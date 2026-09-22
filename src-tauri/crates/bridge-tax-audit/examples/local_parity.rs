@@ -41,12 +41,12 @@
 //! `tae/run.py`'s own `load()`, so a renamed ledger's identity entry (or a bare name that still
 //! matches) resolves on both sides of the comparison, not just this one. Those two tables are
 //! written for the reference implementation's FULL pack, though, and a real client TOML typically
-//! binds many labels this port never reads (`tds`, `gst_outward`, `related_parties`, ...);
+//! binds many labels this port never reads (`gst_outward`, `related_parties`, ...);
 //! `narrow_identity_tables` below strips `[ledger_ids]`/`[group_ids]` down to just the labels the
 //! locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
 //! sees them, so `BIND-ID-UNUSED` never fires on a label this port simply does not consume.
 //! `python_golden.py`'s own `bind_config` call sees the FULL, unnarrowed tables (it binds every
-//! location the reference implementation reads, not just the ones this port ports), so its
+//! location the reference implementation reads, not just the ones this port reads), so its
 //! `BIND-ID-UNUSED` check never trips over a label only this side narrowed away.
 //!
 //! Prints one summary line, and every difference if there are any; exits non-zero on any
@@ -84,7 +84,8 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
 
 /// Narrows `[ledger_ids]`/`[group_ids]` to the labels the locations this port's `Engagement`
 /// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.round_off_ledgers`,
-/// `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
+/// `tds.nature_by_ledger`'s and `tds.payee_aliases`' keys, `tds_payees.s194j_category_by_ledger`'s
+/// keys, `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
 /// `depreciation.dep_expense_ledgers`, `partners.*.interest_ledger`, `tds_tcs_26as`'s three ledger
 /// lists and its `deductor_aliases` values) use, so
 /// `Engagement::bind`'s `BIND-ID-UNUSED` check never refuses over a label a real client TOML
@@ -111,6 +112,20 @@ fn narrow_identity_tables(cfg: &mut toml::Table) {
         }
         if let Some(v) = roles.get("round_off_ledgers") {
             ledger_labels.extend(strs(v));
+        }
+    }
+    for (table, key) in [
+        ("tds", "nature_by_ledger"),
+        ("tds", "payee_aliases"),
+        ("tds_payees", "s194j_category_by_ledger"),
+    ] {
+        if let Some(t) = cfg
+            .get(table)
+            .and_then(toml::Value::as_table)
+            .and_then(|t| t.get(key))
+            .and_then(toml::Value::as_table)
+        {
+            ledger_labels.extend(t.keys().cloned());
         }
     }
     if let Some(t) = cfg

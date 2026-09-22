@@ -16,15 +16,17 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::TallyDate;
-use bridge_tax_audit::book::{Book, Ledger, LedgerLine, TbRow, Voucher, VoucherStatus};
+use bridge_tax_audit::book::{
+    Book, InventoryLine, Ledger, LedgerLine, TbRow, Voucher, VoucherStatus,
+};
 use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::documents::traces_documents_from_json;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_tcs_26as, trial_balance,
-    twentysixas_receipts, Tds26asConfig,
+    cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_payees, tds_tcs_26as,
+    trial_balance, twentysixas_receipts, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -45,6 +47,52 @@ fn date(iso: &str) -> TallyDate {
 
 fn int(v: &Value) -> i64 {
     v.as_i64().unwrap()
+}
+
+/// `key` of `obj`: `None` when absent, or when null and `nullable`; otherwise `read` must accept
+/// the value, or the test panics -- a mistyped key fails here as it does in `parity/edge_golden.py`,
+/// rather than the two sides building different books.
+fn typed<T>(
+    obj: &Value,
+    key: &str,
+    nullable: bool,
+    what: &str,
+    read: impl Fn(&Value) -> Option<T>,
+) -> Option<T> {
+    match obj.get(key) {
+        None => None,
+        Some(Value::Null) if nullable => None,
+        Some(v) => Some(read(v).unwrap_or_else(|| panic!("{key} must be {what}, got {v}"))),
+    }
+}
+
+/// One `inventory` entry: `{item, qty?, rate?, amount?, direction?, qty_field_present?}`, the
+/// numbers as the reference model holds them (`qty` a number, read as a float; `rate`/`amount`
+/// integer paise, debit positive; `direction` 1 or -1), absent or null meaning `None`;
+/// `qty_field_present` a boolean, true when absent. Any other type is refused.
+fn inventory_line(i: &Value) -> InventoryLine {
+    InventoryLine {
+        item: typed(i, "item", false, "text", |v| v.as_str().map(str::to_string))
+            .expect("item is required"),
+        qty: typed(i, "qty", true, "a number or null", Value::as_f64),
+        rate_paise: typed(i, "rate", true, "an integer or null", Value::as_i64),
+        amount_paise: typed(i, "amount", true, "an integer or null", Value::as_i64),
+        direction: typed(i, "direction", true, "1, -1 or null", |v| {
+            match v.as_i64() {
+                Some(1) => Some(1),
+                Some(-1) => Some(-1),
+                _ => None,
+            }
+        }),
+        qty_field_present: typed(
+            i,
+            "qty_field_present",
+            false,
+            "true or false",
+            Value::as_bool,
+        )
+        .unwrap_or(true),
+    }
 }
 
 /// The book `parity/edge_golden.py` builds from the same spec.
@@ -104,6 +152,13 @@ fn build(s: &Value) -> Book {
                     .collect(),
                 narration: text("narration", ""),
                 party_field: text("party", ""),
+                masterid: typed(v, "masterid", false, "text", |m| {
+                    m.as_str().map(str::to_string)
+                }),
+                inventory: v["inventory"]
+                    .as_array()
+                    .map(|a| a.iter().map(inventory_line).collect())
+                    .unwrap_or_default(),
                 guid,
                 base_type,
             }
@@ -140,6 +195,7 @@ fn rules(s: &Value) -> Rules {
     for table in strs(&s["rules_without"]) {
         match table.as_str() {
             "ledger_scrutiny" => rules.ledger_scrutiny_large_entry_paise = None,
+            "s194j" => rules.s194j_aggregate_paise = None,
             other => panic!("rules_without {other} is not wired here"),
         }
     }
@@ -156,6 +212,34 @@ fn period(s: &Value) -> Window {
     Window {
         from: date(from),
         to: date(to),
+    }
+}
+
+/// The `[tds]`/`[tds_payees]` values `parity/edge_golden.py` passes `tds_payees`: a
+/// `s194j_category_by_ledger` value that is not a string is kept as `None`, as `TdsConfig` keeps it.
+fn tds_config(s: &Value) -> TdsConfig {
+    let map = |key: &str| -> BTreeMap<String, String> {
+        s[key]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    TdsConfig {
+        nature_by_ledger: map("nature_by_ledger"),
+        payee_aliases: map("payee_aliases"),
+        previous_year_turnover_paise: s["previous_year_turnover_paise"].as_i64(),
+        s194j_category_by_ledger: s["s194j_category_by_ledger"]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string)))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -218,6 +302,16 @@ fn check(name: &str) {
                 let c = cash_book_integrity::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
+            "tds_payees" => {
+                let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                let r = tds_payees::run(&book, &rules, entity_type, &tds_config(&s)).unwrap();
+                // The reference module has no check_invariants: an empty evaluated list.
+                let rust = canonical_test_result(&book, &r, None).unwrap();
+                let golden = common::golden_named(&format!("edge.{name}.{test}"));
+                let diffs = compare(&golden, &rust, None).unwrap();
+                assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
+                continue;
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -251,10 +345,11 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 6] = [
+const EDGE_TESTS: [&str; 7] = [
     "cash_book_integrity",
     "ledger_scrutiny",
     "stale_balances_41_1",
+    "tds_payees",
     "tds_tcs_26as",
     "trial_balance",
     "twentysixas_receipts",
@@ -387,6 +482,41 @@ fn edge_runners_agree_across_the_two_sides() {
             bridge_tax_audit::registry::find(t).is_some(),
             "{t} is not registered"
         );
+    }
+}
+
+/// The edge-book builder refuses a mistyped `masterid` or inventory key rather than reading it
+/// differently from `parity/edge_golden.py`, which refuses the same specs.
+#[test]
+fn mistyped_voucher_keys_are_refused() {
+    let cases = [
+        serde_json::json!({"item": "x", "qty_field_present": null}),
+        serde_json::json!({"item": "x", "qty": "5"}),
+        serde_json::json!({"item": "x", "rate": 1.5}),
+        serde_json::json!({"item": "x", "direction": 2}),
+        serde_json::json!({"qty": 1}),
+    ];
+    for case in cases {
+        let refused = std::panic::catch_unwind(|| inventory_line(&case)).is_err();
+        assert!(refused, "{case} was not refused");
+    }
+    let accepted = inventory_line(&serde_json::json!({"item": "x", "qty": null, "direction": -1}));
+    assert_eq!(
+        (accepted.qty, accepted.direction, accepted.qty_field_present),
+        (None, Some(-1), true)
+    );
+    for masterid in [serde_json::json!(42), Value::Null] {
+        let refused = std::panic::catch_unwind(|| {
+            typed(
+                &serde_json::json!({ "masterid": masterid }),
+                "masterid",
+                false,
+                "text",
+                |m| m.as_str().map(str::to_string),
+            )
+        })
+        .is_err();
+        assert!(refused, "masterid {masterid} was not refused");
     }
 }
 

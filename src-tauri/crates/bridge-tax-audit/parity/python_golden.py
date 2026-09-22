@@ -167,6 +167,15 @@ def _depreciation(c):
                                           dep_expense_ledgers)
 
 
+def _tds_payees(c):
+    from tae.audit_tests import tds_payees
+    from tae.config import tds_config
+    # As tae/pack.py calls it: the four values tds_config reads from [tds] and [tds_payees].
+    nature_by_ledger, payee_aliases, turnover, s194j_category_by_ledger = tds_config(c.cfg)
+    return tds_payees, tds_payees.run(c.eng, c.rules, nature_by_ledger, payee_aliases, turnover,
+                                      s194j_category_by_ledger)
+
+
 def _traces_documents(c):
     """The Form 26AS/AIS/TIS rows both 26AS tests take as caller data: from --traces-documents
     (the JSON --emit-traces-documents writes, or an invented fixture), from the reference's own
@@ -236,6 +245,7 @@ RUNNERS = {
     "financial_statements": _financial_statements,
     "ledger_scrutiny": _ledger_scrutiny,
     "stale_balances_41_1": _stale_balances_41_1,
+    "tds_payees": _tds_payees,
     "tds_tcs_26as": _tds_tcs_26as,
     "trial_balance": _trial_balance,
     "twentysixas_receipts": _twentysixas_receipts,

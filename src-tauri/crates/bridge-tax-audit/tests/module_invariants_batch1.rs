@@ -56,7 +56,7 @@ fn voucher(guid: &str, date: &str, base: &str, lines: &[(&str, i64)]) -> Voucher
             })
             .collect(),
         narration: String::new(),
-        party_field: String::new(),
+        ..Default::default()
     }
 }
 

@@ -905,7 +905,7 @@ mod tests {
                     },
                 ],
                 narration: String::new(),
-                party_field: String::new(),
+                ..Default::default()
             }],
             tb: BTreeMap::new(),
         };
@@ -945,7 +945,7 @@ mod tests {
             status: crate::book::VoucherStatus::Regular,
             lines: Vec::new(),
             narration: String::new(),
-            party_field: String::new(),
+            ..Default::default()
         };
         assert_eq!(voucher_label(&v), "Payment guid-ééééééa on 2025-06-01");
     }

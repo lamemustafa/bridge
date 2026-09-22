@@ -1,0 +1,284 @@
+{
+ "comment": "tds_payees 194J: Rs 40,000 of professional and Rs 40,000 of technical fees to one payee trip neither category (never summed); royalty over Rs 50,000 trips; exactly Rs 50,000 does not; a 194J ledger with no category, or an unrecognised one, is the unmapped category (a judgement finding with its own fact key, never threshold-tested); one voucher with professional and royalty lines attributes its full credit to each category.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Audit Fees",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194j-000"
+  },
+  {
+   "name": "Tech Support",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194j-001"
+  },
+  {
+   "name": "Royalty Paid",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194j-002"
+  },
+  {
+   "name": "Consulting Misc",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194j-003"
+  },
+  {
+   "name": "Advisory Odd",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194j-004"
+  },
+  {
+   "name": "Consultant J",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194j-005"
+  },
+  {
+   "name": "Consultant K",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194j-006"
+  },
+  {
+   "name": "Licensor L",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194j-007"
+  },
+  {
+   "name": "Consultant N",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194j-008"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Audit Fees",
+   "opening": 0,
+   "debit": 10000000,
+   "credit": 0,
+   "closing": 10000000
+  },
+  {
+   "ledger": "Tech Support",
+   "opening": 0,
+   "debit": 4000000,
+   "credit": 0,
+   "closing": 4000000
+  },
+  {
+   "ledger": "Royalty Paid",
+   "opening": 0,
+   "debit": 5500001,
+   "credit": 0,
+   "closing": 5500001
+  },
+  {
+   "ledger": "Consulting Misc",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "Advisory Odd",
+   "opening": 0,
+   "debit": 200,
+   "credit": 0,
+   "closing": 200
+  },
+  {
+   "ledger": "Consultant J",
+   "opening": 0,
+   "debit": 0,
+   "credit": 8000000,
+   "closing": -8000000
+  },
+  {
+   "ledger": "Consultant K",
+   "opening": 0,
+   "debit": 0,
+   "credit": 300,
+   "closing": -300
+  },
+  {
+   "ledger": "Licensor L",
+   "opening": 0,
+   "debit": 0,
+   "credit": 6500001,
+   "closing": -6500001
+  },
+  {
+   "ledger": "Consultant N",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000000,
+   "closing": -5000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "j01",
+   "date": "2025-04-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Audit Fees",
+     4000000
+    ],
+    [
+     "Consultant J",
+     -4000000
+    ]
+   ]
+  },
+  {
+   "guid": "j02",
+   "date": "2025-04-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Tech Support",
+     4000000
+    ],
+    [
+     "Consultant J",
+     -4000000
+    ]
+   ]
+  },
+  {
+   "guid": "j03",
+   "date": "2025-04-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Royalty Paid",
+     5000001
+    ],
+    [
+     "Licensor L",
+     -5000001
+    ]
+   ]
+  },
+  {
+   "guid": "j04",
+   "date": "2025-04-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Consulting Misc",
+     100
+    ],
+    [
+     "Consultant K",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "j05",
+   "date": "2025-04-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Advisory Odd",
+     200
+    ],
+    [
+     "Consultant K",
+     -200
+    ]
+   ]
+  },
+  {
+   "guid": "j06",
+   "date": "2025-04-07",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Audit Fees",
+     1000000
+    ],
+    [
+     "Royalty Paid",
+     500000
+    ],
+    [
+     "Licensor L",
+     -1500000
+    ]
+   ]
+  },
+  {
+   "guid": "j07",
+   "date": "2025-04-08",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Audit Fees",
+     5000000
+    ],
+    [
+     "Consultant N",
+     -5000000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Audit Fees": "194J",
+  "Tech Support": "194J",
+  "Royalty Paid": "194J",
+  "Consulting Misc": "194J",
+  "Advisory Odd": "194J"
+ },
+ "s194j_category_by_ledger": {
+  "Audit Fees": "professional",
+  "Tech Support": "technical",
+  "Royalty Paid": "royalty",
+  "Advisory Odd": "legal"
+ }
+}

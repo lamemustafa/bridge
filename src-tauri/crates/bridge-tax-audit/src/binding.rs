@@ -1,8 +1,10 @@
 //! Bind an [`Engagement`]'s ledger and group names to the Book by Tally identity, or refuse.
 //!
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
-//! `[roles].round_off_ledgers`, `[loans.loan_ledgers]`'s keys, `[depreciation].block_by_ledger`'s
-//! keys, `[depreciation].dep_expense_ledgers` and `[partners.*].interest_ledger` -- every location
+//! `[roles].round_off_ledgers`, `[tds].nature_by_ledger`'s and `[tds].payee_aliases`' keys,
+//! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys,
+//! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers` and
+//! `[partners.*].interest_ledger` -- every location
 //! this crate's [`Engagement`] reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
 //! a role silently: the figures moved and nothing said why. [`bind`] is the one place a
 //! configured name meets the Book; every one of the locations above is bound once, before any
@@ -24,9 +26,8 @@
 //!   drift can judge.
 //!
 //! **Scope.** This port's registry above is a strict subset of the reference implementation's
-//! (which also binds names inside `tds`, `gst_outward`, `related_parties`, `statutory_dues`, a
-//! legacy trade-creditor JSON source, and more): only the locations `cash_44ab`,
-//! `cash_payments_40a3` and `depreciation` actually read. A real client config's `[ledger_ids]`/
+//! (which also binds names inside `gst_outward`, `related_parties`, `statutory_dues`, a legacy
+//! trade-creditor JSON source, and more): only the locations the ported tests actually read. A real client config's `[ledger_ids]`/
 //! `[group_ids]` tables are written for the reference implementation's full pack and will
 //! typically carry many labels this port never looks at; [`BIND_ID_UNUSED`] is checked only
 //! against the locations this module reads, so this crate never refuses over a label some other,
@@ -396,6 +397,20 @@ rebind the client configuration's identity table against the read the names were
         Ok(pairs)
     }
 
+    /// A table keyed by name, re-keyed by each key's bound name, values unchanged
+    /// ([`Self::bind_keys`]).
+    fn rebind_map<V: Clone>(
+        &mut self,
+        map: &BTreeMap<String, V>,
+        location: &str,
+    ) -> Result<BTreeMap<String, V>> {
+        let pairs = self.bind_keys(map.keys().cloned(), location)?;
+        Ok(pairs
+            .into_iter()
+            .map(|(orig, bound)| (bound, map[&orig].clone()))
+            .collect())
+    }
+
     fn check_unused(&self) -> Result<()> {
         let unused: Vec<String> = self
             .current
@@ -514,6 +529,19 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
+    // `[tds]` and `[tds_payees]` bind before `[loans]` and `[depreciation]`, as they come before
+    // both in the reference's `LEDGER_PATHS` (only which refusal is reported first depends on it).
+    // A payee alias's VALUE is a payee entity label, not a ledger, and is left as written.
+    let mut tds = engagement.tds.clone();
+    if let Some(t) = tds.as_mut() {
+        t.nature_by_ledger = lbinder.rebind_map(&t.nature_by_ledger, "tds.nature_by_ledger")?;
+        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, "tds.payee_aliases")?;
+        t.s194j_category_by_ledger = lbinder.rebind_map(
+            &t.s194j_category_by_ledger,
+            "tds_payees.s194j_category_by_ledger",
+        )?;
+    }
+
     // `[tds_tcs_26as]` binds its three ledger lists and its alias VALUES (the keys are TANs), in
     // the reference's key order within the table (each list sorted, as a set, not in config
     // order); before `[loans]`, as in `LEDGER_PATHS`.
@@ -624,6 +652,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         loan_ledgers_configured,
         depreciation,
         partner_interest_ledgers,
+        tds,
         tds_tcs_26as,
         ..engagement.clone()
     };
@@ -758,6 +787,7 @@ mod tests {
                         amount_paise: -10_000,
                     },
                 ],
+                ..Default::default()
             }],
             tb: BTreeMap::from([(
                 "Cash".to_string(),
@@ -1129,6 +1159,167 @@ mod tests {
         );
         assert!(dep.dep_expense_ledgers.contains("Depreciation A/c"));
         assert_eq!(report.drifts[0].current_name, "Furniture (renamed)");
+    }
+
+    // ---- [tds] and [tds_payees] (tds_payees) ----
+
+    const TDS_TABLES: &str =
+        "\n[tds.nature_by_ledger]\n\"Freight\" = \"194C\"\n\"Fees\" = \"194J\"\n\
+         \n[tds.payee_aliases]\n\"Carrier One\" = \"Carrier group\"\n\
+         \n[tds_payees.s194j_category_by_ledger]\n\"Fees\" = \"professional\"\n\"Royalty\" = \"royalty\"\n";
+
+    fn book_with_tds_ledgers(freight: &str, freight_guid: &str) -> book::Book {
+        let mut b = book("Cash-in-Hand", "", None);
+        for (name, group, guid) in [
+            (freight, "Direct Expenses", freight_guid),
+            ("Fees", "Indirect Expenses", ""),
+            ("Royalty", "Indirect Expenses", ""),
+            ("Carrier One", "Sundry Creditors", ""),
+        ] {
+            b.ledgers
+                .insert(name.to_string(), ledger(name, group, guid, None));
+        }
+        b
+    }
+
+    /// Every `[tds]`/`[tds_payees]` key is bound, as the reference binds them: a key bound by
+    /// identity follows a rename, and a payee alias's value -- an entity label, not a ledger -- is
+    /// kept as written.
+    #[test]
+    fn tds_keys_are_bound_and_alias_values_are_left_alone() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Freight\" = {G_ROUNDOFF:?}\n{TDS_TABLES}"
+        ));
+        let (bound, report) = e
+            .bind(&book_with_tds_ledgers("Freight (renamed)", G_ROUNDOFF))
+            .unwrap();
+        let tds = bound.tds.unwrap();
+        assert_eq!(
+            tds.nature_by_ledger.keys().collect::<Vec<_>>(),
+            ["Fees", "Freight (renamed)"]
+        );
+        assert_eq!(tds.nature_by_ledger["Freight (renamed)"], "194C");
+        assert_eq!(tds.payee_aliases["Carrier One"], "Carrier group");
+        assert_eq!(
+            tds.s194j_category_by_ledger["Fees"].as_deref(),
+            Some("professional")
+        );
+        assert_eq!(report.drifts[0].current_name, "Freight (renamed)");
+    }
+
+    /// A payee ledger and a 194J category ledger renamed in Tally but bound by identity keep their
+    /// alias and category under the new names: without this a renamed 194J ledger would keep its
+    /// nature and lose its category, turning computed findings into unmapped ones.
+    #[test]
+    fn tds_alias_and_category_keys_follow_a_rename_by_identity() {
+        const G_CARRIER: &str = "11111111-1111-1111-1111-000000000004";
+        const G_ROYALTY: &str = "11111111-1111-1111-1111-000000000005";
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Carrier One\" = {G_CARRIER:?}\n\"Royalty\" = {G_ROYALTY:?}\n{TDS_TABLES}"
+        ));
+        let mut b = book_with_tds_ledgers("Freight", "");
+        for (old, new, guid) in [
+            ("Carrier One", "Carrier One (renamed)", G_CARRIER),
+            ("Royalty", "Royalty (renamed)", G_ROYALTY),
+        ] {
+            let mut l = b.ledgers.remove(old).unwrap();
+            l.name = new.to_string();
+            l.guid = guid.to_string();
+            b.ledgers.insert(new.to_string(), l);
+        }
+        let (bound, _report) = e.bind(&b).unwrap();
+        let tds = bound.tds.unwrap();
+        assert_eq!(
+            tds.payee_aliases
+                .get("Carrier One (renamed)")
+                .map(String::as_str),
+            Some("Carrier group")
+        );
+        assert!(!tds.payee_aliases.contains_key("Carrier One"));
+        assert_eq!(
+            tds.s194j_category_by_ledger
+                .get("Royalty (renamed)")
+                .cloned()
+                .flatten()
+                .as_deref(),
+            Some("royalty")
+        );
+        assert!(!tds.s194j_category_by_ledger.contains_key("Royalty"));
+    }
+
+    #[test]
+    fn each_tds_location_refuses_a_name_that_matches_nothing() {
+        for (missing, location) in [
+            ("Freight", "tds.nature_by_ledger"),
+            ("Carrier One", "tds.payee_aliases"),
+            ("Royalty", "tds_payees.s194j_category_by_ledger"),
+        ] {
+            let e = engagement(TDS_TABLES);
+            let mut b = book_with_tds_ledgers("Freight", "");
+            b.ledgers.remove(missing);
+            let err = e.bind(&b).unwrap_err();
+            assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN), "{missing}");
+            assert!(format!("{err}").contains(location), "{err}");
+        }
+    }
+
+    /// `[tds]` is read as the reference's `tds_config` reads it: both maps required once the table
+    /// exists, the turnover optional, and a `s194j_category_by_ledger` value that is not a string
+    /// kept as no category. The refusals are this port's stated divergences.
+    #[test]
+    fn the_tds_tables_are_read_strictly() {
+        assert!(engagement("").tds.is_none());
+        let full = engagement(&format!(
+            "\n[tds]\nprevious_year_turnover_paise = 1_000_000_001\n{TDS_TABLES}\
+             \"Other\" = 7\n"
+        ))
+        .tds
+        .unwrap();
+        assert_eq!(full.previous_year_turnover_paise, Some(1_000_000_001));
+        assert_eq!(full.s194j_category_by_ledger["Other"], None);
+        assert_eq!(
+            engagement(TDS_TABLES)
+                .tds
+                .unwrap()
+                .previous_year_turnover_paise,
+            None
+        );
+        // A top-level `[tds_payees]` that is not a table: the reference raises in this test.
+        let not_a_table = format!(
+            "tds_payees = \"x\"\n{}",
+            base_toml("\n[tds.nature_by_ledger]\n[tds.payee_aliases]\n")
+        );
+        let err = Engagement::from_toml(&not_a_table, Path::new(".")).unwrap_err();
+        assert!(
+            format!("{err}").contains("[tds_payees] is not a table"),
+            "{err}"
+        );
+        for (extra, needle) in [
+            (
+                "\n[tds.nature_by_ledger]\n\"Freight\" = \"194C\"\n",
+                "[tds].payee_aliases",
+            ),
+            (
+                "\n[tds.payee_aliases]\n\"A\" = \"B\"\n",
+                "[tds].nature_by_ledger",
+            ),
+            (
+                "\n[tds.nature_by_ledger]\n\"Freight\" = 1\n[tds.payee_aliases]\n",
+                "[tds].nature_by_ledger.Freight is not a string",
+            ),
+            (
+                "\n[tds.nature_by_ledger]\n[tds.payee_aliases]\n\"A\" = true\n",
+                "[tds].payee_aliases.A is not a string",
+            ),
+            (
+                "\n[tds]\nprevious_year_turnover_paise = 1.5e9\n[tds.nature_by_ledger]\n\
+                 [tds.payee_aliases]\n",
+                "previous_year_turnover_paise is not an integer",
+            ),
+        ] {
+            let err = engagement_err(extra);
+            assert!(format!("{err}").contains(needle), "{extra}: {err}");
+        }
     }
 
     // ---- [tds_tcs_26as] (tds_tcs_26as, twentysixas_receipts) ----

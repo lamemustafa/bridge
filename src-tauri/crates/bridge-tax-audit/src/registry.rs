@@ -74,6 +74,11 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::stale_balances_41_1_on(e, b, r),
     },
     PortedTest {
+        id: "tds_payees",
+        min_figures: 30,
+        run_on: |e, b, r, _| crate::tds_payees_on(e, b, r),
+    },
+    PortedTest {
         id: "tds_tcs_26as",
         min_figures: 30,
         run_on: |e, b, r, c| crate::tds_tcs_26as_on(e, b, r, &c.traces),
