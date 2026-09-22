@@ -1,5 +1,5 @@
 {
- "comment": "statutory_dues_43b: PF employee contribution with an opening lot paid on its own due date, partly late and partly never, a deduction unpaid past its due date and the March deduction due after the year end; ESI paid on its due date, late, then an unmatched advance, and a post-dated payment outside the population; TDS payable closing owing, as figures only; RCM GST (both GST notes); output GST with an opening partly paid and a same-day charge and payment; profession tax over two ledgers, one with no TB row, whose TB does not tie (S43B-1); a nature outside the reference's list, and a zero-amount line on it; salary ledgers with PF and ESI both mapped (no coverage finding).",
+ "comment": "statutory_dues_43b: PF employee contribution with an opening lot paid on its own due date, partly late and partly never, a deduction unpaid past its due date and the March deduction due after the year end; ESI paid on its due date, late, then an unmatched advance, and a post-dated payment outside the population; TDS payable closing owing, as figures only; RCM GST (both GST notes); output GST with an opening partly paid and a same-day charge and payment; profession tax over two ledgers, one with no TB row, whose TB does not tie (S43B-1); a nature outside the reference's list over two ledgers with TB rows, and a zero-amount line on it; salary ledgers with PF and ESI both mapped (no coverage finding).",
  "groups": {
   "Current Assets": null,
   "Bank Accounts": "Current Assets",
@@ -74,6 +74,14 @@
    "guid": "edge-sd-cess"
   },
   {
+   "name": "Cess Payable 2",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-sd-cess-2"
+  },
+  {
    "name": "Salaries",
    "chain": [
     "Indirect Expenses"
@@ -138,6 +146,13 @@
    "debit": 0,
    "credit": 50,
    "closing": -50
+  },
+  {
+   "ledger": "Cess Payable 2",
+   "opening": -30,
+   "debit": 0,
+   "credit": 70,
+   "closing": -100
   }
  ],
  "vouchers": [
@@ -426,6 +441,21 @@
      0
     ]
    ]
+  },
+  {
+   "guid": "edge-sd-020",
+   "date": "2025-12-12",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Cess Payable 2",
+     -70
+    ],
+    [
+     "Salaries",
+     70
+    ]
+   ]
   }
  ],
  "cash": [],
@@ -441,7 +471,8 @@
    "Output GST": "gst_payable",
    "Profession Tax A": "professional_tax",
    "Profession Tax B": "professional_tax",
-   "Cess Payable": "cess_payable"
+   "Cess Payable": "cess_payable",
+   "Cess Payable 2": "cess_payable"
   },
   "salary_expense_ledgers": [
    "Salaries"

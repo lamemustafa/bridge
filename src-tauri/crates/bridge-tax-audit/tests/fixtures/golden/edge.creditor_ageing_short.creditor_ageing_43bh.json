@@ -16,7 +16,7 @@
     },
     {
       "id": "creditor_ageing_43bh.bucket_0_15",
-      "value": 1000,
+      "value": 1100,
       "unit": "paise",
       "definition_sha256_16": "0a5a0ae6e62ce639",
       "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (20 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
@@ -56,7 +56,7 @@
     },
     {
       "id": "creditor_ageing_43bh.clause22_ii_total",
-      "value": 500,
+      "value": 600,
       "unit": "paise",
       "definition_sha256_16": "b7426c55656e8d82",
       "definition_text": "3CD-22(ii): total amount required to be paid to micro/small (non-trader, non-medium, registered) enterprise suppliers during the year (GN 42.26(a)) -- every bill raised on a creditor classified micro/small in client config, whether paid during the year, outstanding at year end, or capitalised (a credit line to the creditor ledger either way). Suppliers classified 'unknown' are excluded (see the per-creditor NEEDS_DOCUMENT findings above), so this is a floor, not the true total, until every supplier is classified.",
@@ -94,6 +94,11 @@
           "kind": "voucher",
           "id": "edge-ca-201",
           "label": "Purchase edge-ca-201 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-cc-dup",
+          "label": "Purchase DUP-SECOND on 2026-03-06"
         }
       ]
     },
@@ -113,6 +118,11 @@
           "kind": "voucher",
           "id": "edge-ca-201",
           "label": "Purchase edge-ca-201 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-cc-dup",
+          "label": "Purchase DUP-SECOND on 2026-03-06"
         }
       ]
     },
@@ -132,12 +142,17 @@
           "kind": "voucher",
           "id": "edge-ca-201",
           "label": "Purchase edge-ca-201 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-cc-dup",
+          "label": "Purchase DUP-SECOND on 2026-03-06"
         }
       ]
     },
     {
       "id": "creditor_ageing_43bh.creditor_reconstructed_bcfde041",
-      "value": 1500,
+      "value": 1600,
       "unit": "paise",
       "definition_sha256_16": "5f0ac424acab6805",
       "definition_text": "Sum of open FIFO lots for one creditor ledger (tag bcfde041) at 2026-03-31.",
@@ -151,6 +166,11 @@
           "kind": "voucher",
           "id": "edge-ca-201",
           "label": "Purchase edge-ca-201 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-cc-dup",
+          "label": "Purchase DUP-SECOND on 2026-03-06"
         }
       ]
     },
@@ -204,7 +224,7 @@
     },
     {
       "id": "creditor_ageing_43bh.post_year_pending_confirmation_total",
-      "value": 1000,
+      "value": 1100,
       "unit": "paise",
       "definition_sha256_16": "12ea1d3238603fe1",
       "definition_text": "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) with no next-year payment data supplied at all -- whether the window was eventually met cannot be determined from these books; NEEDS_DOCUMENT, never assumed met or missed.",
@@ -212,7 +232,7 @@
     },
     {
       "id": "creditor_ageing_43bh.reconstructed_total",
-      "value": 1500,
+      "value": 1600,
       "unit": "paise",
       "definition_sha256_16": "dc79875afa2949a8",
       "definition_text": "Sum of every creditor's open FIFO lots. Books population (optional, cancelled and post-dated vouchers excluded).",
@@ -247,6 +267,11 @@
           "kind": "voucher",
           "id": "edge-ca-201",
           "label": "Purchase edge-ca-201 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-cc-dup",
+          "label": "Purchase DUP-SECOND on 2026-03-06"
         }
       ],
       "title_sha256_16": "bcfe973ad840f839",
@@ -295,6 +320,11 @@
           "kind": "voucher",
           "id": "edge-ca-201",
           "label": "Purchase edge-ca-201 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-cc-dup",
+          "label": "Purchase DUP-SECOND on 2026-03-06"
         }
       ],
       "title_sha256_16": "5af3e36a240dc2b4",
@@ -352,12 +382,12 @@
     {
       "invariant": "POP-1",
       "subject": "Purchases",
-      "detail": "vouchers 500 vs TB movement 0 paise"
+      "detail": "vouchers 600 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-3",
       "subject": "closing_paise",
-      "detail": "TB closing_paise sums to -1500 paise"
+      "detail": "TB closing_paise sums to -1600 paise"
     },
     {
       "invariant": "POP-3",

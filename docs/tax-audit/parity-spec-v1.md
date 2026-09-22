@@ -302,6 +302,20 @@ figure or byte enters this repository or its CI.
 5. If the module has (or gains) a module-level invariant check, nothing else changes here — §5's
    generic handling already covers it; only its own code appearing on both sides is new
    information.
+6. Type a test's own configuration lazily. Loading a client config (`Engagement::from_toml`) and
+   binding it (`Engagement::bind`) run for EVERY test, so a malformed value in one test's own
+   table must not refuse the others. That is also how the reference behaves: its loaders read a
+   test's table only when that test runs.
+   - Binding checks only the shape of the name locations the reference's binding reads (a list of
+     names, a table keyed by names), refusing `BIND-ID-MALFORMED` there as the reference's
+     `names_at` does.
+   - Every other value is kept as written and typed in the test's own `*_on` runner, with the
+     reference's own coercion (for example Python's `int()`).
+   - A test's table that is present but is not a table is skipped by binding (the reference's
+     `_expand` skips it) and refused when that test runs.
+   `CreditorAgeingConfig` and `StatutoryDuesConfig` in `src/lib.rs` are the pattern. A test in the
+   crate's registry must have a unit test showing that a malformed value in its table fails that
+   test and leaves the others running.
 
 ## 11. Ledger tags: figure/finding ids keyed by GUID, not by name
 

@@ -108,21 +108,21 @@ pub struct Engagement {
     /// confirmation of s.44AD history, never inferred from the books); `None` when absent.
     pub presumptive_history: Option<toml::Table>,
     /// `[roles].creditor_groups`, when present: the groups a `{ kind = "groups" }` trade-creditor
-    /// source resolves. Bound like the cash and bank groups whenever it is present, as the
-    /// reference binds every configured group.
+    /// source resolves. Filled by [`Engagement::bind`], which binds it like the cash and bank
+    /// groups whenever it is present, as the reference binds every configured group; `None` on an
+    /// engagement that has not been bound.
     pub creditor_groups: Option<Vec<String>>,
     /// `[roles].trade_creditors_source`, verbatim. Read only when `creditor_ageing_43bh` runs
     /// ([`trade_creditors`]); a `legacy_json` source's ledger names are read and bound by
     /// [`Engagement::bind`] for every test, as the reference's binding does, and the source is
     /// then replaced by `{ kind = "ledgers", ledgers = [...] }`. `None` when absent.
     pub trade_creditors_source: Option<toml::Value>,
-    /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table.
+    /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table. Filled by
+    /// [`Engagement::bind`]; see [`CreditorAgeingConfig`] for what is typed when.
     pub creditor_ageing: CreditorAgeingConfig,
-    /// `statutory_dues_43b`-only: the optional `[statutory_dues]` table's `nature_by_ledger`
-    /// (ledger -> nature, client data) and `salary_expense_ledgers`; both empty when absent, as the
-    /// reference's `statutory_dues_config` defaults them.
-    pub statutory_nature_by_ledger: BTreeMap<String, String>,
-    pub salary_expense_ledgers: Vec<String>,
+    /// `statutory_dues_43b`-only: the optional `[statutory_dues]` table. Filled by
+    /// [`Engagement::bind`]; see [`StatutoryDuesConfig`].
+    pub statutory_dues: StatutoryDuesConfig,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -134,15 +134,76 @@ pub struct Engagement {
 
 /// `[creditor_ageing_43bh]` from the client config, every key optional: the reference's
 /// `creditor_ageing_config` defaults (0, {}, frozenset()) when a key or the whole table is
-/// absent. Values are typed here, at load: `acceptance_lag_days` must be a TOML integer (the
-/// reference's `int()` would also take a numeric string or a boolean), and each classification a
-/// string (the reference refuses anything outside its list only when the test runs, and this port
-/// does the same for a string outside it).
+/// absent.
+///
+/// **Typed lazily** (the batch convention for a test's own table): [`Engagement::bind`] checks
+/// only what binding reads, the SHAPE of the name locations (`supplier_classification` a table,
+/// `mse_interest_ledgers` a list of names, refused `BIND-ID-MALFORMED` as the reference's binding
+/// refuses them), and keeps every VALUE as written. The values are typed only when
+/// `creditor_ageing_43bh` runs, so a malformed value there fails that test and no other, as in the
+/// reference.
 #[derive(Debug, Clone, Default)]
 pub struct CreditorAgeingConfig {
-    pub acceptance_lag_days: i64,
-    pub supplier_classification: BTreeMap<String, String>,
+    /// `[creditor_ageing_43bh]` is present but is not a table: the test refuses when it runs.
+    pub not_a_table: bool,
+    /// `acceptance_lag_days` as written; typed as the reference's `int()` types it.
+    pub acceptance_lag_days: Option<toml::Value>,
+    /// Bound ledger -> classification as written; checked against the list only for a creditor
+    /// the test looks up, as the reference's `_classify` checks it.
+    pub supplier_classification: BTreeMap<String, toml::Value>,
     pub mse_interest_ledgers: Vec<String>,
+}
+
+/// `[statutory_dues]` from the client config: `nature_by_ledger` (bound ledger -> nature as
+/// written) and `salary_expense_ledgers`, both empty when absent, as the reference's
+/// `statutory_dues_config` defaults them. Typed lazily, like [`CreditorAgeingConfig`].
+#[derive(Debug, Clone, Default)]
+pub struct StatutoryDuesConfig {
+    /// `[statutory_dues]` is present but is not a table: the test refuses when it runs.
+    pub not_a_table: bool,
+    pub nature_by_ledger: BTreeMap<String, toml::Value>,
+    pub salary_expense_ledgers: Vec<String>,
+}
+
+/// Python's `int(value)` for a TOML value, as the reference's `creditor_ageing_config` applies it:
+/// an integer as itself, a boolean as 0 or 1, a finite float truncated toward zero, and a string
+/// of ASCII digits (optional sign, surrounding Python whitespace, single underscores between
+/// digits). Anything else is refused, as `int()` raises. One documented narrowing: `int()` also
+/// accepts non-ASCII decimal digits in a string, which this refuses.
+pub(crate) fn py_int(v: &toml::Value, what: &str) -> Result<i64> {
+    let bad = || AuditError::Config(format!("{what}: int() cannot take {v}"));
+    match v {
+        toml::Value::Integer(n) => Ok(*n),
+        toml::Value::Boolean(b) => Ok(i64::from(*b)),
+        toml::Value::Float(f) if f.is_finite() => {
+            let t = f.trunc();
+            // i64 bounds as f64: -2^63 is exact, 2^63 is the first value past the top.
+            if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&t) {
+                #[allow(clippy::cast_possible_truncation)]
+                Ok(t as i64)
+            } else {
+                Err(bad())
+            }
+        }
+        toml::Value::String(s) => {
+            let t = crate::support::py_strip(s);
+            let (neg, digits) = match t.as_bytes().first() {
+                Some(b'-') => (true, &t[1..]),
+                Some(b'+') => (false, &t[1..]),
+                _ => (false, t),
+            };
+            let ok = !digits.is_empty()
+                && digits
+                    .split('_')
+                    .all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));
+            if !ok {
+                return Err(bad());
+            }
+            let n: i64 = digits.replace('_', "").parse().map_err(|_| bad())?;
+            Ok(if neg { -n } else { n })
+        }
+        _ => Err(bad()),
+    }
 }
 
 /// `[depreciation]` from the client config: see [`Engagement::depreciation`].
@@ -431,37 +492,10 @@ not YYYY-MM-DD"
                     })
                 })
                 .transpose()?,
-            creditor_groups: match roles.get("creditor_groups") {
-                Some(_) => Some(strings(roles, "creditor_groups")?),
-                None => None,
-            },
+            creditor_groups: None,
             trade_creditors_source: roles.get("trade_creditors_source").cloned(),
-            creditor_ageing: creditor_ageing_config(cfg.get("creditor_ageing_43bh"))?,
-            statutory_nature_by_ledger: statutory_nature_by_ledger(cfg.get("statutory_dues"))?,
-            salary_expense_ledgers: match cfg
-                .get("statutory_dues")
-                .and_then(toml::Value::as_table)
-                .and_then(|t| t.get("salary_expense_ledgers"))
-            {
-                None => Vec::new(),
-                Some(v) => v
-                    .as_array()
-                    .ok_or_else(|| {
-                        AuditError::Config(
-                            "[statutory_dues].salary_expense_ledgers is not a list".to_string(),
-                        )
-                    })?
-                    .iter()
-                    .map(|x| {
-                        x.as_str().map(str::to_string).ok_or_else(|| {
-                            AuditError::Config(
-                                "[statutory_dues].salary_expense_ledgers holds a non-string"
-                                    .to_string(),
-                            )
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-            },
+            creditor_ageing: CreditorAgeingConfig::default(),
+            statutory_dues: StatutoryDuesConfig::default(),
             base_dir: base_dir.to_path_buf(),
             raw_cfg: cfg,
         })
@@ -474,82 +508,6 @@ not YYYY-MM-DD"
     pub fn bind(&self, book: &book::Book) -> Result<(Self, binding::BindingReport)> {
         binding::bind(self, book)
     }
-}
-
-fn statutory_nature_by_ledger(table: Option<&toml::Value>) -> Result<BTreeMap<String, String>> {
-    let Some(table) = table else {
-        return Ok(BTreeMap::new());
-    };
-    let t = table
-        .as_table()
-        .ok_or_else(|| AuditError::Config("[statutory_dues] is not a table".to_string()))?;
-    let Some(map) = t.get("nature_by_ledger") else {
-        return Ok(BTreeMap::new());
-    };
-    map.as_table()
-        .ok_or_else(|| {
-            AuditError::Config("[statutory_dues].nature_by_ledger is not a table".to_string())
-        })?
-        .iter()
-        .map(|(k, v)| {
-            v.as_str()
-                .map(|s| (k.clone(), s.to_string()))
-                .ok_or_else(|| {
-                    AuditError::Config(format!(
-                        "[statutory_dues].nature_by_ledger.{k} is not a string"
-                    ))
-                })
-        })
-        .collect()
-}
-
-fn creditor_ageing_config(table: Option<&toml::Value>) -> Result<CreditorAgeingConfig> {
-    let Some(table) = table else {
-        return Ok(CreditorAgeingConfig::default());
-    };
-    let bad = |key: &str, what: &str| {
-        AuditError::Config(format!("[creditor_ageing_43bh].{key} is not {what}"))
-    };
-    let t = table
-        .as_table()
-        .ok_or_else(|| AuditError::Config("[creditor_ageing_43bh] is not a table".to_string()))?;
-    let acceptance_lag_days = match t.get("acceptance_lag_days") {
-        None => 0,
-        Some(v) => v
-            .as_integer()
-            .ok_or_else(|| bad("acceptance_lag_days", "an integer"))?,
-    };
-    let supplier_classification = match t.get("supplier_classification") {
-        None => BTreeMap::new(),
-        Some(v) => v
-            .as_table()
-            .ok_or_else(|| bad("supplier_classification", "a table"))?
-            .iter()
-            .map(|(k, v)| {
-                v.as_str()
-                    .map(|s| (k.clone(), s.to_string()))
-                    .ok_or_else(|| bad(&format!("supplier_classification.{k}"), "a string"))
-            })
-            .collect::<Result<_>>()?,
-    };
-    let mse_interest_ledgers = match t.get("mse_interest_ledgers") {
-        None => Vec::new(),
-        Some(v) => v
-            .as_array()
-            .ok_or_else(|| bad("mse_interest_ledgers", "a list"))?
-            .iter()
-            .map(|x| {
-                x.as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| bad("mse_interest_ledgers", "a list of names"))
-            })
-            .collect::<Result<_>>()?,
-    };
-    Ok(CreditorAgeingConfig {
-        acceptance_lag_days,
-        supplier_classification,
-        mse_interest_ledgers,
-    })
 }
 
 /// The ledger names a `legacy_json` trade-creditor source reads (`derived.fs.trade_creditors[]
@@ -750,9 +708,26 @@ pub fn creditor_ageing_43bh_on(
     let (engagement, _report) = engagement.bind(book)?;
     let creditors = trade_creditors(&engagement, book)?;
     let cfg = &engagement.creditor_ageing;
+    if cfg.not_a_table {
+        return Err(AuditError::Config(
+            "[creditor_ageing_43bh] is not a table".to_string(),
+        ));
+    }
     let params = creditor_ageing_43bh::Params {
-        acceptance_lag_days: cfg.acceptance_lag_days,
-        supplier_classification: cfg.supplier_classification.clone(),
+        acceptance_lag_days: match &cfg.acceptance_lag_days {
+            None => 0,
+            Some(v) => py_int(v, "[creditor_ageing_43bh].acceptance_lag_days")?,
+        },
+        // A value that is not a string can never be one of the classifications: kept as its TOML
+        // text, it is refused only if a creditor in scope looks it up, as the reference refuses.
+        supplier_classification: cfg
+            .supplier_classification
+            .iter()
+            .map(|(k, v)| {
+                let text = v.as_str().map_or_else(|| v.to_string(), str::to_string);
+                (k.clone(), text)
+            })
+            .collect(),
         post_year_payments: BTreeMap::new(),
         mse_interest_ledgers: cfg.mse_interest_ledgers.iter().cloned().collect(),
     };
@@ -769,14 +744,31 @@ pub fn statutory_dues_43b_on(
     rules: &Rules,
 ) -> Result<serde_json::Value> {
     let (engagement, _report) = engagement.bind(book)?;
-    let salary: BTreeSet<String> = engagement.salary_expense_ledgers.iter().cloned().collect();
-    let result = statutory_dues_43b::run(
-        book,
-        rules,
-        &engagement.period,
-        &engagement.statutory_nature_by_ledger,
-        &salary,
-    )?;
+    let cfg = &engagement.statutory_dues;
+    if cfg.not_a_table {
+        return Err(AuditError::Config(
+            "[statutory_dues] is not a table".to_string(),
+        ));
+    }
+    let salary: BTreeSet<String> = cfg.salary_expense_ledgers.iter().cloned().collect();
+    // Natures are typed here, when the test runs. A nature that is not a string is refused: the
+    // reference would stringify it into figure ids, which no real configuration relies on.
+    let nature_by_ledger = cfg
+        .nature_by_ledger
+        .iter()
+        .map(|(ledger, nature)| {
+            nature
+                .as_str()
+                .map(|n| (ledger.clone(), n.to_string()))
+                .ok_or_else(|| {
+                    AuditError::Config(format!(
+                        "[statutory_dues].nature_by_ledger.{ledger} is not a string"
+                    ))
+                })
+        })
+        .collect::<Result<BTreeMap<String, String>>>()?;
+    let result =
+        statutory_dues_43b::run(book, rules, &engagement.period, &nature_by_ledger, &salary)?;
     let module_check = statutory_dues_43b::check_invariants(book, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
@@ -962,4 +954,37 @@ pub fn applicability_44ab_canonical(
     comparisons: &applicability_44ab::TurnoverInputs,
 ) -> Result<serde_json::Value> {
     applicability_44ab_on(engagement, &load_book(engagement)?, rules, comparisons)
+}
+
+#[cfg(test)]
+mod py_int_tests {
+    use super::py_int;
+    use toml::Value;
+
+    /// Each expectation is Python 3.13's own `int()` on the same value.
+    #[test]
+    fn py_int_takes_what_pythons_int_takes() {
+        let ok: [(Value, i64); 11] = [
+            (Value::Integer(-4), -4),
+            (Value::Boolean(true), 1),
+            (Value::Boolean(false), 0),
+            (Value::Float(3.9), 3),
+            (Value::Float(-3.9), -3),
+            (Value::from(" 1_000 "), 1000),
+            (Value::from("+5"), 5),
+            (Value::from(" -0 "), 0),
+            (Value::from("007"), 7),
+            (Value::from("0_1"), 1),
+            (Value::from("\u{a0}5\u{2003}"), 5),
+        ];
+        for (v, want) in ok {
+            assert_eq!(py_int(&v, "t").unwrap(), want, "{v}");
+        }
+        for bad in ["1__0", "_1", "1_", "1.0", "", " ", "+_1", "--1"] {
+            assert!(py_int(&Value::from(bad), "t").is_err(), "{bad:?}");
+        }
+        assert!(py_int(&Value::Float(f64::NAN), "t").is_err());
+        assert!(py_int(&Value::Float(f64::INFINITY), "t").is_err());
+        assert!(py_int(&Value::Array(Vec::new()), "t").is_err());
+    }
 }

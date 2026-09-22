@@ -1,5 +1,5 @@
 {
- "comment": "creditor_ageing_43bh, a one-month period and a 20-day lag: an opening lot inside the 15-day window after the lag, beside a bill dated before the period start that is past it, so the clause 22 view removes nothing from the bill's amount.",
+ "comment": "creditor_ageing_43bh, a one-month period and a 20-day lag: an opening lot inside the 15-day window after the lag, beside a bill dated before the period start that is past it, so the clause 22 view removes nothing from the bill's amount; two vouchers sharing one GUID.",
  "period": [
   "2026-03-01",
   "2026-03-31"
@@ -34,8 +34,8 @@
    "ledger": "Short Micro",
    "opening": -1000,
    "debit": 0,
-   "credit": 500,
-   "closing": -1500
+   "credit": 600,
+   "closing": -1600
   }
  ],
  "vouchers": [
@@ -51,6 +51,38 @@
     [
      "Purchases",
      500
+    ]
+   ]
+  },
+  {
+   "guid": "edge-cc-dup",
+   "date": "2026-03-05",
+   "base_type": "Purchase",
+   "number": "DUP-FIRST",
+   "lines": [
+    [
+     "Short Micro",
+     -40
+    ],
+    [
+     "Purchases",
+     40
+    ]
+   ]
+  },
+  {
+   "guid": "edge-cc-dup",
+   "date": "2026-03-06",
+   "base_type": "Purchase",
+   "number": "DUP-SECOND",
+   "lines": [
+    [
+     "Short Micro",
+     -60
+    ],
+    [
+     "Purchases",
+     60
     ]
    ]
   }

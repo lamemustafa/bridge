@@ -804,7 +804,7 @@
   "by": "author",
   "what": "age measured without the acceptance lag",
   "file": "src/creditor_ageing_43bh.rs",
-  "from": "            let age = as_of - add(lot.day, lag)?;",
+  "from": "            let age = as_of - shift(lot.day, lag)?;",
   "to": "            let age = as_of - lot.day;"
  },
  {
@@ -836,7 +836,7 @@
   "by": "author",
   "what": "opening lot age without the lag",
   "file": "src/creditor_ageing_43bh.rs",
-  "from": "        let opening_age = as_of - add(period_start, lag)?;",
+  "from": "        let opening_age = as_of - shift(period_start, lag)?;",
   "to": "        let opening_age = as_of - period_start;"
  },
  {
@@ -868,7 +868,7 @@
   "by": "author",
   "what": "post-year settlement ignores the lag",
   "file": "src/creditor_ageing_43bh.rs",
-  "from": "                    let settled_days = settled_day - add(res.day, lag)?;",
+  "from": "                    let settled_days = settled_day - shift(res.day, lag)?;",
   "to": "                    let settled_days = settled_day - res.day;"
  },
  {
@@ -946,10 +946,10 @@
  {
   "id": "A27",
   "by": "author",
-  "what": "creditor groups not bound",
+  "what": "creditor groups dropped at binding",
   "file": "src/binding.rs",
-  "from": "        .map(|g| gbinder.bind_list(g, \"roles.creditor_groups\"))",
-  "to": "        .map(|g| Ok::<_, AuditError>(g.clone()))"
+  "from": "            &list_at(raw, &[\"roles\", \"creditor_groups\"])?,",
+  "to": "            &Vec::<String>::new(),"
  },
  {
   "id": "A28",
@@ -962,10 +962,10 @@
  {
   "id": "A29",
   "by": "author",
-  "what": "supplier classification keys not rebound",
+  "what": "supplier classification dropped at binding",
   "file": "src/binding.rs",
-  "from": "        .map(|(orig, cls)| (by_orig[orig].clone(), cls.clone()))",
-  "to": "        .map(|(orig, cls)| (orig.clone(), cls.clone()))"
+  "from": "        table_at(raw, &[\"creditor_ageing_43bh\", \"supplier_classification\"])?,",
+  "to": "        None,"
  },
  {
   "id": "A30",
@@ -1162,18 +1162,18 @@
  {
   "id": "S22",
   "by": "author",
-  "what": "nature keys not rebound",
+  "what": "nature_by_ledger dropped at binding",
   "file": "src/binding.rs",
-  "from": "        .map(|(orig, nature)| (by_orig[orig].clone(), nature.clone()))",
-  "to": "        .map(|(orig, nature)| (orig.clone(), nature.clone()))"
+  "from": "        table_at(raw, &[\"statutory_dues\", \"nature_by_ledger\"])?,",
+  "to": "        None,"
  },
  {
   "id": "S23",
   "by": "author",
-  "what": "salary ledgers not bound",
+  "what": "salary ledgers dropped at binding",
   "file": "src/binding.rs",
-  "from": "    let salary_expense_ledgers = lbinder.bind_list(\n        &engagement.salary_expense_ledgers,\n        \"statutory_dues.salary_expense_ledgers\",\n    )?;",
-  "to": "    let salary_expense_ledgers = engagement.salary_expense_ledgers.clone();"
+  "from": "        &list_at(raw, &[\"statutory_dues\", \"salary_expense_ledgers\"])?,",
+  "to": "        &Vec::<String>::new(),"
  },
  {
   "id": "S24",
@@ -1190,5 +1190,237 @@
   "file": "src/statutory_dues_43b.rs",
   "from": "            if let Some(t) = book.tb.get(*n) {\n                opening = opening",
   "to": "            if let Some(t) = book.tb.get(*n).or(book.tb.values().next()) {\n                opening = opening"
+ },
+ {
+  "id": "R01",
+  "by": "reviewer-opus",
+  "what": "post-year: a settled lot is revisited and its settled day overwritten",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if *lot <= 0 {\n                continue;\n            }\n            let take = pay.min(*lot);",
+  "to": "            let take = pay.min(*lot);"
+ },
+ {
+  "id": "R02",
+  "by": "reviewer-opus",
+  "what": "post-year: a negative payment is walked",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if pay <= 0 {\n                break;\n            }\n            if *lot <= 0 {",
+  "to": "            if pay == 0 {\n                break;\n            }\n            if *lot <= 0 {"
+ },
+ {
+  "id": "R03",
+  "by": "reviewer-opus",
+  "what": "post-year: settled paise overwritten, not accumulated",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            out[i].settled_paise += take;",
+  "to": "            out[i].settled_paise = take;"
+ },
+ {
+  "id": "R04",
+  "by": "reviewer-opus",
+  "what": "over-45 creditor count counts every creditor",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if creditor_over_45 > 0 {\n            over_45_creditor_count += 1;",
+  "to": "        if creditor_over_45 >= 0 {\n            over_45_creditor_count += 1;"
+ },
+ {
+  "id": "R05",
+  "by": "reviewer-opus",
+  "what": "unknown finding raised for medium/trader/not_registered too",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        } else if classification == \"unknown\" && (creditor_over_45 > 0 || creditor_over_15 > 0) {",
+  "to": "        } else if (creditor_over_45 > 0 || creditor_over_15 > 0) {"
+ },
+ {
+  "id": "R06",
+  "by": "reviewer-opus",
+  "what": "duplicate-GUID voucher keeps the first, not the last",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    vs.insert(v.guid.as_str(), *v);",
+  "to": "                    vs.entry(v.guid.as_str()).or_insert(*v);"
+ },
+ {
+  "id": "R07",
+  "by": "reviewer-opus",
+  "what": "AGE-1 exceeds-abs branch off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        } else if recon > -closing_paise {",
+  "to": "        } else if recon > -closing_paise + 1_000_000_000 {"
+ },
+ {
+  "id": "R08",
+  "by": "reviewer-opus",
+  "what": "26(i)(A) opening candidate counts non-applicable creditors",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if applicable(classification) && opening_remaining > 0 {",
+  "to": "        if classification != \"medium\" && opening_remaining > 0 {"
+ },
+ {
+  "id": "R09",
+  "by": "reviewer-opus",
+  "what": "no-TB-row creditor takes zero opening even when row exists",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let opening_paise = tb_row.map_or(0, |t| t.opening_paise);",
+  "to": "        let opening_paise = tb_row.map_or(0, |t| t.opening_paise.min(0));"
+ },
+ {
+  "id": "R10",
+  "by": "reviewer-opus",
+  "what": "S43B-1 opening mismatch branch off",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if reported != opening_r {",
+  "to": "            if reported != opening_r && false {"
+ },
+ {
+  "id": "R11",
+  "by": "reviewer-opus",
+  "what": "S43B-1 closing mismatch branch off",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if value != closing_r {",
+  "to": "        if value != closing_r && false {"
+ },
+ {
+  "id": "R12",
+  "by": "reviewer-opus",
+  "what": "S43B-1 no-ledger-evidence branch off",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if ledgers.is_empty() {\n            out.push(",
+  "to": "        if ledgers.len() > 1_000 {\n            out.push("
+ },
+ {
+  "id": "R13",
+  "by": "reviewer-opus",
+  "what": "a negative (debit) opening is seeded as a lot",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if opening_paise > 0 {\n        lots.push(ContributionLot {",
+  "to": "    if opening_paise != 0 {\n        lots.push(ContributionLot {"
+ },
+ {
+  "id": "R14",
+  "by": "reviewer-opus",
+  "what": "the opening lot is dated two days before the period start",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            due_day_number: due_date(month_of(period_start - 1), due_day)?,",
+  "to": "            due_day_number: due_date(month_of(period_start - 2), due_day)?,"
+ },
+ {
+  "id": "R15",
+  "by": "reviewer-opus",
+  "what": "deductions grouped by the month of the day before",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            let e = charges.entry(month_of(d)).or_insert(0);",
+  "to": "            let e = charges.entry(month_of(d - 1)).or_insert(0);"
+ },
+ {
+  "id": "R16",
+  "by": "reviewer-opus",
+  "what": "26(i)(A) payment evidence includes credit-only vouchers",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "                .any(|l| ledgers.contains(l.ledger.as_str()) && l.amount_paise > 0)",
+  "to": "                .any(|l| ledgers.contains(l.ledger.as_str()) && l.amount_paise != 0)"
+ },
+ {
+  "id": "R17",
+  "by": "reviewer-opus",
+  "what": "coverage: any-of becomes all-of",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if natures.iter().any(|n| mapped.contains(n)) {",
+  "to": "        if natures.iter().all(|n| mapped.contains(n)) {"
+ },
+ {
+  "id": "R18",
+  "by": "reviewer-opus",
+  "what": "not-visible and visible-unpaid swap for lots due on the period end",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if l.due_day_number > period_end {\n            not_visible",
+  "to": "        if l.due_day_number > period_end - 1 {\n            not_visible"
+ },
+ {
+  "id": "R19",
+  "by": "reviewer-opus",
+  "what": "the opening lot is included in this year's on-time/late totals",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    for l in lots.iter().filter(|l| l.month.is_some()) {",
+  "to": "    for l in lots.iter() {"
+ },
+ {
+  "id": "R20",
+  "by": "reviewer-opus",
+  "what": "a nature's closing ignores the second ledger",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "                closing = closing.checked_sub(t.closing_paise).ok_or_else(overflow)?;",
+  "to": "                closing = t.closing_paise.checked_neg().ok_or_else(overflow)?;"
+ },
+ {
+  "id": "R21",
+  "by": "reviewer-opus",
+  "what": "voucher evidence keeps the first of a duplicate GUID",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            out.vouchers.insert(v.guid.as_str(), *v);",
+  "to": "            out.vouchers.entry(v.guid.as_str()).or_insert(*v);"
+ },
+ {
+  "id": "R22",
+  "by": "reviewer-opus",
+  "what": "walk: an opening lot of zero is pushed",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    if opening_paise < 0 {\n        lots.push_back(Lot {",
+  "to": "    if opening_paise <= 0 {\n        lots.push_back(Lot {"
+ },
+ {
+  "id": "A33",
+  "by": "author",
+  "what": "a table location's keys are not rebound",
+  "file": "src/binding.rs",
+  "from": ".map(|(orig, bound)| (bound, table[&orig].clone()))",
+  "to": ".map(|(orig, _bound)| (orig.clone(), table[&orig].clone()))"
+ },
+ {
+  "id": "A34",
+  "by": "author",
+  "what": "int() of a boolean is always 1",
+  "file": "src/lib.rs",
+  "from": "        toml::Value::Boolean(b) => Ok(i64::from(*b)),",
+  "to": "        toml::Value::Boolean(_) => Ok(1),"
+ },
+ {
+  "id": "A35",
+  "by": "author",
+  "what": "int() of a float rounds instead of truncating",
+  "file": "src/lib.rs",
+  "from": "            let t = f.trunc();",
+  "to": "            let t = f.round();"
+ },
+ {
+  "id": "A36",
+  "by": "author",
+  "what": "int() of a string accepts a doubled or edge underscore",
+  "file": "src/lib.rs",
+  "from": ".all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));",
+  "to": ".all(|g| g.bytes().all(|b| b.is_ascii_digit()));"
+ },
+ {
+  "id": "A37",
+  "by": "author",
+  "what": "the lag's date range excludes 9999-12-31",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        .filter(|d| (MIN_DAY..=MAX_DAY).contains(d))",
+  "to": "        .filter(|d| (MIN_DAY..MAX_DAY).contains(d))"
+ },
+ {
+  "id": "A38",
+  "by": "author",
+  "what": "a non-table [creditor_ageing_43bh] runs",
+  "file": "src/lib.rs",
+  "from": "            \"[creditor_ageing_43bh] is not a table\".to_string(),\n        ));",
+  "to": "            \"[creditor_ageing_43bh] is not a table\".to_string(),\n        )).or(Ok(serde_json::Value::Null));"
+ },
+ {
+  "id": "S26",
+  "by": "author",
+  "what": "a non-table [statutory_dues] is not flagged",
+  "file": "src/binding.rs",
+  "from": "        not_a_table: raw.get(\"statutory_dues\").is_some_and(|v| !v.is_table()),",
+  "to": "        not_a_table: false,"
  }
 ]

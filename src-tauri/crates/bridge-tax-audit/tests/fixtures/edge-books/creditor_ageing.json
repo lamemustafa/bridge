@@ -1,5 +1,5 @@
 {
- "comment": "creditor_ageing_43bh, acceptance lag 1 day: lots at each bucket edge and each side of the 15- and 45-day windows; micro, small, medium, not_registered and unknown creditors; an opening lot partly paid beside an in-year bill on the period start; an opening balance alone still open (26(i)(A) candidate); post-year payments settling one lot inside its window, one outside it, one partly, and a lot with none; a small creditor with no post-year data; a creditor with no TB row and a configured name that is no ledger at all; same-day bill before payment, an overpayment carried as an advance and a zero-amount line; one voucher cited by two creditors' opening balances; AGE-1's three violations (a post-dated bill in the TB closing, a nil closing with an aged lot, a TB credit smaller than the aged amount); MSMED interest from positive population lines only; a voucher with no number.",
+ "comment": "creditor_ageing_43bh, acceptance lag 1 day: lots at each bucket edge and each side of the 15- and 45-day windows; micro, small, medium, not_registered and unknown creditors; an opening lot partly paid beside an in-year bill on the period start; an opening balance alone still open (26(i)(A) candidate); post-year payments settling one lot inside its window, one outside it, one partly, and a lot with none, and a negative next-year line; a small creditor with no post-year data; a creditor with no TB row and a configured name that is no ledger at all; same-day bill before payment, an overpayment carried as an advance and a zero-amount line; one voucher cited by two creditors' opening balances; AGE-1's three violations (a post-dated bill in the TB closing, a nil closing with an aged lot, a TB credit smaller than the aged amount); MSMED interest from positive population lines only; a voucher with no number.",
  "groups": {
   "Current Assets": null,
   "Bank Accounts": "Current Assets",
@@ -758,6 +758,10 @@
     [
      "2026-04-25",
      1200
+    ],
+    [
+     "2026-04-01",
+     -500
     ]
    ]
   }

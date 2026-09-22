@@ -1,0 +1,416 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "statutory_dues_43b",
+  "test_version": "2",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "a716eb43187c386b",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Each nature's opening/closing liability is the Trial Balance sum across every ledger client config maps to it; charged/paid are population voucher-line sums on the same ledgers (TOT-1: never a filtered sub-table).",
+  "figures": [
+    {
+      "id": "statutory_dues_43b.charged_esi_employee",
+      "value": 300,
+      "unit": "paise",
+      "definition_sha256_16": "dfcbbebccd6de9c0",
+      "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'esi_employee'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-001",
+          "label": "Journal edge-sdd-001 on 2025-05-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-002",
+          "label": "Payment edge-sdd-002 on 2025-06-10"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.charged_pf_employee",
+      "value": 430,
+      "unit": "paise",
+      "definition_sha256_16": "7f028c4f8563a6b5",
+      "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'pf_employee'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.closing_liability_esi_employee",
+      "value": -500,
+      "unit": "paise",
+      "definition_sha256_16": "df4c8553c907496d",
+      "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'esi_employee'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "ESI Employee Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.closing_liability_pf_employee",
+      "value": 30,
+      "unit": "paise",
+      "definition_sha256_16": "f0ce9b63730979a7",
+      "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'pf_employee'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "PF Employee Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.deposited_late_esi_employee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "873a0e7cb1a7d6ec",
+      "definition_text": "Sum of 'esi_employee' deduction lots' payments dated after that month's own due date (FIFO, oldest lot first). Excludes any opening (prior-year) liability lot.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-001",
+          "label": "Journal edge-sdd-001 on 2025-05-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-002",
+          "label": "Payment edge-sdd-002 on 2025-06-10"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.deposited_late_pf_employee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "bb7820aeb77d1e4f",
+      "definition_text": "Sum of 'pf_employee' deduction lots' payments dated after that month's own due date (FIFO, oldest lot first). Excludes any opening (prior-year) liability lot.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.deposited_on_time_esi_employee",
+      "value": 300,
+      "unit": "paise",
+      "definition_sha256_16": "bb8382c4cd9ab124",
+      "definition_text": "Sum of 'esi_employee' deduction lots' payments dated on or before that month's own due date (FIFO, oldest lot first; s.36(1)(va)). Excludes any opening (prior-year) liability lot -- see opening_liability_paid_this_year_<nature> below.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-001",
+          "label": "Journal edge-sdd-001 on 2025-05-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-002",
+          "label": "Payment edge-sdd-002 on 2025-06-10"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.deposited_on_time_pf_employee",
+      "value": 400,
+      "unit": "paise",
+      "definition_sha256_16": "a9308d0c3fa7aef0",
+      "definition_text": "Sum of 'pf_employee' deduction lots' payments dated on or before that month's own due date (FIFO, oldest lot first; s.36(1)(va)). Excludes any opening (prior-year) liability lot -- see opening_liability_paid_this_year_<nature> below.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.not_visible_after_year_end_esi_employee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "dd03436ca6ded480",
+      "definition_text": "Sum of 'esi_employee' deduction lots whose due date falls after 2026-03-31 (the FY's voucher population has no postings after this date, so on-time/late cannot be determined from this book at all).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-001",
+          "label": "Journal edge-sdd-001 on 2025-05-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-002",
+          "label": "Payment edge-sdd-002 on 2025-06-10"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.not_visible_after_year_end_pf_employee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "91ab094f5b3d9b8f",
+      "definition_text": "Sum of 'pf_employee' deduction lots whose due date falls after 2026-03-31 (the FY's voucher population has no postings after this date, so on-time/late cannot be determined from this book at all).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_liability_esi_employee",
+      "value": -500,
+      "unit": "paise",
+      "definition_sha256_16": "b8d0ae3af9c0fc39",
+      "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'esi_employee'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "ESI Employee Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_liability_pf_employee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "8568f8397e642ffd",
+      "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'pf_employee'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "PF Employee Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.paid_esi_employee",
+      "value": 300,
+      "unit": "paise",
+      "definition_sha256_16": "7be8eeb915adaf86",
+      "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'esi_employee'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-001",
+          "label": "Journal edge-sdd-001 on 2025-05-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-002",
+          "label": "Payment edge-sdd-002 on 2025-06-10"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.paid_pf_employee",
+      "value": 400,
+      "unit": "paise",
+      "definition_sha256_16": "2f23386d4c5f390b",
+      "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'pf_employee'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.unpaid_due_date_passed_esi_employee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "5527c8191e7afc96",
+      "definition_text": "Sum of 'esi_employee' deduction lots whose due date fell on or before 2026-03-31 and still had no matching payment recorded in the books by then.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-001",
+          "label": "Journal edge-sdd-001 on 2025-05-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-002",
+          "label": "Payment edge-sdd-002 on 2025-06-10"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.unpaid_due_date_passed_pf_employee",
+      "value": 30,
+      "unit": "paise",
+      "definition_sha256_16": "6aa614b277dd5c3a",
+      "definition_text": "Sum of 'pf_employee' deduction lots whose due date fell on or before 2026-03-31 and still had no matching payment recorded in the books by then.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "statutory_dues_43b/unpaid/pf_employee",
+      "clauses": [
+        "s.36(1)(va)",
+        "3CD-20(b)"
+      ],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "charged",
+          "figure_id": "statutory_dues_43b.charged_pf_employee"
+        },
+        {
+          "name": "closing_liability",
+          "figure_id": "statutory_dues_43b.closing_liability_pf_employee"
+        },
+        {
+          "name": "unpaid_due_date_passed",
+          "figure_id": "statutory_dues_43b.unpaid_due_date_passed_pf_employee"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-003",
+          "label": "Journal edge-sdd-003 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-004",
+          "label": "Payment edge-sdd-004 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdd-dup",
+          "label": "Journal DUP-SECOND on 2025-09-30"
+        }
+      ],
+      "title_sha256_16": "83c81886a4a931d6",
+      "title_text": "Employees' contribution ('pf_employee') charged but no deposit recorded by its due date, which has already passed",
+      "limits_sha256_16": "25743d91d4949d99",
+      "limits_text": [
+        "Checkmate Services P Ltd v CIT (2022) (SC): not allowable for this year regardless of whether it is eventually deposited later."
+      ],
+      "ask_client_sha256_16": "f58de4765a1717c6",
+      "ask_client_text": [
+        "Confirm whether and when this amount was eventually deposited, for interest exposure under the PF/ESI Act (a separate question from income-tax allowability)."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Bank",
+      "detail": "vouchers -700 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Wages",
+      "detail": "vouchers 730 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 470 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "opening_paise",
+      "detail": "TB opening_paise sums to 500 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "statutory_dues_43b.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

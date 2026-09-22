@@ -89,6 +89,22 @@ fn classify<'a>(
     Ok(cls)
 }
 
+/// Python's `date` range, 0001-01-01 ..= 9999-12-31, as day numbers (see [`civil_day_number`]).
+const MIN_DAY: i64 = -719_162;
+const MAX_DAY: i64 = 2_932_896;
+
+/// `day + lag` as a date, refused outside Python's `date` range as the reference's `date +
+/// timedelta` raises `OverflowError` there. Called exactly where the reference adds the lag.
+fn shift(day: i64, lag: i64) -> Result<i64> {
+    day.checked_add(lag)
+        .filter(|d| (MIN_DAY..=MAX_DAY).contains(d))
+        .ok_or_else(|| {
+            AuditError::Config(format!(
+                "{TEST_ID}: date value out of range (acceptance_lag_days {lag})"
+            ))
+        })
+}
+
 /// One open FIFO lot: its day number (see [`civil_day_number`]) and remaining paise, over zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lot {
@@ -383,7 +399,7 @@ records.",
         }
 
         let opening_remaining = d.walk.opening_remaining;
-        let opening_age = as_of - add(period_start, lag)?;
+        let opening_age = as_of - shift(period_start, lag)?;
         let opening_over_45 = if opening_age > over_45_days {
             opening_remaining
         } else {
@@ -398,7 +414,7 @@ records.",
         let (mut creditor_over_45, mut creditor_over_15) = (0i64, 0i64);
         let mut not_yet_over_15: Vec<Lot> = Vec::new();
         for lot in &d.walk.lots {
-            let age = as_of - add(lot.day, lag)?;
+            let age = as_of - shift(lot.day, lag)?;
             let b = bucket(age);
             bucket_totals[b] = add(bucket_totals[b], lot.paise)?;
             if age > over_45_days {
@@ -577,7 +593,7 @@ exists."
                             add(post_year_pending_confirmation_total, res.remaining_paise)?;
                         continue;
                     };
-                    let settled_days = settled_day - add(res.day, lag)?;
+                    let settled_days = settled_day - shift(res.day, lag)?;
                     if settled_days > over_15_days {
                         post_year_confirmed_breach_total =
                             add(post_year_confirmed_breach_total, res.settled_paise)?;
@@ -983,6 +999,19 @@ mod tests {
         );
         let none = apply_post_year_payments(&lots, &[]);
         assert_eq!(none[1].remaining_paise, 50);
+    }
+
+    #[test]
+    fn a_lag_is_bounded_by_pythons_date_range() {
+        let day = |s: &str| civil_day_number(&TallyDate::parse(s).unwrap());
+        assert_eq!(day("00010101"), MIN_DAY);
+        assert_eq!(day("99991231"), MAX_DAY);
+        assert_eq!(shift(MAX_DAY - 5, 5).unwrap(), MAX_DAY);
+        assert!(shift(MAX_DAY - 5, 6).is_err());
+        assert_eq!(shift(MIN_DAY + 5, -5).unwrap(), MIN_DAY);
+        assert!(shift(MIN_DAY + 5, -6).is_err());
+        assert!(shift(0, i64::MIN).is_err());
+        assert!(shift(1, i64::MAX).is_err());
     }
 
     #[test]

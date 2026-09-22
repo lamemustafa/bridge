@@ -1032,6 +1032,71 @@ mod tests {
         assert_eq!(adv, 30);
     }
 
+    /// S43B-1's three reporting branches, which `run()` never reaches (its own figures always carry
+    /// their ledgers and match the TB). The expected messages are the reference's own
+    /// `check_invariants` on the same hand-made result.
+    #[test]
+    fn s43b_1_reports_mismatches_and_missing_evidence_as_the_reference_does() {
+        use crate::book::{Ledger, TbRow};
+        let book = Book {
+            company_name: "c".to_string(),
+            company_guid: "g".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::from([(
+                "X".to_string(),
+                Ledger {
+                    name: "X".to_string(),
+                    parent: "Duties & Taxes".to_string(),
+                    chain: vec!["Duties & Taxes".to_string()],
+                    chain_complete: true,
+                    master_opening_paise: 0,
+                    guid: "gx".to_string(),
+                    masterid: None,
+                },
+            )]),
+            vouchers: Vec::new(),
+            tb: BTreeMap::from([(
+                "X".to_string(),
+                TbRow {
+                    opening_paise: -100,
+                    debit_paise: 50,
+                    credit_paise: 250,
+                    closing_paise: -300,
+                },
+            )]),
+        };
+        let mut r = TestResult::new(TEST_ID, VERSION, "v");
+        let x = || vec![EvidenceRef::new("ledger", "X")];
+        r.fig("opening_liability_a", Value::Int(1), Unit::Paise, "d", x());
+        r.fig(
+            "closing_liability_a",
+            Value::Int(999),
+            Unit::Paise,
+            "d",
+            x(),
+        );
+        r.fig(
+            "closing_liability_b",
+            Value::Int(0),
+            Unit::Paise,
+            "d",
+            Vec::new(),
+        );
+        assert_eq!(
+            check_invariants(&book, &r).unwrap(),
+            vec![
+                "S43B-1: a opening_liability figure (1p) does not match the Trial Balance sum for \
+its own evidenced ledgers (100p)",
+                "S43B-1: a closing_liability figure (999p) does not match the Trial Balance sum for \
+its own evidenced ledgers (300p)",
+                "S43B-1: statutory_dues_43b.closing_liability_b carries no ledger evidence to \
+re-derive from the Trial Balance",
+            ]
+        );
+    }
+
     #[test]
     fn a_due_day_that_does_not_exist_is_refused() {
         assert!(due_date((2025, 1), 30).is_err());

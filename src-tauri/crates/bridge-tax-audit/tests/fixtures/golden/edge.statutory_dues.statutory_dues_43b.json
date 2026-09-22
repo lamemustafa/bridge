@@ -8,7 +8,7 @@
   "figures": [
     {
       "id": "statutory_dues_43b.charged_cess_payable",
-      "value": 50,
+      "value": 120,
       "unit": "paise",
       "definition_sha256_16": "d2860672f36dc596",
       "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'cess_payable'.",
@@ -17,6 +17,11 @@
           "kind": "voucher",
           "id": "edge-sd-018",
           "label": "Journal edge-sd-018 on 2025-10-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sd-020",
+          "label": "Journal edge-sd-020 on 2025-12-12"
         }
       ]
     },
@@ -156,7 +161,7 @@
     },
     {
       "id": "statutory_dues_43b.closing_liability_cess_payable",
-      "value": 50,
+      "value": 150,
       "unit": "paise",
       "definition_sha256_16": "e90f6fd49c852eb4",
       "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'cess_payable'.",
@@ -164,6 +169,11 @@
         {
           "kind": "ledger",
           "id": "Cess Payable",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cess Payable 2",
           "label": ""
         }
       ]
@@ -462,7 +472,7 @@
     },
     {
       "id": "statutory_dues_43b.opening_liability_cess_payable",
-      "value": 0,
+      "value": 30,
       "unit": "paise",
       "definition_sha256_16": "03d882c43f486dc7",
       "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'cess_payable'.",
@@ -470,6 +480,11 @@
         {
           "kind": "ledger",
           "id": "Cess Payable",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cess Payable 2",
           "label": ""
         }
       ]
@@ -680,6 +695,14 @@
       ]
     },
     {
+      "id": "statutory_dues_43b.opening_s43b_paid_this_year_cess_payable",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "d1e397509d78fb33",
+      "definition_text": "Clause 26(i)(A)(a) CANDIDATE: portion of nature 'cess_payable's opening (pre-existing) Trial Balance liability matched, FIFO oldest-first, to this year's own payment vouchers on its mapped ledgers. NOT a settled 'allowable' fact: GN 46.5 limits 26(i)(A) to a sum that was NOT already allowable in an earlier year, which can only be verified from last year's own income-tax return/Form 3CD (not available to this module) -- treating the whole TB opening balance as 26(i)(A) risks double-deducting an amount already allowed last year.",
+      "evidence": []
+    },
+    {
       "id": "statutory_dues_43b.opening_s43b_paid_this_year_gst_payable",
       "value": 1500,
       "unit": "paise",
@@ -690,6 +713,25 @@
           "kind": "voucher",
           "id": "edge-sd-015",
           "label": "Payment edge-sd-015 on 2025-05-20"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_s43b_still_unpaid_cess_payable",
+      "value": 30,
+      "unit": "paise",
+      "definition_sha256_16": "36489f57675eb5ba",
+      "definition_text": "Clause 26(i)(A)(b) CANDIDATE: portion of nature 'cess_payable's opening (pre-existing) liability still unmatched to any payment in this year's population. Same GN 46.5 limitation as the paid portion above: this is a candidate needing last year's return to confirm it was not already allowable in an earlier year, not a settled figure; it carries forward as next year's own opening balance either way, and is EXCLUDED from clause 26(i)(B) above (26-7 fix) so it is never counted twice.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cess Payable",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cess Payable 2",
+          "label": ""
         }
       ]
     },
@@ -718,6 +760,11 @@
           "kind": "voucher",
           "id": "edge-sd-018",
           "label": "Journal edge-sd-018 on 2025-10-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sd-020",
+          "label": "Journal edge-sd-020 on 2025-12-12"
         }
       ]
     },
@@ -857,7 +904,7 @@
     },
     {
       "id": "statutory_dues_43b.this_year_closing_liability_cess_payable",
-      "value": 50,
+      "value": 120,
       "unit": "paise",
       "definition_sha256_16": "2657ce91f33266e7",
       "definition_text": "3CD-26(i)(B): THIS YEAR's own unpaid s.43B liability for nature 'cess_payable' -- the Trial Balance closing balance LESS any still-unpaid remainder of the OPENING (pre-existing) liability reported separately under clause 26(i)(A)(b) below, so the same rupee is never counted under both clauses (26-7 fix, GN 46.4-46.7).",
@@ -865,6 +912,11 @@
         {
           "kind": "ledger",
           "id": "Cess Payable",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cess Payable 2",
           "label": ""
         }
       ]
@@ -1294,6 +1346,46 @@
       ]
     },
     {
+      "id": "statutory_dues_43b/opening_unpaid/cess_payable",
+      "clauses": [
+        "s.43B",
+        "3CD-26(i)(A)(b)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "opening_liability",
+          "figure_id": "statutory_dues_43b.opening_liability_cess_payable"
+        },
+        {
+          "name": "opening_unpaid",
+          "figure_id": "statutory_dues_43b.opening_s43b_still_unpaid_cess_payable"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cess Payable",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cess Payable 2",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "a34d2acb13dafa51",
+      "title_text": "Sum under s.43B for 'cess payable' incurred in an earlier year, still unpaid at this year end: a clause 26(i)(A) candidate",
+      "limits_sha256_16": "6a4faba405ce1cb3",
+      "limits_text": [
+        "Candidate only (GN 46.5): this is only a clause 26(i)(A)(b) amount if it was NOT already allowable in an earlier year -- that needs last year's own income-tax return/Form 3CD, which this module does not have, so this is NOT a settled COMPUTED figure. If and when it is paid, it is allowed only in the year of actual payment (GN 46.4-46.5: no return-due-date relief for a pre-existing liability); it carries forward as next year's own opening balance either way."
+      ],
+      "ask_client_sha256_16": "65b4256fa8e918ee",
+      "ask_client_text": [
+        "Last year's income-tax return/Form 3CD, to confirm whether this amount was already allowable in an earlier year."
+      ]
+    },
+    {
       "id": "statutory_dues_43b/opening_unpaid/gst_payable",
       "clauses": [
         "s.43B",
@@ -1353,6 +1445,11 @@
         {
           "kind": "ledger",
           "id": "Cess Payable",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cess Payable 2",
           "label": ""
         }
       ],
@@ -1579,17 +1676,17 @@
     {
       "invariant": "POP-1",
       "subject": "Salaries",
-      "detail": "vouchers 7950 vs TB movement 0 paise"
+      "detail": "vouchers 8020 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-3",
       "subject": "closing_paise",
-      "detail": "TB closing_paise sums to -6700 paise"
+      "detail": "TB closing_paise sums to -6800 paise"
     },
     {
       "invariant": "POP-3",
       "subject": "opening_paise",
-      "detail": "TB opening_paise sums to -3000 paise"
+      "detail": "TB opening_paise sums to -3030 paise"
     }
   ],
   "result_invariants_evaluated": [
