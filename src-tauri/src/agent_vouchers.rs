@@ -85,7 +85,6 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         // What each request of the window read cost (#595); the empty-window
         // corroboration below is a read of its own and is not counted here.
         let window = serde_json::to_value(&read.timings).unwrap_or(Value::Null);
-        let requested_timings = read.timings.clone();
         let source_marks = read.witness.as_ref().map(|witness| witness.marks);
         let mut rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
         let mut result_state = "complete";
@@ -93,15 +92,7 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         if rows.is_empty() {
             let (read_evidence, partial, reason) = server
                 .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None, source_marks)
-                .await
-                .map_err(|mut failure| {
-                    // The corroboration reads a wider window of its own. Its
-                    // timings would read as the requested window's, which was
-                    // read in full: report that read's instead, with no failed
-                    // request of its own.
-                    failure.window_timings = Some(Box::new(requested_timings.clone()));
-                    failure
-                })?;
+                .await?;
             accumulate_evidence(&mut accumulated, read_evidence);
             if partial {
                 result_state = "partial";

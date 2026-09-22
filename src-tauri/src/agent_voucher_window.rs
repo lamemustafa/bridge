@@ -815,6 +815,11 @@ pub(super) struct WindowReadOutcome<T> {
 /// milliseconds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub(super) struct WindowReadTimings {
+    /// The window this read was asked for, so that timings from a read of a
+    /// different window (the empty-window corroboration's wider one) identify
+    /// themselves.
+    pub(super) from: String,
+    pub(super) to: String,
     pub(super) marks: RequestTally,
     pub(super) census: RequestTally,
     pub(super) parts: Vec<PartTiming>,
@@ -1458,7 +1463,9 @@ where
         &timed, identity, company, from, to, shape, source, limits, parse,
     )
     .await;
-    let timings = timed.into_timings();
+    let mut timings = timed.into_timings();
+    timings.from = from.to_string();
+    timings.to = to.to_string();
     match read {
         Ok(mut outcome) => {
             // `failed` is already `None`: a read that stands ended on a request

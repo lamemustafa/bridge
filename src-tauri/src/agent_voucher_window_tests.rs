@@ -3758,6 +3758,8 @@ fn window_timings_drop_only_their_parts_when_over_the_allowance() {
         ms: 5,
     };
     let timings = WindowReadTimings {
+        from: "20260801".into(),
+        to: "20260801".into(),
         marks: RequestTally { requests: 1, ms: 2 },
         census: RequestTally { requests: 3, ms: 4 },
         parts: vec![part; 3],
@@ -3773,6 +3775,8 @@ fn window_timings_drop_only_their_parts_when_over_the_allowance() {
     assert_eq!(
         trimmed,
         json!({
+            "from": "20260801",
+            "to": "20260801",
             "marks": {"requests": 1, "ms": 2},
             "census": {"requests": 3, "ms": 4},
             "failed": {"kind": "part", "ms": 5},

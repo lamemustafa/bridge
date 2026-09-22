@@ -317,6 +317,10 @@ async fn the_vouchers_tool_reports_its_window_timings_on_success_and_refusal() {
     assert_eq!(parts[0]["rows"], 3);
     assert_eq!(parts[0]["bytes"], body.len());
     assert!(parts[0]["ms"].is_u64());
+    assert_eq!(
+        (&window["from"], &window["to"]),
+        (&json!("20260801"), &json!("20260802"))
+    );
     assert!(window.get("failed").is_none());
 
     // A mark far over the budget needs a census, and Tally declares the census
@@ -409,11 +413,9 @@ async fn only_the_vouchers_tool_reports_window_timings_on_a_refusal() {
     assert!(error.get("window").is_none(), "{error}");
 }
 
-/// #595: an empty requested window is corroborated by a wider read of its
-/// own. When that read is refused, the timings reported are the requested
-/// window's, which was read in full, not the wider window's.
-#[tokio::test]
-async fn a_refused_corroboration_reports_the_requested_windows_timings() {
+/// Plans for a `vouchers` call whose requested window is empty, so that the
+/// wider corroboration read runs next with `corroboration` as its paired legs.
+fn empty_window_then(corroboration: Vec<ScenarioPlan>) -> Vec<ScenarioPlan> {
     let decode = |bytes: &[u8]| {
         String::from_utf16(
             &bytes
@@ -423,34 +425,27 @@ async fn a_refused_corroboration_reports_the_requested_windows_timings() {
         )
         .unwrap()
     };
-    let plan = |xml: String| {
-        ScenarioPlan::new(Fixture::SyntheticXml(xml))
-            .with_encoding(WireEncoding::Utf16Le)
-            .with_framing(ResponseFraming::ContentLength)
-    };
-    let empty = plan(decode(include_bytes!(
+    let empty = ScenarioPlan::new(Fixture::SyntheticXml(decode(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
-    )));
-    // Dated outside the wider window too, so the corroboration is refused.
-    let outside = plan(
-        decode(include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
-        ))
-        .replace("20260801", "20261001"),
-    );
+    ))))
+    .with_encoding(WireEncoding::Utf16Le)
+    .with_framing(ResponseFraming::ContentLength);
     let cycle = import_cycle_plans();
     let mut plans = cycle[..4].to_vec();
     plans.extend(cycle[10..16].iter().cloned());
-    for body in [&empty, &outside] {
-        plans.extend([
-            cycle[0].clone(),
-            body.clone(),
-            cycle[1].clone(),
-            body.clone(),
-            cycle[1].clone(),
-            cycle[0].clone(),
-        ]);
-    }
+    plans.extend([
+        cycle[0].clone(),
+        empty.clone(),
+        cycle[1].clone(),
+        empty,
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]);
+    plans.extend(corroboration);
+    plans
+}
+
+async fn call_vouchers(plans: Vec<ScenarioPlan>) -> Value {
     let simulator = SequenceSimulator::spawn(plans).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let response = server_for(simulator.address(), directory.path())
@@ -461,14 +456,55 @@ async fn a_refused_corroboration_reports_the_requested_windows_timings() {
         .await;
     simulator.cancel();
     simulator.finish().unwrap();
+    response
+}
+
+/// #595: an empty requested window is corroborated by a wider read of its
+/// own. When Tally refuses that read, the error's window is the wider one, and
+/// says so by its own dates, with the part that failed.
+#[tokio::test]
+async fn a_refused_corroboration_read_reports_its_own_window() {
+    let cycle = import_cycle_plans();
+    let refused = cycle[11].clone().with_http_status(500);
+    let response = call_vouchers(empty_window_then(vec![cycle[0].clone(), refused])).await;
     assert_eq!(response["isError"], true, "{response}");
     let window = &response["structuredContent"]["result"]["error"]["window"];
-    let parts = window["parts"]
-        .as_array()
-        .expect("the requested window's parts");
-    assert_eq!(parts.len(), 1, "{window}");
-    assert_eq!(parts[0]["from"], "20260801");
-    assert_eq!(parts[0]["to"], "20260802");
-    assert_eq!(parts[0]["rows"], 0);
-    assert!(window.get("failed").is_none(), "{window}");
+    assert_eq!(window["from"], "20260731", "{window}");
+    assert_eq!(window["to"], "20260803", "{window}");
+    assert_eq!(window["failed"]["kind"], "part", "{window}");
+    assert_eq!(window["parts"][0]["served"], false, "{window}");
+}
+
+/// #595: a corroboration read Tally served, but whose rows fail validation, is
+/// not a window-read failure: the error carries no window.
+#[tokio::test]
+async fn a_corroboration_refused_after_its_read_carries_no_window() {
+    let outside = ScenarioPlan::new(Fixture::SyntheticXml(
+        String::from_utf16(
+            &include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+            )
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        // Dated outside the wider window too.
+        .replace("20260801", "20261001"),
+    ))
+    .with_encoding(WireEncoding::Utf16Le)
+    .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    let response = call_vouchers(empty_window_then(vec![
+        cycle[0].clone(),
+        outside.clone(),
+        cycle[1].clone(),
+        outside,
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]))
+    .await;
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], "window_not_honoured", "{response}");
+    assert!(error.get("window").is_none(), "{error}");
 }
