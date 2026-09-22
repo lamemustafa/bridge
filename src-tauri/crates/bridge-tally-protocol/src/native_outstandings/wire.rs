@@ -1072,7 +1072,7 @@ fn read_element_text(
         .to_string())
 }
 
-use super::model::CompanyCurrency;
+use super::model::{CompanyCurrency, CurrencyMaster};
 
 /// Parses the company currency collection.
 ///
@@ -1159,50 +1159,35 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         ));
     }
 
-    let currency_count = rows.len();
-    let CurrencyRow {
-        symbol,
-        mailing_name,
-        decimal_places,
-    } = rows.into_iter().next().unwrap_or_default();
-    // Only a single defined currency lets this read name the BASE currency.
-    // "Rs." is shared by several currencies, so only the observed Indian
-    // mailing identity is authoritative enough to put ₹ before real money.
-    let is_inr = currency_count == 1
-        && (mailing_name.eq_ignore_ascii_case("Indian Rupees")
-            || mailing_name.eq_ignore_ascii_case("INR"));
-
-    Ok(CompanyCurrency {
-        symbol,
-        mailing_name,
-        currency_count,
-        decimal_places,
-        is_inr,
-    })
-}
-
-#[derive(Default)]
-struct CurrencyRow {
-    symbol: String,
-    mailing_name: String,
-    decimal_places: u8,
+    // Only a single defined currency names the BASE currency by itself; with
+    // several, the caller identifies it from the company's CURRENCYNAME.
+    Ok(CompanyCurrency::from_masters(rows))
 }
 
 fn parse_currency_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<CurrencyRow, NativeOutstandingsError> {
+) -> Result<CurrencyMaster, NativeOutstandingsError> {
     validate_row_attributes(element, "currency_row_malformed_attributes")?;
     let symbol = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("currency_name_missing"),
     )?;
     let mut mailing_name = None;
     let mut decimal_places = None;
+    let mut original_name = None;
     loop {
         match reader
             .read_event()
             .map_err(|_| NativeOutstandingsError::InvalidResponse("currency_xml_malformed"))?
         {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"ORIGINALNAME") => {
+                let text = read_element_text(reader, child.name())?;
+                if original_name.replace(text).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_original_name",
+                    ));
+                }
+            }
             Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
                 let text = read_element_text(reader, child.name())?;
                 if mailing_name.replace(text).is_some() {
@@ -1244,13 +1229,161 @@ fn parse_currency_row(
             _ => {}
         }
     }
-    Ok(CurrencyRow {
-        symbol,
+    Ok(CurrencyMaster {
+        name: symbol,
+        original_name,
         mailing_name: mailing_name.unwrap_or_default(),
         decimal_places: decimal_places.ok_or(NativeOutstandingsError::InvalidResponse(
             "currency_decimal_places_missing",
         ))?,
     })
+}
+
+/// The `CURRENCYNAME` of the one company whose `GUID` is `company_guid`, from
+/// the `Company` collection [`super::render_company_base_currency_request`]
+/// renders. The collection lists every loaded company. Refuses when no row or
+/// several rows carry the GUID, or when the chosen row's `CURRENCYNAME` is
+/// missing or empty.
+pub fn parse_company_currency_name(
+    xml: &str,
+    company_guid: &str,
+) -> Result<String, NativeOutstandingsError> {
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let mut reader = Reader::from_str(&sanitized);
+    reader.config_mut().trim_text(true);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut status_seen = false;
+    let mut collection_seen = false;
+    let mut chosen: Vec<Option<String>> = Vec::new();
+    loop {
+        let event = reader.read_event().map_err(|_| {
+            NativeOutstandingsError::InvalidResponse("company_currency_xml_malformed")
+        })?;
+        match event {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path.is_empty() && name != b"ENVELOPE" {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "company_currency_root_not_envelope",
+                    ));
+                }
+                if path_is(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
+                    let text = read_element_text(&mut reader, element.name())?;
+                    if text.trim() != "1" {
+                        return Err(NativeOutstandingsError::TallyReportedFailure);
+                    }
+                    status_seen = true;
+                    continue;
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"COMPANY"
+                {
+                    let (guid, currency_name) = parse_company_currency_row(&mut reader)?;
+                    if guid.eq_ignore_ascii_case(company_guid) {
+                        chosen.push(currency_name);
+                    }
+                    continue;
+                }
+                path.push(name);
+            }
+            Event::Empty(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+            }
+            Event::End(element) => {
+                let expected = path.pop().ok_or(NativeOutstandingsError::InvalidResponse(
+                    "company_currency_unexpected_close",
+                ))?;
+                if expected != element.name().as_ref().to_ascii_uppercase() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "company_currency_unexpected_close",
+                    ));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !path.is_empty() {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_envelope_unterminated",
+        ));
+    }
+    if !status_seen {
+        return Err(NativeOutstandingsError::TallyReportedFailure);
+    }
+    if !collection_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_collection_missing",
+        ));
+    }
+    match chosen.as_slice() {
+        [Some(name)] if !name.is_empty() => Ok(name.clone()),
+        [_] => Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_name_missing",
+        )),
+        [] => Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_row_missing",
+        )),
+        _ => Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_row_ambiguous",
+        )),
+    }
+}
+
+/// One `COMPANY` row's `GUID` and `CURRENCYNAME`; other fields are skipped. A
+/// field given twice is refused.
+fn parse_company_currency_row(
+    reader: &mut Reader<&[u8]>,
+) -> Result<(String, Option<String>), NativeOutstandingsError> {
+    let mut guid = None;
+    let mut currency_name = None;
+    loop {
+        match reader.read_event().map_err(|_| {
+            NativeOutstandingsError::InvalidResponse("company_currency_xml_malformed")
+        })? {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
+                let text = read_element_text(reader, child.name())?;
+                if guid.replace(text).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "company_currency_duplicate_guid",
+                    ));
+                }
+            }
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"CURRENCYNAME") => {
+                let text = read_element_text(reader, child.name())?;
+                if currency_name.replace(text).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "company_currency_duplicate_name",
+                    ));
+                }
+            }
+            Event::Start(_) => skip_subtree(reader)?,
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"CURRENCYNAME") => {
+                if currency_name.replace(String::new()).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "company_currency_duplicate_name",
+                    ));
+                }
+            }
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"COMPANY") => break,
+            Event::Eof => {
+                return Err(NativeOutstandingsError::InvalidResponse(
+                    "company_currency_row_unterminated",
+                ))
+            }
+            _ => {}
+        }
+    }
+    let guid = guid.ok_or(NativeOutstandingsError::InvalidResponse(
+        "company_currency_guid_missing",
+    ))?;
+    Ok((guid, currency_name))
 }
 
 #[cfg(test)]

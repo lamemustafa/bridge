@@ -319,11 +319,11 @@ fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCo
     // currency. See TALLY_PROTOCOL_REFERENCE.md §9.10a.1.
     let (message, remediation) = match reason {
         "company_base_currency_undetermined" => (
-            "Tally defines multiple Currency masters, so Bridge could not establish the selected company's base currency from this read.",
+            "Tally defines multiple Currency masters, and Bridge could not match exactly one of them to the selected company's base currency.",
             "Do not retry the unchanged export: no operator confirmation can make this read safe. Bridge needs a read that establishes one INR base currency before it can label the workbook.",
         ),
         "company_base_currency_not_inr" => (
-            "The selected Tally company does not use INR as its base currency.",
+            "The selected Tally company's base currency is not INR, and Bridge supports INR-based books only.",
             "Do not retry the unchanged export: select a company whose established base currency is INR. A confirmation cannot change an unsupported base currency.",
         ),
         "company_currency_probe_failed" => (
@@ -1838,9 +1838,8 @@ pub async fn export_party_ledger_master(
         .detect_party_ledger_master_currency(request.config.clone(), &identity)
         .await
         .map_err(party_ledger_master_runtime_command_error)?;
-    let currency_assertion =
-        establish_inr_currency(currency_read.currency_count(), currency_read.is_inr())
-            .map_err(party_ledger_master_currency_admission_error)?;
+    let currency_assertion = establish_inr_currency(currency_read.inr_admission())
+        .map_err(party_ledger_master_currency_admission_error)?;
     let currency_assertion = currency_read.bind_party_ledger_master_assertion(currency_assertion);
     let source = runtime
         .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
@@ -2071,29 +2070,22 @@ enum CompanySweepFailure {
 }
 
 fn company_sweep_currency_preflight_failure(
-    currency_count: usize,
-    is_inr: bool,
+    currency: &bridge_tally_protocol::native_outstandings::CompanyCurrency,
 ) -> Option<&'static str> {
-    establish_inr_currency(currency_count, is_inr).err()
+    establish_inr_currency(currency.inr_admission()).err()
 }
 
 /// The one INR admission rule used by both the existing outstandings sweep and
-/// the party/ledger workbook boundary. A workbook can obtain this typed value
-/// only after `detect_base_currency` has read Tally's own Currency masters.
+/// the party/ledger workbook boundary ([`CompanyCurrency::inr_admission`]). A
+/// workbook can obtain this typed value only after `detect_base_currency` has
+/// read Tally's own Currency masters, and, with several, the company's base.
+///
+/// [`CompanyCurrency::inr_admission`]:
+/// bridge_tally_protocol::native_outstandings::CompanyCurrency::inr_admission
 fn establish_inr_currency(
-    currency_count: usize,
-    is_inr: bool,
+    admission: Result<(), &'static str>,
 ) -> Result<OutstandingsCurrencyAssertion, &'static str> {
-    if currency_count > 1 {
-        return Err("company_base_currency_undetermined");
-    }
-    if currency_count == 1 && !is_inr {
-        return Err("company_base_currency_not_inr");
-    }
-    if currency_count == 1 {
-        return Ok(OutstandingsCurrencyAssertion::Inr);
-    }
-    Err("company_currency_probe_failed")
+    admission.map(|()| OutstandingsCurrencyAssertion::Inr)
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2138,10 +2130,7 @@ pub async fn fetch_tally_outstandings_all_companies(
                     Err(_) => Err(CompanySweepFailure::ReasonCode(
                         "company_currency_probe_failed",
                     )),
-                    Ok(currency) => match company_sweep_currency_preflight_failure(
-                        currency.currency_count,
-                        currency.is_inr,
-                    ) {
+                    Ok(currency) => match company_sweep_currency_preflight_failure(&currency) {
                         Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
                         None => runtime
                             .fetch_outstandings(

@@ -21,8 +21,9 @@ use crate::tally::runtime_control::{
 use crate::warning_codes::WarningCode;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
-    compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
-    parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
+    compute_native_outstandings, parse_company_currency, parse_company_currency_name,
+    parse_native_bill_rows, parse_native_group_snapshot, parse_native_ledger_snapshot,
+    render_company_base_currency_request, render_company_currency_request,
     render_native_bills_request, render_native_group_snapshot_request,
     render_native_ledger_export_request, render_native_ledger_snapshot_request,
     AgeingAnchor as NativeAgeingAnchor, CompanyCurrency, LedgerSnapshotEntry,
@@ -1006,23 +1007,14 @@ impl CompanyCurrencyRead {
         self.evidence.clone()
     }
 
+    /// The shared INR admission rule ([`CompanyCurrency::inr_admission`]).
     pub(crate) fn admit_inr(self) -> Result<PartyLedgerMasterCurrencyAssertion, &'static str> {
-        match (self.currency_count(), self.is_inr()) {
-            (1, true) => {
-                Ok(self.bind_party_ledger_master_assertion(OutstandingsCurrencyAssertion::Inr))
-            }
-            (0, _) => Err("company_currency_probe_failed"),
-            (1, false) => Err("company_base_currency_not_inr"),
-            _ => Err("company_base_currency_undetermined"),
-        }
+        self.currency.inr_admission()?;
+        Ok(self.bind_party_ledger_master_assertion(OutstandingsCurrencyAssertion::Inr))
     }
 
-    pub(crate) fn currency_count(&self) -> usize {
-        self.currency.currency_count
-    }
-
-    pub(crate) fn is_inr(&self) -> bool {
-        self.currency.is_inr
+    pub(crate) fn inr_admission(&self) -> Result<(), &'static str> {
+        self.currency.inr_admission()
     }
 
     pub(crate) fn bind_party_ledger_master_assertion(
@@ -3700,6 +3692,20 @@ impl TallyRuntime {
                             body.require_stable(PairedReadValidationError::CurrencyMaster)?;
                         evidence =
                             RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes);
+                        let mut currency = parse_company_currency(&body)?;
+                        if currency.currency_count > 1 {
+                            // Several masters do not say which is the base: the
+                            // company's own CURRENCYNAME does, by the base
+                            // master's ORIGINALNAME (bridge#551). Only this case
+                            // costs the extra read.
+                            let request =
+                                render_company_base_currency_request(identity.display_name());
+                            let body = client.fetch_native_report_paired(request).await?;
+                            let (body, _, _) = body
+                                .require_stable(PairedReadValidationError::CompanyBaseCurrency)?;
+                            let name = parse_company_currency_name(&body, identity.company_guid())?;
+                            currency = currency.with_company_currency_name(&name);
+                        }
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Err(anyhow::Error::new(
@@ -3708,7 +3714,7 @@ impl TallyRuntime {
                         }
                         bracket_verified_company_identity(&client, &identity).await?;
                         Ok(CompanyCurrencyRead {
-                            currency: parse_company_currency(&body)?,
+                            currency,
                             extent,
                             evidence: evidence.clone(),
                         })

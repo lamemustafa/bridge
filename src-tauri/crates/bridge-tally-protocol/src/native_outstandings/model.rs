@@ -141,19 +141,113 @@ pub enum NativeOverdueCrosscheck {
     UnconfirmedAsOfWithoutEffectiveDateEvidence,
 }
 
-/// What Tally reports about a company's currencies.
+/// What Tally reports about a company's currencies. `symbol`, `mailing_name`,
+/// `decimal_places` and `is_inr` describe the BASE currency once it is
+/// identified ([`Self::base_determined`]).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CompanyCurrency {
     pub symbol: String,
     pub mailing_name: String,
-    /// How many currency masters the company defines. INR is inferred only
-    /// when there is exactly one: with several defined, which is the BASE
-    /// currency is not determinable from this read, and guessing would put a
-    /// wrong currency symbol in front of a real balance.
+    /// How many currency masters the company defines. With exactly one, it is
+    /// the base currency. With several, the Currency masters alone do not say
+    /// which is the base (row order and `RESERVEDNAME` do not either), and
+    /// guessing would put a wrong currency symbol in front of a real balance:
+    /// the company's own `CURRENCYNAME` must identify it
+    /// ([`Self::with_company_currency_name`]).
     pub currency_count: usize,
     /// The base currency's display precision reported by Tally. Consumers
     /// must carry this to their rendering boundary rather than silently
     /// assuming paise precision.
     pub decimal_places: u8,
+    /// The identified base currency's mailing name is INR (`INR` or `Indian
+    /// Rupees`). False while the base is undetermined.
     pub is_inr: bool,
+    /// Whether this read has identified which master is the base currency.
+    #[serde(skip)]
+    pub base_determined: bool,
+    /// Every master as read, in response order.
+    #[serde(skip)]
+    pub masters: Vec<CurrencyMaster>,
+}
+
+/// One Currency master as the currency read returns it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CurrencyMaster {
+    /// `NAME`: the symbol ledgers carry (for example `I₹` or `$`).
+    pub name: String,
+    /// `ORIGINALNAME`: the symbol the company's `CURRENCYNAME` names when this
+    /// master is its base currency (for example `₹` for a master named `I₹`).
+    pub original_name: Option<String>,
+    pub mailing_name: String,
+    pub decimal_places: u8,
+}
+
+fn mailing_name_is_inr(mailing_name: &str) -> bool {
+    // "Rs." is shared by several currencies, so only the observed Indian
+    // mailing identity is authoritative enough to put ₹ before real money.
+    mailing_name.eq_ignore_ascii_case("Indian Rupees") || mailing_name.eq_ignore_ascii_case("INR")
+}
+
+impl CompanyCurrency {
+    /// The read of a company's Currency masters. With exactly one master, that
+    /// master is the base currency. With several, the base stays undetermined
+    /// until [`Self::with_company_currency_name`] identifies it.
+    pub fn from_masters(masters: Vec<CurrencyMaster>) -> Self {
+        let currency_count = masters.len();
+        let base = (currency_count == 1).then(|| masters[0].clone());
+        let mut currency = Self {
+            symbol: String::new(),
+            mailing_name: String::new(),
+            currency_count,
+            decimal_places: 0,
+            is_inr: false,
+            base_determined: false,
+            masters,
+        };
+        if let Some(base) = base {
+            currency.set_base(&base);
+        }
+        currency
+    }
+
+    fn set_base(&mut self, base: &CurrencyMaster) {
+        self.symbol = base.name.clone();
+        self.mailing_name = base.mailing_name.clone();
+        self.decimal_places = base.decimal_places;
+        self.is_inr = mailing_name_is_inr(&base.mailing_name);
+        self.base_determined = true;
+    }
+
+    /// Identifies the base currency among several masters. The company's
+    /// `CURRENCYNAME` names its base currency by the master's `ORIGINALNAME`,
+    /// not its `NAME` (measured 22 Sep 2026: company `₹`, masters `I₹`/`₹` and
+    /// `$`/`$`; bridge#551). The base is the unique master whose `ORIGINALNAME`
+    /// equals it character for character. If no master or several match, it
+    /// stays undetermined. A single-master read is unchanged.
+    pub fn with_company_currency_name(mut self, company_currency_name: &str) -> Self {
+        if self.currency_count < 2 {
+            return self;
+        }
+        let matching: Vec<CurrencyMaster> = self
+            .masters
+            .iter()
+            .filter(|master| master.original_name.as_deref() == Some(company_currency_name))
+            .cloned()
+            .collect();
+        if let [base] = matching.as_slice() {
+            self.set_base(base);
+        }
+        self
+    }
+
+    /// Whether this read may label the company's figures as INR, or the
+    /// reason it may not.
+    pub fn inr_admission(&self) -> Result<(), &'static str> {
+        match (self.currency_count, self.base_determined, self.is_inr) {
+            (0, _, _) => Err("company_currency_probe_failed"),
+            (_, false, _) => Err("company_base_currency_undetermined"),
+            (_, true, false) => Err("company_base_currency_not_inr"),
+            (_, true, true) => Ok(()),
+        }
+    }
 }

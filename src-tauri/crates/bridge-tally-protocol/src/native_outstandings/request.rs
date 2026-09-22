@@ -338,12 +338,32 @@ fn xml_escape(value: &str) -> String {
 /// Renders a request for the company's currency masters.
 ///
 /// A company's base currency is a fact Tally holds, so asking the operator to
-/// assert it is a step the product can answer for itself. Measured
-/// 2026-08-07 on three lab companies: one `CURRENCY` row each, `NAME` `"Rs."`,
-/// `MAILINGNAME` `"Indian Rupees"` or `"INR"`.
+/// assert it is a step the product can answer for itself.
+/// - Measured 2026-08-07 on three lab companies: one `CURRENCY` row each,
+///   `NAME` `"Rs."`, `MAILINGNAME` `"Indian Rupees"` or `"INR"`.
+/// - `ORIGINALNAME` is fetched so that a company with several masters can be
+///   matched to its `CURRENCYNAME` ([`render_company_base_currency_request`]).
+///   Measured 2026-09-22 on licensed TallyPrime 7.1: master `I₹` has
+///   `ORIGINALNAME` `₹`; master `$` has `$` (bridge#551).
 pub fn render_company_currency_request(company: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyCurrencies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyCurrencies" ISMODIFY="No"><TYPE>Currency</TYPE><FETCH>NAME, MAILINGNAME, DECIMALPLACES</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyCurrencies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyCurrencies" ISMODIFY="No"><TYPE>Currency</TYPE><FETCH>NAME, MAILINGNAME, DECIMALPLACES, ORIGINALNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+    )
+}
+
+/// Renders a request for each loaded company's `CURRENCYNAME`: the symbol of
+/// its base currency, as that master's `ORIGINALNAME`.
+/// - It is a plain `Company` collection, with no formula and no filter. It
+///   lists every loaded company, and the caller picks the row by GUID.
+/// - Measured 2026-09-22 on licensed TallyPrime 7.1 (bridge#551). An
+///   INR-based book with a second currency reports `₹`; a USD-based control
+///   reports `$`. `BASECURRENCYSYMBOL`, `BASECURRENCYNAME` and `FORMALNAME`
+///   came back empty or absent.
+/// - Sent only when a company defines more than one Currency master.
+pub fn render_company_base_currency_request(company: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyBaseCurrency</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyBaseCurrency" ISMODIFY="No"><TYPE>Company</TYPE><FETCH>NAME, GUID, CURRENCYNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
     )
 }
