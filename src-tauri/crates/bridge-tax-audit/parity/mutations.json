@@ -1022,5 +1022,37 @@
   "file": "src/registry.rs",
   "from": "        id: \"tds_payees\",\n        min_figures: 30,",
   "to": "        id: \"tds_payees\",\n        min_figures: 31,"
+ },
+ {
+  "id": "C1-37",
+  "by": "author (Lane C)",
+  "what": "payee_aliases bound but the old keys kept",
+  "file": "src/binding.rs",
+  "from": "        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;",
+  "to": "        let _ = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;"
+ },
+ {
+  "id": "C1-38",
+  "by": "author (Lane C)",
+  "what": "194J categories bound but the old keys kept",
+  "file": "src/binding.rs",
+  "from": "        t.s194j_category_by_ledger = lbinder.rebind_map(",
+  "to": "        let _ = lbinder.rebind_map("
+ },
+ {
+  "id": "C1-39",
+  "by": "author (Lane C)",
+  "what": "duplicate figure id not refused",
+  "file": "src/tds_payees.rs",
+  "from": "            if r.figures.iter().any(|f| f.id == row_figure) {",
+  "to": "            if false {"
+ },
+ {
+  "id": "C1-40",
+  "by": "author (Lane C)",
+  "what": "[tds_payees] never read",
+  "file": "src/lib.rs",
+  "from": "                    .get(\"tds_payees\")\n",
+  "to": "                    .get(\"tds_payees-absent\")\n"
  }
 ]
