@@ -313,6 +313,36 @@ pub(crate) fn py_repr_str(text: &str) -> String {
     out
 }
 
+/// An amount in paise written as rupees for a figure definition, as the reference's
+/// `tae/rupees.py` writes it: Indian grouping (the last three digits, then pairs), no decimals for
+/// whole rupees and exactly two otherwise, and a negative amount led by "−" (U+2212) before "₹".
+pub(crate) fn rupees(paise: i128) -> String {
+    let sign = if paise < 0 { "−" } else { "" };
+    let abs = paise.unsigned_abs();
+    let (whole, frac) = (abs / 100, abs % 100);
+    let digits = whole.to_string();
+    let grouped = if digits.len() <= 3 {
+        digits
+    } else {
+        let (mut head, tail) = digits.split_at(digits.len() - 3);
+        let mut pairs = Vec::new();
+        while head.len() > 2 {
+            let (rest, pair) = head.split_at(head.len() - 2);
+            pairs.insert(0, pair);
+            head = rest;
+        }
+        let mut parts = vec![head];
+        parts.extend(pairs);
+        parts.push(tail);
+        parts.join(",")
+    };
+    if frac == 0 {
+        format!("{sign}₹{grouped}")
+    } else {
+        format!("{sign}₹{grouped}.{frac:02}")
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod text_probe_tests {
     //! Replays `tests/fixtures/text-probes.json` -- Python 3.13's own results on the acceptance set,
@@ -474,7 +504,29 @@ pub(crate) mod text_probe_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{guid_tail12, py_lower, py_upper, LOWER_UNCHANGED, UPPER_UNCHANGED};
+    use super::{guid_tail12, py_lower, py_upper, rupees, LOWER_UNCHANGED, UPPER_UNCHANGED};
+
+    #[test]
+    fn rupees_groups_as_the_reference_does() {
+        // tae/rupees.py's own cases (selftest/test_rupees.py).
+        let cases: [(i128, &str); 11] = [
+            (0, "₹0"),
+            (5, "₹0.05"),
+            (100, "₹1"),
+            (12_345, "₹123.45"),
+            (1_000_000, "₹10,000"),
+            (3_500_000, "₹35,000"),
+            (20_000_000, "₹2,00,000"),
+            (1_234_567_890, "₹1,23,45,678.90"),
+            (1_000_000_000, "₹1,00,00,000"),
+            (-5_000_000, "−₹50,000"),
+            (-5, "−₹0.05"),
+        ];
+        for (paise, text) in cases {
+            assert_eq!(rupees(paise), text, "{paise}");
+        }
+        assert_eq!(rupees(i128::MIN).chars().next(), Some('−'));
+    }
 
     /// The toolchain tables the exception lists were generated against.
     const GENERATED_AGAINST: (u8, u8, u8) = (17, 0, 0);

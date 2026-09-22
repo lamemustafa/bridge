@@ -46,7 +46,13 @@ The figure floor in `registry.rs` is structural: every book gives 5 figures and 
 
 ## Reference commit and invocations
 
-Produced at the reference engine commit `76310f60a300d6172efdf11a9c7158cd51f38497` (loans_interest's
+Current pin: `6813a635682b8dc953ddc367458d7beefd6ddebe`. Every golden below was regenerated from an
+archive of that commit by the invocations below, with ENGINE the archive of the current pin. History:
+produced at `76310f60`, re-checked byte-identical at `9d64c743`, re-pinned at `250eaedf` (the second
+CA-facing wording pass, text only) and at `6813a635` (the s.269SS/269T limit written in rupees, one
+definition per golden); `../PROVENANCE.md` records each regeneration.
+
+First produced at the reference engine commit `76310f60a300d6172efdf11a9c7158cd51f38497` (loans_interest's
 never-subtract rule of `02487f42` and bind_config's re-keyed interest ledger), from an archive of that
 commit with no client data, under Python 3.13:
 
@@ -72,10 +78,10 @@ and regenerating all seven goldens there gives byte-identical files.
 | `loans_interest_invariants.json` | 6,570 | `5ddaf6edd94c6fc0dfe087c7eba3f35fe54c7139e1dc5d2092837e1c7b346e87` | `edge-books/loans_interest_invariants.json` |
 | `loans_interest_shared.json` | 3,883 | `f714219e6bf0aa29a66e109cc1be1523b6549e686c5bf4521a60b871b238b90b` | `edge-books/loans_interest_shared.json` |
 | `loans_interest_shared_reversals.json` | 3,907 | `3e58ab5517e605380cbf4a2f502e700f62fd87ee9ecac4441149286790f88208` | `edge-books/loans_interest_shared_reversals.json` |
-| `edge.loans_interest_core.loans_interest.json` | 59,132 | `67491ec6be7db312a1af52885daed4fab7be7008ad0f7ac46626593dfd243aea` | `golden/edge.loans_interest_core.loans_interest.json` |
-| `edge.loans_interest_individual_at.loans_interest.json` | 8,931 | `51063638d289b69461391785eb43e7a6d89586f382fd08c3f436e6f9573b0743` | `golden/edge.loans_interest_individual_at.loans_interest.json` |
-| `edge.loans_interest_individual_over.loans_interest.json` | 10,591 | `96e619adc40aa0caca6567bd8417e4cd557694bb946166ca2715ddfa7dc8f57d` | `golden/edge.loans_interest_individual_over.loans_interest.json` |
-| `edge.loans_interest_invariants.loans_interest.json` | 25,096 | `8e00c88b76f811c59aca89352f9e83d8ff3321b0f85594c7bba788e6a515651a` | `golden/edge.loans_interest_invariants.loans_interest.json` |
-| `edge.loans_interest_shared.loans_interest.json` | 11,547 | `3347c094619f1c355dfe6a9dcfa8e7b70425981ff60eb8f086f013ef945b8bca` | `golden/edge.loans_interest_shared.loans_interest.json` |
-| `edge.loans_interest_shared_reversals.loans_interest.json` | 12,536 | `bfae3f31fced42cd3653d02cbebf160b85057c29d9c26101d19a1978ff142734` | `golden/edge.loans_interest_shared_reversals.loans_interest.json` |
-| `synthetic.loans_interest.json` | 15,254 | `462ad5b40fa8742899489d8f70e7122cd040123277ccae0a085ed97d82016657` | `golden/synthetic.loans_interest.json` |
+| `edge.loans_interest_core.loans_interest.json` | 59,128 | `188c14ff4fe2d83fe06b553402894a67bee7234af146923512bd90d0d5707989` | `golden/edge.loans_interest_core.loans_interest.json` |
+| `edge.loans_interest_individual_at.loans_interest.json` | 8,927 | `5b7657c7691ea3d36b4f0c1196e203c0209628a66cdff7efaa3450b8e5ea8a06` | `golden/edge.loans_interest_individual_at.loans_interest.json` |
+| `edge.loans_interest_individual_over.loans_interest.json` | 10,587 | `9832894dc6ff81ab73ac6eef5dca2d57dd2f356487d95a41476dee57dfa50c29` | `golden/edge.loans_interest_individual_over.loans_interest.json` |
+| `edge.loans_interest_invariants.loans_interest.json` | 25,092 | `42b4d642c02cf7295d74610f96ca5ef5df8325e52bd9ed826e3257aa646869f3` | `golden/edge.loans_interest_invariants.loans_interest.json` |
+| `edge.loans_interest_shared.loans_interest.json` | 11,543 | `4a7444faf0dddc6b166dbd2fa6217a9455daaa85fad73dea90213483408e5707` | `golden/edge.loans_interest_shared.loans_interest.json` |
+| `edge.loans_interest_shared_reversals.loans_interest.json` | 12,532 | `934cc0b1879b7f5d044ca91abbb61456c2800f12c986e03f56f8eb83d45ff621` | `golden/edge.loans_interest_shared_reversals.loans_interest.json` |
+| `synthetic.loans_interest.json` | 15,250 | `7b33d9e9ac86114f87c635785fc261a985e41893ee706fea074686badb8b6e9d` | `golden/synthetic.loans_interest.json` |

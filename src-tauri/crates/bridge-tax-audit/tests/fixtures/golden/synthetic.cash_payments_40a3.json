@@ -52,8 +52,8 @@
       "id": "cash_payments_40a3.s269ss269t_candidate_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "fb366f4ad3bbbc57",
-      "definition_text": "Population, non-Contra vouchers with a cash line and a Loans (Liability)-chain line of an amount, taken without its sign, at or over the s.269SS/269T limit (2000000 paise).",
+      "definition_sha256_16": "3c1b3db6040710d9",
+      "definition_text": "Population, non-Contra vouchers with a cash line and a Loans (Liability)-chain line of an amount, taken without its sign, at or over the s.269SS/269T limit (₹20,000).",
       "evidence": []
     },
     {
@@ -76,8 +76,8 @@
       "id": "cash_payments_40a3.s269st_at_or_over_limit_count",
       "value": 4,
       "unit": "count",
-      "definition_sha256_16": "c84915b6adafab88",
-      "definition_text": "(date, party) pairs where the day's total is at or over the s.269ST(a) limb (i) limit (20000000 paise per person per day).",
+      "definition_sha256_16": "d1cb2ed8cb702b93",
+      "definition_text": "(date, party) pairs where the day's total is at or over the s.269ST(a) limb (i) limit (₹2,00,000 per person per day).",
       "evidence": []
     },
     {
@@ -151,8 +151,8 @@
       "id": "cash_payments_40a3.s269st_payment_at_or_over_limit_count",
       "value": 5,
       "unit": "count",
-      "definition_sha256_16": "e654ca772b964a2c",
-      "definition_text": "(date, party) pairs where the day's cash payment total is at or over the s.269ST(a) limb (a) threshold (20000000 paise per person per day) -- reportable in clause 31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
+      "definition_sha256_16": "8f8629d398594be3",
+      "definition_text": "(date, party) pairs where the day's cash payment total is at or over the s.269ST(a) limb (a) threshold (₹2,00,000 per person per day) -- reportable in clause 31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
       "evidence": []
     },
     {
@@ -590,8 +590,8 @@
       "id": "cash_payments_40a3.s40a3_over_limit_in_scope_count",
       "value": 10,
       "unit": "count",
-      "definition_sha256_16": "1c6c9b67d995aa69",
-      "definition_text": "In-scope (date, payee) pairs where the day's total exceeds the s.40A(3) limit (1000000 paise per person per day).",
+      "definition_sha256_16": "7686f9a6ffe4f134",
+      "definition_text": "In-scope (date, payee) pairs where the day's total exceeds the s.40A(3) limit (₹10,000 per person per day).",
       "evidence": []
     },
     {

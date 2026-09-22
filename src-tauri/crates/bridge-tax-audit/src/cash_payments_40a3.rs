@@ -125,7 +125,7 @@ fn group_for_kind(kind: &str) -> Result<&'static str> {
         })
 }
 
-use crate::support::voucher_label;
+use crate::support::{rupees, voucher_label};
 
 /// One (date, ledger) row's aggregate: cash amount and the distinct vouchers that contributed.
 struct RowAgg<'a> {
@@ -443,7 +443,8 @@ population, non-Contra voucher, payee classified as expenditure, any amount.",
         Unit::Count,
         &format!(
             "In-scope (date, payee) pairs where the day's total exceeds the s.40A(3) limit \
-({limit_40a3} paise per person per day)."
+({} per person per day).",
+            rupees(i128::from(limit_40a3))
         ),
         Vec::new(),
     );
@@ -583,7 +584,8 @@ population, non-Contra voucher, party ledger not under 'Sales Accounts', any amo
         Unit::Count,
         &format!(
             "(date, party) pairs where the day's total is at or over the s.269ST(a) limb (i) \
-limit ({limit_269st} paise per person per day)."
+limit ({} per person per day).",
+            rupees(i128::from(limit_269st))
         ),
         Vec::new(),
     );
@@ -665,8 +667,9 @@ population, non-Contra voucher, party ledger not under 'Purchase Accounts', any 
         Unit::Count,
         &format!(
             "(date, party) pairs where the day's cash payment total is at or over the \
-s.269ST(a) limb (a) threshold ({limit_269st} paise per person per day) -- reportable in clause \
-31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer)."
+s.269ST(a) limb (a) threshold ({limit_269st_text} per person per day) -- reportable in clause \
+31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
+            limit_269st_text = rupees(i128::from(limit_269st))
         ),
         Vec::new(),
     );
@@ -828,8 +831,8 @@ interest' instead.",
         Unit::Count,
         &format!(
             "Population, non-Contra vouchers with a cash line and a Loans (Liability)-chain \
-line of an amount, taken without its sign, at or over the s.269SS/269T limit ({limit_ss_t} \
-paise)."
+line of an amount, taken without its sign, at or over the s.269SS/269T limit ({}).",
+            rupees(i128::from(limit_ss_t))
         ),
         Vec::new(),
     );

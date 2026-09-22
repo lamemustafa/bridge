@@ -743,8 +743,8 @@
       "id": "loans_interest.s269ss_269t_flag_count",
       "value": 6,
       "unit": "count",
-      "definition_sha256_16": "9d3badbe15344ff8",
-      "definition_text": "Reportable taken/repaid rows in cash/journal/other mode at or over the s.269SS/269T limit (2000000 paise).",
+      "definition_sha256_16": "caaf7427c636ca1f",
+      "definition_text": "Reportable taken/repaid rows in cash/journal/other mode at or over the s.269SS/269T limit (₹20,000).",
       "evidence": []
     }
   ],
