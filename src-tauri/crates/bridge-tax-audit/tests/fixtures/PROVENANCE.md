@@ -378,8 +378,9 @@ are the reference's own.
 
 Then at `3fa9d5d4` (the engine's own fix, on top of the evidence fixes in `fffe2191`), `cash_payments_40a3` cites its no-party
 bucket on both s.269ST legs as a `row` ref, never as a `ledger` one: the placeholder names no ledger
-in the books, so EVID-1 reported both citations. Every golden in this file and every edge golden was
-regenerated at `3fa9d5d4` from an archive of that commit. The only change is in
+in the books, so EVID-1 reported both citations. Every golden in this file, batch 2a's
+(`provenance/batch-2a.md`) and every edge golden was regenerated at `3fa9d5d4` from an archive of
+that commit. The only change is in
 `synthetic.cash_payments_40a3.json`: two evidence refs become `row` refs, and its two EVID-1
 violations are gone. Every other golden is byte-identical.
 
