@@ -1185,3 +1185,115 @@ fn a_multi_currency_refusal_names_the_masters_in_plain_words_only_when_nothing_w
         assert_eq!(refused(attempted)["message"], "generic");
     }
 }
+
+/// The captured catalogue's binding of `names`, as a post binds them.
+fn captured_binding(names: &[&str]) -> bridge_tally_protocol::StandardLedgerCatalogBinding {
+    let catalogue = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    ));
+    bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .unwrap()
+    .bind_selected(names.iter().map(|name| name.to_string()))
+    .unwrap()
+}
+
+fn recorded(pairs: &[(&str, &str)]) -> Vec<BoundLedger> {
+    pairs
+        .iter()
+        .map(|(name, guid)| BoundLedger {
+            name: name.to_string(),
+            guid: guid.to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_post_admits_only_the_ledgers_its_build_bound() {
+    // The captured catalogue's GUIDs for these two ledgers.
+    const A: &str = "61c6de69-1748-461c-ad3f-162cb949df9f-000000d5";
+    const B: &str = "61c6de69-1748-461c-ad3f-162cb949df9f-0000001f";
+    let now = captured_binding(&["Bridge Nested Debtor WR4", "Cash"]);
+    // Same ledgers, same GUIDs (GUID case is not identity).
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[
+                ("Cash", &B.to_uppercase()),
+                ("Bridge Nested Debtor WR4", A)
+            ])),
+            &now
+        ),
+        Ok(())
+    );
+    // Cash renamed and a new Cash created since the build: named.
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[
+                ("Bridge Nested Debtor WR4", A),
+                ("Cash", "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff")
+            ])),
+            &now
+        ),
+        Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
+    );
+    // A ledger the record does not hold is not admitted by name alone.
+    assert_eq!(
+        admit_build_binding(Some(&recorded(&[("Bridge Nested Debtor WR4", A)])), &now),
+        Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
+    );
+    // A record built before binding existed has nothing to compare.
+    assert_eq!(
+        admit_build_binding(None, &now),
+        Err(BuildBindingRefusal::Unbound)
+    );
+}
+
+#[test]
+fn a_record_without_ledger_identities_reads_as_built_before_binding() {
+    // An older record, exactly as it was serialized: no `ledger_identities`.
+    let (mut line, _) = batch();
+    line.ledger_identities = None;
+    let json = serde_json::to_value(&line).unwrap();
+    assert!(json.get("ledger_identities").is_none(), "{json}");
+    let reread: ImportLedgerLine = serde_json::from_value(json).unwrap();
+    assert_eq!(reread.ledger_identities, None);
+    // And a current record keeps them across a round trip.
+    line.ledger_identities = Some(recorded(&[("Cash", "g")]));
+    let reread: ImportLedgerLine =
+        serde_json::from_value(serde_json::to_value(&line).unwrap()).unwrap();
+    assert_eq!(reread.ledger_identities, line.ledger_identities);
+}
+
+#[test]
+fn a_changed_ledger_is_named_in_plain_words_only_when_nothing_was_attempted() {
+    let ledgers = (1..=9).map(|n| format!("L{n}")).collect::<Vec<_>>();
+    let refused = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_masters_changed_since_build","message":"generic"}}});
+        name_changed_ledgers(&mut payload, &ledgers);
+        payload["result"]["error"].clone()
+    };
+    let error = refused(json!(false));
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(
+            "A ledger this batch names is no longer the one it was built against (L1, L2, L3, L4, L5, L6, L7, L8 and 1 more)"
+        ),
+        "{message}"
+    );
+    assert_eq!(error["ledgers_changed_total"], 9);
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(refused(attempted)["message"], "generic");
+    }
+    // An unbound batch is told to rebuild, only when nothing was attempted.
+    let mut unbound = json!({"result":{"attempt_recorded":false,
+        "error":{"code":"import_batch_predates_ledger_binding","message":"generic"}}});
+    explain_unbound_batch(&mut unbound);
+    assert!(unbound["result"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Build the batch again"));
+}

@@ -232,6 +232,33 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
 
 /// A built, never-dispatched batch for the captured laboratory company, with
 /// its XML file, exactly as `build_import_xml` leaves one.
+/// Record the build's ledger binding as `build_import_xml` does (#239): each
+/// named ledger with the GUID the captured catalogue gives it.
+fn bind_to_captured_catalogue(line: &mut ImportLedgerLine) {
+    let payload = ImportPayload {
+        company_guid: line.company_guid.clone(),
+        vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
+    };
+    let binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue(),
+        "WR2 Unicode Lab",
+        GUID,
+    )
+    .unwrap()
+    .bind_selected(requested_ledger_names(&payload))
+    .unwrap();
+    line.ledger_identities = Some(
+        binding
+            .pairs()
+            .map(|(name, guid)| BoundLedger {
+                name: name.to_string(),
+                guid: guid.to_string(),
+            })
+            .collect(),
+    );
+}
+
 fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
     let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
     let mut line: ImportLedgerLine = serde_json::from_value(json!({
@@ -250,6 +277,7 @@ fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -614,6 +642,7 @@ fn saved_bank_batch(server: &Server, voucher: Value) -> (ImportLedgerLine, Value
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -1236,6 +1265,7 @@ fn saved_captured_batch(server: &Server) -> Value {
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -1662,4 +1692,100 @@ async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
             ["verification_status"]
         );
     }
+}
+
+// bridge#239: the ledgers a batch names must still carry the GUIDs its build
+// bound them to; a name alone cannot tell a ledger renamed and replaced.
+
+/// A saved Journal refused before approval by its build-time binding: only
+/// the reads up to the post's catalogue are sent, and no intent is recorded.
+async fn refused_by_build_binding(
+    identities: Option<Vec<BoundLedger>>,
+) -> (Value, usize, usize, bool) {
+    let mut plans = before_approval();
+    // The catalogue is the last read; the Currency read and mode probe after
+    // it are never sent.
+    plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
+    let expected = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (mut line, args) = saved_batch(&server);
+    line.ledger_identities = identities;
+    server.append_import_ledger(&line).unwrap();
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator).len();
+    let intent = String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\"");
+    assert!(scripted.previews().is_empty(), "approval must not be asked");
+    (response, observed, expected, intent)
+}
+
+#[tokio::test]
+async fn a_ledger_replaced_under_its_name_since_the_build_is_refused_before_approval() {
+    let identities = vec![
+        BoundLedger {
+            name: "Cash".into(),
+            guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff".into(),
+        },
+        BoundLedger {
+            name: "WR2 Sales".into(),
+            guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000d0".into(),
+        },
+    ];
+    let (response, observed, expected, intent) = refused_by_build_binding(Some(identities)).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_masters_changed_since_build",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(
+        result["error"]["ledgers_changed"],
+        json!(["Cash"]),
+        "{response}"
+    );
+    assert!(result["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("(Cash)"));
+    assert_eq!(observed, expected, "{response}");
+    assert!(!intent);
+}
+
+#[tokio::test]
+async fn a_batch_built_before_ledger_binding_is_refused_and_told_to_rebuild() {
+    let (response, observed, expected, intent) = refused_by_build_binding(None).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_batch_predates_ledger_binding",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(result["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Build the batch again"));
+    assert_eq!(observed, expected, "{response}");
+    assert!(!intent);
+}
+
+/// The approval preview says the ledgers were checked by identity.
+#[tokio::test]
+async fn the_preview_says_the_ledgers_were_checked_by_identity() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(before_approval())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let scripted = ScriptedApproval::declining();
+    let _ = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let previews = scripted.previews();
+    assert_eq!(previews.len(), 1);
+    assert!(previews[0].contains("Ledgers checked by identity against the build"));
 }

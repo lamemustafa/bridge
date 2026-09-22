@@ -373,7 +373,11 @@ Bridge-built files of those types have been imported and verified.
    usable master refuses with `import_base_currency_undetermined`. Inside the
    queue, a change to the company's masters from just before the catalogue
    re-read to the last read before the post refuses with `post_masters_moved`
-   (`post_masters_unconfirmed` if it cannot be checked); re-run the post. This
+   (`post_masters_unconfirmed` if it cannot be checked); re-run the post.
+   The build records each ledger's GUID. A post refuses a ledger renamed and
+   replaced under its name since the build (`import_masters_changed_since_build`,
+   naming it), and a batch built before this record existed
+   (`import_batch_predates_ledger_binding`); rebuild it. This
    sees only changes that move the company's master AlterID (`ALTMSTID`):
    measured for ledger renames and creates made through the gateway. A regroup,
    an edit made in Tally's own screens, and whether posting a voucher moves it

@@ -155,6 +155,8 @@ impl Server {
         let mut post_location: Option<Value> = None;
         // The Currency masters of a book refused for having several (#551).
         let mut currencies_seen: Option<Vec<String>> = None;
+        // The ledgers whose GUID changed since the build (#239).
+        let mut ledgers_changed: Option<Vec<String>> = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
             let xml = admit_saved_voucher_integrity(&line, &self.settings.endpoint, scope)?;
             if snapshot.dispatched {
@@ -216,6 +218,17 @@ impl Server {
             let ledger_binding = catalogue_identities
                 .bind_selected(requested_ledger_names(&payload))
                 .map_err(|_| "import_masters_changed".to_string())?;
+            // The same ledgers must still carry the GUIDs the build bound them
+            // to (#239): a name alone cannot tell a ledger renamed and replaced
+            // under its old name between build and post.
+            admit_build_binding(line.ledger_identities.as_deref(), &ledger_binding).map_err(
+                |refusal| {
+                    if let BuildBindingRefusal::Changed(ledgers) = &refusal {
+                        ledgers_changed = Some(ledgers.clone());
+                    }
+                    ToolFailure::from(refusal.code().to_string())
+                },
+            )?;
             // A Payment, Receipt or Contra is only the right type while every
             // leg classifies as its build found it. The build's own check is
             // stale by now, so classify again before approval from this
@@ -495,6 +508,11 @@ impl Server {
                 }
                 if let Some(currencies) = currencies_seen {
                     name_refused_currencies(&mut outcome.payload, &currencies);
+                }
+                if let Some(ledgers) = ledgers_changed {
+                    name_changed_ledgers(&mut outcome.payload, &ledgers);
+                } else {
+                    explain_unbound_batch(&mut outcome.payload);
                 }
                 Ok(outcome)
             }
@@ -804,6 +822,88 @@ fn refused_currencies(refusal: &ApprovedImportAdmissionError) -> Option<Vec<Stri
     }
 }
 
+/// Why a saved batch's build-time ledger binding does not admit this post.
+#[derive(Debug, PartialEq, Eq)]
+enum BuildBindingRefusal {
+    /// Built before Bridge recorded ledger identities: nothing to compare.
+    Unbound,
+    /// These ledgers now resolve to another GUID, or are not in the record.
+    Changed(Vec<String>),
+}
+
+impl BuildBindingRefusal {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Unbound => "import_batch_predates_ledger_binding",
+            Self::Changed(_) => "import_masters_changed_since_build",
+        }
+    }
+}
+
+/// Every ledger the post binds now must carry the GUID the build bound it to,
+/// compared as the catalogue binding compares GUIDs (ASCII case folded).
+fn admit_build_binding(
+    recorded: Option<&[BoundLedger]>,
+    current: &bridge_tally_protocol::StandardLedgerCatalogBinding,
+) -> Result<(), BuildBindingRefusal> {
+    let recorded = recorded.ok_or(BuildBindingRefusal::Unbound)?;
+    let changed = current
+        .pairs()
+        .filter(|(name, guid)| {
+            !recorded
+                .iter()
+                .any(|bound| bound.name == *name && bound.guid.eq_ignore_ascii_case(guid))
+        })
+        .map(|(name, _)| name.to_string())
+        .collect::<Vec<_>>();
+    if changed.is_empty() {
+        Ok(())
+    } else {
+        Err(BuildBindingRefusal::Changed(changed))
+    }
+}
+
+/// How many changed ledgers a refusal names; the rest are counted.
+const REFUSAL_LEDGERS_NAMED: usize = 8;
+
+/// Name the ledgers whose GUID changed since the build, in plain words, where
+/// no attempt is recorded.
+fn name_changed_ledgers(payload: &mut Value, ledgers: &[String]) {
+    let named = ledgers
+        .iter()
+        .take(REFUSAL_LEDGERS_NAMED)
+        .cloned()
+        .collect::<Vec<_>>();
+    let error = &mut payload["result"]["error"];
+    error["ledgers_changed"] = json!(named);
+    error["ledgers_changed_total"] = json!(ledgers.len());
+    if payload["result"]["attempt_recorded"] == json!(false) {
+        let mut list = named.join(", ");
+        if ledgers.len() > named.len() {
+            list.push_str(&format!(" and {} more", ledgers.len() - named.len()));
+        }
+        payload["result"]["error"]["message"] = json!(format!(
+            "A ledger this batch names is no longer the one it was built against ({list}): it \
+             was renamed or replaced in Tally since the build. Nothing was posted. Build the \
+             batch again, check it, then post the new batch."
+        ));
+    }
+}
+
+/// Say plainly that a batch built before ledger identities were recorded must
+/// be rebuilt, where no attempt is recorded.
+fn explain_unbound_batch(payload: &mut Value) {
+    if payload["result"]["error"]["code"] == json!("import_batch_predates_ledger_binding")
+        && payload["result"]["attempt_recorded"] == json!(false)
+    {
+        payload["result"]["error"]["message"] = json!(
+            "This batch was built before Bridge recorded which ledgers it was built against, so \
+             it cannot be checked. Nothing was posted. Build the batch again, then post the new \
+             batch."
+        );
+    }
+}
+
 /// How many Currency masters a refusal names; the rest are counted.
 const REFUSAL_CURRENCIES_NAMED: usize = 8;
 
@@ -994,7 +1094,7 @@ fn admit_fresh_saved_voucher(
     let classification = classification_review_line(&voucher.voucher_type)
         .map(|line| format!("\n{line}"))
         .unwrap_or_default();
-    let preview = format!("Create ONE {} in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}{classification}\nBatch: {}\n\nBridge adds its batch reference for readback.\nDo not post a file already imported manually.\nPause other edits/imports; keep this company and Tally mode unchanged until Bridge finishes.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
+    let preview = format!("Create ONE {} in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}{classification}\nBatch: {}\n\nLedgers checked by identity against the build; Bridge adds its batch reference.\nDo not post a file already imported manually.\nPause other edits/imports; keep this company and Tally mode unchanged until Bridge finishes.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
         voucher.voucher_type.as_str(), quoted(&company.name), company.guid, company.company_number, company.books_from,
         voucher.date, voucher.voucher_number.as_deref().map(quoted).unwrap_or_else(|| "Tally assigns it".into()),
         optional(&voucher.reference), optional(&voucher.narration), entries, debit.as_str(), credit.as_str(), line.batch_id);
