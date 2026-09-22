@@ -1,0 +1,628 @@
+{
+ "comment": "tds_tcs_26as matching: one deductor under two sections is compared once against its books claim (folded), matched at exactly Re 1 and amount_differs at one paisa more; every 26AS-only reason (no alias, not found in books, different period, a non-TDS/TCS part) and the books-only reasons (not found in 26AS, different period); a party-less voucher attributed through an alias target and one that is not; a zero role line is no claim; the TCS booking fact on fixed-asset purchases from a matched collector, with and without a TCS line; AIS and TIS figures beside the books.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null,
+  "Indirect Incomes": null,
+  "Direct Incomes": null
+ },
+ "ledgers": [
+  {
+   "name": "TDS Receivable",
+   "chain": [
+    "Loans & Advances (Asset)",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-000"
+  },
+  {
+   "name": "TCS Receivable",
+   "chain": [
+    "Loans & Advances (Asset)",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-001"
+  },
+  {
+   "name": "Advance Tax",
+   "chain": [
+    "Loans & Advances (Asset)",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-002"
+  },
+  {
+   "name": "Customer A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-003"
+  },
+  {
+   "name": "Customer B",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-004"
+  },
+  {
+   "name": "Customer C",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-005"
+  },
+  {
+   "name": "Customer E",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-006"
+  },
+  {
+   "name": "Vendor V",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds26as_matching-007"
+  },
+  {
+   "name": "Cash Withdrawal TDS",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds26as_matching-008"
+  },
+  {
+   "name": "Stray Ledger",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds26as_matching-009"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-tds26as_matching-010"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-tds26as_matching-011"
+  },
+  {
+   "name": "Vehicle",
+   "chain": [
+    "Fixed Assets"
+   ],
+   "guid": "edge-tds26as_matching-012"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-013"
+  },
+  {
+   "name": "Customer D",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-014"
+  },
+  {
+   "name": "Customer F",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-015"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "TDS Receivable",
+   "opening": 0,
+   "debit": 1813201,
+   "credit": 0,
+   "closing": 1813201
+  },
+  {
+   "ledger": "TCS Receivable",
+   "opening": 0,
+   "debit": 60000,
+   "credit": 0,
+   "closing": 60000
+  },
+  {
+   "ledger": "Advance Tax",
+   "opening": 0,
+   "debit": 2500000,
+   "credit": 0,
+   "closing": 2500000
+  },
+  {
+   "ledger": "Customer A",
+   "opening": 0,
+   "debit": 10000000,
+   "credit": 1200100,
+   "closing": 8799900
+  },
+  {
+   "ledger": "Customer B",
+   "opening": 0,
+   "debit": 0,
+   "credit": 500101,
+   "closing": -500101
+  },
+  {
+   "ledger": "Customer C",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Customer E",
+   "opening": 0,
+   "debit": 0,
+   "credit": 70000,
+   "closing": -70000
+  },
+  {
+   "ledger": "Vendor V",
+   "opening": 0,
+   "debit": 0,
+   "credit": 91060000,
+   "closing": -91060000
+  },
+  {
+   "ledger": "Cash Withdrawal TDS",
+   "opening": 0,
+   "debit": 0,
+   "credit": 30000,
+   "closing": -30000
+  },
+  {
+   "ledger": "Stray Ledger",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000,
+   "closing": -5000
+  },
+  {
+   "ledger": "Sales",
+   "opening": 0,
+   "debit": 0,
+   "credit": 10000000,
+   "closing": -10000000
+  },
+  {
+   "ledger": "Purchases",
+   "opening": 0,
+   "debit": 1000000,
+   "credit": 0,
+   "closing": 1000000
+  },
+  {
+   "ledger": "Vehicle",
+   "opening": 0,
+   "debit": 90000000,
+   "credit": 0,
+   "closing": 90000000
+  },
+  {
+   "ledger": "Bank",
+   "opening": 0,
+   "debit": 1000,
+   "credit": 2500000,
+   "closing": -2499000
+  },
+  {
+   "ledger": "Customer D",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Customer F",
+   "opening": 0,
+   "debit": 0,
+   "credit": 9000,
+   "closing": -9000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "t01",
+   "date": "2025-06-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     1200100
+    ],
+    [
+     "Customer A",
+     -1200100
+    ]
+   ],
+   "party": "Customer A"
+  },
+  {
+   "guid": "t02",
+   "date": "2025-07-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     500101
+    ],
+    [
+     "Customer B",
+     -500101
+    ]
+   ],
+   "party": "Customer B"
+  },
+  {
+   "guid": "t03",
+   "date": "2025-08-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     70000
+    ],
+    [
+     "Customer E",
+     -70000
+    ]
+   ],
+   "party": "Customer E"
+  },
+  {
+   "guid": "t04",
+   "date": "2024-12-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     9000
+    ],
+    [
+     "Customer F",
+     -9000
+    ]
+   ],
+   "party": "Customer F"
+  },
+  {
+   "guid": "t05",
+   "date": "2025-09-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     30000
+    ],
+    [
+     "Cash Withdrawal TDS",
+     -30000
+    ]
+   ]
+  },
+  {
+   "guid": "t06",
+   "date": "2025-10-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     4000
+    ],
+    [
+     "Stray Ledger",
+     -4000
+    ]
+   ]
+  },
+  {
+   "guid": "t07",
+   "date": "2025-11-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     0
+    ],
+    [
+     "Customer A",
+     0
+    ],
+    [
+     "Bank",
+     1000
+    ],
+    [
+     "Stray Ledger",
+     -1000
+    ]
+   ],
+   "party": "Customer A"
+  },
+  {
+   "guid": "t08",
+   "date": "2025-05-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Vehicle",
+     60000000
+    ],
+    [
+     "TCS Receivable",
+     60000
+    ],
+    [
+     "Vendor V",
+     -60060000
+    ]
+   ],
+   "party": "Vendor V"
+  },
+  {
+   "guid": "t09",
+   "date": "2025-06-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Vehicle",
+     30000000
+    ],
+    [
+     "Vendor V",
+     -30000000
+    ]
+   ],
+   "party": "Vendor V",
+   "number": ""
+  },
+  {
+   "guid": "t10",
+   "date": "2025-07-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1000000
+    ],
+    [
+     "Vendor V",
+     -1000000
+    ]
+   ],
+   "party": "Vendor V"
+  },
+  {
+   "guid": "t11",
+   "date": "2025-12-15",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Advance Tax",
+     2500000
+    ],
+    [
+     "Bank",
+     -2500000
+    ]
+   ]
+  },
+  {
+   "guid": "t12",
+   "date": "2026-01-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer A",
+     10000000
+    ],
+    [
+     "Sales",
+     -10000000
+    ]
+   ],
+   "party": "Customer A"
+  }
+ ],
+ "tests": [
+  "tds_tcs_26as",
+  "twentysixas_receipts"
+ ],
+ "tds_ledgers": [
+  "TDS Receivable"
+ ],
+ "tcs_ledgers": [
+  "TCS Receivable"
+ ],
+ "advance_tax_ledgers": [
+  "Advance Tax"
+ ],
+ "deductor_aliases": {
+  "TAN-EDGE-A": "Customer A",
+  "TAN-EDGE-B": "Customer B",
+  "TAN-EDGE-C": "Customer C",
+  "TAN-EDGE-F": "Cash Withdrawal TDS",
+  "TAN-EDGE-V": "Vendor V",
+  "TAN-EDGE-D": "Customer D"
+ },
+ "form26as": [
+  {
+   "doc": "form26as:edge",
+   "row": 1,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "194C",
+   "txn_date": "2025-06-30",
+   "amount_paise": 100000000,
+   "tax_paise": 1000000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 2,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "194A",
+   "txn_date": "2025-06-30",
+   "amount_paise": 2000000,
+   "tax_paise": 200000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 3,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-B",
+   "section": "194Q",
+   "txn_date": "2025-07-31",
+   "amount_paise": 500000000,
+   "tax_paise": 500000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 4,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-C",
+   "section": "194J",
+   "txn_date": "2025-08-15",
+   "amount_paise": 3000000,
+   "tax_paise": 300000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 5,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-X",
+   "section": "194H",
+   "txn_date": "2025-09-15",
+   "amount_paise": 1000000,
+   "tax_paise": 50000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 6,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-D",
+   "section": "194C",
+   "txn_date": "2024-11-30",
+   "amount_paise": 700000,
+   "tax_paise": 7000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 7,
+   "part": "II",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "194C",
+   "txn_date": "2025-06-30",
+   "amount_paise": 10000,
+   "tax_paise": 100
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 8,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-F",
+   "section": "194N",
+   "txn_date": "2025-09-30",
+   "amount_paise": 1500000000,
+   "tax_paise": 30000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 9,
+   "part": "VI",
+   "deductor_tan": "TAN-EDGE-V",
+   "section": "206C(1F)",
+   "txn_date": "2025-05-15",
+   "amount_paise": 60000000,
+   "tax_paise": 60000
+  }
+ ],
+ "ais": [
+  {
+   "doc": "ais:edge",
+   "row": 1,
+   "category": "gst_turnover",
+   "source_name": "Invented",
+   "source_id": "S1",
+   "txn_date": null,
+   "amount_paise": 10000000
+  },
+  {
+   "doc": "ais:edge",
+   "row": 2,
+   "category": "advance_tax",
+   "source_name": "Invented",
+   "source_id": "S2",
+   "txn_date": "2025-12-15",
+   "amount_paise": 2500000
+  },
+  {
+   "doc": "ais:edge",
+   "row": 3,
+   "category": "refund",
+   "source_name": "Invented",
+   "source_id": "S3",
+   "txn_date": null,
+   "amount_paise": 12345
+  }
+ ],
+ "tis": [
+  {
+   "doc": "tis:edge",
+   "row": 1,
+   "category": "GST turnover",
+   "reported_paise": 10000000,
+   "processed_paise": 10000000,
+   "accepted_paise": 10000000
+  },
+  {
+   "doc": "tis:edge",
+   "row": 2,
+   "category": "Purchase of vehicle",
+   "reported_paise": 60000000,
+   "processed_paise": 60000000,
+   "accepted_paise": 60000000
+  }
+ ]
+}

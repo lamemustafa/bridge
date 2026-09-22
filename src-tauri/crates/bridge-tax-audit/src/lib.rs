@@ -36,6 +36,7 @@ pub mod cash_book_integrity;
 pub mod cash_payments_40a3;
 pub mod compare;
 pub mod depreciation;
+pub mod documents;
 pub mod error;
 pub mod financial_statements;
 pub mod findings;
@@ -47,8 +48,10 @@ pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
 mod support;
+pub mod tds_tcs_26as;
 mod text_tables;
 pub mod trial_balance;
+pub mod twentysixas_receipts;
 pub mod xml;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -105,6 +108,11 @@ pub struct Engagement {
     /// `applicability_44ab`-only: the optional `[presumptive_history]` table, verbatim (client
     /// confirmation of s.44AD history, never inferred from the books); `None` when absent.
     pub presumptive_history: Option<toml::Table>,
+    /// `tds_tcs_26as`/`twentysixas_receipts`-only: `[tds_tcs_26as]` ([`Tds26asConfig`]). `None`
+    /// when the client config carries no such table; once present, all four keys are REQUIRED, as
+    /// the reference's own `tds_tcs_26as_config` requires them. A malformed table refuses reading
+    /// the engagement, and so every test on it.
+    pub tds_tcs_26as: Option<Tds26asConfig>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -123,6 +131,19 @@ pub struct DepreciationConfig {
     /// passes it either -- but `depreciation.py`'s `run()` signature carries it, so this port
     /// does too).
     pub put_to_use_by_voucher: BTreeMap<String, TallyDate>,
+}
+
+/// `[tds_tcs_26as]` from the client config: see [`Engagement::tds_tcs_26as`] and the reference
+/// engine's `tds_tcs_26as_config`. Every value must be a string: the reference would take any
+/// value into its sets and map (a divergence, stated in `tds_tcs_26as`).
+#[derive(Debug, Clone, Default)]
+pub struct Tds26asConfig {
+    pub tds_ledgers: BTreeSet<String>,
+    pub tcs_ledgers: BTreeSet<String>,
+    /// Form 26AS deductor/collector TAN -> the books party ledger (client configuration; a TAN,
+    /// never a name, identifies the deductor).
+    pub deductor_aliases: BTreeMap<String, String>,
+    pub advance_tax_ledgers: BTreeSet<String>,
 }
 
 /// `[snapshot]` keys of the reference engine's legacy raw-export layout. A config naming a read
@@ -328,6 +349,55 @@ not YYYY-MM-DD"
                 })
             })
             .transpose()?;
+        let tds_tcs_26as = cfg
+            .get("tds_tcs_26as")
+            .map(|t| -> Result<Tds26asConfig> {
+                let t = t.as_table().ok_or_else(|| {
+                    AuditError::Config("[tds_tcs_26as] is not a table".to_string())
+                })?;
+                let set = |key: &str| -> Result<BTreeSet<String>> {
+                    t.get(key)
+                        .and_then(toml::Value::as_array)
+                        .ok_or_else(|| {
+                            AuditError::Config(format!("[tds_tcs_26as].{key} is not a list"))
+                        })?
+                        .iter()
+                        .map(|v| {
+                            v.as_str().map(str::to_string).ok_or_else(|| {
+                                AuditError::Config(format!(
+                                    "[tds_tcs_26as].{key} holds a non-string"
+                                ))
+                            })
+                        })
+                        .collect()
+                };
+                let deductor_aliases = t
+                    .get("deductor_aliases")
+                    .and_then(toml::Value::as_table)
+                    .ok_or_else(|| {
+                        AuditError::Config(
+                            "[tds_tcs_26as].deductor_aliases is not a table".to_string(),
+                        )
+                    })?
+                    .iter()
+                    .map(|(tan, v)| {
+                        v.as_str()
+                            .map(|s| (tan.clone(), s.to_string()))
+                            .ok_or_else(|| {
+                                AuditError::Config(format!(
+                                    "[tds_tcs_26as].deductor_aliases.{tan} is not a string"
+                                ))
+                            })
+                    })
+                    .collect::<Result<_>>()?;
+                Ok(Tds26asConfig {
+                    tds_ledgers: set("tds_ledgers")?,
+                    tcs_ledgers: set("tcs_ledgers")?,
+                    deductor_aliases,
+                    advance_tax_ledgers: set("advance_tax_ledgers")?,
+                })
+            })
+            .transpose()?;
         let mut partner_interest_ledgers = BTreeMap::new();
         if let Some(partners) = cfg.get("partners") {
             let partners = partners
@@ -382,6 +452,7 @@ not YYYY-MM-DD"
                 .unwrap_or_default(),
             depreciation,
             partner_interest_ledgers,
+            tds_tcs_26as,
             entity_type: client
                 .get("entity_type")
                 .map(|v| {
@@ -689,6 +760,55 @@ pub fn applicability_44ab_on(
         bound.presumptive_history.as_ref(),
     )?;
     canonical::canonical_test_result(book, &result, None)
+}
+
+/// The `[tds_tcs_26as]` table both 26AS tests read, or the refusal the reference's own
+/// `tds_tcs_26as_config` raises without it.
+fn tds_26as_config<'a>(bound: &'a Engagement, test: &str) -> Result<&'a Tds26asConfig> {
+    bound
+        .tds_tcs_26as
+        .as_ref()
+        .ok_or_else(|| AuditError::Config(format!("{test} needs a [tds_tcs_26as] table")))
+}
+
+/// Run `twentysixas_receipts` on a book with the caller's Form 26AS rows (`documents`, from the
+/// reference's own adapters; this crate reads no document) and return its canonical parity dump,
+/// module invariants included. Refuses without `[tds_tcs_26as]`.
+pub fn twentysixas_receipts_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+    documents: &documents::TracesDocuments,
+) -> Result<serde_json::Value> {
+    let (bound, _report) = engagement.bind(book)?;
+    let cfg = tds_26as_config(&bound, twentysixas_receipts::TEST_ID)?;
+    let result =
+        twentysixas_receipts::run(book, rules, &documents.form26as, &cfg.deductor_aliases)?;
+    let module_check = twentysixas_receipts::check_invariants(book, &documents.form26as, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `tds_tcs_26as` on a book with the caller's Form 26AS, AIS and TIS rows and return its
+/// canonical parity dump, module invariants included. Refuses without `[tds_tcs_26as]`.
+pub fn tds_tcs_26as_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+    documents: &documents::TracesDocuments,
+) -> Result<serde_json::Value> {
+    let (bound, _report) = engagement.bind(book)?;
+    let cfg = tds_26as_config(&bound, tds_tcs_26as::TEST_ID)?;
+    let result = tds_tcs_26as::run(
+        book,
+        rules,
+        &bound.period,
+        &documents.form26as,
+        &documents.ais,
+        &documents.tis,
+        cfg,
+    )?;
+    let module_check = tds_tcs_26as::check_invariants(book, &documents.form26as, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
 }
 
 /// Read, verify, build the book, run `applicability_44ab` and return its canonical parity dump.

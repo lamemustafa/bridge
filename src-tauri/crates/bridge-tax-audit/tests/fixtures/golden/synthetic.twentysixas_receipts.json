@@ -1,0 +1,373 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "twentysixas_receipts",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "573b3457ae395d9b",
+  "population_note_text": "Form 26AS Part I rows whose deductor TAN the client configuration maps to a books ledger; books population (optional, cancelled and post-dated vouchers excluded).",
+  "figures": [
+    {
+      "id": "twentysixas_receipts.interest_26as_amount_b5ae2beb",
+      "value": 1200000,
+      "unit": "paise",
+      "definition_sha256_16": "f80136cdd748fa24",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194 A.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#2",
+          "label": "TAN-INVENTED-A 194 A 2025-09-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.interest_books_amount_b5ae2beb",
+      "value": 1385025,
+      "unit": "paise",
+      "definition_sha256_16": "c346dee5b1c03f66",
+      "definition_text": "Books: income credited from this party in the year (Direct/Indirect Incomes lines).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000033",
+          "label": "Journal J/5 on 2025-08-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000034",
+          "label": "Journal J/6 on 2025-08-22"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.interest_difference_b5ae2beb",
+      "value": -185025,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.other_sections_26as_amount_9275dd88",
+      "value": 500000000,
+      "unit": "paise",
+      "definition_sha256_16": "7f6344e086d01288",
+      "definition_text": "Form 26AS amount under sections that are not a supply or interest (not compared).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_26as_amount_9275dd88",
+      "value": 9000000,
+      "unit": "paise",
+      "definition_sha256_16": "5a6ac2ca4e6b8008",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194Q.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#3",
+          "label": "TAN-INVENTED-B 194Q 2025-12-31"
+        },
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_26as_amount_b5ae2beb",
+      "value": 25400000,
+      "unit": "paise",
+      "definition_sha256_16": "0cc77c5dc1f89724",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194C.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#1",
+          "label": "TAN-INVENTED-A 194C 2025-06-30"
+        },
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#7",
+          "label": "TAN-INVENTED-A 194C 2025-03-31"
+        },
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_books_amount_9275dd88",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "0d472eb72d9de506",
+      "definition_text": "Books: taxable value billed to this party in the year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_books_amount_b5ae2beb",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "0d472eb72d9de506",
+      "definition_text": "Books: taxable value billed to this party in the year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_difference_9275dd88",
+      "value": 9000000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_difference_b5ae2beb",
+      "value": 25400000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "twentysixas_receipts/interest/b5ae2beb",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.interest_26as_amount_b5ae2beb"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.interest_books_amount_b5ae2beb"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.interest_difference_b5ae2beb"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#2",
+          "label": "TAN-INVENTED-A 194 A 2025-09-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000033",
+          "label": "Journal J/5 on 2025-08-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000034",
+          "label": "Journal J/6 on 2025-08-22"
+        }
+      ],
+      "title_sha256_16": "30a65e3512fd5051",
+      "title_text": "Form 26AS reports interest paid or credited by a party that the books do not match",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    },
+    {
+      "id": "twentysixas_receipts/supply/9275dd88",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.supply_26as_amount_9275dd88"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.supply_books_amount_9275dd88"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.supply_difference_9275dd88"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#3",
+          "label": "TAN-INVENTED-B 194Q 2025-12-31"
+        },
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ],
+      "title_sha256_16": "d4aef8064357a44f",
+      "title_text": "Form 26AS reports a different amount paid or credited by a customer than the books bill it",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    },
+    {
+      "id": "twentysixas_receipts/supply/b5ae2beb",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.supply_26as_amount_b5ae2beb"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.supply_books_amount_b5ae2beb"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.supply_difference_b5ae2beb"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#1",
+          "label": "TAN-INVENTED-A 194C 2025-06-30"
+        },
+        {
+          "kind": "document_row",
+          "id": "form26as:synthetic#7",
+          "label": "TAN-INVENTED-A 194C 2025-03-31"
+        },
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ],
+      "title_sha256_16": "d4aef8064357a44f",
+      "title_text": "Form 26AS reports a different amount paid or credited by a customer than the books bill it",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "twentysixas_receipts.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

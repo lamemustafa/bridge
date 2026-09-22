@@ -514,6 +514,33 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
+    // `[tds_tcs_26as]` binds its three ledger lists and its alias VALUES (the keys are TANs), in
+    // the reference's order within the table; before `[loans]`, as in `LEDGER_PATHS`.
+    let mut tds_tcs_26as = engagement.tds_tcs_26as.clone();
+    if let Some(t) = tds_tcs_26as.as_mut() {
+        for (set, location) in [
+            (&mut t.tds_ledgers, "tds_tcs_26as.tds_ledgers"),
+            (&mut t.tcs_ledgers, "tds_tcs_26as.tcs_ledgers"),
+            (
+                &mut t.advance_tax_ledgers,
+                "tds_tcs_26as.advance_tax_ledgers",
+            ),
+        ] {
+            let names: Vec<String> = set.iter().cloned().collect();
+            *set = lbinder.bind_list(&names, location)?.into_iter().collect();
+        }
+        t.deductor_aliases = t
+            .deductor_aliases
+            .iter()
+            .map(|(tan, ledger)| {
+                Ok((
+                    tan.clone(),
+                    lbinder.bind_one(ledger, "tds_tcs_26as.deductor_aliases")?,
+                ))
+            })
+            .collect::<Result<_>>()?;
+    }
+
     let loan_pairs = lbinder.bind_keys(
         engagement.loan_ledgers_configured.iter().cloned(),
         "loans.loan_ledgers",
@@ -596,6 +623,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         loan_ledgers_configured,
         depreciation,
         partner_interest_ledgers,
+        tds_tcs_26as,
         ..engagement.clone()
     };
     Ok((bound, report))
@@ -712,6 +740,7 @@ mod tests {
             ledgers,
             vouchers: vec![Voucher {
                 narration: String::new(),
+                party_field: String::new(),
                 guid: "v1".to_string(),
                 date: TallyDate::parse("20250410").unwrap(),
                 vtype: "Receipt".to_string(),
@@ -1099,6 +1128,108 @@ mod tests {
         );
         assert!(dep.dep_expense_ledgers.contains("Depreciation A/c"));
         assert_eq!(report.drifts[0].current_name, "Furniture (renamed)");
+    }
+
+    // ---- [tds_tcs_26as] (tds_tcs_26as, twentysixas_receipts) ----
+
+    const T26_TABLE: &str = "\n[tds_tcs_26as]\ntds_ledgers = [\"TDS Receivable\"]\n\
+         tcs_ledgers = [\"TCS Receivable\"]\nadvance_tax_ledgers = [\"Advance Tax\"]\n\
+         \n[tds_tcs_26as.deductor_aliases]\n\"TAN-EDGE-A\" = \"Customer A\"\n";
+
+    fn book_with_26as_ledgers(customer: &str, customer_guid: &str) -> book::Book {
+        let mut b = book("Cash-in-Hand", "", None);
+        for (name, group, guid) in [
+            ("TDS Receivable", "Loans & Advances (Asset)", ""),
+            ("TCS Receivable", "Loans & Advances (Asset)", ""),
+            ("Advance Tax", "Loans & Advances (Asset)", ""),
+            (customer, "Sundry Debtors", customer_guid),
+        ] {
+            b.ledgers
+                .insert(name.to_string(), ledger(name, group, guid, None));
+        }
+        b
+    }
+
+    /// The three ledger lists and the alias VALUES are bound (the keys are TANs, left as written),
+    /// and an alias value bound by identity follows a rename.
+    #[test]
+    fn tds_26as_ledgers_and_alias_values_are_bound() {
+        const G_CUSTOMER: &str = "11111111-1111-1111-1111-000000000006";
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Customer A\" = {G_CUSTOMER:?}\n{T26_TABLE}"
+        ));
+        let (bound, _report) = e
+            .bind(&book_with_26as_ledgers("Customer A (renamed)", G_CUSTOMER))
+            .unwrap();
+        let t = bound.tds_tcs_26as.unwrap();
+        assert_eq!(
+            t.deductor_aliases.get("TAN-EDGE-A").map(String::as_str),
+            Some("Customer A (renamed)")
+        );
+        assert!(t.tds_ledgers.contains("TDS Receivable"));
+        assert!(t.tcs_ledgers.contains("TCS Receivable"));
+        assert!(t.advance_tax_ledgers.contains("Advance Tax"));
+    }
+
+    #[test]
+    fn each_tds_26as_location_refuses_a_name_that_matches_nothing() {
+        for (missing, location) in [
+            ("TDS Receivable", "tds_tcs_26as.tds_ledgers"),
+            ("TCS Receivable", "tds_tcs_26as.tcs_ledgers"),
+            ("Advance Tax", "tds_tcs_26as.advance_tax_ledgers"),
+            ("Customer A", "tds_tcs_26as.deductor_aliases"),
+        ] {
+            let mut b = book_with_26as_ledgers("Customer A", "");
+            b.ledgers.remove(missing);
+            let err = engagement(T26_TABLE).bind(&b).unwrap_err();
+            assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN), "{missing}");
+            assert!(format!("{err}").contains(location), "{err}");
+        }
+    }
+
+    /// `[tds_tcs_26as]` is read as the reference's `tds_tcs_26as_config` reads it: all four keys
+    /// required once the table exists. A non-string value is refused (this port's divergence).
+    #[test]
+    fn the_tds_26as_table_is_read_strictly() {
+        assert!(engagement("").tds_tcs_26as.is_none());
+        assert!(engagement(T26_TABLE).tds_tcs_26as.is_some());
+        let without = |key: &str| {
+            T26_TABLE
+                .lines()
+                .filter(|l| !l.starts_with(key))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        for (extra, needle) in [
+            (
+                without("tds_ledgers"),
+                "[tds_tcs_26as].tds_ledgers is not a list",
+            ),
+            (
+                without("tcs_ledgers"),
+                "[tds_tcs_26as].tcs_ledgers is not a list",
+            ),
+            (
+                without("advance_tax_ledgers"),
+                "[tds_tcs_26as].advance_tax_ledgers is not a list",
+            ),
+            (
+                T26_TABLE.replace("tds_ledgers = [\"TDS Receivable\"]", "tds_ledgers = [1]"),
+                "[tds_tcs_26as].tds_ledgers holds a non-string",
+            ),
+            (
+                T26_TABLE.replace("\"TAN-EDGE-A\" = \"Customer A\"", "\"TAN-EDGE-A\" = 7"),
+                "[tds_tcs_26as].deductor_aliases.TAN-EDGE-A is not a string",
+            ),
+            (
+                "\n[tds_tcs_26as]\ntds_ledgers = []\ntcs_ledgers = []\nadvance_tax_ledgers = []\n"
+                    .to_string(),
+                "[tds_tcs_26as].deductor_aliases is not a table",
+            ),
+        ] {
+            let err = engagement_err(&extra);
+            assert!(format!("{err}").contains(needle), "{extra}: {err}");
+        }
     }
 
     // ---- [partners.*].interest_ledger (financial_statements) ----

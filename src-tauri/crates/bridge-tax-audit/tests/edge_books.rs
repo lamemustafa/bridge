@@ -19,9 +19,13 @@ use bridge_tally_primitives::TallyDate;
 use bridge_tax_audit::book::{Book, Ledger, LedgerLine, TbRow, Voucher, VoucherStatus};
 use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
+use bridge_tax_audit::documents::traces_documents_from_json;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
-use bridge_tax_audit::{cash_book_integrity, ledger_scrutiny, stale_balances_41_1, trial_balance};
+use bridge_tax_audit::{
+    cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_tcs_26as, trial_balance,
+    twentysixas_receipts, Tds26asConfig,
+};
 use serde_json::Value;
 
 fn spec(name: &str) -> Value {
@@ -99,6 +103,7 @@ fn build(s: &Value) -> Book {
                     })
                     .collect(),
                 narration: text("narration", ""),
+                party_field: text("party", ""),
                 guid,
                 base_type,
             }
@@ -154,6 +159,24 @@ fn period(s: &Value) -> Window {
     }
 }
 
+/// The `[tds_tcs_26as]` values `parity/edge_golden.py` passes both 26AS tests.
+fn tds_26as_config(s: &Value) -> Tds26asConfig {
+    let set = |key: &str| strs(&s[key]).into_iter().collect();
+    Tds26asConfig {
+        tds_ledgers: set("tds_ledgers"),
+        tcs_ledgers: set("tcs_ledgers"),
+        advance_tax_ledgers: set("advance_tax_ledgers"),
+        deductor_aliases: s["deductor_aliases"]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
 /// Build the book, run every test the spec names, and compare each whole dump with the reference's.
 fn check(name: &str) {
     let s = spec(name);
@@ -195,6 +218,28 @@ fn check(name: &str) {
                 let c = cash_book_integrity::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
+            "twentysixas_receipts" => {
+                let docs = traces_documents_from_json(&s).unwrap();
+                let aliases = tds_26as_config(&s).deductor_aliases;
+                let r = twentysixas_receipts::run(&book, &rules, &docs.form26as, &aliases).unwrap();
+                let c = twentysixas_receipts::check_invariants(&book, &docs.form26as, &r).unwrap();
+                (r, c)
+            }
+            "tds_tcs_26as" => {
+                let docs = traces_documents_from_json(&s).unwrap();
+                let r = tds_tcs_26as::run(
+                    &book,
+                    &rules,
+                    &period(&s),
+                    &docs.form26as,
+                    &docs.ais,
+                    &docs.tis,
+                    &tds_26as_config(&s),
+                )
+                .unwrap();
+                let c = tds_tcs_26as::check_invariants(&book, &docs.form26as, &r).unwrap();
+                (r, c)
+            }
             other => panic!("{name}: no edge dispatch for {other} (EDGE_TESTS: {EDGE_TESTS:?})"),
         };
         let rust = canonical_test_result(&book, &result, Some(module_check)).unwrap();
@@ -206,11 +251,13 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 4] = [
+const EDGE_TESTS: [&str; 6] = [
     "cash_book_integrity",
     "ledger_scrutiny",
     "stale_balances_41_1",
+    "tds_tcs_26as",
     "trial_balance",
+    "twentysixas_receipts",
 ];
 
 /// Synthetic goldens other than `synthetic.<id>.json`, each read by a named test:

@@ -1061,6 +1061,7 @@ mod tests {
             status: VoucherStatus::Regular,
             lines: Vec::new(),
             narration: String::new(),
+            party_field: String::new(),
         };
         assert_eq!(voucher_label(&v), "Payment guid-ééééééa on 2025-06-01");
     }
@@ -1127,6 +1128,7 @@ mod tests {
     fn voucher(guid: &str, date: &str, lines: &[(&str, i64)]) -> Voucher {
         Voucher {
             narration: String::new(),
+            party_field: String::new(),
             guid: guid.to_string(),
             date: TallyDate::parse(date).unwrap(),
             vtype: "Journal".to_string(),

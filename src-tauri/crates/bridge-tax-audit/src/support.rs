@@ -421,3 +421,39 @@ mod tests {
         assert_eq!(guid_tail12(""), "");
     }
 }
+
+/// Python's `repr()` of a str, for the reference's f"{name!r}": single quotes unless the text holds
+/// a `'` and no `"`; backslash, `\n`, `\r`, `\t` and the chosen quote escaped; other ASCII control
+/// characters and DEL as `\xNN`.
+///
+/// TODO(C2, bridge-tax-audit text semantics): a stand-in. Python also escapes every character
+/// `str.isprintable()` rejects (C1 controls, format characters, line/paragraph separators,
+/// unassigned code points), which needs a Unicode 15.1 table this crate does not carry yet; the
+/// pinned `py_repr_str`/`py_isprintable` requested from the text-semantics owner replaces this. Until
+/// then a name holding such a character would differ from the reference, so batch C2 stays in draft.
+pub(crate) fn py_repr_str(s: &str) -> String {
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::from(quote);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}

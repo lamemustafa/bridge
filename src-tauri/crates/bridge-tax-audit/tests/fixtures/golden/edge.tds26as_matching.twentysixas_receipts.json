@@ -1,0 +1,516 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "twentysixas_receipts",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "573b3457ae395d9b",
+  "population_note_text": "Form 26AS Part I rows whose deductor TAN the client configuration maps to a books ledger; books population (optional, cancelled and post-dated vouchers excluded).",
+  "figures": [
+    {
+      "id": "twentysixas_receipts.interest_26as_amount_35c41a95",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "55e5f4cc54cf8be6",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194A.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#2",
+          "label": "TAN-EDGE-A 194A 2025-06-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.interest_books_amount_35c41a95",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "c346dee5b1c03f66",
+      "definition_text": "Books: income credited from this party in the year (Direct/Indirect Incomes lines).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.interest_difference_35c41a95",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.other_sections_26as_amount_8f818fd7",
+      "value": 1500000000,
+      "unit": "paise",
+      "definition_sha256_16": "7f6344e086d01288",
+      "definition_text": "Form 26AS amount under sections that are not a supply or interest (not compared).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash Withdrawal TDS",
+          "label": "Cash Withdrawal TDS"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_26as_amount_35c41a95",
+      "value": 100000000,
+      "unit": "paise",
+      "definition_sha256_16": "0cc77c5dc1f89724",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194C.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#1",
+          "label": "TAN-EDGE-A 194C 2025-06-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_26as_amount_4d8253f2",
+      "value": 500000000,
+      "unit": "paise",
+      "definition_sha256_16": "5a6ac2ca4e6b8008",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194Q.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#3",
+          "label": "TAN-EDGE-B 194Q 2025-07-31"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer B",
+          "label": "Customer B"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_26as_amount_863b5bca",
+      "value": 700000,
+      "unit": "paise",
+      "definition_sha256_16": "0cc77c5dc1f89724",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194C.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#6",
+          "label": "TAN-EDGE-D 194C 2024-11-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer D",
+          "label": "Customer D"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_26as_amount_ffbcb62c",
+      "value": 3000000,
+      "unit": "paise",
+      "definition_sha256_16": "9fc8559d25cbb082",
+      "definition_text": "Form 26AS amount paid/credited by this party under section(s) 194J.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#4",
+          "label": "TAN-EDGE-C 194J 2025-08-15"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer C",
+          "label": "Customer C"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_books_amount_35c41a95",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "0d472eb72d9de506",
+      "definition_text": "Books: taxable value billed to this party in the year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        },
+        {
+          "kind": "voucher",
+          "id": "t12",
+          "label": "Sales t12 on 2026-01-10"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_books_amount_4d8253f2",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "0d472eb72d9de506",
+      "definition_text": "Books: taxable value billed to this party in the year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer B",
+          "label": "Customer B"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_books_amount_863b5bca",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "0d472eb72d9de506",
+      "definition_text": "Books: taxable value billed to this party in the year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer D",
+          "label": "Customer D"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_books_amount_ffbcb62c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "0d472eb72d9de506",
+      "definition_text": "Books: taxable value billed to this party in the year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer C",
+          "label": "Customer C"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_difference_35c41a95",
+      "value": 90000000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_difference_4d8253f2",
+      "value": 500000000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer B",
+          "label": "Customer B"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_difference_863b5bca",
+      "value": 700000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer D",
+          "label": "Customer D"
+        }
+      ]
+    },
+    {
+      "id": "twentysixas_receipts.supply_difference_ffbcb62c",
+      "value": 3000000,
+      "unit": "paise",
+      "definition_sha256_16": "e6d62667b7d4f900",
+      "definition_text": "Form 26AS amount less the books amount.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Customer C",
+          "label": "Customer C"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "twentysixas_receipts/interest/35c41a95",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.interest_26as_amount_35c41a95"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.interest_books_amount_35c41a95"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.interest_difference_35c41a95"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#2",
+          "label": "TAN-EDGE-A 194A 2025-06-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        }
+      ],
+      "title_sha256_16": "30a65e3512fd5051",
+      "title_text": "Form 26AS reports interest paid or credited by a party that the books do not match",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    },
+    {
+      "id": "twentysixas_receipts/supply/35c41a95",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.supply_26as_amount_35c41a95"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.supply_books_amount_35c41a95"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.supply_difference_35c41a95"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#1",
+          "label": "TAN-EDGE-A 194C 2025-06-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer A",
+          "label": "Customer A"
+        },
+        {
+          "kind": "voucher",
+          "id": "t12",
+          "label": "Sales t12 on 2026-01-10"
+        }
+      ],
+      "title_sha256_16": "d4aef8064357a44f",
+      "title_text": "Form 26AS reports a different amount paid or credited by a customer than the books bill it",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    },
+    {
+      "id": "twentysixas_receipts/supply/4d8253f2",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.supply_26as_amount_4d8253f2"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.supply_books_amount_4d8253f2"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.supply_difference_4d8253f2"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#3",
+          "label": "TAN-EDGE-B 194Q 2025-07-31"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer B",
+          "label": "Customer B"
+        }
+      ],
+      "title_sha256_16": "d4aef8064357a44f",
+      "title_text": "Form 26AS reports a different amount paid or credited by a customer than the books bill it",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    },
+    {
+      "id": "twentysixas_receipts/supply/863b5bca",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.supply_26as_amount_863b5bca"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.supply_books_amount_863b5bca"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.supply_difference_863b5bca"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#6",
+          "label": "TAN-EDGE-D 194C 2024-11-30"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer D",
+          "label": "Customer D"
+        }
+      ],
+      "title_sha256_16": "d4aef8064357a44f",
+      "title_text": "Form 26AS reports a different amount paid or credited by a customer than the books bill it",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    },
+    {
+      "id": "twentysixas_receipts/supply/ffbcb62c",
+      "clauses": [
+        "s.199"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_26as",
+          "figure_id": "twentysixas_receipts.supply_26as_amount_ffbcb62c"
+        },
+        {
+          "name": "amount_books",
+          "figure_id": "twentysixas_receipts.supply_books_amount_ffbcb62c"
+        },
+        {
+          "name": "difference",
+          "figure_id": "twentysixas_receipts.supply_difference_ffbcb62c"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#4",
+          "label": "TAN-EDGE-C 194J 2025-08-15"
+        },
+        {
+          "kind": "ledger",
+          "id": "Customer C",
+          "label": "Customer C"
+        }
+      ],
+      "title_sha256_16": "d4aef8064357a44f",
+      "title_text": "Form 26AS reports a different amount paid or credited by a customer than the books bill it",
+      "limits_sha256_16": "7a34bd470a4ea094",
+      "limits_text": [
+        "Tax on a supply falls due on credit or payment, whichever is earlier, so part of a difference can belong to an invoice of the previous or next year.",
+        "Credit for tax deducted is allowed in the year the related income is offered (s.199); a 26AS amount with no matching income is a question about the income, not only the credit."
+      ],
+      "ask_client_sha256_16": "31d2758ed78d55ec",
+      "ask_client_text": [
+        "Obtain the deductor's own ledger or TDS certificate (Form 16A) for the rows that differ, and explain each.",
+        "State whether any invoice or income behind those rows is outside the books."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "twentysixas_receipts.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

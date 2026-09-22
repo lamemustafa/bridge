@@ -1,0 +1,751 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "tds_tcs_26as",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "7fb6f9941344f634",
+  "population_note_text": "Form 26AS Part I (TDS) and Part VI (TCS) rows, aggregated per (TAN, section); matched to vouchers of any type carrying a line on the TDS/TCS ledger set for this client and a named party (each deductor's TAN is linked to its books ledger for this client, never by name). AIS/TIS GST-turnover/purchases and advance-tax figures are reported side by side, not matched.",
+  "figures": [
+    {
+      "id": "tds_tcs_26as.ais_advance_tax_paise",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "271eb5beb9a3af85",
+      "definition_text": "AIS Part B3 (tax payments/challans), 'total' column, summed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.ais_gst_purchases_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "99fcf943a6a4a53c",
+      "definition_text": "AIS category 'GST purchases', accepted-by-taxpayer value, summed across entries.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.ais_gst_turnover_paise",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "93d5bae0f1da1f05",
+      "definition_text": "AIS category 'GST turnover', accepted-by-taxpayer value, summed across entries.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.ais_refund_paise",
+      "value": 12345,
+      "unit": "paise",
+      "definition_sha256_16": "a7a2fc2d4f88e63b",
+      "definition_text": "AIS Part B4 (refund), 'refund_amount' column, summed. No books-side figure is attempted (limit).",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.alias_039c99e0",
+      "value": "Customer C",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-C",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.alias_0fa9e298",
+      "value": "Customer A",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-A",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.alias_63fe4c95",
+      "value": "Customer D",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-D",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.alias_7bc4aaaf",
+      "value": "Vendor V",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-V",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.alias_a15d5360",
+      "value": "Cash Withdrawal TDS",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-F",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.alias_f00ee8c9",
+      "value": "Customer B",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-B",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.books_advance_tax_paise",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "028f8eb8ffe70654",
+      "definition_text": "Period debit movement of the caller-supplied advance-tax ledger(s) -- recomputed from the TB.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_claim_count",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "43e5cca9b9092bd5",
+      "definition_text": "Distinct (kind, party) TDS/TCS claim rows in the books.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_only_reason_different_period_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "f7385549aea7a434",
+      "definition_text": "Books-only rows classified 'different_period'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_only_reason_not_found_in_26as_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "4aeaebe84971ad4d",
+      "definition_text": "Books-only rows classified 'not_found_in_26as'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_only_reason_unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1879f9b5cefc9478",
+      "definition_text": "Books-only rows classified 'unclassified'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_only_row_838da178",
+      "value": "different_period",
+      "unit": "text",
+      "definition_sha256_16": "1f06da41b7774a04",
+      "definition_text": "Books TDS/TCS claim with no 26AS counterpart (kind tds, party 'Customer F').",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "t04",
+          "label": "Journal t04 on 2024-12-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.books_only_row_f46cca67",
+      "value": "not_found_in_26as",
+      "unit": "text",
+      "definition_sha256_16": "898ca7abce330d01",
+      "definition_text": "Books TDS/TCS claim with no 26AS counterpart (kind tds, party 'Customer E').",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "t03",
+          "label": "Journal t03 on 2025-08-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.books_only_unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "52bb02e779d62a8f",
+      "definition_text": "Books-only rows with no reason from the closed set (must be zero -- TT-2).",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_purchases_paise",
+      "value": 1000000,
+      "unit": "paise",
+      "definition_sha256_16": "1e9b25dce6b334d0",
+      "definition_text": "Purchase Accounts period movement (closing-opening) -- recomputed from the TB.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_sales_paise",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "bef6c0cf990d5e48",
+      "definition_text": "Sales Accounts period movement (closing-opening), negated -- recomputed from the TB.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_tcs_ledger_movement_paise",
+      "value": 60000,
+      "unit": "paise",
+      "definition_sha256_16": "cc16226283c65d24",
+      "definition_text": "Period debit movement (Dr+) of the TCS-role ledger(s), recomputed from the TB.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.books_tds_ledger_movement_paise",
+      "value": 1813201,
+      "unit": "paise",
+      "definition_sha256_16": "d5b1173f71a1b889",
+      "definition_text": "Period debit movement (Dr+) of the TDS-role ledger(s), recomputed from the TB.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.category_amount_differs_26as_tax_paise",
+      "value": 500000,
+      "unit": "paise",
+      "definition_sha256_16": "d965b25d84cfd01f",
+      "definition_text": "Sum of 26AS tax, category 'amount_differs'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.category_amount_differs_books_amount_paise",
+      "value": 500101,
+      "unit": "paise",
+      "definition_sha256_16": "8fd8397b1f6cb534",
+      "definition_text": "Sum of the matching books claim, category 'amount_differs'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.category_amount_differs_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "07496ef12e3bb4fe",
+      "definition_text": "(TAN, section) rows in category 'amount_differs'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.category_matched_26as_tax_paise",
+      "value": 1290000,
+      "unit": "paise",
+      "definition_sha256_16": "f2ad68eb58bc5663",
+      "definition_text": "Sum of 26AS tax, category 'matched'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.category_matched_books_amount_paise",
+      "value": 1290100,
+      "unit": "paise",
+      "definition_sha256_16": "d7d22be8788cc13a",
+      "definition_text": "Sum of the matching books claim, category 'matched'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.category_matched_count",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "f3264a8772976b08",
+      "definition_text": "(TAN, section) rows in category 'matched'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.match_pair_tcs_0683e765",
+      "value": "matched",
+      "unit": "text",
+      "definition_sha256_16": "e6497ef789ca0785",
+      "definition_text": "Match outcome for TAN TAN-EDGE-V section(s) 206C(1F) vs books party 'Vendor V'.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#9",
+          "label": "TAN-EDGE-V 206C(1F) 2025-05-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "t08",
+          "label": "Purchase t08 on 2025-05-15"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.match_pair_tds_2601cb7f",
+      "value": "amount_differs",
+      "unit": "text",
+      "definition_sha256_16": "cf36000a84af5411",
+      "definition_text": "Match outcome for TAN TAN-EDGE-B section(s) 194Q vs books party 'Customer B'.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#3",
+          "label": "TAN-EDGE-B 194Q 2025-07-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "t02",
+          "label": "Journal t02 on 2025-07-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.match_pair_tds_f2241a08",
+      "value": "matched",
+      "unit": "text",
+      "definition_sha256_16": "c7e58f590e9c3eca",
+      "definition_text": "Match outcome for TAN TAN-EDGE-A section(s) 194A, 194C vs books party 'Customer A' (2 26AS sections compared together with one books claim).",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#1",
+          "label": "TAN-EDGE-A 194C 2025-06-30"
+        },
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#2",
+          "label": "TAN-EDGE-A 194A 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "t01",
+          "label": "Journal t01 on 2025-06-30"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.match_pair_tds_fde8d965",
+      "value": "matched",
+      "unit": "text",
+      "definition_sha256_16": "f8cbf8a3a26c02d9",
+      "definition_text": "Match outcome for TAN TAN-EDGE-F section(s) 194N vs books party 'Cash Withdrawal TDS'.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#8",
+          "label": "TAN-EDGE-F 194N 2025-09-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "t05",
+          "label": "Journal t05 on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.pair_section_tax_tds_f2241a08_425807f2",
+      "value": 200000,
+      "unit": "paise",
+      "definition_sha256_16": "f6934bfcf80d6f92",
+      "definition_text": "26AS tax under section 194A (TAN TAN-EDGE-A) inside that combined comparison.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#2",
+          "label": "TAN-EDGE-A 194A 2025-06-30"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.pair_section_tax_tds_f2241a08_74ae213d",
+      "value": 1000000,
+      "unit": "paise",
+      "definition_sha256_16": "88ce0683ce3c4148",
+      "definition_text": "26AS tax under section 194C (TAN TAN-EDGE-A) inside that combined comparison.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#1",
+          "label": "TAN-EDGE-A 194C 2025-06-30"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.tcs_capitalisation_080875da",
+      "value": "booked_separately",
+      "unit": "text",
+      "definition_sha256_16": "c5715e739b235cb5",
+      "definition_text": "Whether TCS was booked on a ledger line distinct from the asset's cost lines on this Fixed-Assets voucher -- a booking fact, not a tax-treatment conclusion (see 'Vehicle trail').",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "t08",
+          "label": "Purchase t08 on 2025-05-15"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.tcs_capitalisation_179a8ba9",
+      "value": "no_separate_tcs_line",
+      "unit": "text",
+      "definition_sha256_16": "c5715e739b235cb5",
+      "definition_text": "Whether TCS was booked on a ledger line distinct from the asset's cost lines on this Fixed-Assets voucher -- a booking fact, not a tax-treatment conclusion (see 'Vehicle trail').",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "t09",
+          "label": "Purchase t09 on 2025-06-15"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.tcs_capitalisation_no_separate_line_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "76d6cae4a57a9f84",
+      "definition_text": "Fixed-Assets vouchers, tied to a matched TCS collector, with no distinct TCS ledger line.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.tcs_ledger_36bbf500",
+      "value": "tcs",
+      "unit": "text",
+      "definition_sha256_16": "7eb02c898010fe7e",
+      "definition_text": "TCS-role ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "TCS Receivable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.tds_ledger_852cddd9",
+      "value": "tds",
+      "unit": "text",
+      "definition_sha256_16": "427196b4dff85cec",
+      "definition_text": "TDS-role ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "TDS Receivable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.tis_category_51b71264_accepted_paise",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "983235ed55ace677",
+      "definition_text": "TIS category 'GST turnover', accepted-by-taxpayer/confirmed-by-source total.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "tis:edge#1",
+          "label": "GST turnover"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.tis_category_db7d3100_accepted_paise",
+      "value": 60000000,
+      "unit": "paise",
+      "definition_sha256_16": "5709bb7710b78f05",
+      "definition_text": "TIS category 'Purchase of vehicle', accepted-by-taxpayer/confirmed-by-source total.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "tis:edge#2",
+          "label": "Purchase of vehicle"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_agg_count",
+      "value": 9,
+      "unit": "count",
+      "definition_sha256_16": "26314900c67d6099",
+      "definition_text": "Distinct (TAN, section) rows in Form 26AS Part I/VI.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_reason_different_period_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "c526741c33ef50cc",
+      "definition_text": "26AS-only rows classified 'different_period'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_reason_no_books_ledger_alias_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "b8c1075634c941ab",
+      "definition_text": "26AS-only rows classified 'no_books_ledger_alias'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_reason_not_found_in_books_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "b60ace8f09edf067",
+      "definition_text": "26AS-only rows classified 'not_found_in_books'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_reason_unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "017dda3b51ba6a9d",
+      "definition_text": "26AS-only rows classified 'unclassified'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_row_15113239",
+      "value": "not_found_in_books",
+      "unit": "text",
+      "definition_sha256_16": "3ddffc899bd136b7",
+      "definition_text": "Unmatched 26AS row (TAN TAN-EDGE-C, section 194J, part I).",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#4",
+          "label": "TAN-EDGE-C 194J 2025-08-15"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_row_565206b6",
+      "value": "different_period",
+      "unit": "text",
+      "definition_sha256_16": "ae43339923bd4138",
+      "definition_text": "Unmatched 26AS row (TAN TAN-EDGE-D, section 194C, part I).",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#6",
+          "label": "TAN-EDGE-D 194C 2024-11-30"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_row_a59c6863",
+      "value": "not_found_in_books",
+      "unit": "text",
+      "definition_sha256_16": "0a0d21cc7a3dfcc1",
+      "definition_text": "Unmatched 26AS row (TAN TAN-EDGE-A, section 194C, part II).",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#7",
+          "label": "TAN-EDGE-A 194C 2025-06-30"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_row_ca5907e3",
+      "value": "no_books_ledger_alias",
+      "unit": "text",
+      "definition_sha256_16": "0a2057aae36c15a5",
+      "definition_text": "Unmatched 26AS row (TAN TAN-EDGE-X, section 194H, part I).",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#5",
+          "label": "TAN-EDGE-X 194H 2025-09-15"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "b2220fcc8de4b33b",
+      "definition_text": "26AS-only rows with no reason from the closed set (must be zero -- TT-2).",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_rows_folded_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "5ba6bbdd70afc2d3",
+      "definition_text": "26AS (TAN, section) rows compared together with another row of the same deductor against one books claim, beyond the first row of each such group.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_total_tcs_tax_paise",
+      "value": 60000,
+      "unit": "paise",
+      "definition_sha256_16": "f7e3d791c37d598d",
+      "definition_text": "Sum of Form 26AS Part VI tax across every collector.",
+      "evidence": []
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_total_tds_tax_paise",
+      "value": 2087000,
+      "unit": "paise",
+      "definition_sha256_16": "dd9476660425aa0b",
+      "definition_text": "Sum of Form 26AS Part I tax across every deductor.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "tds_tcs_26as/amount_differs",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount_differs_count",
+          "figure_id": "tds_tcs_26as.category_amount_differs_count"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "625f669214ce9eac",
+      "title_text": "A books TDS/TCS claim matched a Form 26AS row but the tax amount differs by more than a rupee",
+      "limits_sha256_16": "b1f0e58bce715b1b",
+      "limits_text": [
+        "26AS 'Date of Booking' can fall in the next FY relative to the transaction date; a small timing gap can look like an amount difference without being a books error."
+      ],
+      "ask_client_sha256_16": "0406bb286b3cf0c3",
+      "ask_client_text": [
+        "TDS/TCS certificate (Form 16A/27D) for each differing pair."
+      ]
+    },
+    {
+      "id": "tds_tcs_26as/books_only",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "books_only_count",
+          "figure_id": "tds_tcs_26as.books_only_reason_not_found_in_26as_count"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "c2a2037c0f1badfc",
+      "title_text": "Books claim a TDS/TCS credit that the uploaded Form 26AS does not show",
+      "limits_sha256_16": "c50db97c7f76fda0",
+      "limits_text": [
+        "26AS updates continuously as deductors file late; the credit may still appear in a later-dated 26AS pull even though this upload does not show it."
+      ],
+      "ask_client_sha256_16": "e1f7e46309eabf79",
+      "ask_client_text": [
+        "A fresh 26AS pull nearer the filing date; the TDS/TCS certificate for each row."
+      ]
+    },
+    {
+      "id": "tds_tcs_26as/pan_view_scope_limit",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [],
+      "evidence": [],
+      "title_sha256_16": "8bf3e263eced83d4",
+      "title_text": "The uploaded Form 26AS/AIS/TIS are the assessee's own PAN-view record",
+      "limits_sha256_16": "71e30efe002d678a",
+      "limits_text": [
+        "A PAN-view 26AS/AIS/TIS shows tax deducted/collected FROM the assessee, never what the assessee itself deducted or collected as a deductor/collector."
+      ],
+      "ask_client_sha256_16": "182cea522cfdfe8b",
+      "ask_client_text": [
+        "If the entity holds a TAN (deducts u/s 192/194C/194I/194J/etc., or collects TCS), obtain its own TRACES TAN-view export (quarterly 24Q/26Q/27EQ statements or the Justification Report) -- this PAN-view document does not cover that."
+      ]
+    },
+    {
+      "id": "tds_tcs_26as/tcs_capitalisation",
+      "clauses": [
+        "3CD-18",
+        "s.43(1)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "no_separate_line_count",
+          "figure_id": "tds_tcs_26as.tcs_capitalisation_no_separate_line_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "t09",
+          "label": "Purchase t09 on 2025-06-15"
+        }
+      ],
+      "title_sha256_16": "1ed6553e73b1c47d",
+      "title_text": "Fixed-asset purchase from a TCS collector with no separate TCS line in the books: confirm whether TCS was charged on it and, if so, that it is not in the asset's cost",
+      "limits_sha256_16": "61d80add5000dae3",
+      "limits_text": [
+        "This states only that the books show no distinct TCS ledger line on the voucher; it does not by itself confirm the TCS amount was folded into the capitalised cost -- the purchase invoice's own price breakup must be seen to confirm that either way."
+      ],
+      "ask_client_sha256_16": "a9d784bd129ee3c1",
+      "ask_client_text": [
+        "The purchase invoice for each flagged asset, to confirm TCS is shown and recoverable separately from the asset's price."
+      ]
+    },
+    {
+      "id": "tds_tcs_26as/twentysixas_only",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "no_alias_count",
+          "figure_id": "tds_tcs_26as.twentysixas_only_reason_no_books_ledger_alias_count"
+        },
+        {
+          "name": "not_found_count",
+          "figure_id": "tds_tcs_26as.twentysixas_only_reason_not_found_in_books_count"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "c47e3031861ccd00",
+      "title_text": "Form 26AS shows TDS/TCS credit with no matching claim identified in the books",
+      "limits_sha256_16": "3ec333c828ca2793",
+      "limits_text": [
+        "A deductor/collector not yet aliased to a books ledger cannot be matched by this test; the gap may be a mapping the CA still needs to supply, not a books omission."
+      ],
+      "ask_client_sha256_16": "2e8c5943343f9124",
+      "ask_client_text": [
+        "For each unmatched TAN/section: identify the books party ledger, or confirm the income/purchase was never recorded, and supply the alias."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "tds_tcs_26as.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

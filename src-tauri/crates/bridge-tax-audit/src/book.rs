@@ -111,6 +111,10 @@ pub struct Voucher {
     pub lines: Vec<LedgerLine>,
     /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
     pub narration: String,
+    /// PARTYLEDGERNAME, Python-stripped as the reference's adapter reads it; empty when absent.
+    /// Tally names only the first party here, so, as the reference's model says, it is never used
+    /// to attribute a voucher's lines: counterparties come from ledger lines.
+    pub party_field: String,
 }
 
 #[derive(Debug, Clone)]
@@ -506,6 +510,7 @@ fn load_vouchers(
             status,
             lines,
             narration: v.child_text("NARRATION").to_string(),
+            party_field: v.child_text("PARTYLEDGERNAME").to_string(),
         });
     }
     Ok(PartVouchers {
