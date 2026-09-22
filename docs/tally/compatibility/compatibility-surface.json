@@ -127,7 +127,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "88c8e5b9e8caa7402e99d9ca89d4c24d1b43c89282ae82f25ad7714f7618bbad"
+      "sha256": "a7e8d009716ad3f8a96bb805359207affd55c12b35a9a376d77bea3612b33648"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -891,7 +891,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "58115664b878de62420c0323c1b8cd9ae8ee0c129437898c9e2165da7fccf957"
+      "sha256": "4f8d95f1e992b6b75e2151b58a60c0d4f96fcf8d443c8c697f8a808420ff423b"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -967,7 +967,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "1edb4a8f62df341e419a7320e93bc137ee3c6b93f2e6a38908d082cb6d4c629d"
+      "sha256": "0504627538f82d4fef1ee1cc08491b7ceb7ff24a54e7afdf5463f4731e796bdc"
     },
     {
       "path": "src/SourceDraftScreen.tsx",
@@ -1011,7 +1011,7 @@
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "794ebfc882a1fda8ad39f6837ee9d4af8336a315361e482f7d69ea22483fd4da"
+      "sha256": "8b480a79ffaa16c0c51b66a5c1e693783413b9b7ac8317e809f8e027fdfe13d7"
     },
     {
       "path": "src/outstandings-csv.ts",
@@ -1102,5 +1102,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "bdad1ae6c79f2257729343a56e1eaad60cfac4d3c54081c069b160e5723fff2d"
+  "manifest_sha256": "146ab194744ae36aaa7ac13fc7e09cd1113926516134585af40b904008df4119"
 }

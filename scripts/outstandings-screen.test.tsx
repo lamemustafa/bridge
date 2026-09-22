@@ -159,3 +159,28 @@ test("one currency Tally does not name INR is confirmed against what Tally repor
   expect(invoked).not.toContain("fetch_tally_outstandings");
   root.unmount();
 });
+
+test("a currency read that names no master is not offered an INR confirmation", async () => {
+  const { host, root, invoked } = await renderWithCurrency(() =>
+    Promise.resolve({ is_inr: false, symbol: "", mailing_name: "", currency_count: 0 }),
+  );
+  expect(host.textContent).toContain("could not read this company");
+  expect(host.textContent).not.toContain("This company uses INR");
+  expect(invoked).not.toContain("fetch_tally_outstandings");
+  root.unmount();
+});
+
+test("confirming one currency Tally does not name INR reads outstandings under the INR assertion", async () => {
+  const { host, root } = await renderWithCurrency(() =>
+    Promise.resolve({ is_inr: false, symbol: "Rs.", mailing_name: "", currency_count: 1 }),
+  );
+  // An empty mailing name shows the master's name alone.
+  expect(host.textContent).toContain("Tally reports this company’s currency as Rs..");
+  const confirm = [...host.querySelectorAll("button")].find((button) => button.textContent === "This company uses INR");
+  await act(async () => confirm?.click());
+  await flush();
+  const fetches = mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_outstandings");
+  expect(fetches).toHaveLength(1);
+  expect(fetches[0][1]).toMatchObject({ request: { currency_assertion: "INR" } });
+  root.unmount();
+});

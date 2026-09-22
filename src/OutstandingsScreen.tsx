@@ -385,8 +385,9 @@ export function OutstandingsScreen({
   // assert it. The INR requirement stays -- putting a rupee symbol in front of
   // a foreign balance misstates money -- but it is a fact Tally holds, and
   // asking for it on every company was a step the product can answer itself.
-  // Where Tally cannot settle it (several currencies defined, or a non-Indian
-  // one) the manual confirmation below is still shown.
+  // Where Tally names one currency but not INR, the operator may still
+  // confirm it below; a book with several currencies, or none read, is not
+  // read at all (bridge#604).
   React.useEffect(() => {
     if (liveReadSuppressed || !company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
@@ -497,7 +498,7 @@ export function OutstandingsScreen({
     return (
       <section className="panel wide outstandings-empty">
         <h2>Confirm the base currency</h2>
-        <p>Tally reports this company&rsquo;s currency as {currencyCheck.mailingName} ({currencyCheck.name}). Confirm only if this company&rsquo;s books are in Indian rupees.</p>
+        <p>Tally reports this company&rsquo;s currency as {currencyCheck.mailingName ? `${currencyCheck.mailingName} (${currencyCheck.name})` : currencyCheck.name}. Confirm only if this company&rsquo;s books are in Indian rupees.</p>
         <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityFor(company))}>This company uses INR</button>
       </section>
     );

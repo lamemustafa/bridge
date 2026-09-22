@@ -7,6 +7,12 @@ fn currency_source() -> String {
     ))
 }
 
+fn multi_currency_source() -> String {
+    decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ))
+}
+
 fn currency_plans(currency: String) -> Vec<ScenarioPlan> {
     let company = xml(companies());
     let extent = xml(extents());
@@ -282,17 +288,18 @@ async fn operator_outstandings_refuse_several_or_no_currency_masters_before_any_
     let captured = currency_source();
     let start = captured.find("<CURRENCY ").unwrap();
     let end = start + captured[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
-    for (fault, reason) in [
-        ("multiple", "company_base_currency_undetermined"),
-        ("empty", "company_currency_probe_failed"),
+    let mut none = captured.clone();
+    none.replace_range(start..end, "");
+    for (fault, currency, reason) in [
+        // A live capture of a book with `I₹` and `$` masters.
+        (
+            "multiple",
+            multi_currency_source(),
+            "company_base_currency_undetermined",
+        ),
+        ("empty", none, "company_currency_probe_failed"),
     ] {
-        let mut changed = captured.clone();
-        if fault == "multiple" {
-            changed.insert_str(end, &captured[start..end]);
-        } else {
-            changed.replace_range(start..end, "");
-        }
-        let (result, requests) = operator_outstandings(currency_then_native_plans(changed)).await;
+        let (result, requests) = operator_outstandings(currency_then_native_plans(currency)).await;
         let result = result.unwrap();
         assert!(
             matches!(&result, OutstandingsLoadResult::Partial { reason: got, .. } if *got == reason.into()),
@@ -329,7 +336,8 @@ async fn operator_outstandings_with_one_currency_master_read_through() {
 
 /// bridge#604: the operator's assertion is bound to the extent the currency
 /// read observed, as the agent read's witness is. A book that changed between
-/// the two reads is refused before any bill is read.
+/// the two reads is the retryable partial a change during the read gives,
+/// before any bill is read.
 #[tokio::test]
 async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
     let extent = extents();
@@ -346,13 +354,12 @@ async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
         "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-receivable.utf16le.xml"
     ))));
     let (result, requests) = operator_outstandings(plans).await;
-    let error = result.unwrap_err();
-    assert!(matches!(
-        error
-            .chain()
-            .find_map(|cause| cause.downcast_ref::<PairedReadValidationError>()),
-        Some(PairedReadValidationError::CurrencyToMasterExtent)
-    ));
+    let result = result.unwrap();
+    assert!(
+        matches!(&result, OutstandingsLoadResult::Partial { reason, .. }
+            if *reason == "book_changed_during_read".into()),
+        "{result:?}"
+    );
     assert_eq!(requests, 21);
 }
 
@@ -361,13 +368,8 @@ async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
 /// result, with no working paper, and no bill is read.
 #[tokio::test]
 async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() {
-    let captured = currency_source();
-    let start = captured.find("<CURRENCY ").unwrap();
-    let end = start + captured[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
-    let mut several = captured.clone();
-    several.insert_str(end, &captured[start..end]);
     let mut plans = vec![xml(companies())];
-    plans.extend(currency_then_native_plans(several));
+    plans.extend(currency_then_native_plans(multi_currency_source()));
     let simulator = SequenceSimulator::spawn(plans).unwrap();
     let rows = parse_companies_from_collection(&companies()).unwrap();
     let row = rows
