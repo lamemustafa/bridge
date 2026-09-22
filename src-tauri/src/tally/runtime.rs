@@ -943,8 +943,9 @@ pub enum OutstandingsCurrencyAssertion {
 }
 
 /// An INR admission that is inseparable from the company extent observed
-/// during the currency read. Party/ledger masters and MCP outstandings consume
-/// this witness; desktop outstandings retains its explicit operator assertion.
+/// during the currency read. Party/ledger masters, MCP outstandings and the
+/// desktop single-company outstandings read (bridge#604, carrying the
+/// operator's assertion) consume this witness.
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
@@ -1293,6 +1294,16 @@ pub struct UnallocatedParty {
     pub party: String,
     pub amount: ExactDecimal,
     pub direction: ExposureDirection,
+}
+
+/// Why an operator's currency assertion may not be read for a book with
+/// `currency_count` Currency masters ([`TallyRuntime::fetch_operator_outstandings`]).
+fn operator_currency_refusal(currency_count: usize) -> Option<&'static str> {
+    match currency_count {
+        0 => Some("company_currency_probe_failed"),
+        1 => None,
+        _ => Some("company_base_currency_undetermined"),
+    }
 }
 
 fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsLoadResult {
@@ -3367,6 +3378,61 @@ impl TallyRuntime {
             ageing_anchor,
         )
         .await
+    }
+
+    /// The desktop single-company outstandings read, under the INR assertion
+    /// the screen sends: settled by Tally's own currency read, or confirmed by
+    /// the operator for a book with one Currency master that Tally does not
+    /// name INR (bridge#604). It reads the masters itself, whatever the
+    /// screen read before, and refuses without reading any bill:
+    /// - several masters: the book can hold a foreign-currency ledger, whose
+    ///   bills the Bills reports return as plain amounts, indistinguishable
+    ///   from rupees;
+    /// - none (the probe read no master): several cannot be ruled out.
+    ///
+    /// With one master the assertion stands, bound to the extent the currency
+    /// read observed, as the agent read binds its witness. A book that changed
+    /// since that read is the same retryable partial as one that changed
+    /// during the outstandings read.
+    pub(crate) async fn fetch_operator_outstandings(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        let currency = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        if let Some(reason) = operator_currency_refusal(currency.currency_count()) {
+            return Ok(partial_result(reason));
+        }
+        match self
+            .fetch_outstandings_native_with_currency(
+                config,
+                identity,
+                as_of,
+                NativeOutstandingsCurrency::Observed(
+                    currency.bind_party_ledger_master_assertion(currency_assertion),
+                ),
+                ageing_anchor,
+            )
+            .await
+        {
+            Ok((result, _)) => Ok(result),
+            Err(error)
+                if matches!(
+                    error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<PairedReadValidationError>()),
+                    Some(PairedReadValidationError::CurrencyToMasterExtent)
+                ) =>
+            {
+                Ok(partial_result("book_changed_during_read"))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// MCP monetary reads require the observed currency's company extent;
