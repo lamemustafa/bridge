@@ -230,8 +230,6 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
     })
 }
 
-/// A built, never-dispatched batch for the captured laboratory company, with
-/// its XML file, exactly as `build_import_xml` leaves one.
 /// Record the build's ledger binding as `build_import_xml` does (#239): each
 /// named ledger with the GUID the captured catalogue gives it.
 fn bind_to_captured_catalogue(line: &mut ImportLedgerLine) {
@@ -259,6 +257,8 @@ fn bind_to_captured_catalogue(line: &mut ImportLedgerLine) {
     );
 }
 
+/// A built, never-dispatched batch for the captured laboratory company, with
+/// its XML file, exactly as `build_import_xml` leaves one.
 fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
     let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
     let mut line: ImportLedgerLine = serde_json::from_value(json!({
@@ -1697,16 +1697,23 @@ async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
 // bridge#239: the ledgers a batch names must still carry the GUIDs its build
 // bound them to; a name alone cannot tell a ledger renamed and replaced.
 
-/// A saved Journal refused before approval by its build-time binding: only
-/// the reads up to the post's catalogue are sent, and no intent is recorded.
+/// A saved Journal refused before approval by its build-time binding, on the
+/// MCP tool or on the desktop's post. A changed GUID is found on the post's
+/// catalogue read, the last one sent; a record without identities is refused
+/// before any request. No intent is recorded either way.
 async fn refused_by_build_binding(
     identities: Option<Vec<BoundLedger>>,
+    desktop: bool,
 ) -> (Value, usize, usize, bool) {
     let mut plans = before_approval();
-    // The catalogue is the last read; the Currency read and mode probe after
-    // it are never sent.
-    plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
-    let expected = plans.len();
+    let expected = if identities.is_some() {
+        // The Currency read and mode probe after the catalogue are never sent.
+        plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
+        plans.len()
+    } else {
+        plans.clear();
+        0
+    };
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
@@ -1714,64 +1721,84 @@ async fn refused_by_build_binding(
     line.ledger_identities = identities;
     server.append_import_ledger(&line).unwrap();
     let scripted = ScriptedApproval::approving();
-    let response = SCRIPTED_APPROVAL
-        .scope(scripted.clone(), server.call_tool("post_import", args))
-        .await;
+    let result = if desktop {
+        let outcome = SCRIPTED_APPROVAL
+            .scope(
+                scripted.clone(),
+                server.post_import_checked(&args, Some(&line.sha256), PostScope::JournalOnly),
+            )
+            .await
+            .expect("a refusal is reported as the post's outcome");
+        // What the desktop's webview receives.
+        super::super::desktop_journal::DesktopJournalOperation::from_outcome(outcome).result
+            ["result"]
+            .clone()
+    } else {
+        SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await["structuredContent"]["result"]
+            .clone()
+    };
     let observed = sent(simulator).len();
     let intent = String::from_utf8(journal(directory.path()))
         .unwrap()
         .contains("\"dispatch_intent\"");
     assert!(scripted.previews().is_empty(), "approval must not be asked");
-    (response, observed, expected, intent)
+    (result, observed, expected, intent)
 }
 
 #[tokio::test]
 async fn a_ledger_replaced_under_its_name_since_the_build_is_refused_before_approval() {
-    let identities = vec![
-        BoundLedger {
-            name: "Cash".into(),
-            guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff".into(),
-        },
-        BoundLedger {
-            name: "WR2 Sales".into(),
-            guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000d0".into(),
-        },
-    ];
-    let (response, observed, expected, intent) = refused_by_build_binding(Some(identities)).await;
-    let result = &response["structuredContent"]["result"];
-    assert_eq!(
-        result["error"]["code"], "import_masters_changed_since_build",
-        "{response}"
-    );
-    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
-    assert_eq!(
-        result["error"]["ledgers_changed"],
-        json!(["Cash"]),
-        "{response}"
-    );
-    assert!(result["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("(Cash)"));
-    assert_eq!(observed, expected, "{response}");
-    assert!(!intent);
+    for desktop in [false, true] {
+        let identities = vec![
+            BoundLedger {
+                name: "Cash".into(),
+                guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff".into(),
+            },
+            BoundLedger {
+                name: "WR2 Sales".into(),
+                guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000d0".into(),
+            },
+        ];
+        let (result, observed, expected, intent) =
+            refused_by_build_binding(Some(identities), desktop).await;
+        assert_eq!(
+            result["error"]["code"], "import_masters_changed_since_build",
+            "{result}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+        if !desktop {
+            assert_eq!(
+                result["error"]["ledgers_changed"],
+                json!(["Cash"]),
+                "{result}"
+            );
+        }
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("(Cash)"));
+        assert_eq!(observed, expected, "{result}");
+        assert!(!intent);
+    }
 }
 
 #[tokio::test]
-async fn a_batch_built_before_ledger_binding_is_refused_and_told_to_rebuild() {
-    let (response, observed, expected, intent) = refused_by_build_binding(None).await;
-    let result = &response["structuredContent"]["result"];
-    assert_eq!(
-        result["error"]["code"], "import_batch_predates_ledger_binding",
-        "{response}"
-    );
-    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
-    assert!(result["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("Build the batch again"));
-    assert_eq!(observed, expected, "{response}");
-    assert!(!intent);
+async fn a_batch_built_before_ledger_binding_is_refused_before_any_request() {
+    for desktop in [false, true] {
+        let (result, observed, expected, intent) = refused_by_build_binding(None, desktop).await;
+        assert_eq!(
+            result["error"]["code"], "import_batch_predates_ledger_binding",
+            "{result}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Build the batch again"));
+        assert_eq!(observed, expected, "{result}");
+        assert!(!intent);
+    }
 }
 
 /// The approval preview says the ledgers were checked by identity.

@@ -170,6 +170,12 @@ impl Server {
             if self.read_persisted_import_xml(batch_id)? != xml.as_bytes() {
                 return Err("import_batch_changed".to_string().into());
             }
+            // Decidable from the record alone, so refused after the file check
+            // and before any Tally request (#239): a batch saved before Bridge
+            // recorded its ledgers' GUIDs has nothing to check them against.
+            if line.ledger_identities.is_none() {
+                return Err(BuildBindingRefusal::Unbound.code().to_string().into());
+            }
             let preview = admit_fresh_saved_voucher(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
@@ -883,9 +889,9 @@ fn name_changed_ledgers(payload: &mut Value, ledgers: &[String]) {
             list.push_str(&format!(" and {} more", ledgers.len() - named.len()));
         }
         payload["result"]["error"]["message"] = json!(format!(
-            "A ledger this batch names is no longer the one it was built against ({list}): it \
-             was renamed or replaced in Tally since the build. Nothing was posted. Build the \
-             batch again, check it, then post the new batch."
+            "A ledger this batch names is no longer the one it was built against ({list}): the \
+             name now belongs to a different ledger in Tally. Nothing was posted. Confirm which \
+             ledger you meant (it may now have another name) before building the batch again."
         ));
     }
 }

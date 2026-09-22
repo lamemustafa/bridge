@@ -1244,6 +1244,18 @@ fn a_post_admits_only_the_ledgers_its_build_bound() {
         admit_build_binding(Some(&recorded(&[("Bridge Nested Debtor WR4", A)])), &now),
         Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
     );
+    // Two ledgers that exchanged names since the build: every GUID is still
+    // recorded, but under the other name, so both refuse.
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[("Cash", A), ("Bridge Nested Debtor WR4", B)])),
+            &now
+        ),
+        Err(BuildBindingRefusal::Changed(vec![
+            "Bridge Nested Debtor WR4".into(),
+            "Cash".into()
+        ]))
+    );
     // A record built before binding existed has nothing to compare.
     assert_eq!(
         admit_build_binding(None, &now),
@@ -1289,11 +1301,17 @@ fn a_changed_ledger_is_named_in_plain_words_only_when_nothing_was_attempted() {
         assert_eq!(refused(attempted)["message"], "generic");
     }
     // An unbound batch is told to rebuild, only when nothing was attempted.
-    let mut unbound = json!({"result":{"attempt_recorded":false,
-        "error":{"code":"import_batch_predates_ledger_binding","message":"generic"}}});
-    explain_unbound_batch(&mut unbound);
-    assert!(unbound["result"]["error"]["message"]
+    let unbound = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_batch_predates_ledger_binding","message":"generic"}}});
+        explain_unbound_batch(&mut payload);
+        payload["result"]["error"]["message"].clone()
+    };
+    assert!(unbound(json!(false))
         .as_str()
         .unwrap()
         .contains("Build the batch again"));
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(unbound(attempted), "generic");
+    }
 }
