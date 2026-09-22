@@ -673,7 +673,9 @@ pub(super) struct WindowServed {
     /// Tally refused one of the read's data requests as too large or timed out.
     pub(super) refused_a_part: bool,
     /// One copy of every data response, summed: `post_read` reports both bodies
-    /// of a paired read, so half of its evidence bytes.
+    /// of a paired read, so half of its evidence bytes. Valid only for a read
+    /// through [`AgentReader`], the paired reader; the one caller (import
+    /// verification) reads through it.
     pub(super) data_bytes: u64,
 }
 
@@ -895,6 +897,12 @@ pub(super) enum WindowReadKind {
 /// changes transport and retention, never admission: every part still passes
 /// the same census witness, `admit_part`, union and bracket checks.
 pub(super) trait WindowReader {
+    /// How many copies of each response body the reader's evidence `bytes`
+    /// count: 2 for a paired read, 1 for a single read. The executor divides by
+    /// this to measure one response, so a single reader is never planned at
+    /// half its real cost (and so at twice a safe part size).
+    fn evidence_copies(&self) -> u64;
+
     async fn read(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -908,6 +916,11 @@ pub(super) trait WindowReader {
 pub(super) struct AgentReader<'a>(pub(super) &'a Server);
 
 impl WindowReader for AgentReader<'_> {
+    /// `post_read_observing_boundary` reports both accepted bodies of the pair.
+    fn evidence_copies(&self) -> u64 {
+        2
+    }
+
     async fn read(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -997,6 +1010,13 @@ impl<'a> AuditWindowReader<'a> {
 }
 
 impl WindowReader for AuditWindowReader<'_> {
+    /// Each audit part is read once ([`AuditPartShape::Single`]).
+    ///
+    /// [`AuditPartShape::Single`]: crate::tally::runtime::AuditPartShape::Single
+    fn evidence_copies(&self) -> u64 {
+        1
+    }
+
     async fn read(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -1327,6 +1347,7 @@ where
                     let parsed = parse(&xml);
                     let observed = measured_bytes_per_voucher(
                         &read_evidence,
+                        reader.evidence_copies(),
                         parsed.as_ref().map_or(0, Vec::len),
                     );
                     // Account for this part before anything below can refuse.
@@ -1789,11 +1810,12 @@ fn whole_or_counted(
     }
 }
 
-/// Bytes per voucher of one paired read. `post_read` reports both accepted
-/// bodies, so one response is half of it.
-fn measured_bytes_per_voucher(evidence: &Evidence, rows: usize) -> Option<u64> {
+/// Bytes per voucher of one response. The reader's evidence counts `copies`
+/// bodies ([`WindowReader::evidence_copies`]: 2 for the paired agent read, 1
+/// for a single audit read), so one response is that share of it.
+fn measured_bytes_per_voucher(evidence: &Evidence, copies: u64, rows: usize) -> Option<u64> {
     let rows = u64::try_from(rows).ok().filter(|rows| *rows > 0)?;
-    let body = u64::try_from(evidence.bytes / 2).ok()?;
+    let body = u64::try_from(evidence.bytes).ok()? / copies.max(1);
     Some(body.div_ceil(rows))
 }
 

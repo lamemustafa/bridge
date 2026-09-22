@@ -3328,3 +3328,89 @@ async fn an_audit_window_stops_at_a_dropped_part_and_owes_a_drain() {
         ))
     );
 }
+
+/// A later part is planned at the cost the first part measured, and the audit
+/// reader measures it the same as the agent reader, although it reads each part
+/// once where the agent reads it twice. Day two's four vouchers must go in two
+/// parts through either reader: planned at half their real cost, the audit
+/// reader would ask for all four in one part, twice the budget.
+#[tokio::test]
+async fn the_audit_reader_plans_later_parts_at_the_cost_the_agent_reader_measures() {
+    let two = |ids: &[(u64, &str)]| xml_plan(relabelled(&vouchers_kept(2), ids));
+    let day_one = two(&[(1, "20260801"), (2, "20260801")]);
+    let first_half = two(&[(3, "20260802"), (4, "20260802")]);
+    let second_half = two(&[(5, "20260802"), (6, "20260802")]);
+    // One response of two vouchers is exactly the budget, so the measured cost
+    // allows two vouchers a part, and so does the default.
+    let per_voucher = wire_len(&day_one) / 2;
+    let limits = WindowReadLimits {
+        budget_bytes: 2 * per_voucher,
+        default_bytes_per_voucher: per_voucher,
+        max_reads: MAX_PLANNED_READS,
+    };
+    let census = || {
+        WindowCensus::from_rows([
+            (day("20260801"), 1),
+            (day("20260801"), 2),
+            (day("20260802"), 3),
+            (day("20260802"), 4),
+            (day("20260802"), 5),
+            (day("20260802"), 6),
+        ])
+    };
+    let bodies = [day_one, first_half, second_half];
+    let expected = [
+        part("20260801", "20260801", None),
+        part(
+            "20260802",
+            "20260802",
+            Some(AlterIdSpan {
+                after: 0,
+                through: 4,
+            }),
+        ),
+        part(
+            "20260802",
+            "20260802",
+            Some(AlterIdSpan {
+                after: 4,
+                through: 6,
+            }),
+        ),
+    ];
+
+    let (agent, _) = read_window(
+        bodies.iter().flat_map(paired).collect(),
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census()),
+        limits,
+    )
+    .await;
+    assert_eq!(agent.unwrap().reads, expected);
+
+    let simulator = SequenceSimulator::spawn(bodies.iter().flat_map(single).collect()).unwrap();
+    let runtime = TallyRuntime::default();
+    let reader = AuditWindowReader::new(
+        &runtime,
+        TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+    );
+    let identity = identity();
+    let audit = read_voucher_window_with(
+        &reader,
+        &identity,
+        identity.display_name(),
+        "20260801",
+        "20260802",
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census()),
+        limits,
+        |xml| parse_agent_rows(xml, GUID),
+    )
+    .await;
+    let _ = simulator.finish();
+    assert_eq!(audit.unwrap().reads, expected);
+}
