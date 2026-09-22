@@ -35,6 +35,7 @@ pub mod cash_44ab;
 pub mod cash_book_integrity;
 pub mod cash_payments_40a3;
 pub mod compare;
+pub mod creditor_ageing_43bh;
 pub mod depreciation;
 pub mod error;
 pub mod financial_statements;
@@ -46,6 +47,7 @@ pub mod read;
 pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
+pub mod statutory_dues_43b;
 mod support;
 mod text_tables;
 pub mod trial_balance;
@@ -105,11 +107,42 @@ pub struct Engagement {
     /// `applicability_44ab`-only: the optional `[presumptive_history]` table, verbatim (client
     /// confirmation of s.44AD history, never inferred from the books); `None` when absent.
     pub presumptive_history: Option<toml::Table>,
+    /// `[roles].creditor_groups`, when present: the groups a `{ kind = "groups" }` trade-creditor
+    /// source resolves. Bound like the cash and bank groups whenever it is present, as the
+    /// reference binds every configured group.
+    pub creditor_groups: Option<Vec<String>>,
+    /// `[roles].trade_creditors_source`, verbatim. Read only when `creditor_ageing_43bh` runs
+    /// ([`trade_creditors`]); a `legacy_json` source's ledger names are read and bound by
+    /// [`Engagement::bind`] for every test, as the reference's binding does, and the source is
+    /// then replaced by `{ kind = "ledgers", ledgers = [...] }`. `None` when absent.
+    pub trade_creditors_source: Option<toml::Value>,
+    /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table.
+    pub creditor_ageing: CreditorAgeingConfig,
+    /// `statutory_dues_43b`-only: the optional `[statutory_dues]` table's `nature_by_ledger`
+    /// (ledger -> nature, client data) and `salary_expense_ledgers`; both empty when absent, as the
+    /// reference's `statutory_dues_config` defaults them.
+    pub statutory_nature_by_ledger: BTreeMap<String, String>,
+    pub salary_expense_ledgers: Vec<String>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
     /// rest above) is exposed as its own field instead.
     raw_cfg: toml::Table,
+    /// The directory `[snapshot].path` and a legacy trade-creditor source are relative to.
+    base_dir: PathBuf,
+}
+
+/// `[creditor_ageing_43bh]` from the client config, every key optional: the reference's
+/// `creditor_ageing_config` defaults (0, {}, frozenset()) when a key or the whole table is
+/// absent. Values are typed here, at load: `acceptance_lag_days` must be a TOML integer (the
+/// reference's `int()` would also take a numeric string or a boolean), and each classification a
+/// string (the reference refuses anything outside its list only when the test runs, and this port
+/// does the same for a string outside it).
+#[derive(Debug, Clone, Default)]
+pub struct CreditorAgeingConfig {
+    pub acceptance_lag_days: i64,
+    pub supplier_classification: BTreeMap<String, String>,
+    pub mse_interest_ledgers: Vec<String>,
 }
 
 /// `[depreciation]` from the client config: see [`Engagement::depreciation`].
@@ -398,6 +431,38 @@ not YYYY-MM-DD"
                     })
                 })
                 .transpose()?,
+            creditor_groups: match roles.get("creditor_groups") {
+                Some(_) => Some(strings(roles, "creditor_groups")?),
+                None => None,
+            },
+            trade_creditors_source: roles.get("trade_creditors_source").cloned(),
+            creditor_ageing: creditor_ageing_config(cfg.get("creditor_ageing_43bh"))?,
+            statutory_nature_by_ledger: statutory_nature_by_ledger(cfg.get("statutory_dues"))?,
+            salary_expense_ledgers: match cfg
+                .get("statutory_dues")
+                .and_then(toml::Value::as_table)
+                .and_then(|t| t.get("salary_expense_ledgers"))
+            {
+                None => Vec::new(),
+                Some(v) => v
+                    .as_array()
+                    .ok_or_else(|| {
+                        AuditError::Config(
+                            "[statutory_dues].salary_expense_ledgers is not a list".to_string(),
+                        )
+                    })?
+                    .iter()
+                    .map(|x| {
+                        x.as_str().map(str::to_string).ok_or_else(|| {
+                            AuditError::Config(
+                                "[statutory_dues].salary_expense_ledgers holds a non-string"
+                                    .to_string(),
+                            )
+                        })
+                    })
+                    .collect::<Result<_>>()?,
+            },
+            base_dir: base_dir.to_path_buf(),
             raw_cfg: cfg,
         })
     }
@@ -408,6 +473,164 @@ not YYYY-MM-DD"
     /// the reference implementation's `run.load()` calling `bind_config()` once.
     pub fn bind(&self, book: &book::Book) -> Result<(Self, binding::BindingReport)> {
         binding::bind(self, book)
+    }
+}
+
+fn statutory_nature_by_ledger(table: Option<&toml::Value>) -> Result<BTreeMap<String, String>> {
+    let Some(table) = table else {
+        return Ok(BTreeMap::new());
+    };
+    let t = table
+        .as_table()
+        .ok_or_else(|| AuditError::Config("[statutory_dues] is not a table".to_string()))?;
+    let Some(map) = t.get("nature_by_ledger") else {
+        return Ok(BTreeMap::new());
+    };
+    map.as_table()
+        .ok_or_else(|| {
+            AuditError::Config("[statutory_dues].nature_by_ledger is not a table".to_string())
+        })?
+        .iter()
+        .map(|(k, v)| {
+            v.as_str()
+                .map(|s| (k.clone(), s.to_string()))
+                .ok_or_else(|| {
+                    AuditError::Config(format!(
+                        "[statutory_dues].nature_by_ledger.{k} is not a string"
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn creditor_ageing_config(table: Option<&toml::Value>) -> Result<CreditorAgeingConfig> {
+    let Some(table) = table else {
+        return Ok(CreditorAgeingConfig::default());
+    };
+    let bad = |key: &str, what: &str| {
+        AuditError::Config(format!("[creditor_ageing_43bh].{key} is not {what}"))
+    };
+    let t = table
+        .as_table()
+        .ok_or_else(|| AuditError::Config("[creditor_ageing_43bh] is not a table".to_string()))?;
+    let acceptance_lag_days = match t.get("acceptance_lag_days") {
+        None => 0,
+        Some(v) => v
+            .as_integer()
+            .ok_or_else(|| bad("acceptance_lag_days", "an integer"))?,
+    };
+    let supplier_classification = match t.get("supplier_classification") {
+        None => BTreeMap::new(),
+        Some(v) => v
+            .as_table()
+            .ok_or_else(|| bad("supplier_classification", "a table"))?
+            .iter()
+            .map(|(k, v)| {
+                v.as_str()
+                    .map(|s| (k.clone(), s.to_string()))
+                    .ok_or_else(|| bad(&format!("supplier_classification.{k}"), "a string"))
+            })
+            .collect::<Result<_>>()?,
+    };
+    let mse_interest_ledgers = match t.get("mse_interest_ledgers") {
+        None => Vec::new(),
+        Some(v) => v
+            .as_array()
+            .ok_or_else(|| bad("mse_interest_ledgers", "a list"))?
+            .iter()
+            .map(|x| {
+                x.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| bad("mse_interest_ledgers", "a list of names"))
+            })
+            .collect::<Result<_>>()?,
+    };
+    Ok(CreditorAgeingConfig {
+        acceptance_lag_days,
+        supplier_classification,
+        mse_interest_ledgers,
+    })
+}
+
+/// The ledger names a `legacy_json` trade-creditor source reads (`derived.fs.trade_creditors[]
+/// .ledger` in the JSON file it names, relative to `base_dir`), or `None` when the source is not
+/// that kind. The reference's `legacy_trade_creditor_names`.
+pub fn legacy_trade_creditor_names(
+    source: Option<&toml::Value>,
+    base_dir: &Path,
+) -> Result<Option<Vec<String>>> {
+    let Some(src) = source.and_then(toml::Value::as_table) else {
+        return Ok(None);
+    };
+    if src.get("kind").and_then(toml::Value::as_str) != Some("legacy_json") {
+        return Ok(None);
+    }
+    let bad = |what: String| AuditError::Config(format!("legacy trade-creditor source: {what}"));
+    let path = src
+        .get("path")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| bad("no path".to_string()))?;
+    let text = std::fs::read_to_string(base_dir.join(path))
+        .map_err(|e| bad(format!("cannot read {path}: {e}")))?;
+    let data: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| bad(format!("{path}: {e}")))?;
+    data["derived"]["fs"]["trade_creditors"]
+        .as_array()
+        .ok_or_else(|| bad(format!("{path}: no derived.fs.trade_creditors list")))?
+        .iter()
+        .map(|row| {
+            row["ledger"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| bad(format!("{path}: a row has no ledger name")))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+/// The trade creditors `creditor_ageing_43bh` ages: the reference's `trade_creditors`, on a bound
+/// engagement. `groups` resolves `[roles].creditor_groups`; `ledgers` is the list itself (what
+/// binding turns a `legacy_json` source into).
+pub fn trade_creditors(engagement: &Engagement, book: &book::Book) -> Result<BTreeSet<String>> {
+    let src = engagement.trade_creditors_source.as_ref().ok_or_else(|| {
+        AuditError::Config(
+            "client config missing required key 'roles.trade_creditors_source'".to_string(),
+        )
+    })?;
+    let kind = src.get("kind").and_then(toml::Value::as_str).unwrap_or("");
+    match kind {
+        "groups" => {
+            let groups = engagement.creditor_groups.as_ref().ok_or_else(|| {
+                AuditError::Config(
+                    "client config missing required key 'roles.creditor_groups'".to_string(),
+                )
+            })?;
+            Ok(book.ledgers_under_any(groups))
+        }
+        "ledgers" => src
+            .get("ledgers")
+            .and_then(toml::Value::as_array)
+            .ok_or_else(|| {
+                AuditError::Config("roles.trade_creditors_source.ledgers is not a list".to_string())
+            })?
+            .iter()
+            .map(|v| {
+                v.as_str().map(str::to_string).ok_or_else(|| {
+                    AuditError::Config(
+                        "roles.trade_creditors_source.ledgers holds a non-string".to_string(),
+                    )
+                })
+            })
+            .collect(),
+        "legacy_json" => Ok(
+            legacy_trade_creditor_names(Some(src), &engagement.base_dir)?
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        ),
+        other => Err(AuditError::Config(format!(
+            "roles.trade_creditors_source: unknown kind {other:?}"
+        ))),
     }
 }
 
@@ -515,6 +738,47 @@ pub fn depreciation_on(
 /// Read, verify, build the book, run `depreciation` and return its canonical parity dump.
 pub fn depreciation_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     depreciation_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `creditor_ageing_43bh` on a book and return its canonical parity dump, with the module's
+/// own AGE-1 check. Runs as the reference's pack runs it: no next-year payment data.
+pub fn creditor_ageing_43bh_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
+    let creditors = trade_creditors(&engagement, book)?;
+    let cfg = &engagement.creditor_ageing;
+    let params = creditor_ageing_43bh::Params {
+        acceptance_lag_days: cfg.acceptance_lag_days,
+        supplier_classification: cfg.supplier_classification.clone(),
+        post_year_payments: BTreeMap::new(),
+        mse_interest_ledgers: cfg.mse_interest_ledgers.iter().cloned().collect(),
+    };
+    let result = creditor_ageing_43bh::run(book, rules, &engagement.period, &creditors, &params)?;
+    let module_check = creditor_ageing_43bh::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `statutory_dues_43b` on a book and return its canonical parity dump, with the module's
+/// own S43B-1 check.
+pub fn statutory_dues_43b_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
+    let salary: BTreeSet<String> = engagement.salary_expense_ledgers.iter().cloned().collect();
+    let result = statutory_dues_43b::run(
+        book,
+        rules,
+        &engagement.period,
+        &engagement.statutory_nature_by_ledger,
+        &salary,
+    )?;
+    let module_check = statutory_dues_43b::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
 }
 
 /// Run `trial_balance` on a book and return its canonical parity dump, with the module's own

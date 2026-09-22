@@ -2,7 +2,10 @@
 //!
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
 //! `[roles].round_off_ledgers`, `[loans.loan_ledgers]`'s keys, `[depreciation].block_by_ledger`'s
-//! keys, `[depreciation].dep_expense_ledgers` and `[partners.*].interest_ledger` -- every location
+//! keys, `[depreciation].dep_expense_ledgers`, `[partners.*].interest_ledger`,
+//! `[statutory_dues]`'s `salary_expense_ledgers` and `nature_by_ledger` keys,
+//! `[creditor_ageing_43bh]`'s `supplier_classification` keys and `mse_interest_ledgers`, the ledger
+//! names a legacy trade-creditor JSON source lists, and `[roles].creditor_groups` -- every location
 //! this crate's [`Engagement`] reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
 //! a role silently: the figures moved and nothing said why. [`bind`] is the one place a
 //! configured name meets the Book; every one of the locations above is bound once, before any
@@ -24,9 +27,7 @@
 //!   drift can judge.
 //!
 //! **Scope.** This port's registry above is a strict subset of the reference implementation's
-//! (which also binds names inside `tds`, `gst_outward`, `related_parties`, `statutory_dues`, a
-//! legacy trade-creditor JSON source, and more): only the locations `cash_44ab`,
-//! `cash_payments_40a3` and `depreciation` actually read. A real client config's `[ledger_ids]`/
+//! (which also binds names inside `tds`, `gst_outward`, `related_parties`, and more): only the locations the ported tests actually read. A real client config's `[ledger_ids]`/
 //! `[group_ids]` tables are written for the reference implementation's full pack and will
 //! typically carry many labels this port never looks at; [`BIND_ID_UNUSED`] is checked only
 //! against the locations this module reads, so this crate never refuses over a label some other,
@@ -51,6 +52,9 @@ pub const BIND_BOOK_DUPLICATE_ID: &str = "BIND-BOOK-DUPLICATE-ID";
 pub const BIND_ID_MALFORMED: &str = "BIND-ID-MALFORMED";
 pub const BIND_ID_UNUSED: &str = "BIND-ID-UNUSED";
 pub const BIND_COLLISION: &str = "BIND-COLLISION";
+
+/// The location a legacy trade-creditor source's names are reported under, as the reference names it.
+pub const LEGACY_PATH_LABEL: &str = "roles.trade_creditors_source(legacy_json)";
 
 /// A configured identity: a Tally GUID, a MASTERID, or both. Never both absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -550,6 +554,54 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         })
         .collect::<Result<BTreeMap<String, String>>>()?;
 
+    let salary_expense_ledgers = lbinder.bind_list(
+        &engagement.salary_expense_ledgers,
+        "statutory_dues.salary_expense_ledgers",
+    )?;
+    let nature_pairs = lbinder.bind_keys(
+        engagement.statutory_nature_by_ledger.keys().cloned(),
+        "statutory_dues.nature_by_ledger",
+    )?;
+    let by_orig: BTreeMap<String, String> = nature_pairs.into_iter().collect();
+    let statutory_nature_by_ledger: BTreeMap<String, String> = engagement
+        .statutory_nature_by_ledger
+        .iter()
+        .map(|(orig, nature)| (by_orig[orig].clone(), nature.clone()))
+        .collect();
+
+    let mut creditor_ageing = engagement.creditor_ageing.clone();
+    let class_pairs = lbinder.bind_keys(
+        creditor_ageing.supplier_classification.keys().cloned(),
+        "creditor_ageing_43bh.supplier_classification",
+    )?;
+    let by_orig: BTreeMap<String, String> = class_pairs.into_iter().collect();
+    creditor_ageing.supplier_classification = creditor_ageing
+        .supplier_classification
+        .iter()
+        .map(|(orig, cls)| (by_orig[orig].clone(), cls.clone()))
+        .collect();
+    creditor_ageing.mse_interest_ledgers = lbinder.bind_list(
+        &creditor_ageing.mse_interest_ledgers,
+        "creditor_ageing_43bh.mse_interest_ledgers",
+    )?;
+
+    // As the reference does, after every other ledger location: a legacy trade-creditor source's
+    // names are configuration too, read once here and replaced by the bound list.
+    let mut trade_creditors_source = engagement.trade_creditors_source.clone();
+    if let Some(names) = crate::legacy_trade_creditor_names(
+        engagement.trade_creditors_source.as_ref(),
+        &engagement.base_dir,
+    )? {
+        let bound = lbinder.bind_list(&names, LEGACY_PATH_LABEL)?;
+        let mut t = toml::Table::new();
+        t.insert("kind".to_string(), toml::Value::from("ledgers"));
+        t.insert(
+            "ledgers".to_string(),
+            toml::Value::Array(bound.into_iter().map(toml::Value::from).collect()),
+        );
+        trade_creditors_source = Some(toml::Value::Table(t));
+    }
+
     lbinder.check_unused()?;
 
     let group_ids = parse_identity_table(&engagement.raw_cfg, "group_ids")?;
@@ -566,6 +618,11 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
 
     let cash_groups = gbinder.bind_list(&engagement.cash_groups, "roles.cash_groups")?;
     let bank_groups = gbinder.bind_list(&engagement.bank_groups, "roles.bank_groups")?;
+    let creditor_groups = engagement
+        .creditor_groups
+        .as_ref()
+        .map(|g| gbinder.bind_list(g, "roles.creditor_groups"))
+        .transpose()?;
 
     gbinder.check_unused()?;
 
@@ -596,6 +653,11 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         loan_ledgers_configured,
         depreciation,
         partner_interest_ledgers,
+        creditor_groups,
+        trade_creditors_source,
+        creditor_ageing,
+        statutory_nature_by_ledger,
+        salary_expense_ledgers,
         ..engagement.clone()
     };
     Ok((bound, report))

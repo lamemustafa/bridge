@@ -24,7 +24,11 @@ parent or null}), `ledgers` ([{name, chain, guid}]), `tb` ([{ledger, opening, de
 closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, status?, narration?, lines:
 [[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""` to test a voucher with no
 number), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules tables to drop, e.g.
-["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`), `tests`.
+["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`), `creditors` (the
+trade-creditor ledger names `creditor_ageing_43bh` ages), `creditor_ageing` ({acceptance_lag_days?,
+supplier_classification?, mse_interest_ledgers?, post_year_payments?: {ledger: [[ISO date, paise],
+...]}}; each key defaults as the reference's `run()` defaults it), `statutory_dues` ({nature_by_ledger?,
+salary_expense_ledgers?}), `tests`.
 """
 from __future__ import annotations
 
@@ -40,7 +44,8 @@ STATUS = ("regular", "optional", "cancelled", "postdated")
 def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
-    from tae.audit_tests import cash_book_integrity, ledger_scrutiny, stale_balances_41_1, trial_balance
+    from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
+                                 statutory_dues_43b, trial_balance)
     from tae.config import load_rules
     from tae.model import Book, Engagement, Group, Ledger, LedgerLine, Period, TBRow, Voucher, VoucherStatus
     from tae.parity import canonical
@@ -72,14 +77,23 @@ def main() -> int:
         rules.pop(table)
     cash, bank = set(spec.get("cash", [])), set(spec.get("bank", []))
     terms = frozenset(spec.get("own_account_terms", []))
+    ca = spec.get("creditor_ageing", {})
+    sd = spec.get("statutory_dues", {})
+    post_year = {k: [(date.fromisoformat(d), a) for d, a in v] for k, v in ca.get("post_year_payments", {}).items()}
 
     # One runner per test an edge book may name: the module and its result, run as the reference's
     # pack runs it.
     runners = {
         "cash_book_integrity": lambda: (cash_book_integrity,
                                         cash_book_integrity.run(eng, rules, cash, bank, terms)),
+        "creditor_ageing_43bh": lambda: (creditor_ageing_43bh, creditor_ageing_43bh.run(
+            eng, rules, set(spec.get("creditors", [])), acceptance_lag_days=ca.get("acceptance_lag_days", 0),
+            supplier_classification=ca.get("supplier_classification", {}), post_year_payments=post_year,
+            mse_interest_ledgers=frozenset(ca.get("mse_interest_ledgers", [])))),
         "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
+        "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
+            eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
         "trial_balance": lambda: (trial_balance, trial_balance.run(eng, rules)),
     }
     for test in spec["tests"]:

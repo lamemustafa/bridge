@@ -1097,6 +1097,9 @@ mod tests {
             due_date_return_non_audit_firm: String::new(),
             due_dates_status: String::new(),
             ledger_scrutiny_large_entry_paise: None,
+            s43b_h_msme_days: None,
+            s43b: None,
+            s36_1_va_due_day: None,
         }
     }
 

@@ -734,5 +734,461 @@
   "file": "src/text_tables.rs",
   "from": "    (0x0345, 0x0345),",
   "to": "    (0x0346, 0x0346),"
+ },
+ {
+  "id": "A01",
+  "by": "author",
+  "what": "bucket edge 15 moved to 14",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    if age_days <= 15 {",
+  "to": "    if age_days <= 14 {"
+ },
+ {
+  "id": "A02",
+  "by": "author",
+  "what": "bucket edge 45 moved to 46",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    } else if age_days <= 45 {",
+  "to": "    } else if age_days <= 46 {"
+ },
+ {
+  "id": "A03",
+  "by": "author",
+  "what": "bucket edge 90 moved to 89",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    } else if age_days <= 90 {",
+  "to": "    } else if age_days <= 89 {"
+ },
+ {
+  "id": "A04",
+  "by": "author",
+  "what": "same-day payments before bills",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "sorted.sort_by_key(|&(day, amt)| (day, amt > 0));",
+  "to": "sorted.sort_by_key(|&(day, amt)| (day, amt < 0));"
+ },
+ {
+  "id": "A05",
+  "by": "author",
+  "what": "a bill ignores the advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            let used = mag.min(advance);",
+  "to": "            let used = 0;"
+ },
+ {
+  "id": "A06",
+  "by": "author",
+  "what": "an overpayment is dropped, not carried as an advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            advance = advance.checked_add(pay).ok_or_else(overflow)?;",
+  "to": "            advance = advance.checked_add(0).ok_or_else(overflow)?;"
+ },
+ {
+  "id": "A07",
+  "by": "author",
+  "what": "an opening debit is not an advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        advance = opening_paise;",
+  "to": "        advance = 0;"
+ },
+ {
+  "id": "A08",
+  "by": "author",
+  "what": "the opening lot stays tracked after it is paid off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    lots.pop_front();\n                    opening_live = false;",
+  "to": "                    lots.pop_front();"
+ },
+ {
+  "id": "A09",
+  "by": "author",
+  "what": "age measured without the acceptance lag",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            let age = as_of - add(lot.day, lag)?;",
+  "to": "            let age = as_of - lot.day;"
+ },
+ {
+  "id": "A10",
+  "by": "author",
+  "what": "over-45 is at-or-over",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if age > over_45_days {",
+  "to": "            if age >= over_45_days {"
+ },
+ {
+  "id": "A11",
+  "by": "author",
+  "what": "over-15 is at-or-over",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if age > over_15_days {\n                creditor_over_15",
+  "to": "            if age >= over_15_days {\n                creditor_over_15"
+ },
+ {
+  "id": "A12",
+  "by": "author",
+  "what": "opening lot not removed from the clause 22 view",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let creditor_over_45_clause22 = creditor_over_45 - opening_over_45;",
+  "to": "        let creditor_over_45_clause22 = creditor_over_45;"
+ },
+ {
+  "id": "A13",
+  "by": "author",
+  "what": "opening lot age without the lag",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let opening_age = as_of - add(period_start, lag)?;",
+  "to": "        let opening_age = as_of - period_start;"
+ },
+ {
+  "id": "A14",
+  "by": "author",
+  "what": "trader counted as applicable",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    matches!(classification, \"micro\" | \"small\")",
+  "to": "    matches!(classification, \"micro\" | \"small\" | \"trader\")"
+ },
+ {
+  "id": "A15",
+  "by": "author",
+  "what": "unknown total uses the 45-day view",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            unknown_classification_total = add(unknown_classification_total, creditor_over_15)?;",
+  "to": "            unknown_classification_total = add(unknown_classification_total, creditor_over_45)?;"
+ },
+ {
+  "id": "A16",
+  "by": "author",
+  "what": "post-year breach at-or-over",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    if settled_days > over_15_days {",
+  "to": "                    if settled_days >= over_15_days {"
+ },
+ {
+  "id": "A17",
+  "by": "author",
+  "what": "post-year settlement ignores the lag",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    let settled_days = settled_day - add(res.day, lag)?;",
+  "to": "                    let settled_days = settled_day - res.day;"
+ },
+ {
+  "id": "A18",
+  "by": "author",
+  "what": "post-year payments not sorted by date",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    sorted.sort_by_key(|&(day, _)| day);",
+  "to": "    sorted.sort_by_key(|&(_, amt)| amt);"
+ },
+ {
+  "id": "A19",
+  "by": "author",
+  "what": "a partly settled lot's remainder not pending",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    if res.remaining_paise > 0 {",
+  "to": "                    if res.remaining_paise > i64::MAX - 1 {"
+ },
+ {
+  "id": "A20",
+  "by": "author",
+  "what": "MSMED interest counts credit lines too",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if l.amount_paise > 0 && params.mse_interest_ledgers.contains(&l.ledger) {",
+  "to": "            if l.amount_paise != 0 && params.mse_interest_ledgers.contains(&l.ledger) {"
+ },
+ {
+  "id": "A21",
+  "by": "author",
+  "what": "zero-amount lines walked",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if l.amount_paise == 0 {\n                continue;\n            }\n            if let Some(ls)",
+  "to": "            if let Some(ls)"
+ },
+ {
+  "id": "A22",
+  "by": "author",
+  "what": "AGE-1 tie tolerance widened",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    let tol_paise: i128 = 100;",
+  "to": "    let tol_paise: i128 = 1_000;"
+ },
+ {
+  "id": "A23",
+  "by": "author",
+  "what": "AGE-1 ignores the advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let signed_recon = advance - recon;",
+  "to": "        let signed_recon = -recon;"
+ },
+ {
+  "id": "A24",
+  "by": "author",
+  "what": "AGE-1 nil/debit branch off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if recon != 0 {",
+  "to": "            if recon < 0 {"
+ },
+ {
+  "id": "A25",
+  "by": "author",
+  "what": "26(i)(A) evidence not de-duplicated",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if !evidence.contains(&e) {\n                evidence.push(e);\n            }",
+  "to": "            evidence.push(e);"
+ },
+ {
+  "id": "A26",
+  "by": "author",
+  "what": "clause 22(ii) counts unknown creditors",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if applicable(classification) {\n            clause22_ii_total",
+  "to": "        if classification != \"medium\" {\n            clause22_ii_total"
+ },
+ {
+  "id": "A27",
+  "by": "author",
+  "what": "creditor groups not bound",
+  "file": "src/binding.rs",
+  "from": "        .map(|g| gbinder.bind_list(g, \"roles.creditor_groups\"))",
+  "to": "        .map(|g| Ok::<_, AuditError>(g.clone()))"
+ },
+ {
+  "id": "A28",
+  "by": "author",
+  "what": "legacy creditor names not bound",
+  "file": "src/binding.rs",
+  "from": "        let bound = lbinder.bind_list(&names, LEGACY_PATH_LABEL)?;",
+  "to": "        let bound = names.clone();"
+ },
+ {
+  "id": "A29",
+  "by": "author",
+  "what": "supplier classification keys not rebound",
+  "file": "src/binding.rs",
+  "from": "        .map(|(orig, cls)| (by_orig[orig].clone(), cls.clone()))",
+  "to": "        .map(|(orig, cls)| (orig.clone(), cls.clone()))"
+ },
+ {
+  "id": "A30",
+  "by": "author",
+  "what": "a groups source resolves nothing",
+  "file": "src/lib.rs",
+  "from": "            Ok(book.ledgers_under_any(groups))",
+  "to": "            Ok(book.ledgers_under_any(&groups[..0]))"
+ },
+ {
+  "id": "A31",
+  "by": "author",
+  "what": "no-TB-row count off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    if !no_tb_row.is_empty() {",
+  "to": "    if no_tb_row.len() > 1_000 {"
+ },
+ {
+  "id": "A32",
+  "by": "author",
+  "what": "lag note always plural",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if lag == 1 { \"\" } else { \"s\" }",
+  "to": "        \"s\""
+ },
+ {
+  "id": "S01",
+  "by": "author",
+  "what": "on-time is strictly before the due date",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if pdate <= lot.due_day_number {",
+  "to": "            if pdate < lot.due_day_number {"
+ },
+ {
+  "id": "S02",
+  "by": "author",
+  "what": "opening lot due in the period's own first month",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            due_day_number: due_date(month_of(period_start - 1), due_day)?,",
+  "to": "            due_day_number: due_date(month_of(period_start), due_day)?,"
+ },
+ {
+  "id": "S03",
+  "by": "author",
+  "what": "December rolls into month 13",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if m == 12 {\n        (y + 1, 1)",
+  "to": "    if m == 13 {\n        (y + 1, 1)"
+ },
+ {
+  "id": "S04",
+  "by": "author",
+  "what": "payments walked in line order, not date order",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    payments.sort_by_key(|&(d, _)| d);",
+  "to": "    payments.sort_by_key(|&(_, a)| a);"
+ },
+ {
+  "id": "S05",
+  "by": "author",
+  "what": "an unmatched advance is dropped",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            unmatched_advance = unmatched_advance\n                .checked_add(remaining_pay)",
+  "to": "            unmatched_advance = unmatched_advance\n                .checked_add(0)"
+ },
+ {
+  "id": "S06",
+  "by": "author",
+  "what": "the opening lot is not seeded",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if opening_paise > 0 {\n        lots.push(ContributionLot {",
+  "to": "    if opening_paise > i64::MAX - 1 {\n        lots.push(ContributionLot {"
+ },
+ {
+  "id": "S07",
+  "by": "author",
+  "what": "not-visible is at-or-after the period end",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if l.due_day_number > period_end {",
+  "to": "        if l.due_day_number >= period_end {"
+ },
+ {
+  "id": "S08",
+  "by": "author",
+  "what": "26(i)(A) walk: same-day payments before bills",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    sorted.sort_by_key(|&(d, amt)| (d, amt > 0));",
+  "to": "    sorted.sort_by_key(|&(d, amt)| (d, amt < 0));"
+ },
+ {
+  "id": "S09",
+  "by": "author",
+  "what": "26(i)(A) opening remainder left in 26(i)(B)",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    let opening_unpaid_remainder = opening_lot.as_ref().map_or(0, |l| l.remaining_paise);",
+  "to": "    let opening_unpaid_remainder = 0;"
+ },
+ {
+  "id": "S10",
+  "by": "author",
+  "what": "TDS payable treated as a s.43B sum",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if NOT_S43B_NATURES.contains(&nature) {\n            continue;",
+  "to": "        if NOT_S43B_NATURES.contains(&\"none\") {\n            continue;"
+ },
+ {
+  "id": "S11",
+  "by": "author",
+  "what": "RCM note dropped",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if RCM_NATURES.contains(&nature) {",
+  "to": "        if RCM_NATURES.contains(&\"none\") {"
+ },
+ {
+  "id": "S12",
+  "by": "author",
+  "what": "pass-through note dropped",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if PASS_THROUGH_NATURES.contains(&nature) {",
+  "to": "        if PASS_THROUGH_NATURES.contains(&\"none\") {"
+ },
+ {
+  "id": "S13",
+  "by": "author",
+  "what": "coverage: PF employer does not count",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "const PF_NATURES: [&str; 2] = [\"pf_employer\", \"pf_employee\"];",
+  "to": "const PF_NATURES: [&str; 2] = [\"pf_employee\", \"pf_employee\"];"
+ },
+ {
+  "id": "S14",
+  "by": "author",
+  "what": "coverage without salary ledgers",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if salary_expense_ledgers.is_empty() {\n        return;",
+  "to": "    if salary_expense_ledgers.len() > 1_000 {\n        return;"
+ },
+ {
+  "id": "S15",
+  "by": "author",
+  "what": "zero-amount lines counted",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if l.amount_paise == 0 || !ledgers.contains(l.ledger.as_str()) {",
+  "to": "            if !ledgers.contains(l.ledger.as_str()) {"
+ },
+ {
+  "id": "S16",
+  "by": "author",
+  "what": "S43B-1 tie tolerance widened",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    let tol_paise: i128 = 100;",
+  "to": "    let tol_paise: i128 = 1_000;"
+ },
+ {
+  "id": "S17",
+  "by": "author",
+  "what": "S43B-1 ignores payments",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        let derived_closing = opening_r + charged_r - paid_r;",
+  "to": "        let derived_closing = opening_r + charged_r;"
+ },
+ {
+  "id": "S18",
+  "by": "author",
+  "what": "the rules' own s.43B authority ignored",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        Some((a, st)) => (a.as_str(), st.as_str()),",
+  "to": "        Some(_) => (DEFAULT_S43B_AUTHORITY, DEFAULT_S43B_STATUS),"
+ },
+ {
+  "id": "S19",
+  "by": "author",
+  "what": "the rules' own due day ignored",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    let due_day = rules.s36_1_va_due_day.unwrap_or(DEFAULT_S36_1_VA_DUE_DAY);",
+  "to": "    let due_day = DEFAULT_S36_1_VA_DUE_DAY - 1;"
+ },
+ {
+  "id": "S20",
+  "by": "author",
+  "what": "a ledger with no TB row not counted",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            .filter(|n| !book.tb.contains_key(*n))",
+  "to": "            .filter(|n| n.is_empty())"
+ },
+ {
+  "id": "S21",
+  "by": "author",
+  "what": "late payments counted on time",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "                lot.paid_late_paise += take;",
+  "to": "                lot.paid_on_time_paise += take;"
+ },
+ {
+  "id": "S22",
+  "by": "author",
+  "what": "nature keys not rebound",
+  "file": "src/binding.rs",
+  "from": "        .map(|(orig, nature)| (by_orig[orig].clone(), nature.clone()))",
+  "to": "        .map(|(orig, nature)| (orig.clone(), nature.clone()))"
+ },
+ {
+  "id": "S23",
+  "by": "author",
+  "what": "salary ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "    let salary_expense_ledgers = lbinder.bind_list(\n        &engagement.salary_expense_ledgers,\n        \"statutory_dues.salary_expense_ledgers\",\n    )?;",
+  "to": "    let salary_expense_ledgers = engagement.salary_expense_ledgers.clone();"
+ },
+ {
+  "id": "S24",
+  "by": "author",
+  "what": "s36_1_va due day read from the wrong key",
+  "file": "src/rules.rs",
+  "from": "                Some(t) => Some(int_in(t, \"s36_1_va\", \"due_day\")?),",
+  "to": "                Some(t) => Some(int_in(t, \"s36_1_va\", \"due_day\").unwrap_or(16)),"
+ },
+ {
+  "id": "S25",
+  "by": "author",
+  "what": "a nature ledger missing from the TB still sums",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if let Some(t) = book.tb.get(*n) {\n                opening = opening",
+  "to": "            if let Some(t) = book.tb.get(*n).or(book.tb.values().next()) {\n                opening = opening"
  }
 ]

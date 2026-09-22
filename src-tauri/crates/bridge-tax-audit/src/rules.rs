@@ -6,7 +6,8 @@
 //! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
 //! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables, then
 //! `[due_dates]` as three blocks (header, the three dates, `status`), then `[ledger_scrutiny]` in
-//! full --
+//! full, then `[s43b_h]` in full, then `[s43b]` and `[s36_1_va]` as blocks cut clear of their
+//! comments --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -22,7 +23,7 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "4c08f19756da92a32144c21f7e87486e777860919ab04000e36e6287a9d30f51";
+    "21869d9d3ce0f63dcef95c1c271f781f6bd7c4bf54c36364ce365e036f7bf9e3";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -63,6 +64,16 @@ pub struct Rules {
     /// when the rules file has no `[ledger_scrutiny]` table: the reference's `ledger_scrutiny`
     /// then falls back to its own default, and no other test needs the table.
     pub ledger_scrutiny_large_entry_paise: Option<i64>,
+    /// `[s43b_h]`: (`msme_days_with_agreement`, `msme_days_without_agreement`). `None` when the
+    /// rules file has no `[s43b_h]` table; `creditor_ageing_43bh` then refuses, as the
+    /// reference's `rules["s43b_h"]` raises.
+    pub s43b_h_msme_days: Option<(i64, i64)>,
+    /// `[s43b]`: (`authority`, `status`), quoted in `statutory_dues_43b`'s findings. `None` when
+    /// the table is absent; that test then uses the reference's own prototype default text.
+    pub s43b: Option<(String, String)>,
+    /// `[s36_1_va].due_day`. `None` when the table is absent (the reference then defaults to 15);
+    /// a table without the key is refused, as the reference's lookup raises.
+    pub s36_1_va_due_day: Option<i64>,
 }
 
 impl Rules {
@@ -190,6 +201,31 @@ impl Rules {
                 Some(ls) => Some(int_in(ls, "ledger_scrutiny", "large_entry_paise")?),
                 None => None,
             },
+            s43b_h_msme_days: match table.get("s43b_h").and_then(toml::Value::as_table) {
+                Some(t) => Some((
+                    int_in(t, "s43b_h", "msme_days_with_agreement")?,
+                    int_in(t, "s43b_h", "msme_days_without_agreement")?,
+                )),
+                None => None,
+            },
+            s43b: match table.get("s43b").and_then(toml::Value::as_table) {
+                Some(t) => {
+                    let text = |key: &str| {
+                        t.get(key)
+                            .and_then(toml::Value::as_str)
+                            .map(str::to_string)
+                            .ok_or_else(|| {
+                                AuditError::Config(format!("rules: [s43b].{key} is not a string"))
+                            })
+                    };
+                    Some((text("authority")?, text("status")?))
+                }
+                None => None,
+            },
+            s36_1_va_due_day: match table.get("s36_1_va").and_then(toml::Value::as_table) {
+                Some(t) => Some(int_in(t, "s36_1_va", "due_day")?),
+                None => None,
+            },
         })
     }
 
@@ -257,6 +293,21 @@ mod tests {
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>()
         );
+    }
+
+    #[test]
+    fn vendored_rules_carry_the_s43b_h_limits() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(rules.s43b_h_msme_days, Some((45, 15)));
+    }
+
+    #[test]
+    fn vendored_rules_carry_the_statutory_dues_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(rules.s36_1_va_due_day, Some(15));
+        let (authority, status) = rules.s43b.unwrap();
+        assert!(authority.starts_with("s.43B and its proviso"));
+        assert_eq!(status, "confirm");
     }
 
     #[test]
