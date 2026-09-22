@@ -259,10 +259,6 @@ pub(crate) enum AuditPartFailureKind {
 }
 
 impl AuditPartFailureKind {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
-    )]
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::DrainRequired => "audit_part_drain_required",
@@ -286,10 +282,6 @@ impl AuditPartFailureKind {
     /// not: the read must start again from the company list. A pair drift is,
     /// but a caller must cap how often, because a responder whose output is
     /// not deterministic drifts every time.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
-    )]
     pub(crate) const fn retryable(self) -> bool {
         matches!(
             self,
@@ -2877,10 +2869,6 @@ impl TallyRuntime {
     ///   covers the `SVCURRENTCOMPANY` static variable only: TDL embedded in a
     ///   request is not proven unable to change which company Tally reads, so
     ///   requests must come from Bridge's pinned profiles.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
-    )]
     pub(crate) async fn fetch_audit_part(
         &self,
         config: TallyConfig,
