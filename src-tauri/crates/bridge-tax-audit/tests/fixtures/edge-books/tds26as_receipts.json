@@ -1,5 +1,5 @@
 {
- "comment": "twentysixas_receipts: a customer's supply amount compared with the books' billed value through Sales, Debit Note and Credit Note vouchers (a Journal's Sales line is not billing), within Re 1 not a finding; its interest under a lower-case, spaced section ('194 a') compared with income credited on its vouchers, one paisa over Re 1 a finding; another section counted, not compared; a 194-I party with nothing in the books; an alias to a ledger missing from the book (TR-4 on both sides); an unaliased TAN and a Part VI row ignored; a Sales voucher without a number.",
+ "comment": "twentysixas_receipts: a customer's supply amount compared with the books' billed value through Sales, Debit Note and Credit Note vouchers (a Journal's Sales line is not billing), within Re 1 not a finding; its interest under a lower-case, spaced section ('194 a') compared with income credited on its vouchers, one paisa over Re 1 a finding; another section counted, not compared; a 194-I party with nothing in the books; an alias to a ledger missing from the book (TR-4 on both sides); an unaliased TAN and a Part VI row ignored; a Sales voucher without a number. An empty alias is not a party: its row is ignored.",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",
@@ -243,7 +243,8 @@
  "deductor_aliases": {
   "TAN-EDGE-A": "Customer A",
   "TAN-EDGE-B": "Customer B",
-  "TAN-EDGE-G": "Ghost Customer"
+  "TAN-EDGE-G": "Ghost Customer",
+  "TAN-EDGE-E": ""
  },
  "form26as": [
   {
@@ -315,6 +316,16 @@
    "txn_date": "2025-12-31",
    "amount_paise": 900000,
    "tax_paise": 900
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 8,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-E",
+   "section": "194C",
+   "txn_date": "2025-10-15",
+   "amount_paise": 800000,
+   "tax_paise": 8000
   }
  ],
  "ais": [],

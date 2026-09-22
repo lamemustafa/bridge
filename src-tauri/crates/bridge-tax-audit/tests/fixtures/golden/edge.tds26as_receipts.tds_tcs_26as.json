@@ -53,6 +53,20 @@
       ]
     },
     {
+      "id": "tds_tcs_26as.alias_bf337de7",
+      "value": "",
+      "unit": "text",
+      "definition_sha256_16": "1c921d09502de135",
+      "definition_text": "26AS TAN -> books party ledger (client configuration).",
+      "evidence": [
+        {
+          "kind": "config",
+          "id": "TAN-EDGE-E",
+          "label": ""
+        }
+      ]
+    },
+    {
       "id": "tds_tcs_26as.alias_caded89c",
       "value": "Ghost Customer",
       "unit": "text",
@@ -232,7 +246,7 @@
     },
     {
       "id": "tds_tcs_26as.twentysixas_agg_count",
-      "value": 7,
+      "value": 8,
       "unit": "count",
       "definition_sha256_16": "26314900c67d6099",
       "definition_text": "Distinct (TAN, section) rows in Form 26AS Part I/VI.",
@@ -256,7 +270,7 @@
     },
     {
       "id": "tds_tcs_26as.twentysixas_only_reason_not_found_in_books_count",
-      "value": 6,
+      "value": 7,
       "unit": "count",
       "definition_sha256_16": "b60ace8f09edf067",
       "definition_text": "26AS-only rows classified 'not_found_in_books'.",
@@ -323,6 +337,20 @@
           "kind": "document_row",
           "id": "form26as:edge#1",
           "label": "TAN-EDGE-A 194C 2025-05-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_tcs_26as.twentysixas_only_row_4245d4ed",
+      "value": "not_found_in_books",
+      "unit": "text",
+      "definition_sha256_16": "a34e61abccac4ad3",
+      "definition_text": "Unmatched 26AS row (TAN TAN-EDGE-E, section 194C, part I).",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "form26as:edge#8",
+          "label": "TAN-EDGE-E 194C 2025-10-15"
         }
       ]
     },
@@ -394,7 +422,7 @@
     },
     {
       "id": "tds_tcs_26as.twentysixas_total_tds_tax_paise",
-      "value": 209612,
+      "value": 217612,
       "unit": "paise",
       "definition_sha256_16": "dd9476660425aa0b",
       "definition_text": "Sum of Form 26AS Part I tax across every deductor.",

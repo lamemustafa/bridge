@@ -389,3 +389,93 @@ fn edge_runners_agree_across_the_two_sides() {
         );
     }
 }
+
+/// The 26AS module invariants catch what a correct run never produces, so each is driven here with a
+/// tampered result: TR-2 (a supply figure's evidence naming a Part VI row) and TT-4 (a TDS match
+/// pair's evidence naming a Part VI row). The untampered run is clean, the control.
+#[test]
+fn the_26as_invariants_catch_a_row_of_the_wrong_part() {
+    let s = spec("tds26as_receipts");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let docs = traces_documents_from_json(&s).unwrap();
+    let aliases = tds_26as_config(&s).deductor_aliases;
+    let mut r = twentysixas_receipts::run(&book, &rules, &docs.form26as, &aliases).unwrap();
+    let part_vi = docs.form26as.iter().find(|a| a.part == "VI").unwrap();
+    let vi_id = format!("{}#{}", part_vi.doc, part_vi.row);
+    let supply = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id.starts_with("twentysixas_receipts.supply_26as_amount_"))
+        .unwrap();
+    let doc = supply
+        .evidence
+        .iter_mut()
+        .find(|e| e.kind == "document_row")
+        .unwrap();
+    doc.id = vi_id.clone();
+    let v = twentysixas_receipts::check_invariants(&book, &docs.form26as, &r).unwrap();
+    assert!(
+        v.iter()
+            .any(|m| m.starts_with("TR-2:") && m.contains("Part VI row")),
+        "{v:?}"
+    );
+
+    let s = spec("tds26as_matching");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let docs = traces_documents_from_json(&s).unwrap();
+    let cfg = tds_26as_config(&s);
+    let mut r = tds_tcs_26as::run(
+        &book,
+        &rules,
+        &period(&s),
+        &docs.form26as,
+        &docs.ais,
+        &docs.tis,
+        &cfg,
+    )
+    .unwrap();
+    assert!(tds_tcs_26as::check_invariants(&book, &docs.form26as, &r)
+        .unwrap()
+        .is_empty());
+    let part_vi = docs.form26as.iter().find(|a| a.part == "VI").unwrap();
+    let pair = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id.starts_with("tds_tcs_26as.match_pair_tds_"))
+        .unwrap();
+    let doc = pair
+        .evidence
+        .iter_mut()
+        .find(|e| e.kind == "document_row")
+        .unwrap();
+    doc.id = format!("{}#{}", part_vi.doc, part_vi.row);
+    let v = tds_tcs_26as::check_invariants(&book, &docs.form26as, &r).unwrap();
+    assert!(
+        v.iter()
+            .any(|m| m.starts_with("TT-4:") && m.contains("(kind tds) matches a 26AS part-VI row")),
+        "{v:?}"
+    );
+}
+
+/// A TIS category given twice would repeat a figure id: the reference raises, and so does this.
+#[test]
+fn a_repeated_tis_category_is_refused() {
+    let s = spec("tds26as_matching");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let mut docs = traces_documents_from_json(&s).unwrap();
+    let mut again = docs.tis[0].clone();
+    again.row = 99;
+    docs.tis.push(again);
+    let err = tds_tcs_26as::run(
+        &book,
+        &rules,
+        &period(&s),
+        &docs.form26as,
+        &docs.ais,
+        &docs.tis,
+        &tds_26as_config(&s),
+    )
+    .err()
+    .expect("a repeated TIS category is refused");
+    assert!(format!("{err}").contains("would repeat"), "{err}");
+}

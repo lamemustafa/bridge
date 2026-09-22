@@ -1,5 +1,5 @@
 {
- "comment": "tds_tcs_26as matching: one deductor under two sections is compared once against its books claim (folded), matched at exactly Re 1 and amount_differs at one paisa more; every 26AS-only reason (no alias, not found in books, different period, a non-TDS/TCS part) and the books-only reasons (not found in 26AS, different period); a party-less voucher attributed through an alias target and one that is not; a zero role line is no claim; the TCS booking fact on fixed-asset purchases from a matched collector, with and without a TCS line; AIS and TIS figures beside the books.",
+ "comment": "tds_tcs_26as matching: one deductor under two sections is compared once against its books claim (folded), matched at exactly Re 1 and amount_differs at one paisa more; every 26AS-only reason (no alias, not found in books, different period, a non-TDS/TCS part) and the books-only reasons (not found in 26AS, different period); a party-less voucher attributed through an alias target and one that is not; a zero role line is no claim; the TCS booking fact on fixed-asset purchases from a matched collector, with and without a TCS line; AIS and TIS figures beside the books. Also: an empty alias is not a party but is not 'no alias' either (not found in books); a 26AS row dated after the period is a different period; a books-only claim with vouchers both inside and outside the period is not a different period; a Journal on a fixed asset from a TCS collector is not a capitalisation event.",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",
@@ -145,15 +145,31 @@
     "Current Assets"
    ],
    "guid": "edge-tds26as_matching-015"
+  },
+  {
+   "name": "Customer G",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-016"
+  },
+  {
+   "name": "Customer H",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_matching-017"
   }
  ],
  "tb": [
   {
    "ledger": "TDS Receivable",
    "opening": 0,
-   "debit": 1813201,
+   "debit": 1818201,
    "credit": 0,
-   "closing": 1813201
+   "closing": 1818201
   },
   {
    "ledger": "TCS Receivable",
@@ -201,8 +217,8 @@
    "ledger": "Vendor V",
    "opening": 0,
    "debit": 0,
-   "credit": 91060000,
-   "closing": -91060000
+   "credit": 91160000,
+   "closing": -91160000
   },
   {
    "ledger": "Cash Withdrawal TDS",
@@ -235,9 +251,9 @@
   {
    "ledger": "Vehicle",
    "opening": 0,
-   "debit": 90000000,
+   "debit": 90100000,
    "credit": 0,
-   "closing": 90000000
+   "closing": 90100000
   },
   {
    "ledger": "Bank",
@@ -259,6 +275,20 @@
    "debit": 0,
    "credit": 9000,
    "closing": -9000
+  },
+  {
+   "ledger": "Customer G",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000,
+   "closing": -5000
+  },
+  {
+   "ledger": "Customer H",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
   }
  ],
  "vouchers": [
@@ -463,6 +493,54 @@
     ]
    ],
    "party": "Customer A"
+  },
+  {
+   "guid": "t13",
+   "date": "2025-08-20",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Vehicle",
+     100000
+    ],
+    [
+     "Vendor V",
+     -100000
+    ]
+   ],
+   "party": "Vendor V"
+  },
+  {
+   "guid": "t14",
+   "date": "2024-12-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     3000
+    ],
+    [
+     "Customer G",
+     -3000
+    ]
+   ],
+   "party": "Customer G"
+  },
+  {
+   "guid": "t15",
+   "date": "2025-08-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "TDS Receivable",
+     2000
+    ],
+    [
+     "Customer G",
+     -2000
+    ]
+   ],
+   "party": "Customer G"
   }
  ],
  "tests": [
@@ -484,7 +562,9 @@
   "TAN-EDGE-C": "Customer C",
   "TAN-EDGE-F": "Cash Withdrawal TDS",
   "TAN-EDGE-V": "Vendor V",
-  "TAN-EDGE-D": "Customer D"
+  "TAN-EDGE-D": "Customer D",
+  "TAN-EDGE-E": "",
+  "TAN-EDGE-H": "Customer H"
  },
  "form26as": [
   {
@@ -576,6 +656,26 @@
    "txn_date": "2025-05-15",
    "amount_paise": 60000000,
    "tax_paise": 60000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 10,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-E",
+   "section": "194C",
+   "txn_date": "2025-10-15",
+   "amount_paise": 800000,
+   "tax_paise": 8000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 11,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-H",
+   "section": "194C",
+   "txn_date": "2026-05-01",
+   "amount_paise": 900000,
+   "tax_paise": 9000
   }
  ],
  "ais": [
