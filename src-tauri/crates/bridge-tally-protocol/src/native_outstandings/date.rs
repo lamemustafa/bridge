@@ -17,6 +17,12 @@ const MONTH_ABBREVIATIONS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+/// How far before `BooksFrom` a bill's own date may fall (bridge#612), and
+/// how far either side of the as-of date a due date may. Also the longest
+/// book window whose two-digit years resolve unambiguously: every window below
+/// then spans under a hundred years.
+pub const OPENING_BILL_LOOKBACK_YEARS: u32 = 50;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeDisplayDateRole {
     BillDate,
@@ -27,8 +33,22 @@ pub enum NativeDisplayDateRole {
 /// The two-digit year in `raw` may be valid in more than one century, so
 /// resolving against `BooksFrom`'s century alone can silently place an active
 /// bill a century in the past. Exactly one valid calendar date must fall in
-/// the role-appropriate portion of the window; zero or multiple candidates
-/// fail closed.
+/// the role's window; zero or multiple candidates fail closed.
+///
+/// `BooksFrom` is not a lower bound on a bill's dates (bridge#612): an opening
+/// bill keeps its original date, before the books begin (`31-Mar-25` against
+/// `BOOKSFROM` 20250401 on a captured book). The windows are:
+/// - a bill date: after `books_from` less [`OPENING_BILL_LOOKBACK_YEARS`], and
+///   no later than `as_of`, since an as-of Bills report lists only bills dated
+///   on or before it;
+/// - a due date: within [`OPENING_BILL_LOOKBACK_YEARS`] either side of
+///   `as_of`, since a due date can precede the books (an opening bill) or
+///   follow the as-of date (a credit period).
+///
+/// Each window spans less than a hundred years only while the book's own
+/// window (`books_from` to `as_of`) spans less than
+/// [`OPENING_BILL_LOOKBACK_YEARS`]; a longer book refuses as ambiguous rather
+/// than choose a century.
 ///
 /// Fails closed — rather than guessing — when the lexeme does not match the
 /// exact three-part `D[D]-MMM-YY` shape, or when the resolved year/month/day
@@ -83,25 +103,45 @@ pub fn parse_native_display_date(
             "native_date_book_window_invalid",
         ));
     }
-    let books_from_year = parse_year(books_from)?;
-    let as_of_year = parse_year(as_of)?;
-    let first_century = (books_from_year / 100) * 100;
-    let last_century = (as_of_year / 100) * 100;
+    let from = year_month_day(books_from)?;
+    let end = year_month_day(as_of)?;
+    // A book whose own window spans the lookback or more has two-digit years
+    // that more than one century could hold.
+    if end >= (from.0 + OPENING_BILL_LOOKBACK_YEARS, from.1, from.2) {
+        return Err(NativeOutstandingsError::InvalidDate(
+            "native_date_year_ambiguous_book_window",
+        ));
+    }
+    // (exclusive lower, inclusive upper), as (year, month, day).
+    let (after, through) = match role {
+        NativeDisplayDateRole::BillDate => (
+            (
+                from.0.saturating_sub(OPENING_BILL_LOOKBACK_YEARS),
+                from.1,
+                from.2,
+            ),
+            end,
+        ),
+        NativeDisplayDateRole::DueDate => (
+            (
+                end.0.saturating_sub(OPENING_BILL_LOOKBACK_YEARS),
+                end.1,
+                end.2,
+            ),
+            (end.0 + OPENING_BILL_LOOKBACK_YEARS, end.1, end.2),
+        ),
+    };
     let mut candidates = Vec::new();
     let mut has_calendar_candidate = false;
 
-    for century in (first_century..=last_century).step_by(100) {
+    for century in ((after.0 / 100) * 100..=(through.0 / 100) * 100).step_by(100) {
         let year = century + two_digit_year;
         let Ok(candidate) = TallyDate::parse(format!("{year:04}{month:02}{day:02}")) else {
             continue;
         };
         has_calendar_candidate = true;
-        if &candidate >= books_from
-            && match role {
-                NativeDisplayDateRole::BillDate => &candidate <= as_of,
-                NativeDisplayDateRole::DueDate => true,
-            }
-        {
+        let at = (year, month, day);
+        if at > after && at <= through {
             candidates.push(candidate);
         }
     }
@@ -120,10 +160,14 @@ pub fn parse_native_display_date(
     }
 }
 
-fn parse_year(date: &TallyDate) -> Result<u32, NativeOutstandingsError> {
-    date.as_str()[..4]
-        .parse()
-        .map_err(|_| NativeOutstandingsError::InvalidDate("native_date_year_invalid"))
+fn year_month_day(date: &TallyDate) -> Result<(u32, u32, u32), NativeOutstandingsError> {
+    let text = date.as_str();
+    let part = |range: std::ops::Range<usize>| -> Result<u32, NativeOutstandingsError> {
+        text[range]
+            .parse()
+            .map_err(|_| NativeOutstandingsError::InvalidDate("native_date_year_invalid"))
+    };
+    Ok((part(0..4)?, part(4..6)?, part(6..8)?))
 }
 
 #[cfg(test)]
