@@ -1061,6 +1061,7 @@ mod tests {
             status: VoucherStatus::Regular,
             lines: Vec::new(),
             narration: String::new(),
+            ..Default::default()
         };
         assert_eq!(voucher_label(&v), "Payment guid-ééééééa on 2025-06-01");
     }
@@ -1144,6 +1145,7 @@ mod tests {
                     amount_paise: *a,
                 })
                 .collect(),
+            ..Default::default()
         }
     }
 
