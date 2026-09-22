@@ -621,6 +621,100 @@ async fn each_bank_type_posts_the_request_its_intent_recorded() {
     }
 }
 
+fn three_entry_receipt() -> Value {
+    json!({"bridge_txn_id":"receipt-3-466","date":"20260901","voucher_type":"Receipt",
+        "narration":"Synthetic test only","entries":[
+            {"ledger":"Cash","amount":"3.00","side":"Dr"},
+            {"ledger":"Bridge Nested Debtor WR4","amount":"1.00","side":"Cr"},
+            {"ledger":"Café Naïve Traders","amount":"2.00","side":"Cr"}]})
+}
+
+/// The SECOND counterparty of the three-entry Receipt moved under a cash group;
+/// the first counterparty's row is byte-identical.
+fn catalogue_with_second_counterparty_under_cash() -> String {
+    let body = catalogue();
+    let start = body
+        .find("<LEDGER NAME=\"Café Naïve Traders\"")
+        .expect("ledger row");
+    let end = start + body[start..].find("</LEDGER>").expect("row end");
+    let row = &body[start..end];
+    let moved = replaced_once(row, ">Sundry Debtors</PARENT>", ">Cash-in-Hand</PARENT>");
+    format!("{}{}{}", &body[..start], moved, &body[end..])
+}
+
+/// A multi-entry bank voucher (bridge#466, #585) posts like any other: the
+/// preview lists every entry, and the POST is the recorded request.
+#[tokio::test]
+async fn a_three_entry_receipt_posts_the_request_its_intent_recorded() {
+    let mut plans = bank_before_approval(catalogue(), groups());
+    let after = bank_after_approval(catalogue(), groups(), xml(created_one()));
+    let post_at = plans.len() + after.len() - 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_bank_batch(&server, three_entry_receipt());
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    assert_eq!(observed.len(), post_at + 1, "{response}");
+    let intent = dispatch_intent(directory.path());
+    let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
+    assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
+    let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        native_post_request(&line, remote_id)
+            .unwrap()
+            .request_sha256,
+        recorded_sha
+    );
+    let previews = scripted.previews();
+    assert_eq!(previews.len(), 1);
+    for entry in [
+        "Dr 3.00  \"Cash\"",
+        "Cr 1.00  \"Bridge Nested Debtor WR4\"",
+        "Cr 2.00  \"Café Naïve Traders\"",
+    ] {
+        assert!(previews[0].contains(entry), "{entry}: {}", previews[0]);
+    }
+}
+
+/// Every leg is classified again in the queue, not only the first on each
+/// side: the second counterparty turning into money refuses the post.
+#[tokio::test]
+async fn a_second_counterparty_moved_under_cash_after_approval_is_refused() {
+    let mut plans = bank_before_approval(catalogue(), groups());
+    let after = bank_after_approval(
+        catalogue_with_second_counterparty_under_cash(),
+        groups(),
+        xml(created_one()),
+    );
+    let expected = plans.len() + after.len() - 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_bank_batch(&server, three_entry_receipt());
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "import_bank_classification_changed",
+        "{response}"
+    );
+    assert_eq!(observed.len(), expected, "{response}");
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
+}
+
 /// Refused inside the queue, after approval: no intent, and nothing past the
 /// queued reads. The POST's plan and one after it stay in the sequence, so a
 /// post that went ahead would be served and observed here.
