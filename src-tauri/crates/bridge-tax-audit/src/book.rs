@@ -10,9 +10,11 @@
 //! entry with the same name replaces an earlier one; the maps here do the same.
 //!
 //! Foreign-currency amounts are refused, as the reference refuses them (FX-1): the ledgers, trial
-//! balance and voucher parts are each scanned before any amount in them is read. One divergence,
-//! in the refusal's text only: the part is labelled by its id, as every other error here is,
-//! where the reference names its file.
+//! balance and voucher parts are each scanned before any amount in them is read. The refusal's
+//! text differs in one place: the part is labelled by its id, as every other error here is, where
+//! the reference names its file. Which refusal a book gets first can also differ, as it did
+//! before: a duplicate ledger GUID is checked here straight after the ledgers are read, and by the
+//! reference once every part has loaded.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1236,7 +1238,7 @@ mod tests {
 
     #[test]
     fn foreign_amount_matches_what_the_reference_pattern_matches() {
-        let cases: [(&str, bool); 37] = [
+        let cases: [(&str, bool); 43] = [
             (FX_CLOSING, true),
             (FX_LINE, true),
             ("", false),
@@ -1274,6 +1276,12 @@ mod tests {
             ("$ 1,000.50 @ x = I 2", true),
             ("$ 1 x x = I 2", false),
             ("$ 1 @ x x I 2", false),
+            ("a\u{1c}b 1 @ x = I 2", false),
+            ("$\u{1c} 1 @ x = I 2", false),
+            ("a\u{1d}b 1 @ x = I 2", false),
+            ("a\u{1e}b 1 @ x = I 2", false),
+            ("a\u{1f}b 1 @ x = I 2", false),
+            ("$ 1 @ = I 2", false),
         ];
         for (text, want) in cases {
             assert_eq!(is_foreign_amount(text), want, "{text:?}");
@@ -1315,14 +1323,19 @@ mod tests {
         load_vouchers(&xml::parse(text, "probe")?, "probe", &base, None)
     }
 
+    /// A part's rows sit under BODY/DATA/COLLECTION, as a Tally export nests them.
+    fn fx_nested(rows: &str) -> String {
+        format!("<ENVELOPE><BODY><DATA><COLLECTION>{rows}</COLLECTION></DATA></BODY></ENVELOPE>")
+    }
+
     #[test]
     fn ledger_masters_name_every_foreign_ledger() {
-        let text = format!(
-            "<ENVELOPE>{}{}{}</ENVELOPE>",
+        let text = fx_nested(&format!(
+            "{}{}{}",
             fx_ledger("Invented FX Debtor B", FX_OPENING),
             fx_ledger("Invented Rupee Debtor", "-2000.00"),
             fx_ledger("Invented FX Debtor A", FX_OPENING)
-        );
+        ));
         assert_eq!(
             fx_refusal(fx_ledgers(&text)),
             format!("FX-1: probe: foreign-currency amounts on 2 ledger(s) or stock item(s): Invented FX Debtor A, Invented FX Debtor B{FX_TAIL}")
@@ -1339,8 +1352,9 @@ mod tests {
 
     #[test]
     fn the_trial_balance_names_every_foreign_ledger_once() {
-        let text = format!(
-            "<ENVELOPE>{}{}{}</ENVELOPE>",
+        // A row with no name is skipped, as the reference skips it.
+        let text = fx_nested(&format!(
+            "{}{}{}{}",
             fx_tb_row(
                 "Invented FX Debtor A",
                 FX_OPENING,
@@ -1348,9 +1362,10 @@ mod tests {
                 "0.00",
                 "0.00"
             ),
+            fx_tb_row("", FX_OPENING, "0.00", "0.00", "0.00"),
             fx_tb_row("Invented FX Debtor C", "0.00", "0.00", "0.00", FX_LINE),
             fx_tb_row("Invented Rupee Debtor", "0.00", "-2000.00", "0.00", "0.00")
-        );
+        ));
         assert_eq!(
             fx_refusal(fx_tb(&text)),
             format!("FX-1: probe: foreign-currency amounts on 2 ledger(s) or stock item(s): Invented FX Debtor A, Invented FX Debtor C{FX_TAIL}")
@@ -1399,16 +1414,17 @@ mod tests {
     #[test]
     fn every_list_anywhere_in_a_voucher_part_is_scanned() {
         // Each inventory list; an allocation nested in a ledger line; a ledger line outside any
-        // voucher, twice, named once; and a ledger line with no name, named by its empty name.
+        // voucher, twice, named once; names read stripped; and a ledger line with no name, named
+        // by its empty name.
         let stock = format!(
             "<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>All Item</STOCKITEMNAME><AMOUNT>{FX_LINE}</AMOUNT></ALLINVENTORYENTRIES.LIST>\
-             <INVENTORYENTRIESOUT.LIST><STOCKITEMNAME>Out Item</STOCKITEMNAME><AMOUNT>{FX_LINE}</AMOUNT></INVENTORYENTRIESOUT.LIST>\
+             <INVENTORYENTRIESOUT.LIST><STOCKITEMNAME>\tOut Item\n</STOCKITEMNAME><AMOUNT>{FX_LINE}</AMOUNT></INVENTORYENTRIESOUT.LIST>\
              <ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>1.00</AMOUNT>\
              <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>Alloc Item</STOCKITEMNAME><AMOUNT>{FX_LINE}</AMOUNT></INVENTORYALLOCATIONS.LIST>\
              </ALLLEDGERENTRIES.LIST>"
         );
         let stray = format!(
-            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Stray</LEDGERNAME><AMOUNT>{FX_LINE}</AMOUNT></ALLLEDGERENTRIES.LIST>"
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME> Stray </LEDGERNAME><AMOUNT>{FX_LINE}</AMOUNT></ALLLEDGERENTRIES.LIST>"
         );
         let text = format!(
             "<ENVELOPE>{stray}{stray}{}</ENVELOPE>",
@@ -1418,6 +1434,31 @@ mod tests {
             fx_refusal(fx_vouchers(&text)),
             format!("FX-1: probe: foreign-currency amounts on 5 ledger(s) or stock item(s): , All Item, Alloc Item, Out Item, Stray{FX_TAIL}")
         );
+    }
+
+    #[test]
+    fn only_the_first_amount_element_is_read() {
+        // As the reference's `_t` reads it: a foreign amount in a second OPENINGBALANCE or
+        // AMOUNT is neither scanned nor read.
+        let text = format!(
+            "<ENVELOPE><LEDGER NAME='Two'><OPENINGBALANCE>-2000.00</OPENINGBALANCE>\
+             <OPENINGBALANCE>{FX_OPENING}</OPENINGBALANCE></LEDGER></ENVELOPE>"
+        );
+        assert!(fx_ledgers(&text).is_ok_and(|l| l["Two"].master_opening_paise == 200_000));
+        let line = format!(
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>-1.00</AMOUNT>\
+             <AMOUNT>{FX_LINE}</AMOUNT></ALLLEDGERENTRIES.LIST>"
+        );
+        let text = format!("<ENVELOPE>{}</ENVELOPE>", fx_voucher("g", &[], &line));
+        let Ok(part) = fx_vouchers(&text) else {
+            panic!("refused")
+        };
+        let lines: Vec<(&str, i64)> = part.vouchers[0]
+            .lines
+            .iter()
+            .map(|l| (l.ledger.as_str(), l.amount_paise))
+            .collect();
+        assert_eq!(lines, [("Cash", 100)]);
     }
 
     #[test]

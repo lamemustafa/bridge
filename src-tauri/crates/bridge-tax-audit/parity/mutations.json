@@ -3662,5 +3662,61 @@
   "file": "src/book.rs",
   "from": "        root.descendants_named(list)\n            .into_iter()\n            .filter(|e| is_foreign_amount(e.child_text(\"AMOUNT\")))",
   "to": "        root.descendants_named(\"VOUCHER\")\n            .into_iter()\n            .flat_map(move |v| v.children_named(list))\n            .filter(|e| is_foreign_amount(e.child_text(\"AMOUNT\")))"
+ },
+ {
+  "id": "FX1-33",
+  "by": "reviewer",
+  "what": "overlapping separators: `!=` in place of `>`",
+  "file": "src/book.rs",
+  "from": "        && equals > second + 3\n",
+  "to": "        && equals != second + 3\n"
+ },
+ {
+  "id": "FX1-34",
+  "by": "reviewer",
+  "what": "voucher-scan names not stripped",
+  "file": "src/book.rs",
+  "from": ".map(move |e| e.child_text(name))",
+  "to": ".map(move |e| e.child(name).map_or(\"\", |c| c.text.as_str()))"
+ },
+ {
+  "id": "FX1-35",
+  "by": "reviewer",
+  "what": "ledger scan reads only direct children of the root",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(\"LEDGER\")\n            .into_iter()\n            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": "        root.children_named(\"LEDGER\")\n            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))"
+ },
+ {
+  "id": "FX1-36",
+  "by": "reviewer",
+  "what": "TB nameless row named by its empty name",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),",
+  "to": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\")),"
+ },
+ {
+  "id": "FX1-37",
+  "by": "reviewer",
+  "what": "only U+001C added to Rust whitespace, not U+001D..U+001F",
+  "file": "src/book.rs",
+  "from": "(0..s.len()).filter(|&i| xml::is_py_space(s[i]))",
+  "to": "(0..s.len()).filter(|&i| s[i].is_whitespace() || s[i] == '\\u{1c}')"
+ },
+ {
+  "id": "FX1-38",
+  "by": "reviewer",
+  "what": "ledger scan reads any OPENINGBALANCE child, not the first",
+  "file": "src/book.rs",
+  "from": ".filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": ".filter(|l| l.children_named(\"OPENINGBALANCE\").any(|c| is_foreign_amount(&c.text)))"
+ },
+ {
+  "id": "FX1-39",
+  "by": "author",
+  "what": "the trial-balance scan reads only direct children of the root",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(\"LEDGER\")\n            .into_iter()\n            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))",
+  "to": "        root.children_named(\"LEDGER\")\n            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))"
  }
 ]
