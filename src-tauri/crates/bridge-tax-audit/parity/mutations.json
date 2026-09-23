@@ -3262,5 +3262,69 @@
   "file": "src/loans_interest.rs",
   "from": "limit_269_text = rupees(limit_269)",
   "to": "limit_269_text = limit_269"
+ },
+ {
+  "id": "PI-01",
+  "by": "author (Lane B)",
+  "what": "py_int_str: str.isspace() strip instead of int()'s own whitespace",
+  "file": "src/support.rs",
+  "from": "let t = ascii.trim_matches(|c| matches!(c, ' ' | '\\t' | '\\n' | '\\u{b}' | '\\u{c}' | '\\r'));",
+  "to": "let t = ascii.trim_matches(py_isspace);"
+ },
+ {
+  "id": "PI-02",
+  "by": "author (Lane B)",
+  "what": "py_int_str: non-ASCII decimal digits refused",
+  "file": "src/support.rs",
+  "from": "} else if let Some(d) = py_decimal_value(c) {",
+  "to": "} else if let Some(d) = py_decimal_value(c).filter(|_| false) {"
+ },
+ {
+  "id": "PI-03",
+  "by": "author (Lane B)",
+  "what": "py_int_str: digit limit one too high",
+  "file": "src/support.rs",
+  "from": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS + 1 {"
+ },
+ {
+  "id": "PI-04",
+  "by": "author (Lane B)",
+  "what": "py_int_str: digit limit counts underscores",
+  "file": "src/support.rs",
+  "from": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if body.len() > PY_INT_MAX_STR_DIGITS {"
+ },
+ {
+  "id": "PI-05",
+  "by": "author (Lane B)",
+  "what": "py_int_str: i64::MIN refused",
+  "file": "src/support.rs",
+  "from": "0i64.checked_sub_unsigned(magnitude)\n            .ok_or(PyIntError::OutOfRange)",
+  "to": "i64::try_from(magnitude).map(|m| -m).map_err(|_| PyIntError::OutOfRange)"
+ },
+ {
+  "id": "PI-06",
+  "by": "author (Lane B)",
+  "what": "py_int_str: overflow reported as not an int",
+  "file": "src/support.rs",
+  "from": ".ok_or(PyIntError::OutOfRange)?;",
+  "to": ".ok_or(PyIntError::Invalid)?;"
+ },
+ {
+  "id": "PI-07",
+  "by": "author (Lane B)",
+  "what": "py_decimal_value: offset not reduced modulo 10",
+  "file": "src/support.rs",
+  "from": ".and_then(|(lo, _)| u8::try_from((cp - lo) % 10).ok())",
+  "to": ".and_then(|(lo, _)| u8::try_from(cp - lo).ok())"
+ },
+ {
+  "id": "PI-08",
+  "by": "author (Lane B)",
+  "what": "py_int: an out-of-range float reported as not an int",
+  "file": "src/lib.rs",
+  "from": "            } else {\n                Err(PyIntError::OutOfRange)\n            }",
+  "to": "            } else {\n                Err(PyIntError::Invalid)\n            }"
  }
 ]
