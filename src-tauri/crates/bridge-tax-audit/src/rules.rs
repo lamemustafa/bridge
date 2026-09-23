@@ -9,7 +9,9 @@
 //! `[due_dates]` as three blocks (header, the three dates, `status`), then `[ledger_scrutiny]` in
 //! full, then `[s194c]`, `[s194i]` and `[deductor]` in full and `[s194j]` as three blocks
 //! (header, its three value lines, `status`), then `[s43b_h]` in full, then `[s43b]` and
-//! `[s36_1_va]` as blocks cut clear of their comments, then `[s194a]` with `status` cut at its value --
+//! `[s36_1_va]` as blocks cut clear of their comments, then `[s194a]` with `status` cut at its value,
+//! then `[s194t]`, `[s201_1a]`, `[s206c_7]` and `[tds_rates]` as blocks cut clear of their comments
+//! and the four `[entity.<type>]` tables in full --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -25,7 +27,7 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "0374194c02b12834c21fde79d4a3256ada5af2a2c6707f7625906ef47cbeaece";
+    "d56eeaf270501bf0dbb012ea9f26530f259e24840bf5c324cd24c5b8ea0485be";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -97,6 +99,63 @@ pub struct Rules {
     /// `loans_interest`: `[s269ss_269t].reporting_exempt_lender_types`, the narrower Clause 31
     /// reporting exemption. `None` when absent, defaulted by the test as above.
     pub s269ss_269t_reporting_exempt_lender_types: Option<Vec<String>>,
+    /// `partners_40b_194t`: `[s194t]`. `None` without the table; the test then uses its own
+    /// prototype default and says so, as the reference does.
+    pub s194t: Option<S194t>,
+    /// `tds_interest_201`: `[s201_1a]`, `None` without it (the test's own default, flagged).
+    pub s201_1a: Option<S2011a>,
+    /// `tds_interest_201`: `[s206c_7]`, `None` without it (the test's own default, flagged).
+    pub s206c_7: Option<S206c7>,
+    /// `tds_interest_201`'s defaults: `[tds_rates]`. `None` without it; building the defaults
+    /// then refuses, as the reference's `rules["tds_rates"]` raises.
+    pub tds_rates: Option<TdsRates>,
+    /// `[entity.<type>]`, keyed by entity type. `None` when the rules carry no `[entity]` table
+    /// at all: every lookup then refuses, as the reference's `self["entity"]` raises.
+    pub entity: Option<BTreeMap<String, EntityRules>>,
+}
+
+/// `[s194t]`: TDS on payments to partners.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct S194t {
+    pub rate_bp: i64,
+    pub limit_paise: i64,
+}
+
+/// `[s201_1a]`: interest on TDS not deducted, or deducted and not paid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S2011a {
+    pub rate_before_deduction_bp: i64,
+    pub rate_after_deduction_bp: i64,
+    pub authority: String,
+    pub status: String,
+}
+
+/// `[s206c_7]`: interest on TCS not collected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S206c7 {
+    pub rate_bp: i64,
+    pub authority: String,
+    pub status: String,
+}
+
+/// `[tds_rates]`: the lower and higher statutory sub-rate per section, both used where the
+/// payee's own type is not known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TdsRates {
+    pub s194c_individual_huf_bp: i64,
+    pub s194c_other_bp: i64,
+    pub s194i_land_building_bp: i64,
+    pub s194i_plant_machinery_bp: i64,
+    pub s194j_professional_bp: i64,
+    pub s194j_technical_bp: i64,
+}
+
+/// One `[entity.<type>]` table: the keys a ported test reads, each absent when the table omits
+/// it. A value of the wrong type is refused at parse rather than read by truthiness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityRules {
+    pub s40b_interest_rate_bp: Option<i64>,
+    pub s194t: Option<bool>,
 }
 
 /// `[s194a]`: the lender types exempt from s.194A and the threshold for payers other than a bank.
@@ -148,6 +207,14 @@ impl Rules {
             t.get(key).and_then(toml::Value::as_integer).ok_or_else(|| {
                 AuditError::Config(format!("rules: [{table_name}].{key} is not an integer"))
             })
+        };
+        let str_in = |t: &toml::Table, table_name: &str, key: &str| -> Result<String> {
+            t.get(key)
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    AuditError::Config(format!("rules: [{table_name}].{key} is not a string"))
+                })
         };
         let strings_in = |t: &toml::Table, table_name: &str, key: &str| -> Result<Vec<String>> {
             t.get(key)
@@ -299,7 +366,108 @@ impl Rules {
                 .contains_key("reporting_exempt_lender_types")
                 .then(|| strings_in(s269ss_269t, "s269ss_269t", "reporting_exempt_lender_types"))
                 .transpose()?,
+            s194t: optional("s194t")
+                .map(|t| -> Result<S194t> {
+                    Ok(S194t {
+                        rate_bp: int_in(t, "s194t", "rate_bp")?,
+                        limit_paise: int_in(t, "s194t", "limit_paise")?,
+                    })
+                })
+                .transpose()?,
+            s201_1a: optional("s201_1a")
+                .map(|t| -> Result<S2011a> {
+                    Ok(S2011a {
+                        rate_before_deduction_bp: int_in(t, "s201_1a", "rate_before_deduction_bp")?,
+                        rate_after_deduction_bp: int_in(t, "s201_1a", "rate_after_deduction_bp")?,
+                        authority: str_in(t, "s201_1a", "authority")?,
+                        status: str_in(t, "s201_1a", "status")?,
+                    })
+                })
+                .transpose()?,
+            s206c_7: optional("s206c_7")
+                .map(|t| -> Result<S206c7> {
+                    Ok(S206c7 {
+                        rate_bp: int_in(t, "s206c_7", "rate_bp")?,
+                        authority: str_in(t, "s206c_7", "authority")?,
+                        status: str_in(t, "s206c_7", "status")?,
+                    })
+                })
+                .transpose()?,
+            tds_rates: optional("tds_rates")
+                .map(|t| -> Result<TdsRates> {
+                    Ok(TdsRates {
+                        s194c_individual_huf_bp: int_in(t, "tds_rates", "s194c_individual_huf_bp")?,
+                        s194c_other_bp: int_in(t, "tds_rates", "s194c_other_bp")?,
+                        s194i_land_building_bp: int_in(t, "tds_rates", "s194i_land_building_bp")?,
+                        s194i_plant_machinery_bp: int_in(
+                            t,
+                            "tds_rates",
+                            "s194i_plant_machinery_bp",
+                        )?,
+                        s194j_professional_bp: int_in(t, "tds_rates", "s194j_professional_bp")?,
+                        s194j_technical_bp: int_in(t, "tds_rates", "s194j_technical_bp")?,
+                    })
+                })
+                .transpose()?,
+            entity: optional("entity")
+                .map(|t| -> Result<BTreeMap<String, EntityRules>> {
+                    t.iter()
+                        .map(|(key, value)| {
+                            let name = format!("entity.{key}");
+                            let e = value.as_table().ok_or_else(|| {
+                                AuditError::Config(format!("rules: [{name}] is not a table"))
+                            })?;
+                            let s40b = e
+                                .contains_key("s40b_interest_rate_bp")
+                                .then(|| int_in(e, &name, "s40b_interest_rate_bp"))
+                                .transpose()?;
+                            let s194t = e
+                                .get("s194t")
+                                .map(|v| {
+                                    v.as_bool().ok_or_else(|| {
+                                        AuditError::Config(format!(
+                                            "rules: [{name}].s194t is not a boolean"
+                                        ))
+                                    })
+                                })
+                                .transpose()?;
+                            Ok((
+                                key.clone(),
+                                EntityRules {
+                                    s40b_interest_rate_bp: s40b,
+                                    s194t,
+                                },
+                            ))
+                        })
+                        .collect()
+                })
+                .transpose()?,
         })
+    }
+
+    /// The entity type's table, or none when the rules have no table for it. Refuses when the
+    /// rules carry no `[entity]` table at all.
+    fn entity_rules(&self, entity_type: &str) -> Result<Option<&EntityRules>> {
+        self.entity
+            .as_ref()
+            .map(|by_type| by_type.get(entity_type))
+            .ok_or_else(|| AuditError::Config("rules: no [entity] table".to_string()))
+    }
+
+    /// The reference's `rules.entity("s40b_interest_rate_bp", 0) or 0`.
+    pub fn s40b_interest_rate_bp(&self, entity_type: &str) -> Result<i64> {
+        Ok(self
+            .entity_rules(entity_type)?
+            .and_then(|e| e.s40b_interest_rate_bp)
+            .unwrap_or(0))
+    }
+
+    /// The reference's `bool(rules.entity("s194t", False))`.
+    pub fn s194t_applies(&self, entity_type: &str) -> Result<bool> {
+        Ok(self
+            .entity_rules(entity_type)?
+            .and_then(|e| e.s194t)
+            .unwrap_or(false))
     }
 
     /// The vendored AY 2026-27 values.
@@ -452,6 +620,93 @@ mod tests {
                 "statutory_corporation"
             ]
         );
+    }
+
+    /// The engine's own values (`load_rules("2026-27", ...)` at the reference commit).
+    #[test]
+    fn vendored_rules_carry_the_tds_interest_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(
+            rules.s201_1a,
+            Some(S2011a {
+                rate_before_deduction_bp: 100,
+                rate_after_deduction_bp: 150,
+                authority: "s.201(1A)".to_string(),
+                status: "VP".to_string(),
+            })
+        );
+        assert_eq!(
+            rules.s206c_7,
+            Some(S206c7 {
+                rate_bp: 100,
+                authority: "s.206C(7)".to_string(),
+                status: "partial".to_string(),
+            })
+        );
+        assert_eq!(
+            rules.tds_rates,
+            Some(TdsRates {
+                s194c_individual_huf_bp: 100,
+                s194c_other_bp: 200,
+                s194i_land_building_bp: 1000,
+                s194i_plant_machinery_bp: 200,
+                s194j_professional_bp: 1000,
+                s194j_technical_bp: 200,
+            })
+        );
+    }
+
+    /// `rules.entity("s40b_interest_rate_bp", 0) or 0` and `bool(rules.entity("s194t", False))`,
+    /// as the engine gives them for each entity type (huf has no `[entity.huf]` table).
+    #[test]
+    fn vendored_rules_carry_the_partners_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(
+            rules.s194t,
+            Some(S194t {
+                rate_bp: 1000,
+                limit_paise: 2_000_000,
+            })
+        );
+        for (entity_type, s40b, s194t) in [
+            ("firm", 1200, true),
+            ("individual", 0, false),
+            ("company", 0, false),
+            ("llp", 1200, true),
+            ("huf", 0, false),
+        ] {
+            assert_eq!(
+                rules.s40b_interest_rate_bp(entity_type).unwrap(),
+                s40b,
+                "{entity_type}"
+            );
+            assert_eq!(
+                rules.s194t_applies(entity_type).unwrap(),
+                s194t,
+                "{entity_type}"
+            );
+        }
+    }
+
+    /// The engine's `rules.entity(...)` indexes `self["entity"]`, which raises when the rules
+    /// carry no `[entity]` table at all; an entity table's value of the wrong type is refused at
+    /// parse, never read as truthy.
+    #[test]
+    fn entity_rules_fail_closed() {
+        let without: String = VENDORED
+            .split("\n\n")
+            .filter(|block| !block.starts_with("[entity."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let rules = Rules::parse(&without).unwrap();
+        assert!(rules.s40b_interest_rate_bp("firm").is_err());
+        assert!(rules.s194t_applies("firm").is_err());
+        let wrong = VENDORED.replace(
+            "[entity.llp]\nform = \"3CB\"\ns40b_interest_rate_bp = 1200\ns194t = true",
+            "[entity.llp]\ns194t = 1",
+        );
+        assert_ne!(wrong, VENDORED);
+        assert!(Rules::parse(&wrong).is_err());
     }
 
     /// The vendored excerpt is public: the source's own comment beside `return_non_audit_firm`

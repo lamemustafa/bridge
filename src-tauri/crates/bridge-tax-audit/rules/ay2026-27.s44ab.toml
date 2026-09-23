@@ -33,6 +33,22 @@
 #       header's comment lines.
 #   13. [s194a] in full (added for loans_interest), `status` cut at its value, clear of its trailing
 #       comment, which cites private research.
+#   14. [s194t] (added for partners_40b_194t), as two blocks: the header with rate_bp, limit_paise and
+#       authority; and `status` cut at its value, clear of its trailing comment, which cites private
+#       research.
+#   15. [s201_1a] (added for tds_interest_201), as three blocks: the header alone; its three value
+#       lines and authority; and `status` cut at its value, clear of its trailing comment, which cites
+#       private research. Excludes the header's comment lines, which name the reference's own module
+#       history.
+#   16. [s206c_7] (added for tds_interest_201), as three blocks: the header alone; rate_bp; and
+#       authority and status. Excludes the header's comment lines (module history) and
+#       collected_not_paid_rate_bp, which no ported test reads and whose comment cites private
+#       research.
+#   17. [tds_rates] (added for tds_interest_201's defaults), as three blocks: the header alone; its
+#       seven rate lines; and `status`. Excludes the header's comment lines and `authority`, which
+#       name the reference's own modules.
+#   18. [entity.firm], [entity.individual], [entity.company] and [entity.llp] in full (added for
+#       partners_40b_194t, which reads s40b_interest_rate_bp and s194t for the engagement's entity type).
 # The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
 # name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
 # renamed.
@@ -155,3 +171,57 @@ threshold_other_than_securities_paise = 10_000_00  # payers other than bank, co-
 threshold_bank_paise = 50_000_00                    # bank, co-operative bank, post office (₹1,00,000 for senior citizens)
 authority = "s.194A(1), (3)(i), (3)(iii)"
 status = "VP"
+
+[s194t]
+rate_bp = 1000
+limit_paise = 20_000_00                             # salary, remuneration, commission, bonus or interest to a partner
+authority = "s.194T (Finance (No.2) Act 2024), from 1-4-2025; firms incl. LLPs; at credit (incl. to capital) or payment, whichever earlier; share of profit not covered"
+
+status = "VP"
+
+[s201_1a]
+
+rate_before_deduction_bp = 100   # 1% per month or part, deductible date -> deducted date
+rate_after_deduction_bp = 150    # 1.5% per month or part, deducted date -> paid date
+month_conventions = ["calendar_month_or_part", "thirty_day_periods"]  # TRACES reportedly calendar months; ITAT 2019 orders used 30-day periods: compute both
+authority = "s.201(1A)"
+
+status = "VP"
+
+[s206c_7]
+
+rate_bp = 100                    # 1% per month or part where tax was not collected (confirm)
+
+authority = "s.206C(7)"
+status = "partial"
+
+[tds_rates]
+
+s194c_individual_huf_bp = 100
+s194c_other_bp = 200
+s194i_land_building_bp = 1000
+s194i_plant_machinery_bp = 200
+s194j_professional_bp = 1000
+s194j_technical_bp = 200
+s194t_bp = 1000
+
+status = "confirm"
+
+[entity.firm]
+s40b_interest_rate_bp = 1200                       # simple interest cap on partners' capital
+s194t = true                                        # TDS on payments to partners from 1-4-2025
+form = "3CB"                                        # books not otherwise audited under any law
+
+[entity.individual]
+s40b_interest_rate_bp = 0
+s194t = false
+form = "3CB"
+
+[entity.company]
+form = "3CA"                                        # accounts audited under the Companies Act
+s194t = false
+
+[entity.llp]
+form = "3CB"
+s40b_interest_rate_bp = 1200
+s194t = true
