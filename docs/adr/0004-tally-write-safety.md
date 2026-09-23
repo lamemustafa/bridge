@@ -432,17 +432,28 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
    approved GUID cannot be told apart from the one posted into. The per-voucher readback status
    still says what the name comparison found; only the dispatch state carries the doubt.
 
-   The check is recorded beside the batch's proof. Before anything can be sent, Bridge marks it
-   pending, and refuses the post if that mark cannot be written; after the POST, the verdict
-   replaces the mark. A crash before the check finishes, a check that cannot read the catalogue,
-   a cancel during it, or a verdict that cannot be written leaves the mark pending, which every
-   later `verify_import` or reconcile reads as a doubt. The first of those that finds the
-   vouchers finishes the check, against the ledger identities recorded at build (#616), and
-   records its verdict. A recorded doubt is never replaced, since the readback compares by name
-   and cannot clear it: it stays even after a person corrects the voucher in Tally, and a
-   doubted voucher is no baseline for an amendment. Bridge has no way to clear it. Follow-up:
-   an explicit operator acknowledgement through the native approval dialog ("I reviewed this
-   voucher in Tally"), recording who and when; never a clear an agent can call.
+   The check is recorded beside the batch's proof, without a lock. Before anything can be sent,
+   Bridge marks it pending, and refuses the post if that mark cannot be written; after the POST,
+   the verdict replaces the mark. A crash before the check finishes, a check that cannot read the
+   catalogue, a cancel during it, or a verdict that cannot be written leaves the mark pending,
+   which every later `verify_import` or reconcile reads as a doubt. The first of those that finds
+   the vouchers finishes the check, against the ledger identities recorded at build (#616), and
+   records its verdict. An observed doubt is also written to a file of its own that nothing
+   removes or replaces, and readers check it first, so no later verdict, pending mark or race
+   can clear it; the readback compares by name and cannot either. It stays even after a person
+   corrects the voucher in Tally, and while a doubt or a pending check stands, the batch is no
+   baseline for an amendment. Bridge has no way to clear it. Follow-up: an explicit operator
+   acknowledgement through the native approval dialog ("I reviewed this voucher in Tally"),
+   recording who and when; never a clear an agent can call.
+
+   Residuals, stated rather than closed:
+   - a pending check finished by a later readback, perhaps days later, lengthens the window in
+     which a ledger swapped away and back goes unseen;
+   - the records are renamed into place but their directory is not synced, so a power loss can
+     lose a pending mark whose dispatch record survived, and the batch then reads as one
+     dispatched before these records existed;
+   - an observed doubt whose own file cannot be written is kept only by the check record, where
+     a concurrent readback's later verdict can replace it; if neither can be written, it is lost.
 4. **Amendments.** The window between the build and the manual import, and between that import
    and its first verification (follow-up 14). Only amendments posted through Bridge's own queue
    would close the first.

@@ -1069,10 +1069,7 @@ impl Server {
         // write leaves the previous baseline, or none, and an amendment of a
         // voucher it lacks then refuses: the safe direction, so it does not
         // fail this verification.
-        // A proof in doubt about its ledgers (#239) is no baseline.
-        if post::masters_doubt(proof.get("masters_after_post")).is_none() {
-            let _ = record_verified_baseline(&imports, &update.batch_id, proof);
-        }
+        let _ = record_verified_baseline(&imports, &update.batch_id, proof);
         Ok(())
     }
 
@@ -2497,17 +2494,28 @@ fn masters_check_path(imports: &Path, batch_id: &str) -> PathBuf {
     imports.join(format!("{batch_id}.masters_check.json"))
 }
 
-/// The masters check recorded for this batch (#239). Absent only for a batch
-/// dispatched before the record existed. A record that exists but cannot be
-/// opened, read or parsed reads as pending: a doubt, never an admission.
+fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_doubt.json"))
+}
+
+/// The masters check recorded for this batch (#239). An observed doubt is
+/// kept in a file of its own that nothing removes or replaces, and it
+/// overrides the check record. Absent only for a batch dispatched before
+/// these records existed.
 fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
+    read_masters_record(&masters_doubt_path(imports, batch_id))
+        .or_else(|| read_masters_record(&masters_check_path(imports, batch_id)))
+}
+
+/// A record that exists but cannot be opened, read or parsed reads as a
+/// pending check: a doubt, never an admission.
+fn read_masters_record(path: &Path) -> Option<Value> {
     let unreadable = || Some(json!({"state": MASTERS_CHECK_PENDING}));
-    let mut file =
-        match super::local_file::open_local_file(&masters_check_path(imports, batch_id), false) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(_) => return unreadable(),
-        };
+    let mut file = match super::local_file::open_local_file(path, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return unreadable(),
+    };
     let mut bytes = Vec::new();
     if std::io::Read::read_to_end(&mut file, &mut bytes).is_err() {
         return unreadable();
@@ -2515,56 +2523,52 @@ fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
     serde_json::from_slice(&bytes).ok().or_else(unreadable)
 }
 
-fn write_masters_check(imports: &Path, batch_id: &str, check: &Value) -> Result<(), String> {
-    let staged = imports.join(format!("{batch_id}.masters_check.json.next"));
+/// Staged under a name no other writer uses, then renamed into place, so
+/// writers need no lock and never collide.
+fn write_masters_record(path: &Path, record: &Value) -> Result<(), String> {
+    let staged = path.with_extension(format!("{}.next", Uuid::new_v4()));
     let bytes =
-        serde_json::to_vec_pretty(check).map_err(|_| "proof_serialization_failed".to_string())?;
+        serde_json::to_vec_pretty(record).map_err(|_| "proof_serialization_failed".to_string())?;
     write_private(&staged, &bytes)?;
-    fs::rename(&staged, masters_check_path(imports, batch_id))
-        .map_err(|_| "import_file_write_failed".to_string())
+    fs::rename(&staged, path).map_err(|_| {
+        let _ = fs::remove_file(&staged);
+        "import_file_write_failed".to_string()
+    })
 }
 
 impl Server {
     /// Mark this batch's masters check pending before it can be dispatched. A
     /// crash before the check finishes, a concurrent reader, or a failed later
     /// write then reads a doubt, never an absent record; a post whose record
-    /// cannot be written is not sent. A finished verdict, which only a
-    /// dispatched attempt leaves, is never replaced.
+    /// cannot be written is not sent. It never touches an observed doubt.
     pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
         let unavailable = |_| "post_masters_record_unavailable".to_string();
-        let _lock = self.lock_import_admission().map_err(unavailable)?;
         let imports = self.imports_dir().map_err(unavailable)?;
-        match read_masters_check(&imports, batch_id) {
-            Some(recorded) if recorded["state"] != MASTERS_CHECK_PENDING => Ok(()),
-            _ => write_masters_check(&imports, batch_id, &json!({"state": MASTERS_CHECK_PENDING}))
-                .map_err(unavailable),
-        }
+        write_masters_record(
+            &masters_check_path(&imports, batch_id),
+            &json!({"state": MASTERS_CHECK_PENDING}),
+        )
+        .map_err(unavailable)
     }
 
-    /// Record a finished check's verdict and return what the batch's record
-    /// now says. A doubt already recorded is never replaced. A check that
-    /// could not run (`check_unavailable`) is not recorded, so the record
-    /// stays pending and a later readback checks again. If the verdict cannot
-    /// be written, the record stays pending and so does this result.
+    /// Record a finished check's verdict and return what the batch's records
+    /// now say. An observed doubt goes first to its own file, which then
+    /// outranks any later verdict. A check that could not run
+    /// (`check_unavailable`) is not recorded, so a later readback checks
+    /// again; a verdict that cannot be written leaves the check pending.
     pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
         if verdict["state"] == "check_unavailable" {
             return verdict;
         }
         let pending = json!({"state": MASTERS_CHECK_PENDING});
-        let (Ok(_lock), Ok(imports)) = (self.lock_import_admission(), self.imports_dir()) else {
+        let Ok(imports) = self.imports_dir() else {
             return pending;
         };
-        if let Some(recorded) = read_masters_check(&imports, batch_id) {
-            if recorded["state"] != MASTERS_CHECK_PENDING
-                && post::masters_doubt(Some(&recorded)).is_some()
-            {
-                return recorded;
-            }
+        if verdict["state"] == "posted_under_changed_masters" {
+            let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
         }
-        match write_masters_check(&imports, batch_id, &verdict) {
-            Ok(()) => verdict,
-            Err(_) => pending,
-        }
+        let _ = write_masters_record(&masters_check_path(&imports, batch_id), &verdict);
+        read_masters_check(&imports, batch_id).unwrap_or(pending)
     }
 }
 
@@ -2575,6 +2579,11 @@ fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
 /// A build's verified baseline, or `None` when it has none or it cannot be
 /// read. Either way an amendment of that build refuses.
 fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    // A batch in doubt about its ledgers, or whose check is still pending
+    // (#239), is no baseline, whenever its baseline was written.
+    if post::masters_doubt(read_masters_check(imports, batch_id).as_ref()).is_some() {
+        return None;
+    }
     let mut file =
         super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
             .ok()?;
