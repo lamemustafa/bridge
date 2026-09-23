@@ -3294,5 +3294,29 @@
   "file": "tests/edge_books.rs",
   "from": "reference: typed(v, \"reference\", false, \"text\", |r| {\n                    r.as_str().map(str::to_string)\n                })\n                .unwrap_or_default(),",
   "to": "reference: v[\"reference\"].as_str().unwrap_or_default().to_string(),"
+ },
+ {
+  "id": "E2B-05",
+  "by": "reviewer",
+  "what": "the voucher reference read from any descendant, not a direct child",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.descendants_named(\"REFERENCE\").first().map_or(\"\", |r| xml::py_strip(&r.text)).to_string(),"
+ },
+ {
+  "id": "E2B-06",
+  "by": "reviewer",
+  "what": "the voucher reference stripped with Rust's `trim`, not Python's `str.strip()`",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.child(\"REFERENCE\").map_or(String::new(), |r| r.text.trim().to_string()),"
+ },
+ {
+  "id": "E2B-07",
+  "by": "reviewer",
+  "what": "the `&#4;` marker dropped from the voucher reference",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.child_text(\"REFERENCE\").trim_start_matches(\"\\u{fffd}#4;\").to_string(),"
  }
 ]
