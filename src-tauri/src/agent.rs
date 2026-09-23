@@ -8,7 +8,7 @@ use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 
 #[path = "agent_import.rs"]
 mod agent_import;
-pub use crate::tally::approved_import::run_confirmation;
+pub use crate::tally::approved_import::{run_confirmation, run_review_confirmation};
 pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 
 // LAB-ONLY additive surface (audit-sprint 2026-09-14, Phase 3). Compiled only
@@ -906,7 +906,9 @@ impl Server {
         if matches!(name, "build_import_xml" | "parse_bank_statement") {
             self.import_enabled()?;
         }
-        if name == "post_import" && !self.settings.writes_enabled {
+        if matches!(name, "post_import" | "acknowledge_post_review")
+            && !self.settings.writes_enabled
+        {
             return Err("import_posting_disabled".to_string().into());
         }
         #[cfg(feature = "lab-writes")]
@@ -943,6 +945,7 @@ impl Server {
             "voucher_schema" => self.voucher_schema().map_err(Into::into),
             "validate_masters" => self.validate_masters(args).await,
             "post_import" => self.post_import(args).await,
+            "acknowledge_post_review" => self.acknowledge_post_review(args).await,
             "build_import_xml" => {
                 self.import_enabled()?;
                 self.build_import_xml(args).await

@@ -79,11 +79,15 @@ impl LazyTallyMirror {
 pub fn run_journal_confirmation_child_from_args(
     mut args: impl Iterator<Item = String>,
 ) -> Option<i32> {
-    if args.next().as_deref() == Some("--confirm-journal") && args.next().is_none() {
-        Some(if agent::run_confirmation() { 0 } else { 1 })
-    } else {
-        None
+    let confirmed = match args.next().as_deref() {
+        Some("--confirm-journal") => agent::run_confirmation as fn() -> bool,
+        Some("--confirm-review") => agent::run_review_confirmation,
+        _ => return None,
+    };
+    if args.next().is_some() {
+        return None;
     }
+    Some(if confirmed() { 0 } else { 1 })
 }
 
 pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
