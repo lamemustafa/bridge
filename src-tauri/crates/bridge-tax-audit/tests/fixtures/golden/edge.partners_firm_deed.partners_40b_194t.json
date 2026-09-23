@@ -1,0 +1,589 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "partners_40b_194t",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "a0c67c53d6186932",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). A capital-ledger line is excluded from the daily-balance walk, and counted as interest/remuneration credited instead, iff that SAME voucher also carries a line on the partner's own interest or remuneration ledger -- identified from the voucher's other lines, never from a date, number or narration.",
+  "figures": [
+    {
+      "id": "partners_40b_194t.allowable_interest_68d69d29",
+      "value": 195836,
+      "unit": "paise",
+      "definition_sha256_16": "71ba162b346d060d",
+      "definition_text": "s.40(b) allowable interest for partner (tag 68d69d29): simple interest at 1000 bp on the capital balance walked day by day (opening TB balance, then every population voucher line on the capital ledger(s) other than an interest/remuneration credit, changing the balance ON its date), actual days / 365, a debit (negative) capital day contributing zero.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_a83e6c31",
+      "value": 164959,
+      "unit": "paise",
+      "definition_sha256_16": "1f4b5b0795a02a5a",
+      "definition_text": "s.40(b) allowable interest for partner (tag a83e6c31): simple interest at 1000 bp on the capital balance walked day by day (opening TB balance, then every population voucher line on the capital ledger(s) other than an interest/remuneration credit, changing the balance ON its date), actual days / 365, a debit (negative) capital day contributing zero.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "B Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_d0893259",
+      "value": 2929233,
+      "unit": "paise",
+      "definition_sha256_16": "51ee49d5e016f5da",
+      "definition_text": "s.40(b) allowable interest for partner (tag d0893259): simple interest at 1000 bp on the capital balance walked day by day (opening TB balance, then every population voucher line on the capital ledger(s) other than an interest/remuneration credit, changing the balance ON its date), actual days / 365, a debit (negative) capital day contributing zero.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "A Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_360day_68d69d29",
+      "value": 198556,
+      "unit": "paise",
+      "definition_sha256_16": "04c7a826a7df2c87",
+      "definition_text": "Same daily-balance walk for partner (tag 68d69d29), but actual days / 360.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_360day_a83e6c31",
+      "value": 167250,
+      "unit": "paise",
+      "definition_sha256_16": "e9aebafd1faaff47",
+      "definition_text": "Same daily-balance walk for partner (tag a83e6c31), but actual days / 360.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "B Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_360day_d0893259",
+      "value": 2969917,
+      "unit": "paise",
+      "definition_sha256_16": "ad94a4ca9938ce8d",
+      "definition_text": "Same daily-balance walk for partner (tag d0893259), but actual days / 360.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "A Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_no_reduction_68d69d29",
+      "value": 200000,
+      "unit": "paise",
+      "definition_sha256_16": "a92575db8e7694aa",
+      "definition_text": "s.40(b) interest for partner (tag 68d69d29) as if capital were never reduced by a withdrawal or transfer (every debit line on the capital ledger(s) skipped; a credit/increase line, e.g. capital introduced, still applied).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_no_reduction_a83e6c31",
+      "value": 214959,
+      "unit": "paise",
+      "definition_sha256_16": "0c33e8cb28659142",
+      "definition_text": "s.40(b) interest for partner (tag a83e6c31) as if capital were never reduced by a withdrawal or transfer (every debit line on the capital ledger(s) skipped; a credit/increase line, e.g. capital introduced, still applied).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "B Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_no_reduction_d0893259",
+      "value": 6073973,
+      "unit": "paise",
+      "definition_sha256_16": "4f0f03e4e9994f62",
+      "definition_text": "s.40(b) interest for partner (tag d0893259) as if capital were never reduced by a withdrawal or transfer (every debit line on the capital ledger(s) skipped; a credit/increase line, e.g. capital introduced, still applied).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "A Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_opening_only_68d69d29",
+      "value": 200000,
+      "unit": "paise",
+      "definition_sha256_16": "4ceaba288719067c",
+      "definition_text": "s.40(b) interest for partner (tag 68d69d29) as if the capital balance stayed at its opening value for the whole year (no intra-year voucher line applied at all).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_opening_only_a83e6c31",
+      "value": 200000,
+      "unit": "paise",
+      "definition_sha256_16": "5c1923d4c831757f",
+      "definition_text": "s.40(b) interest for partner (tag a83e6c31) as if the capital balance stayed at its opening value for the whole year (no intra-year voucher line applied at all).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "B Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.allowable_interest_sensitivity_opening_only_d0893259",
+      "value": 5000000,
+      "unit": "paise",
+      "definition_sha256_16": "58338b51b4e628b4",
+      "definition_text": "s.40(b) interest for partner (tag d0893259) as if the capital balance stayed at its opening value for the whole year (no intra-year voucher line applied at all).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "A Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.applicable",
+      "value": "yes",
+      "unit": "text",
+      "definition_sha256_16": "2381f51fb2248582",
+      "definition_text": "Whether s.40(b)/s.194T apply to this engagement: read from rules.entity(...).s40b_interest_rate_bp and rules.entity(...).s194t for this engagement's entity_type -- never from the entity_type string itself. 'no' when both are absent/zero/false.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.capital_opening_68d69d29",
+      "value": -2000000,
+      "unit": "paise",
+      "definition_sha256_16": "4ae8d17b322bb56b",
+      "definition_text": "Opening (1-4) balance of partner (tag 68d69d29)'s capital ledger(s), Dr+/Cr-.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "C Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.capital_opening_a83e6c31",
+      "value": -2000000,
+      "unit": "paise",
+      "definition_sha256_16": "9e6e830db804a5e8",
+      "definition_text": "Opening (1-4) balance of partner (tag a83e6c31)'s capital ledger(s), Dr+/Cr-.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "B Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.capital_opening_d0893259",
+      "value": -50000000,
+      "unit": "paise",
+      "definition_sha256_16": "79ae7683c5519492",
+      "definition_text": "Opening (1-4) balance of partner (tag d0893259)'s capital ledger(s), Dr+/Cr-.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "A Capital",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.interest_credited_68d69d29",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "2d011a6275143efd",
+      "definition_text": "Interest actually credited to partner (tag 68d69d29)'s capital ledger(s), in a voucher also carrying a line on their interest_ledger.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.interest_credited_a83e6c31",
+      "value": 100000,
+      "unit": "paise",
+      "definition_sha256_16": "0bac2b0fb06a5ba6",
+      "definition_text": "Interest actually credited to partner (tag a83e6c31)'s capital ledger(s), in a voucher also carrying a line on their interest_ledger.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "pf-10",
+          "label": "Journal pf-10 on 2026-03-31"
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.interest_credited_d0893259",
+      "value": 8150000,
+      "unit": "paise",
+      "definition_sha256_16": "51a789863adcd061",
+      "definition_text": "Interest actually credited to partner (tag d0893259)'s capital ledger(s), in a voucher also carrying a line on their interest_ledger.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "pf-07",
+          "label": "Journal pf-07 on 2026-02-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "pf-08",
+          "label": "Journal pf-08 on 2026-03-31"
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.interest_rate_bp_used",
+      "value": 1000,
+      "unit": "bp",
+      "definition_sha256_16": "8257ebb9358a44dc",
+      "definition_text": "Rate used for s.40(b) allowable interest: min(deed interest_rate_bp 1000, rules s40b_interest_rate_bp 1200).",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.remuneration_credited_68d69d29",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ab4572a7610e0265",
+      "definition_text": "Remuneration credited to partner (tag 68d69d29), in a voucher also carrying a line on their remuneration_ledger. The s.40(b)(v) book-profit limit is NOT computed here.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.remuneration_credited_a83e6c31",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "7458e2cf06f33fba",
+      "definition_text": "Remuneration credited to partner (tag a83e6c31), in a voucher also carrying a line on their remuneration_ledger. The s.40(b)(v) book-profit limit is NOT computed here.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.remuneration_credited_d0893259",
+      "value": 12000000,
+      "unit": "paise",
+      "definition_sha256_16": "2ca8cd05585d2b2f",
+      "definition_text": "Remuneration credited to partner (tag d0893259), in a voucher also carrying a line on their remuneration_ledger. The s.40(b)(v) book-profit limit is NOT computed here.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "pf-09",
+          "label": "Journal pf-09 on 2026-03-31"
+        }
+      ]
+    },
+    {
+      "id": "partners_40b_194t.s194t_amount_credited_68d69d29",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "bed6961819e71e44",
+      "definition_text": "Interest + remuneration credited to partner (tag 68d69d29) in the year -- the s.194T base (salary, remuneration, commission, bonus and interest to a partner).",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_amount_credited_a83e6c31",
+      "value": 100000,
+      "unit": "paise",
+      "definition_sha256_16": "90fde207b3c2eac9",
+      "definition_text": "Interest + remuneration credited to partner (tag a83e6c31) in the year -- the s.194T base (salary, remuneration, commission, bonus and interest to a partner).",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_amount_credited_d0893259",
+      "value": 20150000,
+      "unit": "paise",
+      "definition_sha256_16": "3a5632523f4f84f2",
+      "definition_text": "Interest + remuneration credited to partner (tag d0893259) in the year -- the s.194T base (salary, remuneration, commission, bonus and interest to a partner).",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_interest_credited_total",
+      "value": 8250000,
+      "unit": "paise",
+      "definition_sha256_16": "547cdec5d181e1a4",
+      "definition_text": "Sum of interest_credited_<partner> across all partners -- cross-check this against a shared interest_ledger's own TB movement when every partner uses the same ledger name.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_tds_expected_68d69d29",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "4edf5e54aa2c1f1a",
+      "definition_text": "TDS @ 1000 bp on s194t_amount_credited_68d69d29.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_tds_expected_a83e6c31",
+      "value": 10000,
+      "unit": "paise",
+      "definition_sha256_16": "0d81b54c957031cd",
+      "definition_text": "TDS @ 1000 bp on s194t_amount_credited_a83e6c31.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_tds_expected_d0893259",
+      "value": 2015000,
+      "unit": "paise",
+      "definition_sha256_16": "e8beff0dcf52fb8c",
+      "definition_text": "TDS @ 1000 bp on s194t_amount_credited_d0893259.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_tds_ledger_seen_68d69d29",
+      "value": "no",
+      "unit": "text",
+      "definition_sha256_16": "b9bf84124ebe9a15",
+      "definition_text": "Whether a line under 'Duties & Taxes' with 'tds' in its name appears in the voucher(s) crediting partner (tag 68d69d29)'s interest/remuneration.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_tds_ledger_seen_a83e6c31",
+      "value": "no",
+      "unit": "text",
+      "definition_sha256_16": "e829e35d78b4b360",
+      "definition_text": "Whether a line under 'Duties & Taxes' with 'tds' in its name appears in the voucher(s) crediting partner (tag a83e6c31)'s interest/remuneration.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s194t_tds_ledger_seen_d0893259",
+      "value": "yes",
+      "unit": "text",
+      "definition_sha256_16": "52439c4f1597c90f",
+      "definition_text": "Whether a line under 'Duties & Taxes' with 'tds' in its name appears in the voucher(s) crediting partner (tag d0893259)'s interest/remuneration.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s40b_excess_68d69d29",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "cd313a23eede6372",
+      "definition_text": "interest_credited_68d69d29 minus allowable_interest_68d69d29, floor 0.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s40b_excess_a83e6c31",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "b10cce937b4cc544",
+      "definition_text": "interest_credited_a83e6c31 minus allowable_interest_a83e6c31, floor 0.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s40b_excess_d0893259",
+      "value": 5220767,
+      "unit": "paise",
+      "definition_sha256_16": "83b7cf293884c4b8",
+      "definition_text": "interest_credited_d0893259 minus allowable_interest_d0893259, floor 0.",
+      "evidence": []
+    },
+    {
+      "id": "partners_40b_194t.s40b_excess_total",
+      "value": 5220767,
+      "unit": "paise",
+      "definition_sha256_16": "dd25f8d7cf65d3b9",
+      "definition_text": "Sum of s40b_excess_<partner> across all partners.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "partners_40b_194t/remuneration_book_profit_required",
+      "clauses": [
+        "s.40(b)(v)",
+        "3CD-21(c)"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "partner_a",
+          "figure_id": "partners_40b_194t.remuneration_credited_d0893259"
+        },
+        {
+          "name": "partner_b",
+          "figure_id": "partners_40b_194t.remuneration_credited_a83e6c31"
+        },
+        {
+          "name": "partner_c",
+          "figure_id": "partners_40b_194t.remuneration_credited_68d69d29"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "da183c8c78892b0b",
+      "title_text": "Remuneration to working partners: the s.40(b)(v) limit depends on book profit, not computed here",
+      "limits_sha256_16": "5ccb7d5428506b19",
+      "limits_text": [
+        "The s.40(b)(v) remuneration ceiling is a slab on 'book profit' (s.28-44D profit plus remuneration debited, per Explanation 3), which this test does not compute; whether remuneration is authorised and quantified by the deed, and from what date, is a deed reading, not a books fact."
+      ],
+      "ask_client_sha256_16": "bad8e2b6aaefd75b",
+      "ask_client_text": [
+        "Provide the computation of book profit under s.40(b) Explanation 3, and the deed clause authorising and quantifying remuneration."
+      ]
+    },
+    {
+      "id": "partners_40b_194t/s194t/d0893259",
+      "clauses": [
+        "s.194T",
+        "3CD-34(a)",
+        "3CD-34(c)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "credited",
+          "figure_id": "partners_40b_194t.s194t_amount_credited_d0893259"
+        },
+        {
+          "name": "tds_expected",
+          "figure_id": "partners_40b_194t.s194t_tds_expected_d0893259"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "pf-07",
+          "label": "Journal pf-07 on 2026-02-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "pf-08",
+          "label": "Journal pf-08 on 2026-03-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "pf-09",
+          "label": "Journal pf-09 on 2026-03-31"
+        }
+      ],
+      "title_sha256_16": "d1f70c4ae426e9e2",
+      "title_text": "Payments/credits to a partner over the s.194T threshold with no TDS ledger line seen",
+      "limits_sha256_16": "9abd82c6c6d9e9ad",
+      "limits_text": [
+        "Books only: TAN registration, challans filed and any Form 26A route are not visible from vouchers."
+      ],
+      "ask_client_sha256_16": "6a80444f273c484e",
+      "ask_client_text": [
+        "Confirm the firm's TAN and whether TDS under s.194T was deposited (this is not visible from the books shown here if it went through a ledger not captured in touched_vouchers).",
+        "If not deducted, confirm whether Form 26A relief is available (partner returned the income, tax paid)."
+      ]
+    },
+    {
+      "id": "partners_40b_194t/s40b_excess/d0893259",
+      "clauses": [
+        "s.40(b)",
+        "3CD-21(c)"
+      ],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "allowable",
+          "figure_id": "partners_40b_194t.allowable_interest_d0893259"
+        },
+        {
+          "name": "credited",
+          "figure_id": "partners_40b_194t.interest_credited_d0893259"
+        },
+        {
+          "name": "excess",
+          "figure_id": "partners_40b_194t.s40b_excess_d0893259"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "pf-07",
+          "label": "Journal pf-07 on 2026-02-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "pf-08",
+          "label": "Journal pf-08 on 2026-03-31"
+        }
+      ],
+      "title_sha256_16": "fd7312a75d65b7af",
+      "title_text": "Interest credited to a partner exceeds the s.40(b) allowable amount",
+      "limits_sha256_16": "9179deb381486730",
+      "limits_text": [
+        "Allowable interest here assumes the capital base is exactly the capital ledger(s) supplied and that interest was authorised for the whole year; confirm both against the deed."
+      ],
+      "ask_client_sha256_16": "1595229f4492f1b1",
+      "ask_client_text": [
+        "Confirm the deed's authorised interest rate and the capital base it applies to."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [],
+  "module_invariant_violations": []
+}

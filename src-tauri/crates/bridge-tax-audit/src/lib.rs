@@ -45,6 +45,7 @@ pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
 pub mod loans_interest;
+pub mod partners_40b_194t;
 pub mod read;
 pub mod registry;
 pub mod rules;
@@ -1283,6 +1284,27 @@ pub fn tds_payees_on(
         .as_ref()
         .ok_or_else(|| AuditError::Config("tds_payees needs a [tds] table".to_string()))?;
     let result = tds_payees::run(book, rules, &entity_type, tds)?;
+    canonical::canonical_test_result(book, &result, None)
+}
+
+/// Run `partners_40b_194t` on an already-built book: its canonical parity dump (the reference
+/// module has no module invariants).
+pub fn partners_40b_194t_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("partners_40b_194t needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    let result = partners_40b_194t::run(
+        book,
+        rules,
+        &engagement.period,
+        &entity_type,
+        &bound.partners,
+    )?;
     canonical::canonical_test_result(book, &result, None)
 }
 

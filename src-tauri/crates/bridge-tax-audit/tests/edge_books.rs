@@ -25,9 +25,9 @@ use bridge_tax_audit::documents::traces_documents_from_json;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, loans_interest,
+    cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, loans_interest, partners_40b_194t,
     stale_balances_41_1, statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
-    twentysixas_receipts, Tds26asConfig, TdsConfig,
+    twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -199,6 +199,7 @@ fn rules(s: &Value) -> Rules {
             "s43b" => rules.s43b = None,
             "s36_1_va" => rules.s36_1_va_due_day = None,
             "s194j" => rules.s194j_aggregate_paise = None,
+            "s194t" => rules.s194t = None,
             other => panic!("rules_without {other} is not wired here"),
         }
     }
@@ -276,6 +277,33 @@ fn tds_config(s: &Value) -> TdsConfig {
                     .collect()
             })
             .unwrap_or_default(),
+    }
+}
+
+/// A spec's JSON value as the TOML value a client config would carry (integers, text, booleans,
+/// lists and tables; anything else is refused, so the two sides cannot read different configs).
+fn toml_of(v: &Value) -> toml::Value {
+    match v {
+        Value::String(t) => toml::Value::String(t.clone()),
+        Value::Bool(b) => toml::Value::Boolean(*b),
+        Value::Number(n) => toml::Value::Integer(n.as_i64().expect("an integer")),
+        Value::Array(a) => toml::Value::Array(a.iter().map(toml_of).collect()),
+        Value::Object(m) => {
+            toml::Value::Table(m.iter().map(|(k, x)| (k.clone(), toml_of(x))).collect())
+        }
+        Value::Null => panic!("null is not a TOML value"),
+    }
+}
+
+/// The `partners` and `deed` `parity/edge_golden.py` passes `partners_40b_194t`, as a bound
+/// `[partners]` table.
+fn partners(s: &Value) -> PartnersConfig {
+    PartnersConfig {
+        partners: s["partners"]
+            .as_object()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), toml_of(v))).collect())
+            .unwrap_or_default(),
+        deed: (!s["deed"].is_null()).then(|| toml_of(&s["deed"])),
     }
 }
 
@@ -443,6 +471,18 @@ fn check(name: &str) {
                     }
                 }
             }
+            "partners_40b_194t" => {
+                let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                let r =
+                    partners_40b_194t::run(&book, &rules, &period(&s), entity_type, &partners(&s))
+                        .unwrap();
+                // The reference module has no check_invariants: an empty evaluated list.
+                let rust = canonical_test_result(&book, &r, None).unwrap();
+                let golden = common::golden_named(&format!("edge.{name}.{test}"));
+                let diffs = compare(&golden, &rust, None).unwrap();
+                assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
+                continue;
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -476,11 +516,12 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 10] = [
+const EDGE_TESTS: [&str; 11] = [
     "cash_book_integrity",
     "creditor_ageing_43bh",
     "ledger_scrutiny",
     "loans_interest",
+    "partners_40b_194t",
     "stale_balances_41_1",
     "statutory_dues_43b",
     "tds_payees",

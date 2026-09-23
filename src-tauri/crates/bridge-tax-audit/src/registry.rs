@@ -80,6 +80,12 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::loans_interest_on(e, b, r),
     },
     PortedTest {
+        id: "partners_40b_194t",
+        // `applicable` alone, on any book that is not a firm's or an LLP's.
+        min_figures: 1,
+        run_on: |e, b, r, _| crate::partners_40b_194t_on(e, b, r),
+    },
+    PortedTest {
         id: "stale_balances_41_1",
         min_figures: 1,
         run_on: |e, b, r, _| crate::stale_balances_41_1_on(e, b, r),
