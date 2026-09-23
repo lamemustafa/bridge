@@ -280,20 +280,29 @@ or an owner decision to amend the requirement instead:
     the same window as the catalogue re-read (#239). This refuses every post
     into a book that defines a second currency, even one whose legs are all in the base. When
     #601 can name the base, each leg's own `CURRENCYNAME` is compared with it instead.
-14. **Amendments overwrite a human edit made after the build, #239 (R10). Named, not closed.**
-    An amendment (`amends_batch_id`) is refused unless each voucher it alters is still in the book
-    as a build of that batch wrote it: its date, a bank voucher's effective date, its type, its
-    number, its entries and its narration are compared. That comparison runs when the amendment is
-    built. The import itself is done by hand through Tally's Import menu, and Bridge refuses to
-    post an amendment (`import_post_amendment_requires_file_import`), so nothing can re-check the
-    vouchers just before they are altered. An edit made in Tally between the build and the import
-    is overwritten without warning. A voucher's reference is not compared at all: the verification
-    read does not fetch it, and adding it is a change to a pinned read that needs a live capture
-    first. Whether an import without a reference keeps or clears one a person added in Tally is not
-    measured. The build's own warning says both; the tool description now says the check runs at
-    build, not at import. Closing this needs either Bridge posting amendments through its own
-    queue (where the check could run last before the POST, as the #574 aim check does) or a
-    measured reference in the read.
+14. **Amendments can overwrite work done in Tally, #239. Named, not closed.** An amendment
+    (`amends_batch_id`) is refused unless each voucher it alters is still in the book as a build of
+    that batch wrote it, in these fields only: the date, a bank voucher's effective date when Tally
+    returns one, the voucher type, the voucher number when the batch set one, each entry's ledger,
+    amount and side, and the narration. Two gaps remain, and each needs its own fix:
+    - **Fields not compared.** A voucher's reference, its bill-wise and cost-centre allocations,
+      and which ledger Tally records as its party are not fetched by the verification read, so an
+      edit to any of them, whenever it was made, is not seen. An in-place alteration replaces a
+      voucher's entries rather than merging them (TALLY_PROTOCOL_REFERENCE §9.3, measured over the
+      gateway), and an amendment's entries carry no allocations, so allocations made in Tally,
+      including those Bridge's own build advice asks for after a Payment or Receipt import, are
+      expected to be lost. That loss, and what happens to a reference, are not measured directly.
+      Fetching and comparing those fields, or comparing each voucher's `ALTERID` with the one Bridge
+      last recorded for it, would close this gap.
+    - **The build-to-import window.** The comparison runs when the amendment is built. The import
+      is done by hand through Tally's Import menu, and Bridge refuses to post an amendment
+      (`import_post_amendment_requires_file_import`), so nothing re-checks the vouchers just before
+      they are altered, and an edit made in between is overwritten without warning. Only Bridge
+      posting amendments through its own queue, with the check run last before the POST as the
+      #574 aim check is, would close this gap.
+
+    The build result's warnings and next step, the tool and schema descriptions, and the refusal
+    text state these limits and ask for a prompt import.
 
 ## Amendment — owner decision, 2026-09-22: direct voucher posting
 

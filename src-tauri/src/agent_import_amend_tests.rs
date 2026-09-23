@@ -564,6 +564,24 @@ async fn an_amendment_built_against_an_unchanged_book_reuses_the_original_remote
         .as_str()
         .unwrap()
         .starts_with("This file amends an earlier batch."));
+    // The warning names what is not compared, and the next message says why
+    // the file must be imported by hand, not the generic native-post reason.
+    let warning = result["warnings"][0].as_str().unwrap();
+    for named in [
+        "reference",
+        "bill-wise or cost-centre allocations",
+        "Import promptly",
+    ] {
+        assert!(warning.contains(named), "{named} in {warning}");
+    }
+    assert!(result["warnings"][1]
+        .as_str()
+        .unwrap()
+        .contains("Bridge does not post amendments"));
+    assert!(result["next_step"]
+        .as_str()
+        .unwrap()
+        .starts_with("Import promptly"));
 
     let xml = std::fs::read_to_string(
         directory
