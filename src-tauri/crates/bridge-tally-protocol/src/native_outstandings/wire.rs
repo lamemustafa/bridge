@@ -1165,14 +1165,10 @@ fn read_element_text(
 
 use super::model::{CompanyCurrency, CurrencyMaster};
 
-/// Parses the company currency collection into the company's currency, with
-/// no company `CURRENCYNAME`: a single master is the base, several leave it
-/// unidentified ([`CompanyCurrency::from_masters`]).
+/// Parses the company currency collection into the company's currency
+/// ([`CompanyCurrency::from_masters`]).
 pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutstandingsError> {
-    Ok(CompanyCurrency::from_masters(
-        &parse_currency_masters(xml)?,
-        None,
-    ))
+    Ok(CompanyCurrency::from_masters(&parse_currency_masters(xml)?))
 }
 
 /// Parses the company currency collection into its masters, in read order.
@@ -1181,7 +1177,9 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
 /// request, not one of the flat `Data` reports. Rows are read only from
 /// `<DATA>`, because the same `CMPINFO` counter block that inflates a naive
 /// ledger scan also carries a bare `<CURRENCY>0</CURRENCY>`.
-pub fn parse_currency_masters(xml: &str) -> Result<Vec<CurrencyMaster>, NativeOutstandingsError> {
+pub(crate) fn parse_currency_masters(
+    xml: &str,
+) -> Result<Vec<CurrencyMaster>, NativeOutstandingsError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::native_outstandings::model::identify_base_master;
 use crate::native_outstandings::render_company_currency_request;
 
 const MODERN_LIVE: &[u8] = include_bytes!(concat!(
@@ -292,6 +293,15 @@ fn master(name: &str, original_name: Option<&str>, mailing_name: &str) -> Curren
     }
 }
 
+const ORIGINALNAME_FOREX_LIVE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+));
+const ORIGINALNAME_SHAPE_LIVE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/currency_originalname_shape_live.utf16le.xml"
+));
+
 /// bridge#551: the INR rule is the mailing name alone. `I₹`/`₹`/`INR` and
 /// `Rs.`/`Indian Rupees` are the captured shapes; the rest are constructed.
 /// A rupee symbol, as `NAME` or `ORIGINALNAME`, admits nothing without an
@@ -317,86 +327,85 @@ fn the_inr_rule_admits_only_an_indian_mailing_name() {
 }
 
 /// bridge#551: the base is the only master, or the unique master whose
-/// `ORIGINALNAME` is the company's `CURRENCYNAME`; otherwise none is, and
-/// nothing is INR. Identifying the base never makes it INR.
+/// `ORIGINALNAME` is the company's `CURRENCYNAME`; otherwise none is.
+/// Identifying a base never makes the company's currency INR:
+/// `CompanyCurrency` admits only a single master.
 #[test]
 fn the_base_is_the_only_master_or_the_one_the_company_names() {
     let rupee = "\u{20b9}";
     let inr = master("I\u{20b9}", Some(rupee), "INR");
     let dollar = master("$", Some("$"), "US Dollar");
+    let both = [dollar.clone(), inr.clone()];
 
-    let single = CompanyCurrency::from_masters(&[inr.clone()], None);
-    assert!(single.is_inr, "a lone master is the base");
-    let symbol_only = CompanyCurrency::from_masters(&[master(rupee, Some(rupee), "Rupees")], None);
-    assert!(
-        !symbol_only.is_inr,
-        "a lone base with a rupee symbol but no Indian mailing name"
+    assert_eq!(
+        identify_base_master(std::slice::from_ref(&dollar), None),
+        Some(&dollar)
     );
-    assert_eq!(symbol_only.symbol, rupee);
-
-    let identified = CompanyCurrency::from_masters(&[dollar.clone(), inr.clone()], Some(rupee));
-    assert!(identified.is_inr);
-    assert_eq!(identified.symbol, "I\u{20b9}");
-    assert_eq!(identified.mailing_name, "INR");
-    assert_eq!(identified.currency_count, 2);
-    assert_eq!(identified.names, ["$", "I\u{20b9}"]);
-
-    let usd_base = CompanyCurrency::from_masters(&[dollar.clone(), inr.clone()], Some("$"));
-    assert!(!usd_base.is_inr, "an identified base that is not INR");
-    assert_eq!(usd_base.symbol, "$");
-
-    for name in [None, Some(""), Some("I\u{20b9}"), Some("€")] {
-        let unidentified = CompanyCurrency::from_masters(&[dollar.clone(), inr.clone()], name);
-        assert!(!unidentified.is_inr, "{name:?}");
-        assert_eq!(
-            unidentified.symbol, "$",
-            "{name:?}: the first master read, as before"
-        );
+    assert_eq!(identify_base_master(&both, Some(rupee)), Some(&inr));
+    assert_eq!(identify_base_master(&both, Some("$")), Some(&dollar));
+    for name in [None, Some(""), Some(" "), Some("I\u{20b9}"), Some("€")] {
+        assert_eq!(identify_base_master(&both, name), None, "{name:?}");
     }
-    let twice = CompanyCurrency::from_masters(&[inr.clone(), inr.clone()], Some(rupee));
-    assert!(
-        !twice.is_inr,
+    assert_eq!(
+        identify_base_master(&[inr.clone(), inr.clone()], Some(rupee)),
+        None,
         "two masters answering the name identify neither"
     );
-    // An empty company value names nothing, even a master whose
-    // ORIGINALNAME is present but empty.
-    let blank = master(rupee, Some(""), "INR");
-    let empty = CompanyCurrency::from_masters(&[dollar.clone(), blank], Some(""));
-    assert!(!empty.is_inr);
-    assert_eq!(empty.symbol, "$");
+    // A blank company value names nothing, even a master whose ORIGINALNAME
+    // is present and equally blank.
+    for blank in ["", " "] {
+        let unnamed = master(rupee, Some(blank), "INR");
+        assert_eq!(
+            identify_base_master(&[dollar.clone(), unnamed], Some(blank)),
+            None,
+            "{blank:?}"
+        );
+    }
+
+    let single = CompanyCurrency::from_masters(std::slice::from_ref(&inr));
+    assert!(single.is_inr);
+    let symbol_only = CompanyCurrency::from_masters(&[master(rupee, Some(rupee), "Rupees")]);
+    assert!(
+        !symbol_only.is_inr,
+        "a rupee symbol without an Indian mailing name"
+    );
+    let several = CompanyCurrency::from_masters(&[inr.clone(), dollar.clone()]);
+    assert!(!several.is_inr, "an INR first master among several");
+    assert_eq!(several.symbol, "I\u{20b9}");
+    assert_eq!(several.currency_count, 2);
 }
 
 /// bridge#551: the captured two-master books, read with `ORIGINALNAME`
-/// (TALLY_PROTOCOL_REFERENCE §9.10a.2). Without the company's
-/// `CURRENCYNAME` neither names its base, as before; with the `₹` both books
-/// reported, the rupee master is the base, and it is INR by its mailing name.
-/// `ORIGINALNAME` is read untrimmed: a padded `₹`, injected into the capture,
-/// identifies nothing.
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2).
+/// - Through the production parser, each is still a book with two masters and
+///   no INR base, as before: `parse_company_currency` takes no company name.
+/// - Given the `₹` both books' company `CURRENCYNAME` carried, the rupee master
+///   is identified as the base, and it is INR by its mailing name.
+/// - `ORIGINALNAME` is read untrimmed: a padded `₹`, injected into the capture,
+///   identifies nothing.
 #[test]
 fn captured_masters_carry_originalname_and_the_company_name_picks_the_base() {
     let rupee = "\u{20b9}";
     for (bytes, sha256, expected) in [
         (
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
-            ))
-            .as_slice(),
+            ORIGINALNAME_FOREX_LIVE,
             "07bd90682e88b1c5155afe7a1b0b5c541c89c8f660aa546a0014f6311261ebc3",
             [("$", "$", "USD"), ("I\u{20b9}", rupee, "INR")],
         ),
         (
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/currency_originalname_shape_live.utf16le.xml"
-            ))
-            .as_slice(),
+            ORIGINALNAME_SHAPE_LIVE,
             "0c3ac1f8bfcc372a8e2213c31980b149faeadc566cf69502f3e1dd61750a241d",
             [("I\u{20b9}", rupee, "INR"), ("UUSD", "USD", "US Dollar")],
         ),
     ] {
         assert_eq!(sha256_hex(bytes), sha256, "captured wire bytes changed");
         let xml = decode_utf16le(bytes);
+
+        let currency = parse_company_currency(&xml).unwrap();
+        assert_eq!(currency.currency_count, 2);
+        assert!(!currency.is_inr, "several masters stay undetermined");
+        assert_eq!(currency.symbol, expected[0].0, "the first master read");
+
         let masters = parse_currency_masters(&xml).unwrap();
         let read = masters
             .iter()
@@ -409,14 +418,10 @@ fn captured_masters_carry_originalname_and_the_company_name_picks_the_base() {
             })
             .collect::<Vec<_>>();
         assert_eq!(read, expected);
-
-        let unnamed = CompanyCurrency::from_masters(&masters, None);
-        assert_eq!(unnamed.currency_count, 2);
-        assert!(!unnamed.is_inr);
-
-        let named = CompanyCurrency::from_masters(&masters, Some(rupee));
-        assert!(named.is_inr);
-        assert_eq!(named.symbol, "I\u{20b9}");
+        assert_eq!(identify_base_master(&masters, None), None);
+        let base = identify_base_master(&masters, Some(rupee)).unwrap();
+        assert_eq!(base.name, "I\u{20b9}");
+        assert!(base.is_inr());
 
         let original = format!(">{rupee}</ORIGINALNAME>");
         assert_eq!(xml.matches(&original).count(), 1);
@@ -426,19 +431,18 @@ fn captured_masters_carry_originalname_and_the_company_name_picks_the_base() {
         assert!(padded
             .iter()
             .any(|master| master.original_name.as_deref() == Some(&format!(" {rupee}"))));
-        assert!(!CompanyCurrency::from_masters(&padded, Some(rupee)).is_inr);
+        assert_eq!(identify_base_master(&padded, Some(rupee)), None);
     }
 }
 
-/// bridge#551: a second `ORIGINALNAME` on one master, as text or as an empty
-/// element, is refused rather than letting either value pick the base.
-/// Injected into the captured FOREX read.
+/// bridge#551: `ORIGINALNAME` fails closed at the wire, injected into the
+/// captured FOREX read. A second one on the same master, as text or as an
+/// empty element, is refused rather than letting either pick the base; a text
+/// that does not unescape is refused; a lone empty element reads as present
+/// and empty, not absent.
 #[test]
-fn a_duplicated_originalname_is_refused() {
-    let xml = decode_utf16le(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
-    )));
+fn originalname_is_refused_when_duplicated_or_malformed_and_kept_when_empty() {
+    let xml = decode_utf16le(ORIGINALNAME_FOREX_LIVE);
     let original = "<ORIGINALNAME TYPE=\"String\">\u{20b9}</ORIGINALNAME>";
     assert_eq!(xml.matches(original).count(), 1);
     for second in [original, "<ORIGINALNAME/>"] {
@@ -450,10 +454,25 @@ fn a_duplicated_originalname_is_refused() {
             "{second}"
         );
     }
+    assert_eq!(
+        parse_currency_masters(&xml.replace(
+            original,
+            "<ORIGINALNAME TYPE=\"String\">&bogus;</ORIGINALNAME>"
+        )),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "native_xml_invalid_escape"
+        ))
+    );
+    let empty = parse_currency_masters(&xml.replace(original, "<ORIGINALNAME/>")).unwrap();
+    assert_eq!(empty[1].name, "I\u{20b9}");
+    assert_eq!(empty[1].original_name.as_deref(), Some(""));
 }
 
+/// bridge#551: the production request does not fetch `ORIGINALNAME` until its
+/// first consumer does (TALLY_PROTOCOL_REFERENCE §9.10a.2).
 #[test]
-fn the_currency_request_fetches_originalname() {
-    assert!(render_company_currency_request("Synthetic Company")
-        .contains("<FETCH>NAME, MAILINGNAME, DECIMALPLACES, ORIGINALNAME</FETCH>"));
+fn the_currency_request_does_not_fetch_originalname_yet() {
+    let request = render_company_currency_request("Synthetic Company");
+    assert!(request.contains("<FETCH>NAME, MAILINGNAME, DECIMALPLACES</FETCH>"));
+    assert!(!request.contains("ORIGINALNAME"));
 }

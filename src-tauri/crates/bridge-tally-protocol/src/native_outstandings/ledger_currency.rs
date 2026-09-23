@@ -13,8 +13,9 @@ use super::model::CompanyCurrency;
 /// The NAME of a book's base Currency master, held only where the base is
 /// known. With several masters, `CompanyCurrency::symbol` is merely the first
 /// master read (on the captured FOREX book, `$`), so this type is built only
-/// from a book with exactly one master. Identifying the base among several
-/// masters is bridge#601's, which adds that constructor: the company's own
+/// from a book with exactly one master. A constructor for the base among
+/// several masters comes with the read that identifies it
+/// (`model::identify_base_master`, bridge#551): the company's own
 /// `CURRENCYNAME` is the base master's ORIGINALNAME (`₹` on the captured FOREX
 /// book), not the NAME its ledgers carry (`I₹`), so the base NAME is found
 /// through that master and never taken from the company field directly.
