@@ -154,6 +154,7 @@ class KillerFile(unittest.TestCase):
                 "tests/renamed.rs::every_edge_book_matches_the_reference": None,
                 "tests/registry.rs::gone": None,
                 "tests/renamed.rs::<crashed>": None,
+                "doc::src/renamed.rs - x (line 1)": None,
                 # cargo prints a doc test's path relative to the workspace
                 f"doc::{crate.relative_to(crate.parent.parent).as_posix()}/src/book.rs - book::V (line 3)": "src/book.rs",
             }
@@ -494,6 +495,11 @@ class GitRepo(unittest.TestCase):
         sh(self.repo, "checkout", "-q", "-b", "pr")
         self.write("src/book.rs", "// book, edited\n")
         self.commit("pr edit")
+        sh(self.repo, "checkout", "-q", "-b", "fixture-only")
+        self.write("tests/fixtures/श्री ₹.json", "{}\n")  # git quotes such a path unless -z
+        self.commit("a non-ASCII fixture")
+        self.assertIn("tests/fixtures/श्री ₹.json", mu.changed_since("pr", self.repo, self.CRATE))
+        sh(self.repo, "checkout", "-q", "pr")
         sh(self.repo, "checkout", "-q", "master")
         self.write("src/read.rs", "#[cfg(test)]\nmod tests; // master moved\n")
         self.commit("master edit")
@@ -510,7 +516,8 @@ class GitRepo(unittest.TestCase):
         text, failed = mu.report(self.muts, {"B1": record(self.muts[0], [], verdict=mu.SURVIVED),
                                              "R1": mu.load_results(mu.RESULTS)["R1"]}, mu.load_results(mu.RESULTS))
         self.assertTrue(failed)
-        issue.write_text(f"#7\n{text}\nRun: https://example.invalid/run\n")
+        issue.write_text(f"#7\n{text}\nRun: https://example.invalid/run\n"
+                         f"#8\n<!-- {mu.FAILING_MARK} R1 -->\n")  # a second open issue
         sh(self.repo, "branch", "base")
         # A crate change that selects nothing by itself ...
         self.write("src/support.rs", "// unrelated\n")
@@ -520,14 +527,18 @@ class GitRepo(unittest.TestCase):
         rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
         self.assertEqual(rc, 1, out)
         self.assertIn("B1: failing on the nightly run  [NOT PROVEN ON THIS TREE]", out)
-        self.assertNotIn("R1:", out)
+        self.assertIn("R1: failing on the nightly run  [NOT PROVEN ON THIS TREE]", out)
         # ... while a change outside the crate is not held by it, B1 still unproven ...
         (self.repo / "README.md").write_text("outside the crate\n")
         self.commit("outside the crate")
         rc, out = self.main("--verify", "--changed-since", "HEAD~1", "--nightly-issues", str(issue))
         self.assertEqual((rc, "B1:" in out), (0, False), out)
-        # ... and the fix that re-proves it on its own tree passes; an issue without the line refuses.
+        # ... re-proving only one of the failing ids is not enough ...
         self.prove("B1")
+        rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
+        self.assertEqual(rc, 1, out)
+        # ... and the fix that re-proves them all on its own tree passes; an issue without the line refuses.
+        self.prove("R1")
         rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
         self.assertEqual(rc, 0, out)
         issue.write_text("#7\nsomeone rewrote the body\n")
@@ -594,6 +605,11 @@ class GitRepo(unittest.TestCase):
         self.assertEqual((w.dir / self.CRATE / "src/book.rs").read_bytes(), b"// book\r\n")
         self.assertFalse((w.tree / "stale.rs").exists())
         self.assertEqual(kept.stat().st_mtime, 1, "an unchanged file is not re-written")
+        (self.root / "src/book.rs").write_bytes(b"// book, weakened\n")
+        self.commit("a changed file")
+        w.sync(mu.committed_files("HEAD", self.repo))
+        self.assertEqual((w.dir / self.CRATE / "src/book.rs").read_bytes(), b"// book, weakened\n",
+                         "a copy file whose bytes differ from HEAD is re-written")
         (self.root / "src/link.rs").symlink_to("book.rs")
         self.commit("a tracked symlink")
         with self.assertRaises(SystemExit):
@@ -604,8 +620,17 @@ class GitRepo(unittest.TestCase):
         work, results = outside / "mutants", outside / "r.json"
         head = sh(self.repo, "rev-parse", "HEAD").strip()
         tree = mu.crate_tree("HEAD", self.repo, self.CRATE)
+        refs = []
+        saved = mu.crate_tree, mu.committed_files
+        mu.crate_tree = lambda ref, *a: refs.append(("tree", ref)) or saved[0](ref, *a)
+        mu.committed_files = lambda ref, *a: refs.append(("files", ref)) or saved[1](ref, *a)
+        try:
+            with fake_cargo(outside, FAKE_CARGO):
+                rc, out = self.main("B1", "R1", "--workdir", str(work), "--results", str(results))
+        finally:
+            mu.crate_tree, mu.committed_files = saved
+        self.assertEqual(refs, [("tree", head), ("files", head)], "HEAD is read once and both use that commit")
         with fake_cargo(outside, FAKE_CARGO):
-            rc, out = self.main("B1", "R1", "--workdir", str(work), "--results", str(results))
             self.assertEqual(rc, 1, out)  # R1 survives: the fake suite ignores it
             recs = json.loads(results.read_text())
             self.assertEqual({k: (v["verdict"], v["killers"], v["mode"], v["crate_tree"], v["commit"])
@@ -742,21 +767,41 @@ class StopPath(unittest.TestCase):
                         w.run([], 5)
                     self.assertFalse(pidfile.exists(), "a stopped run starts nothing")
                     mu._STOP.clear()
-                    stopper = threading.Timer(1.0, lambda: (mu._STOP.set(), mu._kill_active()))
+                    def stop_once_started():  # a loaded machine can start the fake cargo late
+                        for _ in range(200):
+                            if pidfile.exists() and pidfile.read_text().strip():
+                                break
+                            time.sleep(0.05)
+                        mu._STOP.set()
+                        mu._kill_active()
+                    stopper = threading.Thread(target=stop_once_started)
                     start = time.monotonic()
                     stopper.start()
                     with self.assertRaises(mu.Stopped):
                         w.run([], 60)
-                    self.assertLess(time.monotonic() - start, 10, "the stop ended the run")
+                    stopper.join()
+                    self.assertLess(time.monotonic() - start, 15, "the stop ended the run")
                     self.assertTrue(gone(int(pidfile.read_text())), "the child in cargo's group is gone")
                     mu._STOP.clear()
                     pidfile.unlink()
-                    rc, _ = w.run([], 1)
+                    rc, _ = w.run([], 3)
                     self.assertIsNone(rc, "a timeout")
                     self.assertTrue(gone(int(pidfile.read_text())))
                     self.assertEqual(mu._ACTIVE, set())
                 finally:
                     mu._STOP.clear()
+            pidfile.unlink()
+            saved_grace = mu.KILL_GRACE
+            mu.KILL_GRACE = 0.5
+            try:
+                with fake_cargo(tmp, "#!/bin/sh\ntrap '' TERM\n" + SLOW_CARGO.split("\n", 2)[2], PIDFILE=str(pidfile)):
+                    start = time.monotonic()
+                    rc, _ = w.run([], 3)
+                self.assertIsNone(rc)
+                self.assertLess(time.monotonic() - start, 15, "SIGKILL follows an ignored SIGTERM")
+                self.assertTrue(gone(int(pidfile.read_text())), "the group that ignored SIGTERM is gone")
+            finally:
+                mu.KILL_GRACE = saved_grace
 
 
 class ResultsFile(unittest.TestCase):
