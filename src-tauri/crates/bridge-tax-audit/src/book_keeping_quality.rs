@@ -18,9 +18,9 @@
 //! 6. Contra narrations whose claimed direction the Cash line's sign contradicts.
 //!
 //! Python semantics reproduced where they decide a figure: MASTERID is read as `int()` reads it
-//! (its own whitespace set, a sign, single underscores; a well-formed MASTERID with a non-ASCII
-//! digit, which `int()` reads, is refused rather than read differently, as is a value beyond i64;
-//! see `masterid_int`); the purchase
+//! (its own whitespace set, a sign, single underscores, and any Unicode decimal digit, which
+//! `int()` reads as its value; a value beyond i64 is refused rather than read differently; see
+//! `masterid_int`); the purchase
 //! rate and the cost are floats accumulated in population order, compared exactly with the integer
 //! sale, and rounded half to even; the invoice, receipt and re-issue maps keep the last voucher per
 //! GUID, as a dict does; a write-off is one row per voucher (by its position, not its GUID) and
@@ -1285,6 +1285,29 @@ mod tests {
         assert_eq!(masterid_int("9223372036854775807").unwrap(), Some(i64::MAX));
         assert!(masterid_int("-9223372036854775809").is_err());
         assert!(masterid_int("9223372036854775808").is_err());
+        // The same in non-ASCII digits (Python 3.13's int(), Arabic-Indic): the bounds are read, one
+        // past either is refused; a sign applies to them as to ASCII digits; 4,300 of them is still
+        // within the limit.
+        let arabic = |s: &str| -> String {
+            s.chars()
+                .map(|c| {
+                    c.to_digit(10)
+                        .map_or(c, |d| char::from_u32(0x660 + d).unwrap())
+                })
+                .collect()
+        };
+        assert_eq!(
+            masterid_int(&arabic("9223372036854775807")).unwrap(),
+            Some(i64::MAX)
+        );
+        assert_eq!(
+            masterid_int(&arabic("-9223372036854775808")).unwrap(),
+            Some(i64::MIN)
+        );
+        assert!(masterid_int(&arabic("9223372036854775808")).is_err());
+        assert!(masterid_int(&arabic("-9223372036854775809")).is_err());
+        assert_eq!(masterid_int("-\u{661}\u{662}").unwrap(), Some(-12));
+        assert_eq!(masterid_int(&"\u{660}".repeat(4300)).unwrap(), Some(0));
     }
 
     /// Python's `int < float` is exact; each expectation is Python's own answer.
