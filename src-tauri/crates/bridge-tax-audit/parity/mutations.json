@@ -1394,8 +1394,8 @@
  {
   "id": "A36",
   "by": "author",
-  "what": "int() of a string accepts a doubled or edge underscore",
-  "file": "src/lib.rs",
+  "what": "int() of a string accepts a doubled or edge underscore (in py_int_str since the string reader moved there)",
+  "file": "src/support.rs",
   "from": ".all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));",
   "to": ".all(|g| g.bytes().all(|b| b.is_ascii_digit()));"
  },
@@ -2480,14 +2480,6 @@
   "to": ".filter(|(mid, _)| *mid >= last)"
  },
  {
-  "id": "E1B-05",
-  "by": "author",
-  "what": "unparseable MASTERID read as 0",
-  "file": "src/book_keeping_quality.rs",
-  "from": "    if !well_formed {\n        return Ok(None);\n    }",
-  "to": "    if !well_formed {\n        return Ok(Some(0));\n    }"
- },
- {
   "id": "E1B-06",
   "by": "author",
   "what": "a repeated GUID keeps its first lag",
@@ -2672,14 +2664,6 @@
   "to": "let comparison_available = named.lines > 0;"
  },
  {
-  "id": "E1B-29",
-  "by": "author",
-  "what": "a non-ASCII MASTERID digit not treated as a digit",
-  "file": "src/book_keeping_quality.rs",
-  "from": "g.chars().all(support::py_is_decimal)",
-  "to": "g.bytes().all(|b| b.is_ascii_digit())"
- },
- {
   "id": "E1B-30",
   "by": "author",
   "what": "slug separators not collapsed",
@@ -2702,22 +2686,6 @@
   "file": "src/book_keeping_quality.rs",
   "from": ".filter(|l| l.amount_paise > 0)\n            .map(|l| l.amount_paise),\n    )\n}",
   "to": ".map(|l| l.amount_paise.abs()),\n    )\n}"
- },
- {
-  "id": "E1B-33",
-  "by": "author",
-  "what": "MASTERID stripped with str.strip()'s set, not int()'s",
-  "file": "src/book_keeping_quality.rs",
-  "from": "    let t = text.trim();\n",
-  "to": "    let t = support::py_strip(text);\n"
- },
- {
-  "id": "E1B-34",
-  "by": "author",
-  "what": "a non-ASCII digit refused even where int() rejects the text",
-  "file": "src/book_keeping_quality.rs",
-  "from": "    let t = text.trim();\n",
-  "to": "    if text.chars().any(|c| !c.is_ascii() && support::py_is_decimal(c)) {\n        return Err(AuditError::Config(String::new()));\n    }\n    let t = text.trim();\n"
  },
  {
   "id": "E1B-O01",
@@ -2856,14 +2824,6 @@
   "to": "    if eo.unparseable >= 0 {"
  },
  {
-  "id": "E1B-O20",
-  "by": "reviewer",
-  "what": "negative MASTERID read as positive",
-  "file": "src/book_keeping_quality.rs",
-  "from": "if negative { \"-\" } else { \"\" }",
-  "to": "\"\""
- },
- {
   "id": "E1B-O21",
   "by": "reviewer",
   "what": "contra hash truncated to 10 hex",
@@ -2912,22 +2872,6 @@
   "to": "    let stock_ledgers: BTreeSet<String> = book.ledgers.values().filter(|l| l.parent == STOCK_GROUP).map(|l| l.name.clone()).collect();"
  },
  {
-  "id": "E1B-35",
-  "by": "author",
-  "what": "the int() digit limit moved one digit up",
-  "file": "src/book_keeping_quality.rs",
-  "from": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {",
-  "to": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS + 1 {"
- },
- {
-  "id": "E1B-36",
-  "by": "author",
-  "what": "underscores counted as digits toward the int() limit",
-  "file": "src/book_keeping_quality.rs",
-  "from": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {",
-  "to": "if digits.chars().count() > PY_INT_MAX_STR_DIGITS {"
- },
- {
   "id": "E1B-37",
   "by": "author",
   "what": "write-off citations not deduplicated",
@@ -2950,5 +2894,509 @@
   "file": "src/book_keeping_quality.rs",
   "from": ".entry((n, l.ledger.clone()))",
   "to": ".entry((0, l.ledger.clone()))"
+ },
+ {
+  "id": "LB-01",
+  "by": "author (Lane B)",
+  "what": "a loan's interest_ledger not bound",
+  "file": "src/binding.rs",
+  "from": "                let name = lbinder.bind_one(name, &location)?;",
+  "to": "                let name = name.to_string();"
+ },
+ {
+  "id": "LB-02",
+  "by": "author (Lane B)",
+  "what": "shared_interest_ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "&[\"loans\", \"shared_interest_ledgers\"]",
+  "to": "&[\"loans\", \"shared_interest_ledgers_off\"]"
+ },
+ {
+  "id": "LB-03",
+  "by": "author (Lane B)",
+  "what": "the bound interest ledger not written back",
+  "file": "src/binding.rs",
+  "from": "                t.insert(\"interest_ledger\".to_string(), toml::Value::from(name));",
+  "to": "                let _ = name;"
+ },
+ {
+  "id": "LB-04",
+  "by": "author (Lane B)",
+  "what": "a non-string interest_ledger not refused as malformed",
+  "file": "src/binding.rs",
+  "from": "                let name = v.as_str().ok_or_else(|| {",
+  "to": "                let name = v.as_str().or(Some(\"5\")).ok_or_else(|| {"
+ },
+ {
+  "id": "LB-05",
+  "by": "author (Lane B)",
+  "what": "a [loans.loan_ledgers] that is not a table not refused",
+  "file": "src/binding.rs",
+  "from": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"])?;",
+  "to": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"]).unwrap_or(None);"
+ },
+ {
+  "id": "D1-01",
+  "by": "author (Lane B)",
+  "what": "cash counter-line not read as cash",
+  "file": "src/loans_interest.rs",
+  "from": "    if counter.iter().any(|l| cash.contains(*l)) {",
+  "to": "    if counter.iter().any(|l| cash.contains(*l) && false) {"
+ },
+ {
+  "id": "D1-02",
+  "by": "author (Lane B)",
+  "what": "Journal mode not recognised",
+  "file": "src/loans_interest.rs",
+  "from": "    } else if base_type == \"Journal\" {",
+  "to": "    } else if base_type == \"journal\" {"
+ },
+ {
+  "id": "D1-03",
+  "by": "author (Lane B)",
+  "what": "a repaid journal coded J instead of I",
+  "file": "src/loans_interest.rs",
+  "from": "        (\"journal\", \"repaid\") => \"I\",",
+  "to": "        (\"journal\", \"repaid\") => \"J\","
+ },
+ {
+  "id": "D1-04",
+  "by": "author (Lane B)",
+  "what": "an interest journal needs only to include the interest ledger",
+  "file": "src/loans_interest.rs",
+  "from": "        if interest_ledger.is_some_and(|il| only(&others, il)) {",
+  "to": "        if interest_ledger.is_some_and(|il| others.contains(il)) {"
+ },
+ {
+  "id": "D1-05",
+  "by": "author (Lane B)",
+  "what": "Contra vouchers bucketed on a loan",
+  "file": "src/loans_interest.rs",
+  "from": "        if v.base_type == \"Contra\" || !v.lines.iter().any(|l| l.ledger == loan_ledger) {",
+  "to": "        if !v.lines.iter().any(|l| l.ledger == loan_ledger) {"
+ },
+ {
+  "id": "D1-06",
+  "by": "author (Lane B)",
+  "what": "a debit opening walked as a negative outstanding",
+  "file": "src/loans_interest.rs",
+  "from": "    let mut principal = opening_outstanding.max(0);",
+  "to": "    let mut principal = opening_outstanding;"
+ },
+ {
+  "id": "D1-07",
+  "by": "author (Lane B)",
+  "what": "interest credited leaves the breach balance unmoved",
+  "file": "src/loans_interest.rs",
+  "from": "        breach = breach_prior + sign * amount;",
+  "to": "        breach = breach_prior;"
+ },
+ {
+  "id": "D1-08",
+  "by": "author (Lane B)",
+  "what": "a repayment's reporting window read from its own amount only",
+  "file": "src/loans_interest.rs",
+  "from": "                prior.max(amt) >= limit_269\n",
+  "to": "                amt >= limit_269\n"
+ },
+ {
+  "id": "D1-09",
+  "by": "author (Lane B)",
+  "what": "a repayment's breach test ignores interest credited",
+  "file": "src/loans_interest.rs",
+  "from": "                row.prior_breach.max(amt) >= limit_269",
+  "to": "                prior.max(amt) >= limit_269"
+ },
+ {
+  "id": "D1-10",
+  "by": "author (Lane B)",
+  "what": "the s.269SS/269T flag ignores the breach-exempt lenders",
+  "file": "src/loans_interest.rs",
+  "from": "                && !exempt_269.contains(lender_type);",
+  "to": "                ;"
+ },
+ {
+  "id": "D1-11",
+  "by": "author (Lane B)",
+  "what": "reporting-exempt lenders reported in Clause 31",
+  "file": "src/loans_interest.rs",
+  "from": "        if reporting_exempt_269.contains(lender_type) {",
+  "to": "        if reporting_exempt_269.contains(lender_type) && false {"
+ },
+ {
+  "id": "D1-12",
+  "by": "author (Lane B)",
+  "what": "s.194A fires for a non-deductor",
+  "file": "src/loans_interest.rs",
+  "from": "            && status == \"deductor\"",
+  "to": "            && status != \"unknown\""
+ },
+ {
+  "id": "D1-13",
+  "by": "author (Lane B)",
+  "what": "the reversal rule switched on by default",
+  "file": "src/loans_interest.rs",
+  "from": "pub const NET_REVERSALS: bool = false;",
+  "to": "pub const NET_REVERSALS: bool = true;"
+ },
+ {
+  "id": "D1-14",
+  "by": "author (Lane B)",
+  "what": "a paired loan's interest journals counted on the shared ledger",
+  "file": "src/loans_interest.rs",
+  "from": "            if cited.contains(&at) || v.base_type == \"Contra\" {",
+  "to": "            if v.base_type == \"Contra\" {"
+ },
+ {
+  "id": "D1-15",
+  "by": "author (Lane B)",
+  "what": "a credit may reverse a debit on its own voucher",
+  "file": "src/loans_interest.rs",
+  "from": "                    && dat != cat\n",
+  "to": "                    && true\n"
+ },
+ {
+  "id": "D1-16",
+  "by": "author (Lane B)",
+  "what": "LOAN-1 tolerance widened a thousandfold",
+  "file": "src/loans_interest.rs",
+  "from": "        if diff.abs() > tol {",
+  "to": "        if diff.abs() > tol * 1000 {"
+ },
+ {
+  "id": "D1-17",
+  "by": "author (Lane B)",
+  "what": "LOAN-2 (A) blind to small interest lines",
+  "file": "src/loans_interest.rs",
+  "from": "            if on_interest != 0 {",
+  "to": "            if on_interest.abs() > 1_000_000 {"
+ },
+ {
+  "id": "D1-18",
+  "by": "author (Lane B)",
+  "what": "LOAN-3 never marks a longer list",
+  "file": "src/loans_interest.rs",
+  "from": "                if debits.len() > 5 { \" ...\" } else { \"\" }",
+  "to": "                if debits.len() > 6 { \" ...\" } else { \"\" }"
+ },
+ {
+  "id": "D1-19",
+  "by": "author (Lane B)",
+  "what": "a repeated row figure id not refused",
+  "file": "src/loans_interest.rs",
+  "from": "            if r.figures\n                .iter()\n",
+  "to": "            if false && r.figures\n                .iter()\n"
+ },
+ {
+  "id": "D1-20",
+  "by": "author (Lane B)",
+  "what": "a [loans] that is not a table not refused",
+  "file": "src/lib.rs",
+  "from": "    if bound.loans.not_a_table {",
+  "to": "    if bound.loans.not_a_table && false {"
+ },
+ {
+  "id": "D1-21",
+  "by": "author (Lane B)",
+  "what": "LOAN-3 recomputation ignores the switch",
+  "file": "src/loans_interest.rs",
+  "from": "!net_reversals || is_receipt(&pop[*n].base_type)",
+  "to": "is_receipt(&pop[*n].base_type)"
+ },
+ {
+  "id": "Y01",
+  "by": "author",
+  "what": "the no-party bucket cited as a ledger (EVID-1)",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "    if ledger_name == UNIDENTIFIED_PARTY {",
+  "to": "    if false {"
+ },
+ {
+  "id": "Y02",
+  "by": "author",
+  "what": "the no-party row ref loses its label",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "EvidenceRef::with_label(\"row\", UNIDENTIFIED_PARTY_ROW, UNIDENTIFIED_PARTY)",
+  "to": "EvidenceRef::new(\"row\", UNIDENTIFIED_PARTY_ROW)"
+ },
+ {
+  "id": "Y03",
+  "by": "author",
+  "what": "the s.269ST receipt leg cites a ledger again",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st/{rid}\"),",
+  "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st/{rid}\"),"
+ },
+ {
+  "id": "Y04",
+  "by": "author",
+  "what": "the s.269ST payment leg cites a ledger again",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),",
+  "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),"
+ },
+ {
+  "id": "SB-01",
+  "by": "author (Lane B)",
+  "what": "rupees: western grouping (thousands only)",
+  "file": "src/support.rs",
+  "from": "        while head.len() > 2 {",
+  "to": "        while head.len() > 3 {"
+ },
+ {
+  "id": "SB-02",
+  "by": "author (Lane B)",
+  "what": "rupees: paise written without zero padding",
+  "file": "src/support.rs",
+  "from": "format!(\"{sign}₹{grouped}.{frac:02}\")",
+  "to": "format!(\"{sign}₹{grouped}.{frac}\")"
+ },
+ {
+  "id": "SB-03",
+  "by": "author (Lane B)",
+  "what": "rupees: ASCII hyphen for a negative amount",
+  "file": "src/support.rs",
+  "from": "let sign = if paise < 0 { \"−\" } else { \"\" };",
+  "to": "let sign = if paise < 0 { \"-\" } else { \"\" };"
+ },
+ {
+  "id": "SB-04",
+  "by": "author (Lane B)",
+  "what": "40a3: s.40A(3) limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "rupees(i128::from(limit_40a3))",
+  "to": "limit_40a3"
+ },
+ {
+  "id": "SB-05",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269ST receipt limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "\n            rupees(i128::from(limit_269st))",
+  "to": "\n            limit_269st"
+ },
+ {
+  "id": "SB-06",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269ST payment threshold back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "limit_269st_text = rupees(i128::from(limit_269st))",
+  "to": "limit_269st_text = limit_269st"
+ },
+ {
+  "id": "SB-07",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269SS/269T candidate limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "rupees(i128::from(limit_ss_t))",
+  "to": "limit_ss_t"
+ },
+ {
+  "id": "SB-08",
+  "by": "author (Lane B)",
+  "what": "depreciation: cash on a flagged addition back in paise",
+  "file": "src/depreciation.rs",
+  "from": "rupees(i128::from(row.cash_paise)),",
+  "to": "row.cash_paise,"
+ },
+ {
+  "id": "SB-09",
+  "by": "author (Lane B)",
+  "what": "loans_interest: s.269SS/269T limit back in paise",
+  "file": "src/loans_interest.rs",
+  "from": "limit_269_text = rupees(limit_269)",
+  "to": "limit_269_text = limit_269"
+ },
+ {
+  "id": "PI-01",
+  "by": "author (Lane B)",
+  "what": "py_int_str: str.isspace() strip instead of int()'s own whitespace",
+  "file": "src/support.rs",
+  "from": "let t = ascii.trim_matches(|c| matches!(c, ' ' | '\\t' | '\\n' | '\\u{b}' | '\\u{c}' | '\\r'));",
+  "to": "let t = ascii.trim_matches(py_isspace);"
+ },
+ {
+  "id": "PI-02",
+  "by": "author (Lane B)",
+  "what": "py_int_str: non-ASCII decimal digits refused",
+  "file": "src/support.rs",
+  "from": "} else if let Some(d) = py_decimal_value(c) {",
+  "to": "} else if let Some(d) = py_decimal_value(c).filter(|_| false) {"
+ },
+ {
+  "id": "PI-03",
+  "by": "author (Lane B)",
+  "what": "py_int_str: digit limit one too high",
+  "file": "src/support.rs",
+  "from": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS + 1 {"
+ },
+ {
+  "id": "PI-04",
+  "by": "author (Lane B)",
+  "what": "py_int_str: digit limit counts underscores",
+  "file": "src/support.rs",
+  "from": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if body.len() > PY_INT_MAX_STR_DIGITS {"
+ },
+ {
+  "id": "PI-05",
+  "by": "author (Lane B)",
+  "what": "py_int_str: i64::MIN refused",
+  "file": "src/support.rs",
+  "from": "0i64.checked_sub_unsigned(magnitude)\n            .ok_or(PyIntError::OutOfRange)",
+  "to": "i64::try_from(magnitude).map(|m| -m).map_err(|_| PyIntError::OutOfRange)"
+ },
+ {
+  "id": "PI-06",
+  "by": "author (Lane B)",
+  "what": "py_int_str: overflow reported as not an int",
+  "file": "src/support.rs",
+  "from": ".ok_or(PyIntError::OutOfRange)?;",
+  "to": ".ok_or(PyIntError::Invalid)?;"
+ },
+ {
+  "id": "PI-07",
+  "by": "author (Lane B)",
+  "what": "py_decimal_value: offset not reduced modulo 10",
+  "file": "src/support.rs",
+  "from": ".and_then(|(lo, _)| u8::try_from((cp - lo) % 10).ok())",
+  "to": ".and_then(|(lo, _)| u8::try_from(cp - lo).ok())"
+ },
+ {
+  "id": "PI-08",
+  "by": "author (Lane B)",
+  "what": "py_int: an out-of-range float reported as not an int",
+  "file": "src/lib.rs",
+  "from": "            } else {\n                Err(PyIntError::OutOfRange)\n            }",
+  "to": "            } else {\n                Err(PyIntError::Invalid)\n            }"
+ },
+ {
+  "id": "D2-01",
+  "by": "author (Lane B)",
+  "what": "rules: an entity type without s194t read as applying",
+  "file": "src/rules.rs",
+  "from": "            .unwrap_or(false))",
+  "to": "            .unwrap_or(true))"
+ },
+ {
+  "id": "D2-02",
+  "by": "author (Lane B)",
+  "what": "rules: no [entity] table read as no entry",
+  "file": "src/rules.rs",
+  "from": "            .ok_or_else(|| AuditError::Config(\"rules: no [entity] table\".to_string()))",
+  "to": "            .map_or(Ok(None), Ok)"
+ },
+ {
+  "id": "D2-03",
+  "by": "author (Lane B)",
+  "what": "binding: partner capital ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "        (\"capital_ledgers\", true),\n",
+  "to": ""
+ },
+ {
+  "id": "D2-04",
+  "by": "author (Lane B)",
+  "what": "binding: partner remuneration ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "        (\"remuneration_ledger\", false),\n",
+  "to": ""
+ },
+ {
+  "id": "D2-05",
+  "by": "author (Lane B)",
+  "what": "binding: an empty partner interest ledger kept for financial_statements",
+  "file": "src/binding.rs",
+  "from": "(!name.is_empty()).then(|| (k.clone(), name.to_string()))",
+  "to": "true.then(|| (k.clone(), name.to_string()))"
+ },
+ {
+  "id": "D2-06",
+  "by": "author (Lane B)",
+  "what": "partners: a day in debit counts",
+  "file": "src/partners_40b_194t.rs",
+  "from": "        if economic > 0 {",
+  "to": "        if economic != 0 {"
+ },
+ {
+  "id": "D2-07",
+  "by": "author (Lane B)",
+  "what": "partners: an event applies the day after its date",
+  "file": "src/partners_40b_194t.rs",
+  "from": "while idx < events.len() && events[idx].0 <= day {",
+  "to": "while idx < events.len() && events[idx].0 < day {"
+ },
+ {
+  "id": "D2-08",
+  "by": "author (Lane B)",
+  "what": "partners: remuneration wins a voucher carrying both ledgers",
+  "file": "src/partners_40b_194t.rs",
+  "from": "            if is_interest {",
+  "to": "            if is_interest && !is_remuneration {"
+ },
+ {
+  "id": "D2-09",
+  "by": "author (Lane B)",
+  "what": "partners: a capital ledger named twice counts its opening once",
+  "file": "src/partners_40b_194t.rs",
+  "from": "    let opening_paise = p\n        .capital_ledgers\n        .iter()\n        .filter_map(|n| book.tb.get(n))",
+  "to": "    let opening_paise = capital\n        .iter()\n        .filter_map(|n| book.tb.get(*n))"
+ },
+ {
+  "id": "D2-10",
+  "by": "author (Lane B)",
+  "what": "partners: the higher of deed and statutory rate",
+  "file": "src/partners_40b_194t.rs",
+  "from": "|d| d.min(s40b_rate)",
+  "to": "|d| d.max(s40b_rate)"
+ },
+ {
+  "id": "D2-11",
+  "by": "author (Lane B)",
+  "what": "partners: s.194T at the limit is a finding",
+  "file": "src/partners_40b_194t.rs",
+  "from": "if subject_paise > i128::from(tds_limit_paise) {",
+  "to": "if subject_paise >= i128::from(tds_limit_paise) {"
+ },
+ {
+  "id": "D2-12",
+  "by": "author (Lane B)",
+  "what": "partners: a TDS ledger anywhere counts as seen",
+  "file": "src/partners_40b_194t.rs",
+  "from": ".is_some_and(|led| led.under(DUTIES_TAXES_GROUP))",
+  "to": ".is_some_and(|_led| true)"
+ },
+ {
+  "id": "D2-13",
+  "by": "author (Lane B)",
+  "what": "partners: both applicability keys required",
+  "file": "src/partners_40b_194t.rs",
+  "from": "let applicable = s194t_on || s40b_rate > 0;",
+  "to": "let applicable = s194t_on && s40b_rate > 0;"
+ },
+ {
+  "id": "MI-01",
+  "by": "author (Lane B)",
+  "what": "masterid_int: an unparseable MASTERID read as 0 (was E1B-05)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Err(support::PyIntError::Invalid) => Ok(None),",
+  "to": "Err(support::PyIntError::Invalid) => Ok(Some(0)),"
+ },
+ {
+  "id": "MI-02",
+  "by": "author (Lane B)",
+  "what": "masterid_int: a negative MASTERID read as positive (was E1B-O20)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Ok(n) => Ok(Some(n)),",
+  "to": "Ok(n) => Ok(Some(n.abs())),"
+ },
+ {
+  "id": "PI-09",
+  "by": "author (Lane B)",
+  "what": "py_int_str: the minus sign dropped",
+  "file": "src/support.rs",
+  "from": "Some(b'-') => (true, &t[1..]),",
+  "to": "Some(b'-') => (false, &t[1..]),"
  }
 ]

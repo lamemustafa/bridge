@@ -10,8 +10,8 @@
       "id": "financial_statements.closing_stock",
       "value": 14000000,
       "unit": "paise",
-      "definition_sha256_16": "d71330240d267c52",
-      "definition_text": "Closing stock: sum, per Stock-in-Hand ledger, of TB opening + the year's TB debit movement - the year's TB credit movement (recomputed; the ledger's own TB closing field is NOT used -- see closing_stock_tb_field and stock_in_hand_ledgers_with_stale_tb_closing_field_count).",
+      "definition_sha256_16": "768cd298936fdd0e",
+      "definition_text": "Closing stock: sum, per Stock-in-Hand ledger, of TB opening + the year's TB debit movement - the year's TB credit movement (recomputed; the ledger's own TB closing field is NOT used -- it is shown separately, for comparison, with a count of the ledgers where it is stale).",
       "evidence": [
         {
           "kind": "ledger",
@@ -29,8 +29,8 @@
       "id": "financial_statements.closing_stock_tb_field",
       "value": 7000000,
       "unit": "paise",
-      "definition_sha256_16": "d645d651d2361e22",
-      "definition_text": "Sum, per Stock-in-Hand ledger, of the TB's OWN closing field (TBALCLOSING) -- shown only for comparison; closing_stock above (opening + net debit movement) is the figure used everywhere else in this test.",
+      "definition_sha256_16": "2157dd7cfd4c06ec",
+      "definition_text": "Sum, per Stock-in-Hand ledger, of the TB's OWN closing field -- shown only for comparison; the recomputed closing stock (opening plus net debit movement) is the figure used everywhere else in this test.",
       "evidence": [
         {
           "kind": "ledger",
@@ -123,8 +123,8 @@
       "id": "financial_statements.excluded_voucher_count",
       "value": 4,
       "unit": "count",
-      "definition_sha256_16": "5d7871bdfb6e9d8c",
-      "definition_text": "Exported vouchers excluded from the books population (exported_voucher_count - in_books_voucher_count).",
+      "definition_sha256_16": "46a4ecb71c47f77a",
+      "definition_text": "Exported vouchers excluded from the books population (vouchers exported less vouchers in the books population).",
       "evidence": []
     },
     {
@@ -139,16 +139,16 @@
       "id": "financial_statements.gross_profit",
       "value": 8300000,
       "unit": "paise",
-      "definition_sha256_16": "1fd6d0911f0202e7",
-      "definition_text": "sales + direct_incomes - (opening_stock + purchases + direct_expenses - closing_stock); one stock basis (TB / balance-sheet, above) used at BOTH ends, direct expenses included, so this ties to Form 3CD Clause 40.",
+      "definition_sha256_16": "fe49a8e9250d7a75",
+      "definition_text": "Sales plus direct incomes, less (opening stock plus purchases plus direct expenses less closing stock); one stock basis (Trial Balance / balance sheet, with the recomputed closing stock) used at BOTH ends, direct expenses included, so this ties to Form 3CD Clause 40.",
       "evidence": []
     },
     {
       "id": "financial_statements.gross_profit_pct_bp",
       "value": 2790,
       "unit": "bp",
-      "definition_sha256_16": "5ea7bdc9264a7e55",
-      "definition_text": "gross_profit / sales, on the TB stock basis above.",
+      "definition_sha256_16": "cafe6eda2f423635",
+      "definition_text": "Gross profit as a share of sales, on the Trial Balance stock basis (recomputed closing stock).",
       "evidence": []
     },
     {
@@ -202,24 +202,24 @@
       "id": "financial_statements.net_profit",
       "value": -3030525,
       "unit": "paise",
-      "definition_sha256_16": "dd9b37cc62bee6af",
-      "definition_text": "gross_profit - indirect_expenses + other_income.",
+      "definition_sha256_16": "c4aa6652a16ffc28",
+      "definition_text": "Gross profit less indirect expenses plus indirect incomes.",
       "evidence": []
     },
     {
       "id": "financial_statements.net_profit_pct_bp",
       "value": -1019,
       "unit": "bp",
-      "definition_sha256_16": "bf411136b0a7c6bd",
-      "definition_text": "net_profit / sales.",
+      "definition_sha256_16": "50588594384c4d6a",
+      "definition_text": "Net profit as a share of sales.",
       "evidence": []
     },
     {
       "id": "financial_statements.opening_stock",
       "value": 7000000,
       "unit": "paise",
-      "definition_sha256_16": "1a9ac8aad7cec49d",
-      "definition_text": "Opening stock: sum of TB opening balances of every ledger under 'Stock-in-Hand' (a masters value, read directly; not subject to the closing-field quirk below).",
+      "definition_sha256_16": "6e54cecc268780f1",
+      "definition_text": "Opening stock: sum of TB opening balances of every ledger under 'Stock-in-Hand' (a masters value, read directly; not subject to the quirk in the Trial Balance's own closing field for Stock-in-Hand ledgers).",
       "evidence": [
         {
           "kind": "ledger",
@@ -251,8 +251,8 @@
       "id": "financial_statements.partner_interest",
       "value": 750000,
       "unit": "paise",
-      "definition_sha256_16": "93135a40f53892fa",
-      "definition_text": "Sum of TB closing balances of the client's own partners'-interest ledgers (client config; already included inside indirect_expenses above).",
+      "definition_sha256_16": "e84bac1d6690b576",
+      "definition_text": "Sum of TB closing balances of the client's own partners'-interest ledgers (the client's setup; already included inside indirect expenses).",
       "evidence": [
         {
           "kind": "ledger",
@@ -265,8 +265,8 @@
       "id": "financial_statements.profit_before_partner_interest",
       "value": -2280525,
       "unit": "paise",
-      "definition_sha256_16": "299d11a29b601dc3",
-      "definition_text": "net_profit + partner_interest (net_profit above is AFTER partners' interest, since it is charged as an indirect expense).",
+      "definition_sha256_16": "7ac511ba01f5f020",
+      "definition_text": "Net profit plus the partners' interest (net profit is AFTER partners' interest, since it is charged as an indirect expense).",
       "evidence": [
         {
           "kind": "ledger",
@@ -301,8 +301,8 @@
       "id": "financial_statements.report_closing_stock_diff",
       "value": -100,
       "unit": "paise",
-      "definition_sha256_16": "6fb6d4005f01759f",
-      "definition_text": "closing_stock - report_closing_stock.",
+      "definition_sha256_16": "85a48b93d3de5a36",
+      "definition_text": "Closing stock less the closing stock in Tally's own report.",
       "evidence": []
     },
     {
@@ -317,8 +317,8 @@
       "id": "financial_statements.report_net_profit_diff",
       "value": -100,
       "unit": "paise",
-      "definition_sha256_16": "8a18c1ba1c346705",
-      "definition_text": "net_profit - report_net_profit.",
+      "definition_sha256_16": "211b3a77f5a6fbec",
+      "definition_text": "Net profit less the net profit in Tally's own report.",
       "evidence": []
     },
     {
@@ -347,8 +347,8 @@
       "id": "financial_statements.stock_in_hand_ledgers_with_stale_tb_closing_field_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "89d2f658559162e6",
-      "definition_text": "Stock-in-Hand ledgers where the TB's own closing field does not equal opening + net debit movement -- Tally leaves TBALCLOSING as a static copy of TBALOPENING on such a ledger when the company does not integrate accounts with inventory; verified nonzero on data (not merely asserted) wherever this quirk is present.",
+      "definition_sha256_16": "d52a056386e7f798",
+      "definition_text": "Stock-in-Hand ledgers where the TB's own closing field does not equal opening + net debit movement -- Tally leaves the closing field as a static copy of the opening on such a ledger when the company does not integrate accounts with inventory; verified nonzero on data (not merely asserted) wherever this quirk is present.",
       "evidence": [
         {
           "kind": "ledger",
@@ -361,8 +361,8 @@
       "id": "financial_statements.stock_to_turnover_pct_bp",
       "value": 4706,
       "unit": "bp",
-      "definition_sha256_16": "e99e0fe10e3278f9",
-      "definition_text": "closing_stock / sales.",
+      "definition_sha256_16": "ced20a6c90703a12",
+      "definition_text": "Closing stock as a share of sales.",
       "evidence": []
     }
   ],
