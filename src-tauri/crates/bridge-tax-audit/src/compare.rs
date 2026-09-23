@@ -63,6 +63,8 @@ const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 /// `partners_40b_194t` always emits `applicable`, and nothing else unless the entity type is a firm
 /// or an LLP (the rules' `[entity.<type>]`), so 1 is its floor: a proprietor's book is quiet, not
 /// broken.
+/// `tds_interest_201` always emits these 10: `as_of`, the three rates, and six totals and counts;
+/// every priced row adds its own.
 /// `twentysixas_receipts` emits nothing structural: every figure belongs to one deductor party and
 /// class with a Part I row, so 1 is its floor, and a run with no such row has nothing to compare.
 pub fn default_min_figures(test_id: &str) -> usize {

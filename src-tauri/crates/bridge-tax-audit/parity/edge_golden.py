@@ -44,7 +44,12 @@ interest_ledger?}}, default {}), `shared_interest_ledgers` (default []) and `net
 default false: true sets the module's NET_REVERSALS switch, reaching the dormant reversal rule in `run` and
 in the module invariant alike); and for `partners_40b_194t`: `entity_type` as for `tds_payees`, `partners`
 ({key: {capital_ledgers, interest_ledger?, remuneration_ledger?}}, default {}) and `deed` (a table such as
-{interest_rate_bp}, absent meaning none).
+{interest_rate_bp}, absent meaning none); and for `tds_interest_201`: `defaults` (the caller's rows: {section,
+payee_key, tax_paise, deductible_date, deducted_date?, paid_date?, payee_return_filed_date?,
+deductor_status_uncertain?, evidence?: [[kind, id, label], ...]}, dates ISO, default []) and `as_of` (ISO,
+default the rules' `[due_dates].audit_report`), or `defaults_from_results` (true: the rows are built from
+`tds_payees`' and `partners_40b_194t`'s own results on the book, with their spec keys above, by the reference
+pack's own `_tds_interest_defaults`, with `previous_year_turnover_status` ("placeholder" sets the deductor flag)).
 """
 from __future__ import annotations
 
@@ -63,8 +68,9 @@ def main() -> int:
     from tae.adapters.traces_documents import AisRow, TisRow
     from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, loans_interest,
                                  partners_40b_194t, stale_balances_41_1, statutory_dues_43b, tds_payees,
-                                 tds_tcs_26as, trial_balance, twentysixas_receipts)
+                                 tds_interest_201, tds_tcs_26as, trial_balance, twentysixas_receipts)
     from tae.model import Form26ASRow
+    from tae.findings import EvidenceRef
     from tae.config import load_rules
     from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
                            VoucherStatus)
@@ -143,6 +149,33 @@ def main() -> int:
             spec.get("previous_year_turnover_paise"), cash, bank,
             frozenset(spec.get("shared_interest_ledgers", [])))
 
+    def interest_rows():
+        # tds_interest_201's rows: with `defaults_from_results`, built from tds_payees' and
+        # partners_40b_194t's own results on this book by the reference pack's own helper, as the
+        # pack builds them; otherwise as the caller supplies them (dates ISO or absent, evidence as
+        # [kind, id, label] triples).
+        if spec.get("defaults_from_results", False):
+            from tae import pack
+            payees = tds_payees.run(eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
+                                    spec.get("previous_year_turnover_paise"),
+                                    dict(spec.get("s194j_category_by_ledger", {})))
+            partners = partners_40b_194t.run(eng, rules, {k: dict(v) for k, v in spec.get("partners", {}).items()},
+                                             spec.get("deed"))
+            uncertain = spec.get("previous_year_turnover_status") == "placeholder"
+            return pack._tds_interest_defaults(eng, rules, payees, partners, uncertain)
+        rows = []
+        for r in spec.get("defaults", []):
+            row = {k: r[k] for k in ("section", "payee_key", "tax_paise")}
+            row["deductible_date"] = day(r["deductible_date"])
+            for k in ("deducted_date", "paid_date", "payee_return_filed_date"):
+                if k in r:
+                    row[k] = day(r[k])
+            if "deductor_status_uncertain" in r:
+                row["deductor_status_uncertain"] = r["deductor_status_uncertain"]
+            row["evidence"] = tuple(EvidenceRef(k, i, l) for k, i, l in r.get("evidence", []))
+            rows.append(row)
+        return rows
+
     # One runner per test an edge book may name: the module and its result, run as the reference's
     # pack runs it.
     runners = {
@@ -159,6 +192,8 @@ def main() -> int:
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
         "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
             eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
+        "tds_interest_201": lambda: (tds_interest_201, tds_interest_201.run(
+            eng, rules, interest_rows(), day(spec["as_of"]) if "as_of" in spec else rules["due_dates"]["audit_report"])),
         "tds_payees": lambda: (tds_payees, tds_payees.run(
             eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
             spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),

@@ -1,0 +1,933 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "tds_interest_201",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ae234de12cf0d159",
+  "population_note_text": "Not walked from the books population: every row is one (section, payee) tax amount already identified as a shortfall by 'TDS on payments made' or 'Partners (s.40(b), s.194T)', with whatever deduction/payment dates the books or documents establish. An unsupplied date is never guessed; it drives a range instead.",
+  "figures": [
+    {
+      "id": "tds_interest_201.as_of",
+      "value": "2026-09-30",
+      "unit": "text",
+      "definition_sha256_16": "5449f2e5763b11b6",
+      "definition_text": "Reference date for every maximum bound: the return due date from rules[due_dates], or the report date, as supplied by the caller -- this test never reads rules[due_dates] itself.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deducted_date_34a7f392",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "1f50c88ca355f8f5",
+      "definition_text": "Date tax was actually deducted/collected (row 2, tag 34a7f392); 'not supplied' when books/documents do not establish it -- drives the range below, never guessed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deducted_date_4766a340",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "84245bbd18395cbc",
+      "definition_text": "Date tax was actually deducted/collected (row 1, tag 4766a340); 'not supplied' when books/documents do not establish it -- drives the range below, never guessed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deducted_date_85b911ba",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "d642b098dab9a8fa",
+      "definition_text": "Date tax was actually deducted/collected (row 0, tag 85b911ba); 'not supplied' when books/documents do not establish it -- drives the range below, never guessed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deducted_date_8b9c6566",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "d85de4de7f23626e",
+      "definition_text": "Date tax was actually deducted/collected (row 4, tag 8b9c6566); 'not supplied' when books/documents do not establish it -- drives the range below, never guessed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deducted_date_ee86fefe",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "e06991e600156534",
+      "definition_text": "Date tax was actually deducted/collected (row 3, tag ee86fefe); 'not supplied' when books/documents do not establish it -- drives the range below, never guessed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deductible_date_34a7f392",
+      "value": "2025-05-11",
+      "unit": "text",
+      "definition_sha256_16": "90815ecdcb1001f6",
+      "definition_text": "Date tax became deductible/collectible (row 2, tag 34a7f392): the earlier of credit and payment for most sections.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deductible_date_4766a340",
+      "value": "2025-05-12",
+      "unit": "text",
+      "definition_sha256_16": "8616e38d1780d2b7",
+      "definition_text": "Date tax became deductible/collectible (row 1, tag 4766a340): the earlier of credit and payment for most sections.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deductible_date_85b911ba",
+      "value": "2025-05-12",
+      "unit": "text",
+      "definition_sha256_16": "c2d36de0f0d860c3",
+      "definition_text": "Date tax became deductible/collectible (row 0, tag 85b911ba): the earlier of credit and payment for most sections.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deductible_date_8b9c6566",
+      "value": "2026-03-31",
+      "unit": "text",
+      "definition_sha256_16": "e8b04185d07efd93",
+      "definition_text": "Date tax became deductible/collectible (row 4, tag 8b9c6566): the earlier of credit and payment for most sections.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.deductible_date_ee86fefe",
+      "value": "2025-05-11",
+      "unit": "text",
+      "definition_sha256_16": "964913ad976a1510",
+      "definition_text": "Date tax became deductible/collectible (row 3, tag ee86fefe): the earlier of credit and payment for most sections.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.interest_max_34a7f392",
+      "value": 20400,
+      "unit": "paise",
+      "definition_sha256_16": "f1137331ef29dc65",
+      "definition_text": "s.201(1A) interest, maximum bound (row 2 tag 34a7f392): any unsupplied leg is assumed still outstanding through as_of (2026-09-30).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_max_4766a340",
+      "value": 11900,
+      "unit": "paise",
+      "definition_sha256_16": "fcd9d854afcc7c7c",
+      "definition_text": "s.201(1A) interest, maximum bound (row 1 tag 4766a340): any unsupplied leg is assumed still outstanding through as_of (2026-09-30).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_max_85b911ba",
+      "value": 5950,
+      "unit": "paise",
+      "definition_sha256_16": "eb7b359540406d98",
+      "definition_text": "s.201(1A) interest, maximum bound (row 0 tag 85b911ba): any unsupplied leg is assumed still outstanding through as_of (2026-09-30).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_max_8b9c6566",
+      "value": 21000,
+      "unit": "paise",
+      "definition_sha256_16": "c4bcb5b0cfc88b1c",
+      "definition_text": "s.201(1A) interest, maximum bound (row 4 tag 8b9c6566): any unsupplied leg is assumed still outstanding through as_of (2026-09-30).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "tif-p1",
+          "label": "Journal J-9 on 2026-03-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_max_ee86fefe",
+      "value": 102000,
+      "unit": "paise",
+      "definition_sha256_16": "b4f8932410b363c0",
+      "definition_text": "s.201(1A) interest, maximum bound (row 3 tag ee86fefe): any unsupplied leg is assumed still outstanding through as_of (2026-09-30).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_min_34a7f392",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "bae89a08dd8c2c72",
+      "definition_text": "s.201(1A) interest, minimum bound (row 2 tag 34a7f392): known dates used where supplied; any unsupplied leg is assumed complete with zero further delay for this floor.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_min_4766a340",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "d59c96db96fb4784",
+      "definition_text": "s.201(1A) interest, minimum bound (row 1 tag 4766a340): known dates used where supplied; any unsupplied leg is assumed complete with zero further delay for this floor.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_min_85b911ba",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "2e8f5c1020cd9817",
+      "definition_text": "s.201(1A) interest, minimum bound (row 0 tag 85b911ba): known dates used where supplied; any unsupplied leg is assumed complete with zero further delay for this floor.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_min_8b9c6566",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "fe63c83b28753006",
+      "definition_text": "s.201(1A) interest, minimum bound (row 4 tag 8b9c6566): known dates used where supplied; any unsupplied leg is assumed complete with zero further delay for this floor.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "tif-p1",
+          "label": "Journal J-9 on 2026-03-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.interest_min_ee86fefe",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3a1b21c03ab5666c",
+      "definition_text": "s.201(1A) interest, minimum bound (row 3 tag ee86fefe): known dates used where supplied; any unsupplied leg is assumed complete with zero further delay for this floor.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.months_stage1_max_34a7f392",
+      "value": 17,
+      "unit": "count",
+      "definition_sha256_16": "fa44be8325619e90",
+      "definition_text": "s.201(1A) pre-deduction months (or part), maximum bound, row 2 tag 34a7f392.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_max_4766a340",
+      "value": 17,
+      "unit": "count",
+      "definition_sha256_16": "71e779cf5a0e6814",
+      "definition_text": "s.201(1A) pre-deduction months (or part), maximum bound, row 1 tag 4766a340.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_max_85b911ba",
+      "value": 17,
+      "unit": "count",
+      "definition_sha256_16": "390bf9a320b171ee",
+      "definition_text": "s.201(1A) pre-deduction months (or part), maximum bound, row 0 tag 85b911ba.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_max_8b9c6566",
+      "value": 7,
+      "unit": "count",
+      "definition_sha256_16": "d73c098248320125",
+      "definition_text": "s.201(1A) pre-deduction months (or part), maximum bound, row 4 tag 8b9c6566.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_max_ee86fefe",
+      "value": 17,
+      "unit": "count",
+      "definition_sha256_16": "5b6fd5815f6d351e",
+      "definition_text": "s.201(1A) pre-deduction months (or part), maximum bound, row 3 tag ee86fefe.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_min_34a7f392",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "da7c7e80f64c0343",
+      "definition_text": "s.201(1A) pre-deduction months (or part), minimum bound, row 2 tag 34a7f392.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_min_4766a340",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "5e591371735f626a",
+      "definition_text": "s.201(1A) pre-deduction months (or part), minimum bound, row 1 tag 4766a340.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_min_85b911ba",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "10a793a6cea1ad60",
+      "definition_text": "s.201(1A) pre-deduction months (or part), minimum bound, row 0 tag 85b911ba.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_min_8b9c6566",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "bfc70ed10aabc3a6",
+      "definition_text": "s.201(1A) pre-deduction months (or part), minimum bound, row 4 tag 8b9c6566.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage1_min_ee86fefe",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "e7b4025c2992f8a6",
+      "definition_text": "s.201(1A) pre-deduction months (or part), minimum bound, row 3 tag ee86fefe.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_max_34a7f392",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "9b65c4609768c3e0",
+      "definition_text": "s.201(1A) post-deduction months (or part), maximum bound, row 2 tag 34a7f392.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_max_4766a340",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "28d66568b923f1bd",
+      "definition_text": "s.201(1A) post-deduction months (or part), maximum bound, row 1 tag 4766a340.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_max_85b911ba",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "78830106ac8a8cb9",
+      "definition_text": "s.201(1A) post-deduction months (or part), maximum bound, row 0 tag 85b911ba.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_max_8b9c6566",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "d402be0eea12dfdc",
+      "definition_text": "s.201(1A) post-deduction months (or part), maximum bound, row 4 tag 8b9c6566.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_max_ee86fefe",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "ddf6b155302fbcfc",
+      "definition_text": "s.201(1A) post-deduction months (or part), maximum bound, row 3 tag ee86fefe.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_min_34a7f392",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c8d4fc8149cc883e",
+      "definition_text": "s.201(1A) post-deduction months (or part), minimum bound, row 2 tag 34a7f392.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_min_4766a340",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "d6eab0594a6c1bcf",
+      "definition_text": "s.201(1A) post-deduction months (or part), minimum bound, row 1 tag 4766a340.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_min_85b911ba",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c4ad44f7a084a21d",
+      "definition_text": "s.201(1A) post-deduction months (or part), minimum bound, row 0 tag 85b911ba.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_min_8b9c6566",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "ec1a529ee04ee170",
+      "definition_text": "s.201(1A) post-deduction months (or part), minimum bound, row 4 tag 8b9c6566.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.months_stage2_min_ee86fefe",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "71906f0d8d4da558",
+      "definition_text": "s.201(1A) post-deduction months (or part), minimum bound, row 3 tag ee86fefe.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.paid_date_34a7f392",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "789b29cbc37383b1",
+      "definition_text": "Date the deducted/collected tax was actually paid/deposited (row 2, tag 34a7f392); 'not supplied' when books/documents do not establish it.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.paid_date_4766a340",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "00bcda132649583c",
+      "definition_text": "Date the deducted/collected tax was actually paid/deposited (row 1, tag 4766a340); 'not supplied' when books/documents do not establish it.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.paid_date_85b911ba",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "c8be2e405dee5798",
+      "definition_text": "Date the deducted/collected tax was actually paid/deposited (row 0, tag 85b911ba); 'not supplied' when books/documents do not establish it.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.paid_date_8b9c6566",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "27ca36e03f1cdb80",
+      "definition_text": "Date the deducted/collected tax was actually paid/deposited (row 4, tag 8b9c6566); 'not supplied' when books/documents do not establish it.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.paid_date_ee86fefe",
+      "value": "not supplied",
+      "unit": "text",
+      "definition_sha256_16": "54c30c6e7b69c08a",
+      "definition_text": "Date the deducted/collected tax was actually paid/deposited (row 3, tag ee86fefe); 'not supplied' when books/documents do not establish it.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.rate_206c_bp",
+      "value": 100,
+      "unit": "bp",
+      "definition_sha256_16": "eb31194b5485d0b1",
+      "definition_text": "s.206C(7) rate, per month or part of a month (s.206C(7), status=partial).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.rate_after_deduction_bp",
+      "value": 150,
+      "unit": "bp",
+      "definition_sha256_16": "c0ddadc0a830bd41",
+      "definition_text": "s.201(1A) post-deduction rate, per month or part of a month (s.201(1A), status=VP).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.rate_before_deduction_bp",
+      "value": 100,
+      "unit": "bp",
+      "definition_sha256_16": "61e9b5e6f5af092e",
+      "definition_text": "s.201(1A) pre-deduction rate, per month or part of a month (s.201(1A), status=VP).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.s201_1a_defaults_with_26a_relief_date_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c5d3210e055dd4c4",
+      "definition_text": "Rows (deducted_date unknown, s.201(1A)) where a payee return-filing date was supplied for the Form 26A relief scenario.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.s201_1a_defaults_without_26a_relief_date_count",
+      "value": 5,
+      "unit": "count",
+      "definition_sha256_16": "4a8e34d79e7c2115",
+      "definition_text": "Rows (deducted_date unknown, s.201(1A)) where no payee return-filing date was supplied -- the Form 26A relief scenario could not be computed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.section_34a7f392",
+      "value": "194I",
+      "unit": "text",
+      "definition_sha256_16": "d5e26df610596ed0",
+      "definition_text": "Section this row's interest is computed under (row 2, payee '194I_72327f85_lower_rate', tag 34a7f392).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.section_4766a340",
+      "value": "194C",
+      "unit": "text",
+      "definition_sha256_16": "7e6d7cbebb2bf4d5",
+      "definition_text": "Section this row's interest is computed under (row 1, payee '194C_f81067e8_higher_rate', tag 4766a340).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.section_85b911ba",
+      "value": "194C",
+      "unit": "text",
+      "definition_sha256_16": "63648562c2dba84d",
+      "definition_text": "Section this row's interest is computed under (row 0, payee '194C_f81067e8_lower_rate', tag 85b911ba).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.section_8b9c6566",
+      "value": "194T",
+      "unit": "text",
+      "definition_sha256_16": "ff51a85155c2f0ef",
+      "definition_text": "Section this row's interest is computed under (row 4, payee 'd0893259', tag 8b9c6566).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.section_ee86fefe",
+      "value": "194I",
+      "unit": "text",
+      "definition_sha256_16": "7a3e369ab84bc601",
+      "definition_text": "Section this row's interest is computed under (row 3, payee '194I_72327f85_higher_rate', tag ee86fefe).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.tax_34a7f392",
+      "value": 120000,
+      "unit": "paise",
+      "definition_sha256_16": "52a5b491a0a95b1e",
+      "definition_text": "Tax this row's interest is computed on (row 2, payee '194I_72327f85_lower_rate', tag 34a7f392) -- carried in from tds_payees/partners_40b_194t, not re-derived here.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.tax_4766a340",
+      "value": 70002,
+      "unit": "paise",
+      "definition_sha256_16": "b675d99a3550aba2",
+      "definition_text": "Tax this row's interest is computed on (row 1, payee '194C_f81067e8_higher_rate', tag 4766a340) -- carried in from tds_payees/partners_40b_194t, not re-derived here.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.tax_85b911ba",
+      "value": 35001,
+      "unit": "paise",
+      "definition_sha256_16": "6d2c8d254b03f04c",
+      "definition_text": "Tax this row's interest is computed on (row 0, payee '194C_f81067e8_lower_rate', tag 85b911ba) -- carried in from tds_payees/partners_40b_194t, not re-derived here.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.tax_8b9c6566",
+      "value": 300000,
+      "unit": "paise",
+      "definition_sha256_16": "8502c83a6c585258",
+      "definition_text": "Tax this row's interest is computed on (row 4, payee 'd0893259', tag 8b9c6566) -- carried in from tds_payees/partners_40b_194t, not re-derived here.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "tif-p1",
+          "label": "Journal J-9 on 2026-03-31"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.tax_ee86fefe",
+      "value": 600000,
+      "unit": "paise",
+      "definition_sha256_16": "12dc964c4402cc45",
+      "definition_text": "Tax this row's interest is computed on (row 3, payee '194I_72327f85_higher_rate', tag ee86fefe) -- carried in from tds_payees/partners_40b_194t, not re-derived here.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ]
+    },
+    {
+      "id": "tds_interest_201.total_interest_26a_relief_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ab0733b55696edc9",
+      "definition_text": "Sum of interest_26a_relief_<row> across only the rows where a payee filing date was supplied -- a partial sum over a subset, never compared directly to total_interest_min/max.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_interest_max_paise",
+      "value": 161250,
+      "unit": "paise",
+      "definition_sha256_16": "91fd72b3cd0a3475",
+      "definition_text": "Sum of interest_max_<row> across every default -- the ceiling of the combined range.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_interest_min_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3378872b1cdc3f2c",
+      "definition_text": "Sum of interest_min_<row> across every default -- the floor of the combined range.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_tax_paise",
+      "value": 1125003,
+      "unit": "paise",
+      "definition_sha256_16": "5c4aa14a2da3d64e",
+      "definition_text": "Sum of tax_<row> across every default supplied.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "tds_interest_201/34a7f392",
+      "clauses": [
+        "s.201(1A)",
+        "3CD-21(b)",
+        "3CD-34(a)",
+        "3CD-34(c)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "deductible_date",
+          "figure_id": "tds_interest_201.deductible_date_34a7f392"
+        },
+        {
+          "name": "interest_max",
+          "figure_id": "tds_interest_201.interest_max_34a7f392"
+        },
+        {
+          "name": "interest_min",
+          "figure_id": "tds_interest_201.interest_min_34a7f392"
+        },
+        {
+          "name": "tax",
+          "figure_id": "tds_interest_201.tax_34a7f392"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ],
+      "title_sha256_16": "a85cc598a79eff6f",
+      "title_text": "Possible s.201(1A) interest on a 194I shortfall for one payee -- range pending deposit evidence",
+      "limits_sha256_16": "589fdc312f1789e5",
+      "limits_text": [
+        "Books/documents alone cannot establish the actual deduction/collection and deposit dates; challans, the TAN and (for the pre-deduction leg) Form 26A are needed before any single interest amount can be confirmed -- this is a range, not a computed liability.",
+        "No payee return-filing date was supplied, so the Form 26A (first proviso to s.201(1)) relief scenario could not be computed for this row; the maximum bound above assumes tax remains undeducted through as_of.",
+        "Whether this assessee is a deductor at all for the year is itself unresolved (previous-year turnover unconfirmed -- see tds_payees' own deductor_status finding); this interest range is conditional on deductor status being confirmed, not a standalone conclusion."
+      ],
+      "ask_client_sha256_16": "6f0a675ecfce7394",
+      "ask_client_text": [
+        "Provide TDS/TCS challans and the TAN to confirm actual deduction/collection and deposit dates for this payee.",
+        "If not deducted/collected, confirm whether Form 26A (or the equivalent TCS relief) is available, and the payee's own return-filing date."
+      ]
+    },
+    {
+      "id": "tds_interest_201/4766a340",
+      "clauses": [
+        "s.201(1A)",
+        "3CD-21(b)",
+        "3CD-34(a)",
+        "3CD-34(c)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "deductible_date",
+          "figure_id": "tds_interest_201.deductible_date_4766a340"
+        },
+        {
+          "name": "interest_max",
+          "figure_id": "tds_interest_201.interest_max_4766a340"
+        },
+        {
+          "name": "interest_min",
+          "figure_id": "tds_interest_201.interest_min_4766a340"
+        },
+        {
+          "name": "tax",
+          "figure_id": "tds_interest_201.tax_4766a340"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ],
+      "title_sha256_16": "5be51a1180170d4a",
+      "title_text": "Possible s.201(1A) interest on a 194C shortfall for one payee -- range pending deposit evidence",
+      "limits_sha256_16": "589fdc312f1789e5",
+      "limits_text": [
+        "Books/documents alone cannot establish the actual deduction/collection and deposit dates; challans, the TAN and (for the pre-deduction leg) Form 26A are needed before any single interest amount can be confirmed -- this is a range, not a computed liability.",
+        "No payee return-filing date was supplied, so the Form 26A (first proviso to s.201(1)) relief scenario could not be computed for this row; the maximum bound above assumes tax remains undeducted through as_of.",
+        "Whether this assessee is a deductor at all for the year is itself unresolved (previous-year turnover unconfirmed -- see tds_payees' own deductor_status finding); this interest range is conditional on deductor status being confirmed, not a standalone conclusion."
+      ],
+      "ask_client_sha256_16": "6f0a675ecfce7394",
+      "ask_client_text": [
+        "Provide TDS/TCS challans and the TAN to confirm actual deduction/collection and deposit dates for this payee.",
+        "If not deducted/collected, confirm whether Form 26A (or the equivalent TCS relief) is available, and the payee's own return-filing date."
+      ]
+    },
+    {
+      "id": "tds_interest_201/85b911ba",
+      "clauses": [
+        "s.201(1A)",
+        "3CD-21(b)",
+        "3CD-34(a)",
+        "3CD-34(c)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "deductible_date",
+          "figure_id": "tds_interest_201.deductible_date_85b911ba"
+        },
+        {
+          "name": "interest_max",
+          "figure_id": "tds_interest_201.interest_max_85b911ba"
+        },
+        {
+          "name": "interest_min",
+          "figure_id": "tds_interest_201.interest_min_85b911ba"
+        },
+        {
+          "name": "tax",
+          "figure_id": "tds_interest_201.tax_85b911ba"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p01",
+          "label": "Payment p01 on 2025-05-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "p03",
+          "label": "Payment p03 on 2025-05-12"
+        }
+      ],
+      "title_sha256_16": "5be51a1180170d4a",
+      "title_text": "Possible s.201(1A) interest on a 194C shortfall for one payee -- range pending deposit evidence",
+      "limits_sha256_16": "589fdc312f1789e5",
+      "limits_text": [
+        "Books/documents alone cannot establish the actual deduction/collection and deposit dates; challans, the TAN and (for the pre-deduction leg) Form 26A are needed before any single interest amount can be confirmed -- this is a range, not a computed liability.",
+        "No payee return-filing date was supplied, so the Form 26A (first proviso to s.201(1)) relief scenario could not be computed for this row; the maximum bound above assumes tax remains undeducted through as_of.",
+        "Whether this assessee is a deductor at all for the year is itself unresolved (previous-year turnover unconfirmed -- see tds_payees' own deductor_status finding); this interest range is conditional on deductor status being confirmed, not a standalone conclusion."
+      ],
+      "ask_client_sha256_16": "6f0a675ecfce7394",
+      "ask_client_text": [
+        "Provide TDS/TCS challans and the TAN to confirm actual deduction/collection and deposit dates for this payee.",
+        "If not deducted/collected, confirm whether Form 26A (or the equivalent TCS relief) is available, and the payee's own return-filing date."
+      ]
+    },
+    {
+      "id": "tds_interest_201/8b9c6566",
+      "clauses": [
+        "s.201(1A)",
+        "3CD-21(b)",
+        "3CD-34(a)",
+        "3CD-34(c)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "deductible_date",
+          "figure_id": "tds_interest_201.deductible_date_8b9c6566"
+        },
+        {
+          "name": "interest_max",
+          "figure_id": "tds_interest_201.interest_max_8b9c6566"
+        },
+        {
+          "name": "interest_min",
+          "figure_id": "tds_interest_201.interest_min_8b9c6566"
+        },
+        {
+          "name": "tax",
+          "figure_id": "tds_interest_201.tax_8b9c6566"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "tif-p1",
+          "label": "Journal J-9 on 2026-03-31"
+        }
+      ],
+      "title_sha256_16": "30798006505e920f",
+      "title_text": "Possible s.201(1A) interest on a 194T shortfall for one payee -- range pending deposit evidence",
+      "limits_sha256_16": "0733e3a1a42e5b85",
+      "limits_text": [
+        "Books/documents alone cannot establish the actual deduction/collection and deposit dates; challans, the TAN and (for the pre-deduction leg) Form 26A are needed before any single interest amount can be confirmed -- this is a range, not a computed liability.",
+        "No payee return-filing date was supplied, so the Form 26A (first proviso to s.201(1)) relief scenario could not be computed for this row; the maximum bound above assumes tax remains undeducted through as_of."
+      ],
+      "ask_client_sha256_16": "6f0a675ecfce7394",
+      "ask_client_text": [
+        "Provide TDS/TCS challans and the TAN to confirm actual deduction/collection and deposit dates for this payee.",
+        "If not deducted/collected, confirm whether Form 26A (or the equivalent TCS relief) is available, and the payee's own return-filing date."
+      ]
+    },
+    {
+      "id": "tds_interest_201/ee86fefe",
+      "clauses": [
+        "s.201(1A)",
+        "3CD-21(b)",
+        "3CD-34(a)",
+        "3CD-34(c)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "deductible_date",
+          "figure_id": "tds_interest_201.deductible_date_ee86fefe"
+        },
+        {
+          "name": "interest_max",
+          "figure_id": "tds_interest_201.interest_max_ee86fefe"
+        },
+        {
+          "name": "interest_min",
+          "figure_id": "tds_interest_201.interest_min_ee86fefe"
+        },
+        {
+          "name": "tax",
+          "figure_id": "tds_interest_201.tax_ee86fefe"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "p02",
+          "label": "Payment p02 on 2025-05-11"
+        }
+      ],
+      "title_sha256_16": "a85cc598a79eff6f",
+      "title_text": "Possible s.201(1A) interest on a 194I shortfall for one payee -- range pending deposit evidence",
+      "limits_sha256_16": "589fdc312f1789e5",
+      "limits_text": [
+        "Books/documents alone cannot establish the actual deduction/collection and deposit dates; challans, the TAN and (for the pre-deduction leg) Form 26A are needed before any single interest amount can be confirmed -- this is a range, not a computed liability.",
+        "No payee return-filing date was supplied, so the Form 26A (first proviso to s.201(1)) relief scenario could not be computed for this row; the maximum bound above assumes tax remains undeducted through as_of.",
+        "Whether this assessee is a deductor at all for the year is itself unresolved (previous-year turnover unconfirmed -- see tds_payees' own deductor_status finding); this interest range is conditional on deductor status being confirmed, not a standalone conclusion."
+      ],
+      "ask_client_sha256_16": "6f0a675ecfce7394",
+      "ask_client_text": [
+        "Provide TDS/TCS challans and the TAN to confirm actual deduction/collection and deposit dates for this payee.",
+        "If not deducted/collected, confirm whether Form 26A (or the equivalent TCS relief) is available, and the payee's own return-filing date."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to -20000000 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "opening_paise",
+      "detail": "TB opening_paise sums to -20000000 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "tds_interest_201.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

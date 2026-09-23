@@ -1,0 +1,318 @@
+{
+ "comment": "tds_interest_201: rows built from tds_payees' and partners_40b_194t's own results on this book, as the reference's pack builds them (a copy of tds_payees_goods_and_cash as a firm, plus one partner credited interest over the s.194T limit): each 194C/194I finding at both its lower and higher rate, the s.194T finding once, each dated by the latest voucher it cites, with the deductor-status flag the config's placeholder turnover sets.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null,
+  "Capital Account": null
+ },
+ "ledgers": [
+  {
+   "name": "Freight",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-000"
+  },
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-001"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-002"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-003"
+  },
+  {
+   "name": "Supplier X",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-004"
+  },
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-005"
+  },
+  {
+   "name": "HDFC Current",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-006"
+  },
+  {
+   "name": "Overdraft",
+   "chain": [
+    "Bank OD A/c",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-tds_payees_goods_and_cash-007"
+  },
+  {
+   "name": "A Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-tds_interest_from_results-p00"
+  },
+  {
+   "name": "Interest to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_interest_from_results-p01"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Freight",
+   "opening": 0,
+   "debit": 7600100,
+   "credit": 10000000,
+   "closing": -2399900
+  },
+  {
+   "ledger": "Rent",
+   "opening": 0,
+   "debit": 6200000,
+   "credit": 20000000,
+   "closing": -13800000
+  },
+  {
+   "ledger": "Purchases",
+   "opening": 0,
+   "debit": 51000000,
+   "credit": 0,
+   "closing": 51000000
+  },
+  {
+   "ledger": "Sales",
+   "opening": 0,
+   "debit": 0,
+   "credit": 100000000,
+   "closing": -100000000
+  },
+  {
+   "ledger": "Supplier X",
+   "opening": 0,
+   "debit": 130000000,
+   "credit": 55300000,
+   "closing": 74700000
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3500000,
+   "closing": -3500000
+  },
+  {
+   "ledger": "HDFC Current",
+   "opening": 0,
+   "debit": 0,
+   "credit": 6000000,
+   "closing": -6000000
+  },
+  {
+   "ledger": "Overdraft",
+   "opening": 0,
+   "debit": 0,
+   "credit": 100,
+   "closing": -100
+  },
+  {
+   "ledger": "A Capital",
+   "opening": -20000000,
+   "debit": 0,
+   "credit": 3000000,
+   "closing": -23000000
+  },
+  {
+   "ledger": "Interest to Partners",
+   "opening": 0,
+   "debit": 3000000,
+   "credit": 0,
+   "closing": 3000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "g01",
+   "date": "2025-04-10",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     50000000
+    ],
+    [
+     "Freight",
+     4000000
+    ],
+    [
+     "Supplier X",
+     -54000000
+    ]
+   ]
+  },
+  {
+   "guid": "g02",
+   "date": "2025-04-11",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Supplier X",
+     130000000
+    ],
+    [
+     "Sales",
+     -100000000
+    ],
+    [
+     "Freight",
+     -10000000
+    ],
+    [
+     "Rent",
+     -20000000
+    ]
+   ]
+  },
+  {
+   "guid": "g03",
+   "date": "2025-04-12",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1000000
+    ],
+    [
+     "Freight",
+     100000
+    ],
+    [
+     "Rent",
+     200000
+    ],
+    [
+     "Supplier X",
+     -1300000
+    ]
+   ]
+  },
+  {
+   "guid": "p01",
+   "date": "2025-05-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Freight",
+     3500000
+    ],
+    [
+     "Cash",
+     -3500000
+    ]
+   ]
+  },
+  {
+   "guid": "p02",
+   "date": "2025-05-11",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Rent",
+     6000000
+    ],
+    [
+     "HDFC Current",
+     -6000000
+    ]
+   ]
+  },
+  {
+   "guid": "p03",
+   "date": "2025-05-12",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Freight",
+     100
+    ],
+    [
+     "Overdraft",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "tif-p1",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "number": "J-9",
+   "lines": [
+    [
+     "Interest to Partners",
+     3000000
+    ],
+    [
+     "A Capital",
+     -3000000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_interest_201"
+ ],
+ "nature_by_ledger": {
+  "Freight": "194C",
+  "Rent": "194I"
+ },
+ "defaults_from_results": true,
+ "entity_type": "firm",
+ "previous_year_turnover_status": "placeholder",
+ "partners": {
+  "partner_a": {
+   "capital_ledgers": [
+    "A Capital"
+   ],
+   "interest_ledger": "Interest to Partners"
+  }
+ }
+}

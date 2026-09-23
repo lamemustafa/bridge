@@ -186,7 +186,7 @@
     },
     {
       "id": "partners_40b_194t.remuneration_credited_a83e6c31",
-      "value": 1490000,
+      "value": 2000000,
       "unit": "paise",
       "definition_sha256_16": "7458e2cf06f33fba",
       "definition_text": "Remuneration credited to partner (tag a83e6c31), in a voucher also carrying a line on their remuneration_ledger. The s.40(b)(v) book-profit limit is NOT computed here.",
@@ -208,7 +208,7 @@
     },
     {
       "id": "partners_40b_194t.s194t_amount_credited_a83e6c31",
-      "value": 1490000,
+      "value": 2000000,
       "unit": "paise",
       "definition_sha256_16": "90fde207b3c2eac9",
       "definition_text": "Interest + remuneration credited to partner (tag a83e6c31) in the year -- the s.194T base (salary, remuneration, commission, bonus and interest to a partner).",
@@ -232,7 +232,7 @@
     },
     {
       "id": "partners_40b_194t.s194t_tds_expected_a83e6c31",
-      "value": 149000,
+      "value": 200000,
       "unit": "paise",
       "definition_sha256_16": "0d81b54c957031cd",
       "definition_text": "TDS @ 1000 bp on s194t_amount_credited_a83e6c31.",

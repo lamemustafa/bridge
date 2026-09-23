@@ -56,9 +56,10 @@ furniture_10 = 0
 plant_machinery_15 = 50000000
 computers_40 = 0
 
-# financial_statements only: each partner's interest_ledger (the reference engine's
-# partner_interest_ledgers). capital_ledgers is here only because the reference engine's own
-# binding binds every [partners.*] location; this crate reads interest_ledger alone.
+# financial_statements reads each partner's interest_ledger (the reference engine's
+# partner_interest_ledgers); partners_40b_194t reads the whole entry, but this engagement is an
+# individual, so it does not apply. Every [partners.*] ledger location is bound, as the reference
+# engine binds it.
 [partners.partner_a]
 capital_ledgers = ["Partner Capital - A"]
 interest_ledger = "Interest to Partners"

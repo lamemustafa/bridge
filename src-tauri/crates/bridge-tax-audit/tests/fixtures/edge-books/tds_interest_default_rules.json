@@ -1,0 +1,104 @@
+{
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-tds_interest_default_rules-000"
+  },
+  {
+   "name": "Contract Charges",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_interest_default_rules-001"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank",
+   "opening": 1000000,
+   "debit": 0,
+   "credit": 800000,
+   "closing": 200000
+  },
+  {
+   "ledger": "Contract Charges",
+   "opening": 0,
+   "debit": 800000,
+   "credit": 0,
+   "closing": 800000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "ti-01",
+   "date": "2025-06-10",
+   "base_type": "Payment",
+   "number": "P-1",
+   "lines": [
+    [
+     "Contract Charges",
+     500000
+    ],
+    [
+     "Bank",
+     -500000
+    ]
+   ]
+  },
+  {
+   "guid": "ti-02",
+   "date": "2025-08-20",
+   "base_type": "Payment",
+   "number": "P-2",
+   "lines": [
+    [
+     "Contract Charges",
+     300000
+    ],
+    [
+     "Bank",
+     -300000
+    ]
+   ]
+  }
+ ],
+ "comment": "tds_interest_201: rules without [s201_1a] or [s206c_7] (the module's own flagged defaults), priced as of an explicit date after the audit report date.",
+ "tests": [
+  "tds_interest_201"
+ ],
+ "rules_without": [
+  "s201_1a",
+  "s206c_7"
+ ],
+ "as_of": "2026-10-31",
+ "defaults": [
+  {
+   "section": "194C",
+   "payee_key": "s201_default",
+   "tax_paise": 120000,
+   "deductible_date": "2025-06-10",
+   "evidence": [
+    [
+     "voucher",
+     "ti-01",
+     "Payment P-1 on 2025-06-10"
+    ]
+   ]
+  },
+  {
+   "section": "206C(1)",
+   "payee_key": "s206c_default",
+   "tax_paise": 60000,
+   "deductible_date": "2025-06-10"
+  }
+ ]
+}

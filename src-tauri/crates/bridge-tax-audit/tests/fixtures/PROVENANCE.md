@@ -438,7 +438,7 @@ range (one rule for an empty or missing value across its renderers) are outside 
 | `edge.tb_rows.trial_balance.order.json` | 219 | `2ace3be45ee1cd6ae4757727e947e07fd2ca3600a83f480b279bdda181d5f43d` | `golden/edge.tb_rows.trial_balance.order.json` |
 | `text-probes.json` | 1,150,882 | `96ca23055262ee348a27ae2672664d9296c869d1ac95fb21f3a904b43631760c` | `text-probes.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |
-| `synthetic-engagement.toml` | 5,398 | `bdbf64c7a4fefc386fd554c1957257e5da28a2b737835d7829f9df238261ee26` | `synthetic-engagement.toml` |
+| `synthetic-engagement.toml` | 5,433 | `fbb0a6762a5a8a647e7bfa2e9ea3a8acc5c5ea47664bee398921f3b3080a5608` | `synthetic-engagement.toml` |
 | `manifest.json` | 9,711 | `d3948085c8466002c269133fd59c5f6361acab028ff6db74bd1fd6d23f7271a7` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 8,102 | `12e4d994960ecd768cd33fb4565f19b140a765d3f9f4982dbcfe1a108d9e5214` | `synthetic-read/parts/groups.xml` |

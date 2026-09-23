@@ -1,0 +1,206 @@
+{
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-tds_interest_rows-000"
+  },
+  {
+   "name": "Contract Charges",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_interest_rows-001"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank",
+   "opening": 1000000,
+   "debit": 0,
+   "credit": 800000,
+   "closing": 200000
+  },
+  {
+   "ledger": "Contract Charges",
+   "opening": 0,
+   "debit": 800000,
+   "credit": 0,
+   "closing": 800000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "ti-01",
+   "date": "2025-06-10",
+   "base_type": "Payment",
+   "number": "P-1",
+   "lines": [
+    [
+     "Contract Charges",
+     500000
+    ],
+    [
+     "Bank",
+     -500000
+    ]
+   ]
+  },
+  {
+   "guid": "ti-02",
+   "date": "2025-08-20",
+   "base_type": "Payment",
+   "number": "P-2",
+   "lines": [
+    [
+     "Contract Charges",
+     300000
+    ],
+    [
+     "Bank",
+     -300000
+    ]
+   ]
+  }
+ ],
+ "comment": "tds_interest_201: rows supplied directly, reaching every pricing branch: s.201(1A) with both legs known, with only the deduction date known (a range on the second leg), with nothing known and a payee return-filing date (the Form 26A figures) and without one, the deductor-status flag; s.206C(7) with the payment date known, with only the collection date known, and with neither, under three spellings of the section; a deduction on 31 March and deposit on 1 April (two months), a same-day deposit (none), a zero and a negative tax (no interest), a deductible date after as_of (none), and a payee key carrying a quote character.",
+ "tests": [
+  "tds_interest_201"
+ ],
+ "defaults": [
+  {
+   "section": "194C",
+   "payee_key": "194C_known_both",
+   "tax_paise": 120000,
+   "deductible_date": "2025-06-10",
+   "deducted_date": "2025-07-05",
+   "paid_date": "2025-09-07",
+   "evidence": [
+    [
+     "voucher",
+     "ti-01",
+     "Payment P-1 on 2025-06-10"
+    ]
+   ]
+  },
+  {
+   "section": "194J",
+   "payee_key": "194J_deducted_only",
+   "tax_paise": 90000,
+   "deductible_date": "2025-06-10",
+   "deducted_date": "2025-08-01",
+   "evidence": [
+    [
+     "voucher",
+     "ti-01",
+     "Payment P-1 on 2025-06-10"
+    ],
+    [
+     "voucher",
+     "ti-02",
+     "Payment P-2 on 2025-08-20"
+    ]
+   ]
+  },
+  {
+   "section": "194I",
+   "payee_key": "194I_with_26a",
+   "tax_paise": 250000,
+   "deductible_date": "2025-06-10",
+   "payee_return_filed_date": "2026-01-15",
+   "evidence": [
+    [
+     "voucher",
+     "ti-01",
+     "Payment P-1 on 2025-06-10"
+    ]
+   ]
+  },
+  {
+   "section": "194T",
+   "payee_key": "194T_nothing",
+   "tax_paise": 300000,
+   "deductible_date": "2025-08-20",
+   "deductor_status_uncertain": true,
+   "evidence": [
+    [
+     "voucher",
+     "ti-01",
+     "Payment P-1 on 2025-06-10"
+    ],
+    [
+     "voucher",
+     "ti-02",
+     "Payment P-2 on 2025-08-20"
+    ]
+   ]
+  },
+  {
+   "section": "206C(1)",
+   "payee_key": "tcs_paid",
+   "tax_paise": 50000,
+   "deductible_date": "2025-06-10",
+   "paid_date": "2025-11-02"
+  },
+  {
+   "section": "206 c",
+   "payee_key": "tcs_collected",
+   "tax_paise": 50000,
+   "deductible_date": "2025-06-10",
+   "deducted_date": "2025-06-30"
+  },
+  {
+   "section": "206C.(1H)",
+   "payee_key": "tcs_nothing",
+   "tax_paise": 70000,
+   "deductible_date": "2025-06-10"
+  },
+  {
+   "section": "194C",
+   "payee_key": "boundary",
+   "tax_paise": 100000,
+   "deductible_date": "2026-03-31",
+   "deducted_date": "2026-04-01",
+   "paid_date": "2026-04-01"
+  },
+  {
+   "section": "194C",
+   "payee_key": "zero_tax",
+   "tax_paise": 0,
+   "deductible_date": "2025-06-10"
+  },
+  {
+   "section": "194C",
+   "payee_key": "negative_tax",
+   "tax_paise": -500,
+   "deductible_date": "2025-06-10"
+  },
+  {
+   "section": "194J",
+   "payee_key": "after_as_of",
+   "tax_paise": 80000,
+   "deductible_date": "2026-10-15"
+  },
+  {
+   "section": "194C",
+   "payee_key": "o'brien \"and\" sons",
+   "tax_paise": 40000,
+   "deductible_date": "2025-06-10",
+   "evidence": [
+    [
+     "voucher",
+     "ti-01",
+     "Payment P-1 on 2025-06-10"
+    ]
+   ]
+  }
+ ]
+}

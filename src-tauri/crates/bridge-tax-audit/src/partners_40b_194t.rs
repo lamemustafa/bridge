@@ -656,6 +656,28 @@ mod tests {
         assert_eq!(r.figures.len(), 1);
         // A firm reads the population, which refuses the unknown status.
         assert!(run(&unreadable_book(), &rules, &year(), "firm", &cfg("")).is_err());
+        // Either key alone makes the test apply (it then reads the population, which refuses).
+        let only = |s40b: Option<i64>, s194t: Option<bool>| Rules {
+            entity: Some(BTreeMap::from([(
+                "x".to_string(),
+                crate::rules::EntityRules {
+                    s40b_interest_rate_bp: s40b,
+                    s194t,
+                },
+            )])),
+            ..rules.clone()
+        };
+        for r in [only(Some(1200), None), only(None, Some(true))] {
+            assert!(run(&unreadable_book(), &r, &year(), "x", &cfg("")).is_err());
+        }
+        let neither = only(Some(0), Some(false));
+        assert_eq!(
+            run(&unreadable_book(), &neither, &year(), "x", &cfg(""))
+                .unwrap()
+                .figures
+                .len(),
+            1
+        );
         let without = Rules {
             entity: None,
             ..rules

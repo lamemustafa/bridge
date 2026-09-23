@@ -96,6 +96,12 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::statutory_dues_43b_on(e, b, r),
     },
     PortedTest {
+        id: "tds_interest_201",
+        // `as_of`, the three rates and the six totals, on any book; each priced row adds more.
+        min_figures: 10,
+        run_on: |e, b, r, _| crate::tds_interest_201_on(e, b, r),
+    },
+    PortedTest {
         id: "tds_payees",
         min_figures: 30,
         run_on: |e, b, r, _| crate::tds_payees_on(e, b, r),

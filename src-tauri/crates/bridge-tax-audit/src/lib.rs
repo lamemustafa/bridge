@@ -52,6 +52,7 @@ pub mod rules;
 pub mod stale_balances_41_1;
 pub mod statutory_dues_43b;
 mod support;
+pub mod tds_interest_201;
 pub mod tds_payees;
 pub mod tds_tcs_26as;
 mod text_tables;
@@ -1308,6 +1309,49 @@ pub fn partners_40b_194t_on(
     canonical::canonical_test_result(book, &result, None)
 }
 
+/// The reference's pack: `cfg.get("tds", {}).get("previous_year_turnover_status") == "placeholder"`,
+/// the flag that makes every tds_payees row of `tds_interest_201` conditional on deductor status.
+fn previous_year_turnover_is_placeholder(cfg: &toml::Table) -> bool {
+    cfg.get("tds")
+        .and_then(|t| t.get("previous_year_turnover_status"))
+        .and_then(toml::Value::as_str)
+        == Some("placeholder")
+}
+
+/// Run `tds_interest_201` on an already-built book, as the reference's pack runs it: its rows
+/// built from `tds_payees`' and `partners_40b_194t`'s own results, priced as of the rules' audit
+/// report date, with the deductor-status flag the client config's `[tds]` sets.
+pub fn tds_interest_201_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("tds_interest_201 needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    let tds = bound
+        .tds
+        .as_ref()
+        .ok_or_else(|| AuditError::Config("tds_interest_201 needs a [tds] table".to_string()))?;
+    let payees = tds_payees::run(book, rules, &entity_type, tds)?;
+    let partners = partners_40b_194t::run(
+        book,
+        rules,
+        &engagement.period,
+        &entity_type,
+        &bound.partners,
+    )?;
+    let uncertain = previous_year_turnover_is_placeholder(&engagement.raw_cfg);
+    let defaults = tds_interest_201::defaults_from(book, rules, &payees, &partners, uncertain)?;
+    let as_of =
+        bridge_tally_primitives::TallyDate::parse(rules.due_date_audit_report.replace('-', ""))
+            .map_err(|e| AuditError::Config(format!("rules: [due_dates].audit_report: {e}")))?;
+    let result = tds_interest_201::run(rules, &defaults, &as_of)?;
+    let check = tds_interest_201::check_invariants(&result)?;
+    canonical::canonical_test_result(book, &result, Some(check))
+}
+
 /// Read, verify, build the book, run `tds_payees` and return its canonical parity dump.
 pub fn tds_payees_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     tds_payees_on(engagement, &load_book(engagement)?, rules)
@@ -1320,6 +1364,31 @@ pub fn applicability_44ab_canonical(
     comparisons: &applicability_44ab::TurnoverInputs,
 ) -> Result<serde_json::Value> {
     applicability_44ab_on(engagement, &load_book(engagement)?, rules, comparisons)
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    use super::previous_year_turnover_is_placeholder;
+
+    #[test]
+    fn only_the_placeholder_text_marks_turnover_unconfirmed() {
+        let flag = |text: &str| {
+            previous_year_turnover_is_placeholder(&toml::from_str::<toml::Table>(text).unwrap())
+        };
+        assert!(flag(
+            "[tds]\nprevious_year_turnover_status = \"placeholder\"\n"
+        ));
+        for text in [
+            "",
+            "[tds]\n",
+            "[tds]\nprevious_year_turnover_status = \"confirmed\"\n",
+            "[tds]\nprevious_year_turnover_status = \"Placeholder\"\n",
+            "[tds]\nprevious_year_turnover_status = true\n",
+            "tds = 5\n",
+        ] {
+            assert!(!flag(text), "{text:?}");
+        }
+    }
 }
 
 #[cfg(test)]

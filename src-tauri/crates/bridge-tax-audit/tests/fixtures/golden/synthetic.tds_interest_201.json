@@ -1,0 +1,133 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "tds_interest_201",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ae234de12cf0d159",
+  "population_note_text": "Not walked from the books population: every row is one (section, payee) tax amount already identified as a shortfall by 'TDS on payments made' or 'Partners (s.40(b), s.194T)', with whatever deduction/payment dates the books or documents establish. An unsupplied date is never guessed; it drives a range instead.",
+  "figures": [
+    {
+      "id": "tds_interest_201.as_of",
+      "value": "2026-09-30",
+      "unit": "text",
+      "definition_sha256_16": "5449f2e5763b11b6",
+      "definition_text": "Reference date for every maximum bound: the return due date from rules[due_dates], or the report date, as supplied by the caller -- this test never reads rules[due_dates] itself.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.rate_206c_bp",
+      "value": 100,
+      "unit": "bp",
+      "definition_sha256_16": "eb31194b5485d0b1",
+      "definition_text": "s.206C(7) rate, per month or part of a month (s.206C(7), status=partial).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.rate_after_deduction_bp",
+      "value": 150,
+      "unit": "bp",
+      "definition_sha256_16": "c0ddadc0a830bd41",
+      "definition_text": "s.201(1A) post-deduction rate, per month or part of a month (s.201(1A), status=VP).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.rate_before_deduction_bp",
+      "value": 100,
+      "unit": "bp",
+      "definition_sha256_16": "61e9b5e6f5af092e",
+      "definition_text": "s.201(1A) pre-deduction rate, per month or part of a month (s.201(1A), status=VP).",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.s201_1a_defaults_with_26a_relief_date_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c5d3210e055dd4c4",
+      "definition_text": "Rows (deducted_date unknown, s.201(1A)) where a payee return-filing date was supplied for the Form 26A relief scenario.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.s201_1a_defaults_without_26a_relief_date_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "4a8e34d79e7c2115",
+      "definition_text": "Rows (deducted_date unknown, s.201(1A)) where no payee return-filing date was supplied -- the Form 26A relief scenario could not be computed.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_interest_26a_relief_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ab0733b55696edc9",
+      "definition_text": "Sum of interest_26a_relief_<row> across only the rows where a payee filing date was supplied -- a partial sum over a subset, never compared directly to total_interest_min/max.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_interest_max_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "91fd72b3cd0a3475",
+      "definition_text": "Sum of interest_max_<row> across every default -- the ceiling of the combined range.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_interest_min_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3378872b1cdc3f2c",
+      "definition_text": "Sum of interest_min_<row> across every default -- the floor of the combined range.",
+      "evidence": []
+    },
+    {
+      "id": "tds_interest_201.total_tax_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "5c4aa14a2da3d64e",
+      "definition_text": "Sum of tax_<row> across every default supplied.",
+      "evidence": []
+    }
+  ],
+  "findings": [],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "tds_interest_201.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

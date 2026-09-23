@@ -43,7 +43,9 @@ writes that JSON. With neither, no comparison source is supplied. `creditor_agei
 `[creditor_ageing_43bh]` table, and passes no next-year payment data, as the reference's pack runs
 it. `statutory_dues_43b` reads the optional `[statutory_dues]` table (`nature_by_ledger`,
 `salary_expense_ledgers`). `partners_40b_194t` reads the optional `[partners]` table, with its `deed`
-popped out, as the reference's `partners_config` returns it. With --read DIR, the [snapshot] table is replaced in memory by that read with
+popped out, as the reference's `partners_config` returns it. `tds_interest_201` runs as the pack runs it:
+`tds_payees` and `partners_40b_194t` first, their results turned into rows by the pack's own
+`_tds_interest_defaults`, priced as of `[due_dates].audit_report`. With --read DIR, the [snapshot] table is replaced in memory by that read with
 allow_unbracketed_read = true -- the same switch the engine's own read-format parity gate applies
 -- so a legacy client config can be run against its wrapped read without editing it.
 
@@ -216,6 +218,21 @@ def _partners_40b_194t(c):
     return partners_40b_194t, partners_40b_194t.run(c.eng, c.rules, partners, deed)
 
 
+def _tds_interest_201(c):
+    from tae import pack
+    from tae.audit_tests import partners_40b_194t, tds_interest_201, tds_payees
+    from tae.config import partners_config, tds_config
+    # As tae/pack.py runs it: tds_payees' and partners_40b_194t's own results, turned into rows by
+    # the pack's own helper, priced as of the rules' audit report date.
+    nature_by_ledger, payee_aliases, turnover, s194j_category_by_ledger = tds_config(c.cfg)
+    payees = tds_payees.run(c.eng, c.rules, nature_by_ledger, payee_aliases, turnover, s194j_category_by_ledger)
+    partners, deed = partners_config(c.cfg)
+    res_partners = partners_40b_194t.run(c.eng, c.rules, partners, deed)
+    uncertain = c.cfg.get("tds", {}).get("previous_year_turnover_status") == "placeholder"
+    defaults = pack._tds_interest_defaults(c.eng, c.rules, payees, res_partners, uncertain)
+    return tds_interest_201, tds_interest_201.run(c.eng, c.rules, defaults, c.rules["due_dates"]["audit_report"])
+
+
 def _traces_documents(c):
     """The Form 26AS/AIS/TIS rows both 26AS tests take as caller data: from --traces-documents
     (the JSON --emit-traces-documents writes, or an invented fixture), from the reference's own
@@ -289,6 +306,7 @@ RUNNERS = {
     "partners_40b_194t": _partners_40b_194t,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
+    "tds_interest_201": _tds_interest_201,
     "tds_payees": _tds_payees,
     "tds_tcs_26as": _tds_tcs_26as,
     "trial_balance": _trial_balance,

@@ -19,8 +19,9 @@
 //! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
 //! Profit & Loss report totals as caller data -- the file `parity/python_golden.py
 //! --emit-report-totals` wrote from the same read, so both sides tie against the same numbers;
-//! without it both run with no report. `CLIENT_TOML`'s `[partners.*].interest_ledger` entries are
-//! read and bound like every other configured name. `CLIENT_TOML` is the
+//! without it both run with no report. `CLIENT_TOML`'s `[partners.*]` ledger locations
+//! (`capital_ledgers`, `interest_ledger`, `remuneration_ledger`) are read and bound like every other
+//! configured name. `CLIENT_TOML` is the
 //! reference engine's client config; its `[snapshot]` is replaced in memory by `READ_DIR` with
 //! `allow_unbracketed_read = true`, the same switch `parity/python_golden.py --read` applies, so
 //! both sides read the same bytes. For `cash_payments_40a3`, `CLIENT_TOML`'s own `[roles]
@@ -180,17 +181,16 @@ fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), Stri
             ledger_labels.extend(strs(v));
         }
     }
+    // Every [partners.*] entry's three ledger locations, as `Engagement::bind` binds them.
     if let Some(partners) = cfg.get("partners").and_then(toml::Value::as_table) {
-        for (key, partner) in partners {
-            if key == "deed" {
-                continue;
+        for partner in partners.values().filter_map(toml::Value::as_table) {
+            if let Some(v) = partner.get("capital_ledgers") {
+                ledger_labels.extend(strs(v));
             }
-            if let Some(label) = partner
-                .as_table()
-                .and_then(|p| p.get("interest_ledger"))
-                .and_then(toml::Value::as_str)
-            {
-                ledger_labels.insert(label.to_string());
+            for key in ["interest_ledger", "remuneration_ledger"] {
+                if let Some(label) = partner.get(key).and_then(toml::Value::as_str) {
+                    ledger_labels.insert(label.to_string());
+                }
             }
         }
     }

@@ -22,12 +22,13 @@ use bridge_tax_audit::book::{
 use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::documents::traces_documents_from_json;
+use bridge_tax_audit::findings::EvidenceRef;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
     cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, loans_interest, partners_40b_194t,
-    stale_balances_41_1, statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
-    twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
+    stale_balances_41_1, statutory_dues_43b, tds_interest_201, tds_payees, tds_tcs_26as,
+    trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -200,6 +201,8 @@ fn rules(s: &Value) -> Rules {
             "s36_1_va" => rules.s36_1_va_due_day = None,
             "s194j" => rules.s194j_aggregate_paise = None,
             "s194t" => rules.s194t = None,
+            "s201_1a" => rules.s201_1a = None,
+            "s206c_7" => rules.s206c_7 = None,
             other => panic!("rules_without {other} is not wired here"),
         }
     }
@@ -305,6 +308,38 @@ fn partners(s: &Value) -> PartnersConfig {
             .unwrap_or_default(),
         deed: (!s["deed"].is_null()).then(|| toml_of(&s["deed"])),
     }
+}
+
+/// `tds_interest_201`'s rows as `parity/edge_golden.py` passes them: dates ISO or absent, evidence
+/// as [kind, id, label] triples.
+fn interest_rows(s: &Value) -> Vec<tds_interest_201::InterestDefault> {
+    let opt_date = |r: &Value, k: &str| r[k].as_str().map(date);
+    s["defaults"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|r| tds_interest_201::InterestDefault {
+            section: r["section"].as_str().unwrap().to_string(),
+            payee_key: r["payee_key"].as_str().unwrap().to_string(),
+            tax_paise: r["tax_paise"].as_i64().unwrap(),
+            deductible_date: date(r["deductible_date"].as_str().unwrap()),
+            deducted_date: opt_date(r, "deducted_date"),
+            paid_date: opt_date(r, "paid_date"),
+            payee_return_filed_date: opt_date(r, "payee_return_filed_date"),
+            deductor_status_uncertain: r["deductor_status_uncertain"].as_bool().unwrap_or(false),
+            evidence: r["evidence"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|e| {
+                    let t = |i: usize| e[i].as_str().unwrap();
+                    EvidenceRef::with_label(t(0), t(1), t(2))
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// The `loans` table `parity/edge_golden.py` passes `loans_interest`, typed as the crate types a
@@ -483,6 +518,33 @@ fn check(name: &str) {
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
             }
+            "tds_interest_201" => {
+                let as_of = s["as_of"]
+                    .as_str()
+                    .map_or_else(|| date(&rules.due_date_audit_report), date);
+                let rows = if s["defaults_from_results"].as_bool().unwrap_or(false) {
+                    let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                    let payees =
+                        tds_payees::run(&book, &rules, entity_type, &tds_config(&s)).unwrap();
+                    let partners = partners_40b_194t::run(
+                        &book,
+                        &rules,
+                        &period(&s),
+                        entity_type,
+                        &partners(&s),
+                    )
+                    .unwrap();
+                    let uncertain =
+                        s["previous_year_turnover_status"].as_str() == Some("placeholder");
+                    tds_interest_201::defaults_from(&book, &rules, &payees, &partners, uncertain)
+                        .unwrap()
+                } else {
+                    interest_rows(&s)
+                };
+                let r = tds_interest_201::run(&rules, &rows, &as_of).unwrap();
+                let c = tds_interest_201::check_invariants(&r).unwrap();
+                (r, c)
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -516,7 +578,7 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 11] = [
+const EDGE_TESTS: [&str; 12] = [
     "cash_book_integrity",
     "creditor_ageing_43bh",
     "ledger_scrutiny",
@@ -524,6 +586,7 @@ const EDGE_TESTS: [&str; 11] = [
     "partners_40b_194t",
     "stale_balances_41_1",
     "statutory_dues_43b",
+    "tds_interest_201",
     "tds_payees",
     "tds_tcs_26as",
     "trial_balance",

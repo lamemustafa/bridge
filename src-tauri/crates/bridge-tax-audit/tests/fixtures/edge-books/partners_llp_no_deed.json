@@ -1,5 +1,5 @@
 {
- "comment": "partners_40b_194t: an LLP with no deed (the statutory cap is used and said to be an assumption) and rules without [s194t] (the module's own default rate and limit, flagged). A is credited interest far above the allowable amount; B only remuneration, below the s.194T limit, on a voucher whose only 'TDS' ledger is not under Duties & Taxes (so no TDS line is seen).",
+ "comment": "partners_40b_194t: an LLP with no deed (the statutory cap is used and said to be an assumption) and rules without [s194t] (the module's own default rate and limit, flagged). A is credited interest far above the allowable amount; B only remuneration, exactly at the s.194T limit (not over it, so no finding), on a voucher whose only 'TDS' ledger is not under Duties & Taxes (so no TDS line is seen).",
  "groups": {
   "Current Assets": null,
   "Bank Accounts": "Current Assets",
@@ -80,8 +80,8 @@
    "ledger": "B Capital",
    "opening": -5000000,
    "debit": 0,
-   "credit": 1490000,
-   "closing": -6490000
+   "credit": 2000000,
+   "closing": -7000000
   },
   {
    "ledger": "Bank",
@@ -114,9 +114,9 @@
   {
    "ledger": "Remuneration to Partners",
    "opening": 0,
-   "debit": 1500000,
+   "debit": 2010000,
    "credit": 0,
-   "closing": 1500000
+   "closing": 2010000
   },
   {
    "ledger": "TDS on Partners 194T",
@@ -164,11 +164,11 @@
    "lines": [
     [
      "Remuneration to Partners",
-     1500000
+     2010000
     ],
     [
      "B Capital",
-     -1490000
+     -2000000
     ],
     [
      "Partner Tds Adjustment",
