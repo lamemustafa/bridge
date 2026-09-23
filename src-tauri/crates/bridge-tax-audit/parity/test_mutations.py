@@ -715,6 +715,30 @@ class GitRepo(unittest.TestCase):
             self.assertIn("STALE X1", out)
         self.assertEqual(sh(self.repo, "status", "--porcelain"), "", "the working tree is never touched")
 
+    def test_an_accepted_survivor_passes_every_path_through_main(self):
+        outside = Path(self.t.name)
+        work, results = outside / "mutants", outside / "r.json"
+        r1 = next(m for m in self.muts if m["id"] == "R1")  # the fake suite never kills R1
+        mu.SURVIVORS.write_text(json.dumps({"R1": {"mutation": mu.mutation_hash(r1), "reason": "test"}}))
+        self.commit("accept R1 as a survivor")
+        with fake_cargo(outside, FAKE_CARGO):
+            rc, out = self.main("B1", "R1", "--workdir", str(work), "--results", str(results))
+        self.assertEqual(rc, 0, out)  # the run's own judgement
+        self.assertEqual(json.loads(results.read_text())["R1"]["verdict"], mu.SURVIVED)
+        rc, out = self.main("R1", "--verify", "--results", str(results))
+        self.assertEqual(rc, 0, out)  # the merge check
+        self.assertIn("1 selected, 1 proven", out)
+        self.assertNotIn("NOT PROVEN", out)
+        (self.root / "src/support.rs").write_text("// unrelated\n")
+        self.commit("an unrelated source change")
+        rc, out = self.main("--list", "--changed-since", "HEAD~1", "--results", str(results))
+        self.assertNotIn("R1:", out, "selection does not re-pick an accepted survivor by itself")
+        mu.RESULTS.write_text(results.read_text())
+        self.commit("commit the records")
+        rc, out = self.main("--merge", str(results), "--results", str(outside / "all.json"))
+        self.assertEqual(rc, 0, out)  # the nightly's judgement
+        self.assertIn("## Accepted survivors (1)", out)
+
     def test_sigterm_stops_a_run_ends_its_cargo_and_restores_the_copy(self):
         self.sigterm_run(HANG_ON_B1)
 
