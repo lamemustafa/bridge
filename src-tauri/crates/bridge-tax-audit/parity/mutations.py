@@ -362,14 +362,16 @@ def verify(chosen: list[dict], results: dict, tree: str, order: list[str], accep
 
 def failing_ids(text: str) -> list[str] | None:
     """The mutation ids the open nightly issues list as failing, from the line `report` writes.
-    `text` holds each issue's body after a `<!-- mutation-nightly-issue N -->` header (text with
-    no header is one issue). None when ANY issue lacks the line: that issue cannot be satisfied
-    mechanically, and another issue's line must not hide it. [] when there is no issue."""
-    blocks = re.split(r"<!--\s*" + re.escape(ISSUE_MARK) + r"\s+\d+\s*-->", text)
-    if len(blocks) > 1:
-        blocks = blocks[1:]  # anything before the first header belongs to no issue
-    elif not text.strip():
+    `text` holds each issue's body after a `<!-- mutation-nightly-issue N -->` header, as ci.yml
+    writes it. None when ANY issue lacks the line, and when non-empty text holds no header at all
+    (the header drifted from ci.yml's): an issue that cannot be read must not be hidden by
+    another's line. [] when there is no issue."""
+    if not text.strip():
         return []
+    blocks = re.split(r"<!--\s*" + re.escape(ISSUE_MARK) + r"\s+\d+\s*-->", text)
+    if len(blocks) == 1:
+        return None
+    blocks = blocks[1:]  # anything before the first header belongs to no issue
     ids: set[str] = set()
     for block in blocks:
         marks = re.findall(r"<!--\s*" + re.escape(FAILING_MARK) + r"([^>]*?)-->", block)
