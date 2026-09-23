@@ -402,7 +402,7 @@ looked. There is no mutation-time witness either. So Bridge can only check befor
 read after it; it cannot make the two atomic. One policy applies to every edition, with no Gold
 gate (owner, 21 September): what matters is a second writer, not the licence tier.
 
-**What is checked before anything is sent.** Each refuses before a post's dispatch intent, or, for an amendment, before its file is written; nothing reaches Tally.
+**What is checked before anything is sent.** Each refuses before a post's dispatch intent, or, for an amendment, before its file is written, so nothing is posted.
 
 | Check | Where | Evidence |
 |---|---|---|
@@ -414,19 +414,29 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
 
 **The windows that remain.** Each is named where an operator or an agent reads it.
 1. **Between the last request and the POST.** Only local work runs there: the recheck and the
-   durable intent. A change made in Tally during it is posted into.
-2. **Changes that do not move `ALTMSTID`.** A regroup, and any edit made in Tally's own screens
-   rather than through the gateway, are not yet measured. Until they are, such a change inside
-   the queue is caught only if it moves the mark.
+   durable intent. A change made in Tally during it is not seen before the POST; it is posted
+   into, and only the check after the POST (window 3) can flag it.
+2. **Changes that do not move `ALTMSTID`.** Whether a regroup, or any edit made in Tally's own
+   screens rather than through the gateway, moves the mark is not yet measured. A change that
+   does not move it is missed by the check in the queue and by the check after the POST alike.
 3. **After the POST.** The readback compares ledgers by name, and a posted voucher's ledger lines
-   carry no ledger GUID over XML (measured 2026-09-23 on one Bridge-posted Journal). So when the
-   target's master mark moved between the snapshot before the POST and the one after it, Bridge
-   reads the ledger catalogue again and resolves each approved ledger's name to its GUID. If any
-   now resolves to another GUID (`masters_after_post: posted_under_changed_masters`), or the read
-   fails (`check_unavailable`), the post is reported `reconciliation_required`, never
-   `posted_verified`, with a message that the voucher is in Tally and must not be posted again. A
-   ledger renamed after the POST that gives its approved name back to its approved GUID cannot be
-   told apart from the one posted into, and a later `verify_import` compares by name only.
+   carry no ledger GUID over XML (measured 2026-09-23 on one Bridge-posted Journal; #239,
+   R-2 measurement comment). So unless the target's master mark is proven unmoved between the
+   snapshot before the POST and the one after it, Bridge reads the ledger catalogue again and
+   resolves each approved ledger's name to its GUID. A snapshot after the POST that is lost or
+   unreadable counts as moved. If any ledger now resolves to another GUID
+   (`masters_after_post: posted_under_changed_masters`), or the check cannot be completed
+   (`masters_after_post_unconfirmed`), the post is reported `reconciliation_required`, never
+   `posted_verified`, with a message that the voucher is in Tally, should be reviewed there, and
+   must not be rebuilt. A ledger renamed after the POST that gives its approved name back to its
+   approved GUID cannot be told apart from the one posted into.
+
+   The doubt is recorded beside the batch's proof, once, and a later `verify_import` or reconcile
+   reads it, since their readback compares by name and cannot clear it. It therefore stays even
+   after a person corrects the voucher in Tally: Bridge has no way to clear it. If it cannot be
+   recorded, the result says so. Follow-up: an explicit operator acknowledgement through the
+   native approval dialog ("I reviewed this voucher in Tally"), recording who and when; never a
+   clear an agent can call.
 4. **Amendments.** The window between the build and the manual import, and between that import
    and its first verification (follow-up 14). Only amendments posted through Bridge's own queue
    would close the first.

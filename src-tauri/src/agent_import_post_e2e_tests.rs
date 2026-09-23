@@ -1247,6 +1247,11 @@ fn captured_posted_journal() -> String {
 }
 
 fn saved_captured_batch(server: &Server) -> Value {
+    let line = saved_captured_line(server);
+    json!({"company_guid":GUID,"batch_id":line.batch_id})
+}
+
+fn saved_captured_line(server: &Server) -> ImportLedgerLine {
     let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
     let mut line: ImportLedgerLine = serde_json::from_value(json!({
         "batch_id":"bridge-6c79872c-aab6-4be5-a181-18182c8148be", "identity_scheme":"batch_v1",
@@ -1275,7 +1280,7 @@ fn saved_captured_batch(server: &Server) -> Value {
         rendered,
     )
     .unwrap();
-    json!({"company_guid":GUID,"batch_id":line.batch_id})
+    line
 }
 
 /// The whole native post, end to end: absent before, one clean create, the
@@ -1863,11 +1868,7 @@ async fn post_with_masters_after(
     plans.extend(after_approval(xml(created_one())));
     plans.push(xml(marks_after));
     plans.extend(catalogue);
-    plans.extend(probe());
-    plans.extend(verified_company());
-    plans.extend(paired(marks()));
-    plans.extend(paired(captured_posted_journal()));
-    plans.extend(paired(captured_posted_journal()));
+    plans.extend(reconcile_readback());
     let scripted = plans.len();
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -1876,11 +1877,37 @@ async fn post_with_masters_after(
     let response = SCRIPTED_APPROVAL
         .scope(
             ScriptedApproval::approving(),
-            server.call_tool("post_import", args),
+            server.call_tool("post_import", args.clone()),
         )
         .await;
     let observed = sent(simulator).len();
+    let record = server.imports_dir().unwrap().join(format!(
+        "{}.masters_doubt.json",
+        args["batch_id"].as_str().unwrap()
+    ));
+    let recorded = fs::read(&record)
+        .ok()
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap());
+    // The record beside the proof is exactly the doubt this result reports.
+    let reported = &response["structuredContent"]["result"]["masters_after_post"];
+    match &recorded {
+        Some(recorded) => assert_eq!(recorded, reported, "{response}"),
+        None => assert!(
+            masters_doubt(Some(reported)).is_none(),
+            "a doubt is recorded: {response}"
+        ),
+    }
     (response, observed, scripted)
+}
+
+/// The readback after a post, and in a later reconcile of the posted batch.
+fn reconcile_readback() -> Vec<ScenarioPlan> {
+    let mut plans = probe();
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(paired(captured_posted_journal()));
+    plans
 }
 
 /// The snapshot after the POST with the target's master mark at `masters`
@@ -1916,6 +1943,24 @@ async fn moved_masters_with_every_approved_ledger_unchanged_stay_verified() {
         result["masters_after_post"]["state"], "unchanged",
         "{response}"
     );
+    assert_eq!(result["masters_after_post"]["trigger"], "masters_moved");
+    assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(observed, scripted, "{response}");
+}
+
+/// A snapshot after the POST that cannot be read proves nothing unmoved, so
+/// the approved ledgers are still read again, never skipped.
+#[tokio::test]
+async fn an_unreadable_snapshot_after_the_post_still_checks_the_ledgers() {
+    let unreadable = "<ENVELOPE><BODY><DATA></DATA></BODY></ENVELOPE>".to_string();
+    let (response, observed, scripted) =
+        post_with_masters_after(unreadable, paired(catalogue())).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["masters_after_post"],
+        json!({"state":"unchanged","trigger":"masters_unconfirmed"}),
+        "{response}"
+    );
     assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
     assert_eq!(observed, scripted, "{response}");
 }
@@ -1939,10 +1984,7 @@ async fn a_ledger_now_on_another_guid_after_the_post_is_flagged_not_verified() {
     assert_eq!(result["error"]["code"], "posted_under_changed_masters");
     let message = result["error"]["message"].as_str().unwrap();
     assert!(message.starts_with("Posted to Tally"), "{message}");
-    assert!(
-        message.contains("Do not post this batch again"),
-        "{message}"
-    );
+    assert!(message.contains("do not rebuild this event"), "{message}");
     assert_eq!(observed, scripted, "{response}");
 }
 
@@ -1962,4 +2004,182 @@ async fn moved_masters_that_cannot_be_re_read_are_not_verified() {
     );
     assert_eq!(result["dispatch"]["state"], "reconciliation_required");
     assert_eq!(result["error"]["code"], "masters_after_post_unconfirmed");
+}
+
+/// A later `post_import` of a dispatched batch only reconciles: it reads the
+/// voucher back by name, and a doubt recorded at the post outlives it.
+async fn reconcile_with_doubt_record(record: Option<&[u8]>) -> (Value, usize, usize) {
+    let plans = reconcile_readback();
+    let scripted = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let line = saved_captured_line(&server);
+    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    {
+        let _lock = server.lock_import_admission().unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_for(
+                &line, &native,
+            ))
+            .unwrap();
+        // A clean response was saved, so only the readback decides.
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::response(
+                &line,
+                ledger::DispatchResponse {
+                    request_sha256: native.request_sha256.clone(),
+                    ..super::tests::dispatch_response("success", 1, 0)
+                },
+            ))
+            .unwrap();
+    }
+    if let Some(record) = record {
+        fs::write(
+            server
+                .imports_dir()
+                .unwrap()
+                .join(format!("{}.masters_doubt.json", line.batch_id)),
+            record,
+        )
+        .unwrap();
+    }
+    let args = json!({"company_guid":GUID,"batch_id":line.batch_id});
+    let response = server.call_tool("post_import", args).await;
+    (response, sent(simulator).len(), scripted)
+}
+
+#[tokio::test]
+async fn a_doubted_post_stays_doubted_when_reconciled_later() {
+    // The control: with no record the same readback reconciles.
+    let (response, observed, scripted) = reconcile_with_doubt_record(None).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["dispatch"]["state"], "previous_attempt_reconciled",
+        "{response}"
+    );
+    assert_eq!(observed, scripted, "{response}");
+    let doubt = json!({"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Cash"]});
+    let (response, observed, scripted) =
+        reconcile_with_doubt_record(Some(&serde_json::to_vec(&doubt).unwrap())).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["dispatch"]["state"], "reconciliation_required",
+        "{response}"
+    );
+    assert_eq!(result["error"]["code"], "posted_under_changed_masters");
+    assert_eq!(result["masters_after_post"], doubt);
+    assert_eq!(observed, scripted, "{response}");
+}
+
+/// A record that exists but cannot be parsed is still a doubt.
+#[tokio::test]
+async fn an_unreadable_doubt_record_is_still_a_doubt() {
+    let (response, _, _) = reconcile_with_doubt_record(Some(b"{not json")).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["dispatch"]["state"], "reconciliation_required",
+        "{response}"
+    );
+    assert_eq!(result["error"]["code"], "masters_after_post_unconfirmed");
+}
+
+/// A readback that fails after the post still reports and records the doubt.
+#[tokio::test]
+async fn a_failed_readback_after_a_doubted_post_still_carries_the_doubt() {
+    let replaced = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(masters_moved_to(8)));
+    plans.extend(paired(replaced));
+    // No readback is scripted: the sentinel answers it, so it fails.
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let args = saved_captured_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args.clone()),
+        )
+        .await;
+    drop(sent(simulator));
+    let result = &response["structuredContent"]["result"];
+    assert_ne!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(
+        result["masters_after_post"]["state"], "posted_under_changed_masters",
+        "{response}"
+    );
+    let record = server.imports_dir().unwrap().join(format!(
+        "{}.masters_doubt.json",
+        args["batch_id"].as_str().unwrap()
+    ));
+    let recorded: Value = serde_json::from_slice(&fs::read(record).unwrap()).unwrap();
+    assert_eq!(recorded, result["masters_after_post"]);
+}
+
+/// The first doubt recorded for a batch is kept: a later one never replaces it.
+#[test]
+fn a_masters_doubt_record_is_written_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at("127.0.0.1:9".parse().unwrap(), directory.path());
+    let first = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
+    assert!(server.record_masters_doubt("batch-a", &first));
+    assert!(server.record_masters_doubt("batch-a", &json!({"state":"check_unavailable"})));
+    let path = server
+        .imports_dir()
+        .unwrap()
+        .join("batch-a.masters_doubt.json");
+    let recorded: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(recorded, first);
+}
+
+/// A doubt that cannot be recorded still downgrades this result, and its
+/// message says a later readback may not see it.
+#[tokio::test]
+async fn a_doubt_that_cannot_be_recorded_says_so() {
+    let replaced = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(masters_moved_to(8)));
+    plans.extend(paired(replaced));
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let args = saved_captured_batch(&server);
+    let batch = args["batch_id"].as_str().unwrap().to_string();
+    // A directory where the record is staged makes its write fail.
+    let imports = server.imports_dir().unwrap();
+    fs::create_dir(imports.join(format!("{batch}.masters_doubt.json.next"))).unwrap();
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    drop(sent(simulator));
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["dispatch"]["state"], "reconciliation_required",
+        "{response}"
+    );
+    assert_eq!(result["error"]["code"], "posted_under_changed_masters");
+    assert_eq!(result["masters_after_post"]["recorded"], false);
+    assert!(
+        result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Bridge could not record this doubt"),
+        "{response}"
+    );
+    assert!(!imports.join(format!("{batch}.masters_doubt.json")).exists());
 }

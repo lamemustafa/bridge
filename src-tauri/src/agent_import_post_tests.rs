@@ -241,7 +241,7 @@ fn native_preview_preserves_visible_multilingual_text() {
     }
 }
 
-fn dispatch_response(
+pub(super) fn dispatch_response(
     application_status: &str,
     created: u64,
     altered: u64,
@@ -294,7 +294,7 @@ fn exact_readback_requires_a_clean_persisted_response_to_reconcile() {
         let mut payload = json!({
             "result": {"counts": {"posted_verified": 1}, "duplicates": []}
         });
-        finalize_previous_attempt_reconciliation(&mut payload, response);
+        finalize_previous_attempt_reconciliation(&mut payload, response, None);
         assert_eq!(payload["result"]["dispatch"]["state"], expected_state);
         assert_eq!(
             payload["result"]["dispatch"]["response_state"],
@@ -601,7 +601,9 @@ fn missing_counter_evidence_cannot_confirm_current_or_previous_dispatch() {
         let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
         let current: fn(&mut Value, Option<&ledger::DispatchResponse>) =
             |payload, response| finalize_current_dispatch(payload, response, None);
-        for finalize in [current, finalize_previous_attempt_reconciliation] {
+        let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+            |payload, response| finalize_previous_attempt_reconciliation(payload, response, None);
+        for finalize in [current, previous] {
             let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
             finalize(&mut payload, Some(&response));
             assert_eq!(
@@ -1332,6 +1334,10 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
             "posted_under_changed_masters",
         ),
         ("check_unavailable", "masters_after_post_unconfirmed"),
+        // A state this build does not know, or a not_checked for any other
+        // reason than unmoved masters, is a doubt too.
+        ("not_checked", "masters_after_post_unconfirmed"),
+        ("some_future_state", "masters_after_post_unconfirmed"),
     ] {
         let result = finalized(json!({"state": state}));
         assert_eq!(
@@ -1341,14 +1347,42 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
         assert_eq!(result["error"]["code"], code);
         let message = result["error"]["message"].as_str().unwrap();
         assert!(message.starts_with("Posted to Tally"), "{message}");
+        assert!(message.contains("do not rebuild this event"), "{message}");
+        assert!(!message.contains("could not record"), "{message}");
+        let unrecorded = finalized(json!({"state": state, "recorded": false}));
         assert!(
-            message.contains("Do not post this batch again"),
-            "{message}"
+            unrecorded["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Bridge could not record this doubt"),
+            "{unrecorded}"
         );
     }
-    for state in ["unchanged", "not_checked"] {
-        let result = finalized(json!({"state": state}));
-        assert_eq!(result["dispatch"]["state"], "posted_verified", "{state}");
+    for masters in [
+        json!({"state": "unchanged"}),
+        json!({"state": "not_checked", "reason": "masters_unmoved"}),
+    ] {
+        let result = finalized(masters.clone());
+        assert_eq!(result["dispatch"]["state"], "posted_verified", "{masters}");
         assert!(result.get("error").is_none());
     }
+    // A reconcile of an earlier attempt is held back by the same doubt.
+    let reconciled = |masters: Option<Value>| {
+        let mut payload = json!({"result": {"counts": {"posted_verified": 1}, "duplicates": []}});
+        finalize_previous_attempt_reconciliation(&mut payload, Some(&response), masters.as_ref());
+        payload["result"].clone()
+    };
+    let doubted = reconciled(Some(
+        json!({"state": "posted_under_changed_masters", "ledgers": ["Cash"]}),
+    ));
+    assert_eq!(
+        doubted["dispatch"]["state"], "reconciliation_required",
+        "{doubted}"
+    );
+    assert_eq!(doubted["error"]["code"], "posted_under_changed_masters");
+    let clear = reconciled(None);
+    assert_eq!(
+        clear["dispatch"]["state"], "previous_attempt_reconciled",
+        "{clear}"
+    );
 }

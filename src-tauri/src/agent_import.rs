@@ -957,6 +957,13 @@ impl Server {
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": observed_evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": voucher_read_sha256}
             });
+            // This call's own check, or the doubt recorded when this batch was
+            // posted: a later readback, which compares by name, never clears it.
+            let masters_after_post = match masters_after_post {
+                Some(masters) => Some(masters),
+                None if dispatched => read_masters_doubt(&self.imports_dir()?, &line.batch_id),
+                None => None,
+            };
             let mut proof = proof;
             if let Some(masters) = &masters_after_post {
                 proof["masters_after_post"] = masters.clone();
@@ -973,6 +980,7 @@ impl Server {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,
                         dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
                     );
                 }
             }
@@ -2445,6 +2453,49 @@ pub(super) fn local_evidence(label: &str) -> Evidence {
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
+fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_doubt.json"))
+}
+
+/// The masters doubt recorded when this batch was posted, if any (#239).
+fn read_masters_doubt(imports: &Path, batch_id: &str) -> Option<Value> {
+    // Only a record that is absent means no doubt. One that exists but cannot
+    // be opened, read or parsed is still a doubt: never silently admitted.
+    let unreadable = || Some(json!({"state":"check_unavailable"}));
+    let mut file =
+        match super::local_file::open_local_file(&masters_doubt_path(imports, batch_id), false) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(_) => return unreadable(),
+        };
+    let mut bytes = Vec::new();
+    if std::io::Read::read_to_end(&mut file, &mut bytes).is_err() {
+        return unreadable();
+    }
+    serde_json::from_slice(&bytes).ok().or_else(unreadable)
+}
+
+impl Server {
+    /// Record a masters doubt for this batch once; an existing record is kept.
+    /// Staged and renamed, like the verified baseline. Returns whether a
+    /// record is now in place; when it is not, only this call's result
+    /// carries the doubt, and its message says so.
+    pub(super) fn record_masters_doubt(&self, batch_id: &str, masters: &Value) -> bool {
+        let Ok(imports) = self.imports_dir() else {
+            return false;
+        };
+        let path = masters_doubt_path(&imports, batch_id);
+        if path.exists() {
+            return true;
+        }
+        let staged = imports.join(format!("{batch_id}.masters_doubt.json.next"));
+        let Ok(bytes) = serde_json::to_vec_pretty(masters) else {
+            return false;
+        };
+        write_private(&staged, &bytes).is_ok() && fs::rename(&staged, &path).is_ok()
+    }
+}
+
 fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
     imports.join(format!("{batch_id}.baseline.json"))
 }
