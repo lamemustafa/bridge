@@ -935,6 +935,29 @@ fn the_build_whose_record_equals_the_book_admits_even_when_not_first() {
         .unwrap()
         .expect("the amendment's own record equals the book");
     assert_eq!(admitted[0]["book_matches_batch_id"], AMENDMENT);
+    // Altered since both readings: refused, naming the latest matching build
+    // with a record.
+    let mut altered = book_row(&original);
+    altered.alter_id = Some(42);
+    let refused = lineage
+        .compare_and_swap(
+            &proposal,
+            &book(vec![altered]),
+            &baselines(&[(ORIGINAL, 40), (AMENDMENT, 41)]),
+        )
+        .unwrap()
+        .expect_err("no record equals the book");
+    assert_eq!(refused[0]["reason"], "voucher_altered_since_verified");
+    assert_eq!(refused[0]["book_matches_batch_id"], AMENDMENT);
+    assert_eq!(refused[0]["verified_alter_id"], 41);
+    // An unread ALTERID never matches a missing record: nothing is verified.
+    let mut unread = book_row(&original);
+    unread.alter_id = None;
+    let refused = lineage
+        .compare_and_swap(&proposal, &book(vec![unread]), &baselines(&[]))
+        .unwrap()
+        .expect_err("an unread ALTERID and no record prove nothing");
+    assert_eq!(refused[0]["reason"], "voucher_never_verified");
 }
 
 #[test]
