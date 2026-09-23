@@ -604,6 +604,7 @@ impl Server {
                     snapshot.as_ref(),
                     received_response.as_ref(),
                 );
+                let cause = failure.cause;
                 let mut outcome = post_failure_outcome(
                     batch_id,
                     guid,
@@ -613,6 +614,13 @@ impl Server {
                     received_response.as_ref(),
                     attempted,
                 );
+                // The typed, data-free reason, under the generic refusal's
+                // budget rule; a post refusal used to drop it (bridge#634).
+                if let Some(cause) = cause {
+                    if self.settings.max_bytes >= crate::agent::REMEDIATION_MIN_RESPONSE_BUDGET {
+                        outcome.payload["result"]["error"]["cause"] = json!(cause);
+                    }
+                }
                 if let Some(located) = post_location {
                     outcome.payload["result"]["post_location"] = located;
                 }
@@ -725,14 +733,8 @@ fn post_failure_outcome(
         .unwrap_or(accumulated);
     evidence.state = "partial";
     evidence.reason_code = Some(failure.code.clone());
-    let mut payload = reconciliation_failure_payload(batch_id, attempted, response, &failure.code);
-    // The typed, data-free reason, as the generic refusal carries it; a post
-    // refused in the queue lost it here (bridge#634).
-    if let Some(cause) = failure.cause {
-        payload["result"]["error"]["cause"] = json!(cause);
-    }
     ToolOutcome {
-        payload,
+        payload: reconciliation_failure_payload(batch_id, attempted, response, &failure.code),
         evidence,
         company_guid: Some(guid.to_string()),
         truncated: false,
