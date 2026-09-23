@@ -1,0 +1,335 @@
+{
+ "comment": "partners_40b_194t: a firm with a deed (rate below the statutory cap). A goes into debit for part of the year, B's withdrawal falls on the first day, a transfer moves capital from B to A, one voucher carries both the interest and the remuneration ledger (read as interest), A's interest journal carries a TDS line under Duties & Taxes, B's interest journal has no number (its label uses the GUID's tail), C names its capital ledger twice (its opening counts twice) and has no interest or remuneration ledger, and an optional voucher on A's capital is outside the population.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Capital Account": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "A Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_firm_deed-000"
+  },
+  {
+   "name": "B Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_firm_deed-001"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-partners_firm_deed-002"
+  },
+  {
+   "name": "C Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_firm_deed-003"
+  },
+  {
+   "name": "Interest to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_firm_deed-004"
+  },
+  {
+   "name": "Partner Tds Adjustment",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_firm_deed-005"
+  },
+  {
+   "name": "Remuneration to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_firm_deed-006"
+  },
+  {
+   "name": "TDS on Partners 194T",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-partners_firm_deed-007"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "A Capital",
+   "opening": -50000000,
+   "debit": 60300000,
+   "credit": 51150000,
+   "closing": -40850000
+  },
+  {
+   "ledger": "B Capital",
+   "opening": -2000000,
+   "debit": 500000,
+   "credit": 400000,
+   "closing": -1900000
+  },
+  {
+   "ledger": "Bank",
+   "opening": 53000000,
+   "debit": 31000000,
+   "credit": 60700000,
+   "closing": 23300000
+  },
+  {
+   "ledger": "C Capital",
+   "opening": -1000000,
+   "debit": 200000,
+   "credit": 0,
+   "closing": -800000
+  },
+  {
+   "ledger": "Interest to Partners",
+   "opening": 0,
+   "debit": 9125000,
+   "credit": 0,
+   "closing": 9125000
+  },
+  {
+   "ledger": "Partner Tds Adjustment",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Remuneration to Partners",
+   "opening": 0,
+   "debit": 12025000,
+   "credit": 0,
+   "closing": 12025000
+  },
+  {
+   "ledger": "TDS on Partners 194T",
+   "opening": 0,
+   "debit": 0,
+   "credit": 900000,
+   "closing": -900000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "pf-01",
+   "date": "2025-04-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "B Capital",
+     500000
+    ],
+    [
+     "Bank",
+     -500000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-02",
+   "date": "2025-06-15",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "A Capital",
+     -1000000
+    ],
+    [
+     "Bank",
+     1000000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-03",
+   "date": "2025-09-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "A Capital",
+     60000000
+    ],
+    [
+     "Bank",
+     -60000000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-04",
+   "date": "2025-10-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "A Capital",
+     300000
+    ],
+    [
+     "B Capital",
+     -300000
+    ]
+   ],
+   "vtype": "Capital Transfer"
+  },
+  {
+   "guid": "pf-05",
+   "date": "2025-12-01",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "A Capital",
+     -30000000
+    ],
+    [
+     "Bank",
+     30000000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-06",
+   "date": "2026-01-15",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "C Capital",
+     200000
+    ],
+    [
+     "Bank",
+     -200000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-07",
+   "date": "2026-02-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "A Capital",
+     -50000
+    ],
+    [
+     "Interest to Partners",
+     25000
+    ],
+    [
+     "Remuneration to Partners",
+     25000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-08",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest to Partners",
+     9000000
+    ],
+    [
+     "A Capital",
+     -8100000
+    ],
+    [
+     "TDS on Partners 194T",
+     -900000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-09",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Remuneration to Partners",
+     12000000
+    ],
+    [
+     "A Capital",
+     -12000000
+    ]
+   ]
+  },
+  {
+   "guid": "pf-10",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest to Partners",
+     100000
+    ],
+    [
+     "B Capital",
+     -100000
+    ]
+   ],
+   "number": ""
+  },
+  {
+   "guid": "pf-11",
+   "date": "2026-03-20",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "A Capital",
+     700000
+    ],
+    [
+     "Bank",
+     -700000
+    ]
+   ],
+   "status": "optional"
+  }
+ ],
+ "tests": [
+  "partners_40b_194t"
+ ],
+ "entity_type": "firm",
+ "partners": {
+  "partner_a": {
+   "capital_ledgers": [
+    "A Capital"
+   ],
+   "interest_ledger": "Interest to Partners",
+   "remuneration_ledger": "Remuneration to Partners"
+  },
+  "partner_b": {
+   "capital_ledgers": [
+    "B Capital"
+   ],
+   "interest_ledger": "Interest to Partners"
+  },
+  "partner_c": {
+   "capital_ledgers": [
+    "C Capital",
+    "C Capital"
+   ]
+  }
+ },
+ "deed": {
+  "interest_rate_bp": 1000
+ }
+}

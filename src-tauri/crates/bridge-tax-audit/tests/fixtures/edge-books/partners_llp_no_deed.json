@@ -1,0 +1,201 @@
+{
+ "comment": "partners_40b_194t: an LLP with no deed (the statutory cap is used and said to be an assumption) and rules without [s194t] (the module's own default rate and limit, flagged). A is credited interest far above the allowable amount; B only remuneration, exactly at the s.194T limit (not over it, so no finding), on a voucher whose only 'TDS' ledger is not under Duties & Taxes (so no TDS line is seen).",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Capital Account": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "A Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_llp_no_deed-000"
+  },
+  {
+   "name": "B Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_llp_no_deed-001"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-partners_llp_no_deed-002"
+  },
+  {
+   "name": "C Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_llp_no_deed-003"
+  },
+  {
+   "name": "Interest to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_llp_no_deed-004"
+  },
+  {
+   "name": "Partner Tds Adjustment",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_llp_no_deed-005"
+  },
+  {
+   "name": "Remuneration to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_llp_no_deed-006"
+  },
+  {
+   "name": "TDS on Partners 194T",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-partners_llp_no_deed-007"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "A Capital",
+   "opening": -1000000,
+   "debit": 0,
+   "credit": 7000000,
+   "closing": -8000000
+  },
+  {
+   "ledger": "B Capital",
+   "opening": -5000000,
+   "debit": 0,
+   "credit": 2000000,
+   "closing": -7000000
+  },
+  {
+   "ledger": "Bank",
+   "opening": 6000000,
+   "debit": 2000000,
+   "credit": 0,
+   "closing": 8000000
+  },
+  {
+   "ledger": "C Capital",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Interest to Partners",
+   "opening": 0,
+   "debit": 5000000,
+   "credit": 0,
+   "closing": 5000000
+  },
+  {
+   "ledger": "Partner Tds Adjustment",
+   "opening": 0,
+   "debit": 0,
+   "credit": 10000,
+   "closing": -10000
+  },
+  {
+   "ledger": "Remuneration to Partners",
+   "opening": 0,
+   "debit": 2010000,
+   "credit": 0,
+   "closing": 2010000
+  },
+  {
+   "ledger": "TDS on Partners 194T",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "pl-01",
+   "date": "2025-07-01",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "A Capital",
+     -2000000
+    ],
+    [
+     "Bank",
+     2000000
+    ]
+   ]
+  },
+  {
+   "guid": "pl-02",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest to Partners",
+     5000000
+    ],
+    [
+     "A Capital",
+     -5000000
+    ]
+   ]
+  },
+  {
+   "guid": "pl-03",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Remuneration to Partners",
+     2010000
+    ],
+    [
+     "B Capital",
+     -2000000
+    ],
+    [
+     "Partner Tds Adjustment",
+     -10000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "partners_40b_194t"
+ ],
+ "entity_type": "llp",
+ "rules_without": [
+  "s194t"
+ ],
+ "partners": {
+  "partner_a": {
+   "capital_ledgers": [
+    "A Capital"
+   ],
+   "interest_ledger": "Interest to Partners"
+  },
+  "partner_b": {
+   "capital_ledgers": [
+    "B Capital"
+   ],
+   "remuneration_ledger": "Remuneration to Partners"
+  }
+ }
+}

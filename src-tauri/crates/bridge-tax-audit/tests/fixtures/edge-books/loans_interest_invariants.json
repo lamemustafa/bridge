@@ -1,0 +1,417 @@
+{
+ "comment": "loans_interest module invariants: LOAN-1 (a Contra into a loan; a loan with no TB row), LOAN-2 (an EMI split, a TDS-net journal, a shared GUID, an unbalanced journal) and LOAN-3 (debits outside any loan on a ledger not declared shared, more than five; a shared ledger whose TB debit does not tie).",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Bank A",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_invariants-000"
+  },
+  {
+   "name": "Bank Interest",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_invariants-001"
+  },
+  {
+   "name": "Bank Term Loan",
+   "chain": [
+    "Secured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_invariants-002"
+  },
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_invariants-003"
+  },
+  {
+   "name": "Friend Loan",
+   "chain": [
+    "Unsecured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_invariants-004"
+  },
+  {
+   "name": "Interest on NBFC Loan",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_invariants-005"
+  },
+  {
+   "name": "NBFC Loan",
+   "chain": [
+    "Unsecured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_invariants-006"
+  },
+  {
+   "name": "TDS Payable",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-loans_interest_invariants-007"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank A",
+   "opening": 0,
+   "debit": 3050000,
+   "credit": 191000,
+   "closing": 2859000
+  },
+  {
+   "ledger": "Bank Interest",
+   "opening": 0,
+   "debit": 45000,
+   "credit": 0,
+   "closing": 40000
+  },
+  {
+   "ledger": "Bank Term Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 1000000,
+   "closing": -1000000
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 500000,
+   "credit": 0,
+   "closing": 500000
+  },
+  {
+   "ledger": "Interest on NBFC Loan",
+   "opening": 0,
+   "debit": 120000,
+   "credit": 0,
+   "closing": 120000
+  },
+  {
+   "ledger": "NBFC Loan",
+   "opening": 0,
+   "debit": 110000,
+   "credit": 2127000,
+   "closing": -2017000
+  },
+  {
+   "ledger": "TDS Payable",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3000,
+   "closing": -3000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "li-301",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "NBFC Loan",
+     -2000000
+    ],
+    [
+     "Bank A",
+     2000000
+    ]
+   ]
+  },
+  {
+   "guid": "li-302",
+   "date": "2025-04-06",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "NBFC Loan",
+     -50000
+    ],
+    [
+     "Bank A",
+     50000
+    ]
+   ]
+  },
+  {
+   "guid": "li-303",
+   "date": "2025-05-31",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "NBFC Loan",
+     100000
+    ],
+    [
+     "Interest on NBFC Loan",
+     20000
+    ],
+    [
+     "Bank A",
+     -120000
+    ]
+   ]
+  },
+  {
+   "guid": "li-304",
+   "date": "2025-06-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     30000
+    ],
+    [
+     "NBFC Loan",
+     -27000
+    ],
+    [
+     "TDS Payable",
+     -3000
+    ]
+   ]
+  },
+  {
+   "guid": "li-305",
+   "date": "2025-07-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     40000
+    ],
+    [
+     "NBFC Loan",
+     -40000
+    ]
+   ]
+  },
+  {
+   "guid": "li-305",
+   "date": "2025-08-31",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "NBFC Loan",
+     10000
+    ],
+    [
+     "Bank A",
+     -10000
+    ]
+   ]
+  },
+  {
+   "guid": "li-306",
+   "date": "2025-09-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     9000
+    ],
+    [
+     "NBFC Loan",
+     -10000
+    ]
+   ]
+  },
+  {
+   "guid": "li-310",
+   "date": "2025-10-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     1000
+    ],
+    [
+     "Bank A",
+     -1000
+    ]
+   ]
+  },
+  {
+   "guid": "li-311",
+   "date": "2025-10-02",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     2000
+    ],
+    [
+     "Bank A",
+     -2000
+    ]
+   ]
+  },
+  {
+   "guid": "li-312",
+   "date": "2025-10-03",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     3000
+    ],
+    [
+     "Bank A",
+     -3000
+    ]
+   ]
+  },
+  {
+   "guid": "li-313",
+   "date": "2025-10-04",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     4000
+    ],
+    [
+     "Bank A",
+     -4000
+    ]
+   ]
+  },
+  {
+   "guid": "li-314",
+   "date": "2025-10-05",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     5000
+    ],
+    [
+     "Bank A",
+     -5000
+    ]
+   ]
+  },
+  {
+   "guid": "li-315",
+   "date": "2025-10-06",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     6000
+    ],
+    [
+     "Bank A",
+     -6000
+    ]
+   ]
+  },
+  {
+   "guid": "li-320",
+   "date": "2025-04-07",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Friend Loan",
+     -500000
+    ],
+    [
+     "Cash",
+     500000
+    ]
+   ]
+  },
+  {
+   "guid": "li-321",
+   "date": "2025-05-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank Term Loan",
+     -1000000
+    ],
+    [
+     "Bank A",
+     1000000
+    ]
+   ]
+  },
+  {
+   "guid": "li-322",
+   "date": "2025-06-05",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Bank Interest",
+     40000
+    ],
+    [
+     "Bank A",
+     -40000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "loans_interest"
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Bank A"
+ ],
+ "entity_type": "firm",
+ "loans": {
+  "NBFC Loan": {
+   "lender": "Invented Finance Ltd",
+   "lender_type": "nbfc",
+   "interest_ledger": "Interest on NBFC Loan"
+  },
+  "Friend Loan": {
+   "lender": "Invented Friend",
+   "lender_type": "person"
+  },
+  "Bank Term Loan": {
+   "lender": "Invented Bank",
+   "lender_type": "bank",
+   "interest_ledger": "Bank Interest"
+  }
+ },
+ "shared_interest_ledgers": [
+  "Bank Interest"
+ ]
+}

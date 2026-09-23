@@ -345,7 +345,8 @@ no sign flip.",
         Value::Int(d.opening_stock),
         Unit::Paise,
         "Opening stock: sum of TB opening balances of every ledger under 'Stock-in-Hand' (a \
-masters value, read directly; not subject to the closing-field quirk below).",
+masters value, read directly; not subject to the quirk in the Trial Balance's own closing field \
+for Stock-in-Hand ledgers).",
         stock_ev.clone(),
     );
     let f_close_stock = r.fig(
@@ -354,16 +355,16 @@ masters value, read directly; not subject to the closing-field quirk below).",
         Unit::Paise,
         "Closing stock: sum, per Stock-in-Hand ledger, of TB opening + the year's TB debit \
 movement - the year's TB credit movement (recomputed; the ledger's own TB closing field is NOT \
-used -- see closing_stock_tb_field and stock_in_hand_ledgers_with_stale_tb_closing_field_count).",
+used -- it is shown separately, for comparison, with a count of the ledgers where it is stale).",
         stock_ev.clone(),
     );
     r.fig(
         "closing_stock_tb_field",
         Value::Int(d.closing_stock_tb_field),
         Unit::Paise,
-        "Sum, per Stock-in-Hand ledger, of the TB's OWN closing field (TBALCLOSING) -- shown only \
-for comparison; closing_stock above (opening + net debit movement) is the figure used everywhere \
-else in this test.",
+        "Sum, per Stock-in-Hand ledger, of the TB's OWN closing field -- shown only for comparison; \
+the recomputed closing stock (opening plus net debit movement) is the figure used everywhere else in \
+this test.",
         stock_ev,
     );
     let stale: Vec<&StockRow> = d.stock_rows.iter().filter(|row| row.stale).collect();
@@ -372,7 +373,8 @@ else in this test.",
         Value::Int(i64::try_from(stale.len()).map_err(|_| overflow())?),
         Unit::Count,
         "Stock-in-Hand ledgers where the TB's own closing field does not equal opening + net \
-debit movement -- Tally leaves TBALCLOSING as a static copy of TBALOPENING on such a ledger when \
+debit movement -- Tally leaves the closing field as a static copy of the opening on such a ledger \
+when \
 the company does not integrate accounts with inventory; verified nonzero on data (not merely \
 asserted) wherever this quirk is present.",
         stale
@@ -385,23 +387,24 @@ asserted) wherever this quirk is present.",
         "gross_profit",
         Value::Int(d.gross_profit),
         Unit::Paise,
-        "sales + direct_incomes - (opening_stock + purchases + direct_expenses - closing_stock); \
-one stock basis (TB / balance-sheet, above) used at BOTH ends, direct expenses included, so this \
-ties to Form 3CD Clause 40.",
+        "Sales plus direct incomes, less (opening stock plus purchases plus direct expenses less \
+closing stock); one stock basis (Trial Balance / balance sheet, with the recomputed closing stock) \
+used at BOTH ends, direct expenses included, so this ties to Form 3CD Clause 40.",
         Vec::new(),
     );
     let f_gp_pct = r.fig(
         "gross_profit_pct_bp",
         pct_bp(d.gross_profit, d.sales).ok_or_else(overflow)?,
         Unit::BasisPoints,
-        "gross_profit / sales, on the TB stock basis above.",
+        "Gross profit as a share of sales, on the Trial Balance stock basis (recomputed closing \
+stock).",
         Vec::new(),
     );
     r.fig(
         "stock_to_turnover_pct_bp",
         pct_bp(d.closing_stock, d.sales).ok_or_else(overflow)?,
         Unit::BasisPoints,
-        "closing_stock / sales.",
+        "Closing stock as a share of sales.",
         Vec::new(),
     );
     let f_indirect_exp = r.fig(
@@ -424,14 +427,14 @@ sign-flipped to a positive figure.",
         "net_profit",
         Value::Int(d.net_profit),
         Unit::Paise,
-        "gross_profit - indirect_expenses + other_income.",
+        "Gross profit less indirect expenses plus indirect incomes.",
         Vec::new(),
     );
     r.fig(
         "net_profit_pct_bp",
         pct_bp(d.net_profit, d.sales).ok_or_else(overflow)?,
         Unit::BasisPoints,
-        "net_profit / sales.",
+        "Net profit as a share of sales.",
         Vec::new(),
     );
 
@@ -458,15 +461,15 @@ sign-flipped to a positive figure.",
             "partner_interest",
             Value::Int(pi),
             Unit::Paise,
-            "Sum of TB closing balances of the client's own partners'-interest ledgers (client \
-config; already included inside indirect_expenses above).",
+            "Sum of TB closing balances of the client's own partners'-interest ledgers (the client's \
+setup; already included inside indirect expenses).",
             ev.clone(),
         );
         let f_pbi = r.fig(
             "profit_before_partner_interest",
             Value::Int(pbi),
             Unit::Paise,
-            "net_profit + partner_interest (net_profit above is AFTER partners' interest, since it \
+            "Net profit plus the partners' interest (net profit is AFTER partners' interest, since it \
 is charged as an indirect expense).",
             ev,
         );
@@ -522,7 +525,7 @@ part), else 'not performed' and why.",
             "report_net_profit_diff",
             Value::Int(diff_np),
             Unit::Paise,
-            "net_profit - report_net_profit.",
+            "Net profit less the net profit in Tally's own report.",
             Vec::new(),
         );
         facts.push(("report_net_profit".to_string(), f_rep_np));
@@ -541,7 +544,7 @@ test)."
                 "report_closing_stock_diff",
                 Value::Int(sub(d.closing_stock, cs)?),
                 Unit::Paise,
-                "closing_stock - report_closing_stock.",
+                "Closing stock less the closing stock in Tally's own report.",
                 Vec::new(),
             );
             facts.push(("report_closing_stock".to_string(), f_rep_cs));
@@ -609,8 +612,8 @@ post-dated excluded).",
         "excluded_voucher_count",
         Value::Int(d.excluded_count),
         Unit::Count,
-        "Exported vouchers excluded from the books population (exported_voucher_count - \
-in_books_voucher_count).",
+        "Exported vouchers excluded from the books population (vouchers exported less vouchers in \
+the books population).",
         Vec::new(),
     );
     for ((status, vtype), vouchers) in &excluded {

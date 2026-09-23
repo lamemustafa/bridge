@@ -18,64 +18,64 @@
       "id": "creditor_ageing_43bh.bucket_0_15",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "7b7a24db7e73daeb",
-      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
+      "definition_sha256_16": "b3771ee1ad6e9b4c",
+      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.bucket_16_45",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "7b7a24db7e73daeb",
-      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
+      "definition_sha256_16": "b3771ee1ad6e9b4c",
+      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.bucket_46_90",
       "value": 8000000,
       "unit": "paise",
-      "definition_sha256_16": "7b7a24db7e73daeb",
-      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
+      "definition_sha256_16": "b3771ee1ad6e9b4c",
+      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.bucket_over_90",
       "value": 57484499,
       "unit": "paise",
-      "definition_sha256_16": "7b7a24db7e73daeb",
-      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
+      "definition_sha256_16": "b3771ee1ad6e9b4c",
+      "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.clause22_i_mse_interest_paise",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "f6a73b75ec0436b1",
-      "definition_text": "3CD-22(i): s.16 MSMED interest debited to P&L (inadmissible under s.23), summed over ledgers client config tags as MSMED-interest ledgers (CPC OI 17 <-> 22(i)). NIL (0) if the auditee neither provided nor paid any such interest, per GN 42.21 -- not itself a finding that none is due; see the mercantile-system observation in GN 42.22 (a CA judgement, not computed here).",
+      "definition_sha256_16": "592866c4924c84aa",
+      "definition_text": "3CD-22(i): s.16 MSMED interest debited to P&L (inadmissible under s.23), summed over ledgers the client's setup tags as MSMED-interest ledgers (CPC OI 17 <-> 22(i)). NIL (0) if the auditee neither provided nor paid any such interest, per GN 42.21 -- not itself a finding that none is due; see the mercantile-system observation in GN 42.22 (a CA judgement, not computed here).",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.clause22_ii_total",
       "value": 60599999,
       "unit": "paise",
-      "definition_sha256_16": "b7426c55656e8d82",
-      "definition_text": "3CD-22(ii): total amount required to be paid to micro/small (non-trader, non-medium, registered) enterprise suppliers during the year (GN 42.26(a)) -- every bill raised on a creditor classified micro/small in client config, whether paid during the year, outstanding at year end, or capitalised (a credit line to the creditor ledger either way). Suppliers classified 'unknown' are excluded (see the per-creditor NEEDS_DOCUMENT findings above), so this is a floor, not the true total, until every supplier is classified.",
+      "definition_sha256_16": "484b5f5f6c44ba34",
+      "definition_text": "3CD-22(ii): total amount required to be paid to micro/small (non-trader, non-medium, registered) enterprise suppliers during the year (GN 42.26(a)) -- every bill raised on a creditor classified micro/small in the client's setup, whether paid during the year, outstanding at year end, or capitalised (a credit line to the creditor ledger either way). Suppliers classified 'unknown' are excluded (each is reported in its own finding asking for the supplier's category), so this is a floor, not the true total, until every supplier is classified.",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.clause22_iii_b_15day_total",
       "value": 60599999,
       "unit": "paise",
-      "definition_sha256_16": "c720d59b4ca84cec",
-      "definition_text": "3CD-22(iii)(b), no-written-agreement (15-day) view -- the DEFAULT amount for this clause (GN 42.14(b): with no written agreement on file the MSMED limit is 15 days, not 45), same population as the 45-day figure above (including the same opening-lot exclusion), shown beside it because whether a written agreement exists is not in these books.",
+      "definition_sha256_16": "1e091472cd5cabe5",
+      "definition_text": "3CD-22(iii)(b), no-written-agreement (15-day) view -- the DEFAULT amount for this clause (GN 42.14(b): with no written agreement on file the MSMED limit is 15 days, not 45), same population as the clause 22(iii)(b) 45-day view (including the same opening-lot exclusion), shown beside it because whether a written agreement exists is not in these books.",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.clause22_iii_b_45day_total",
       "value": 60599999,
       "unit": "paise",
-      "definition_sha256_16": "cbfd6628d74375c6",
-      "definition_text": "3CD-22(iii)(b), with-written-agreement (45-day) view: claimed as a deduction, outstanding on the last day of the PY, and not paid within the s.15 MSMED time -- summed only over creditors classified micro/small (non-trader, registered) (CPC OI 11h <-> 22(iii)(b)). EXCLUDES the opening (pre-year) balance's own lot on every creditor (GN 42.25: a due of an earlier year is not a 22(iii)(b) amount -- see opening_dues_26a_candidate_total below). Shown beside the 15-day figure, never in its place: with no written agreement on file the default amount for this clause is the 15-day figure (GN 42.14(b)).",
+      "definition_sha256_16": "4b57c83eaa25f201",
+      "definition_text": "3CD-22(iii)(b), with-written-agreement (45-day) view: claimed as a deduction, outstanding on the last day of the PY, and not paid within the s.15 MSMED time -- summed only over creditors classified micro/small (non-trader, registered) (CPC OI 11h <-> 22(iii)(b)). EXCLUDES the opening (pre-year) balance's own lot on every creditor (GN 42.25: a due of an earlier year is not a 22(iii)(b) amount -- that lot is reported as the clause 26(i)(A)(b) candidate instead). Shown beside the 15-day figure, never in its place: with no written agreement on file the default amount for this clause is the 15-day figure (GN 42.14(b)).",
       "evidence": []
     },
     {
@@ -312,8 +312,8 @@
       "id": "creditor_ageing_43bh.creditor_over15_6ff124a6",
       "value": 60599999,
       "unit": "paise",
-      "definition_sha256_16": "101ae7d0b1512f82",
-      "definition_text": "Sum of one creditor ledger's (tag 6ff124a6) FIFO lots older than 15 days as of 2026-03-31 (no-written-agreement view), EXCLUDING the opening balance's own lot (GN 42.25). Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+      "definition_sha256_16": "264073aa7aad44df",
+      "definition_text": "Sum of one creditor ledger's (tag 6ff124a6) FIFO lots older than 15 days as of 2026-03-31 (no-written-agreement view), EXCLUDING the opening balance's own lot (GN 42.25). Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
       "evidence": [
         {
           "kind": "ledger",
@@ -351,8 +351,8 @@
       "id": "creditor_ageing_43bh.creditor_over15_a9fd9709",
       "value": 3650000,
       "unit": "paise",
-      "definition_sha256_16": "e86b5bee2fafff18",
-      "definition_text": "Sum of one creditor ledger's (tag a9fd9709) FIFO lots older than 15 days as of 2026-03-31 (no-written-agreement view). Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+      "definition_sha256_16": "38611322be321774",
+      "definition_text": "Sum of one creditor ledger's (tag a9fd9709) FIFO lots older than 15 days as of 2026-03-31 (no-written-agreement view). Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
       "evidence": [
         {
           "kind": "ledger",
@@ -390,8 +390,8 @@
       "id": "creditor_ageing_43bh.creditor_over45_6ff124a6",
       "value": 60599999,
       "unit": "paise",
-      "definition_sha256_16": "3c0a48170fef7b88",
-      "definition_text": "Sum of one creditor ledger's (tag 6ff124a6) FIFO lots older than 45 days as of 2026-03-31, EXCLUDING the opening balance's own lot (GN 42.25 -- see opening_dues_26a_candidate_total). Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+      "definition_sha256_16": "93caba24a697bb75",
+      "definition_text": "Sum of one creditor ledger's (tag 6ff124a6) FIFO lots older than 45 days as of 2026-03-31, EXCLUDING the opening balance's own lot (GN 42.25 -- that lot is reported as the clause 26(i)(A)(b) candidate instead). Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
       "evidence": [
         {
           "kind": "ledger",
@@ -429,8 +429,8 @@
       "id": "creditor_ageing_43bh.creditor_over45_a9fd9709",
       "value": 3650000,
       "unit": "paise",
-      "definition_sha256_16": "aa0f607732eec0b5",
-      "definition_text": "Sum of one creditor ledger's (tag a9fd9709) FIFO lots older than 45 days as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+      "definition_sha256_16": "f04075719ac3fba1",
+      "definition_text": "Sum of one creditor ledger's (tag a9fd9709) FIFO lots older than 45 days as of 2026-03-31. Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
       "evidence": [
         {
           "kind": "ledger",
@@ -698,24 +698,24 @@
       "id": "creditor_ageing_43bh.opening_dues_26a_candidate_creditor_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "41ff4887f804f95b",
-      "definition_text": "Micro/small creditor ledgers with a still-unpaid opening-balance remainder reported above.",
+      "definition_sha256_16": "3992792cb0c205d2",
+      "definition_text": "Micro/small creditor ledgers with a still-unpaid remainder of their OPENING (pre-year) balance.",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.opening_dues_26a_candidate_total",
       "value": 1234500,
       "unit": "paise",
-      "definition_sha256_16": "1f68bfed130a7140",
-      "definition_text": "3CD-22-1 (GN 42.25): the still-unpaid remainder of each micro/small creditor's OPENING (pre-year) balance -- excluded from every clause 22 figure above because it relates to a period earlier than this PY, not to this year's own claimed dues. Reported here as a candidate for clause 26(i)(A)(b) instead (GN 46.5: only a sum NOT allowable in an earlier year belongs in 26(i)(A); that needs last year's own return/3CD, which this module does not have).",
+      "definition_sha256_16": "605d5895edef9c9a",
+      "definition_text": "3CD-22-1 (GN 42.25): the still-unpaid remainder of each micro/small creditor's OPENING (pre-year) balance -- excluded from every clause 22 figure because it relates to a period earlier than this PY, not to this year's own claimed dues. Reported here as a candidate for clause 26(i)(A)(b) instead (GN 46.5: only a sum NOT allowable in an earlier year belongs in 26(i)(A); that needs last year's own return/3CD, which this module does not have).",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.over_15_total",
       "value": 65484499,
       "unit": "paise",
-      "definition_sha256_16": "83a768fd212880e1",
-      "definition_text": "Books-fact sum of FIFO lots older than 15 days (rules.s43b_h.msme_days_without_agreement), same scope as over_45_total, shown beside it, never instead of it. Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+      "definition_sha256_16": "f16db35724482c4b",
+      "definition_text": "Books-fact sum of FIFO lots older than 15 days (the rules' MSME limit without a written agreement), same scope as the 45-day books-fact sum, shown beside it, never instead of it. Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
       "evidence": []
     },
     {
@@ -730,24 +730,24 @@
       "id": "creditor_ageing_43bh.over_45_total",
       "value": 65484499,
       "unit": "paise",
-      "definition_sha256_16": "e7787e62f79e743b",
-      "definition_text": "Books-fact sum of FIFO lots older than 45 days (rules.s43b_h.msme_days_with_agreement), across every creditor in scope regardless of MSME classification -- a raw ageing fact, not a s.43B(h) applicability conclusion (see clause22_iii_b_45day_total for the classification-scoped candidate). Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+      "definition_sha256_16": "d3dd617914de606c",
+      "definition_text": "Books-fact sum of FIFO lots older than 45 days (the rules' MSME limit with a written agreement), across every creditor in scope regardless of MSME classification -- a raw ageing fact, not a s.43B(h) applicability conclusion (the clause 22(iii)(b) 45-day total is the classification-scoped candidate). Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.post_year_confirmed_breach_total",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "fb93591d859a1a87",
-      "definition_text": "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) that `post_year_payments` shows were actually settled after that window in the following year (or never settled) -- a disallowance for the claim year under audit, confirmed from next-year payment data, not assumed. Not folded into over_45_total/over_15_total/clause22_iii_b_* above (those are the at-31-March view only); add this figure to them for the full-year picture.",
+      "definition_sha256_16": "9fe56ffefef28f4c",
+      "definition_text": "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) that the next-year payment data shows were actually settled after that window in the following year (or never settled) -- a disallowance for the claim year under audit, confirmed from next-year payment data, not assumed. Not folded into the books-fact aged sums or the clause 22(iii)(b) totals (those are the at-31-March view only); add this figure to them for the full-year picture.",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.post_year_pending_confirmation_total",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "12ea1d3238603fe1",
-      "definition_text": "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) with no next-year payment data supplied at all -- whether the window was eventually met cannot be determined from these books; NEEDS_DOCUMENT, never assumed met or missed.",
+      "definition_sha256_16": "ddeaace73580df0b",
+      "definition_text": "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) with no next-year payment data supplied at all -- whether the window was eventually met cannot be determined from these books; a document is needed, never assumed met or missed.",
       "evidence": []
     },
     {
@@ -762,16 +762,16 @@
       "id": "creditor_ageing_43bh.unknown_classification_creditor_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "e83cc95357603631",
-      "definition_text": "Creditor ledgers with an aged open lot and no MSME classification in client config.",
+      "definition_sha256_16": "3cc908e0e8204fe6",
+      "definition_text": "Creditor ledgers with an aged open lot and no MSME classification in the client's setup.",
       "evidence": []
     },
     {
       "id": "creditor_ageing_43bh.unknown_classification_total",
       "value": 3650000,
       "unit": "paise",
-      "definition_sha256_16": "05ead76bba5df5c0",
-      "definition_text": "Sum of the (larger, 15-day-view) aged amount on creditors with an aged open lot but no MSME classification in client config -- pending Udyam evidence, excluded from every clause 22(ii)/22(iii)(b) s.43B(h) total above until classified.",
+      "definition_sha256_16": "b440363031240f63",
+      "definition_text": "Sum of the (larger, 15-day-view) aged amount on creditors with an aged open lot but no MSME classification in the client's setup -- pending Udyam evidence, excluded from every clause 22(ii)/22(iii)(b) s.43B(h) total until classified.",
       "evidence": []
     }
   ],
@@ -895,19 +895,19 @@
       ],
       "title_sha256_16": "5af3e36a240dc2b4",
       "title_text": "Creditor ledger has FIFO-reconstructed lots older than the MSME limit as of 2026-03-31",
-      "limits_sha256_16": "9af424c8471dd2fa",
+      "limits_sha256_16": "f9488c663a96ad93",
       "limits_text": [
         "Not bill-wise: ISBILLWISEON is off (or unknown) for this ledger, so this ages a FIFO reconstruction of ledger postings, not Tally's own bill-by-bill outstanding report.",
-        "Supplier classified 'micro' by client config (Udyam Registration Certificate; GN 42.7 -- never recomputed from financials here), so s.43B(h) is taken to apply. With no written agreement on file the MSMED limit is 15 days (GN 42.14(b)), so the 15-day, no-agreement figure is the default amount for this clause; the 45-day, with-agreement figure is shown beside it only as the alternative that applies once a written agreement (or invoice/purchase-order terms constituting one, GN 42.29) on this creditor's credit period is confirmed.",
-        "Age is computed from bill date + acceptance_lag_days (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
+        "Supplier classified 'micro' in the client's setup (Udyam Registration Certificate; GN 42.7 -- never recomputed from financials here), so s.43B(h) is taken to apply. With no written agreement on file the MSMED limit is 15 days (GN 42.14(b)), so the 15-day, no-agreement figure is the default amount for this clause; the 45-day, with-agreement figure is shown beside it only as the alternative that applies once a written agreement (or invoice/purchase-order terms constituting one, GN 42.29) on this creditor's credit period is confirmed.",
+        "Age is computed from bill date plus the acceptance lag set for this client (3 days), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
         "Excludes the opening (pre-year) balance's own lot, which is reported separately as a clause 26(i)(A) candidate, not counted here (GN 42.25: '22-1').",
         "This provision disallows the amount of a lot unpaid beyond the window at 31 March for the year it was claimed (clause 22(iii)(b), GN 42.26(b)), and the s.139(1) return-due-date proviso available to ordinary s.43B items does NOT extend to s.43B(h) (GN 42.27, 46.7). A payment recorded after 31 March, if it exists, is outside this FY's voucher population and cannot be seen from these books -- it does not, on its own, cure this disallowance."
       ],
-      "ask_client_sha256_16": "d5e62d4ece1f85cc",
+      "ask_client_sha256_16": "2771b4ff09ba7047",
       "ask_client_text": [
         "Udyam registration certificate, confirming category and activity (micro/small vs medium vs trader), for this creditor.",
         "Any written agreement on credit period with this creditor (the MSMED Act limit is 15 days without one, 45 days with one).",
-        "Acceptance/deemed-acceptance date (GRN or delivery record) for each open bill, to replace the acceptance_lag_days assumption."
+        "Acceptance/deemed-acceptance date (GRN or delivery record) for each open bill, to replace the assumed acceptance lag."
       ]
     },
     {

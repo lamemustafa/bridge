@@ -328,7 +328,8 @@ pub fn run(
     let period_start = civil_day_number(&period.from);
     let (over_45_days, over_15_days) = s43b_h_days(rules)?;
     let lag_note = format!(
-        "Age is computed from bill date + acceptance_lag_days ({lag} day{}), an assumption that \
+        "Age is computed from bill date plus the acceptance lag set for this client ({lag} day{}), \
+an assumption that \
 acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the \
 bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery \
 records.",
@@ -450,8 +451,8 @@ records.",
                     Unit::Paise,
                     &format!(
                         "Sum of one creditor ledger's (tag {h}) FIFO lots older than \
-{over_45_days} days as of {as_of_iso}, EXCLUDING the opening balance's own lot (GN 42.25 -- see \
-opening_dues_26a_candidate_total). {lag_note}"
+{over_45_days} days as of {as_of_iso}, EXCLUDING the opening balance's own lot (GN 42.25 -- that \
+lot is reported as the clause 26(i)(A)(b) candidate instead). {lag_note}"
                     ),
                     creditor_ev.clone(),
                 );
@@ -490,7 +491,7 @@ of {as_of_iso}"
 ages a FIFO reconstruction of ledger postings, not Tally's own bill-by-bill outstanding report."
                             .to_string(),
                         format!(
-                            "Supplier classified '{classification}' by client config (Udyam \
+                            "Supplier classified '{classification}' in the client's setup (Udyam \
 Registration Certificate; GN 42.7 -- never recomputed from financials here), so s.43B(h) is taken \
 to apply. With no written agreement on file the MSMED limit is 15 days (GN 42.14(b)), so the \
 15-day, no-agreement figure is the default amount for this clause; the 45-day, with-agreement \
@@ -517,7 +518,7 @@ and cannot be seen from these books -- it does not, on its own, cure this disall
 limit is 15 days without one, 45 days with one)."
                             .to_string(),
                         "Acceptance/deemed-acceptance date (GRN or delivery record) for each open \
-bill, to replace the acceptance_lag_days assumption."
+bill, to replace the assumed acceptance lag."
                             .to_string(),
                     ],
                 });
@@ -637,10 +638,10 @@ exists."
         Value::Int(over_45_total),
         Unit::Paise,
         &format!(
-            "Books-fact sum of FIFO lots older than {over_45_days} days \
-(rules.s43b_h.msme_days_with_agreement), across every creditor in scope regardless of MSME \
-classification -- a raw ageing fact, not a s.43B(h) applicability conclusion (see \
-clause22_iii_b_45day_total for the classification-scoped candidate). {lag_note}"
+            "Books-fact sum of FIFO lots older than {over_45_days} days (the rules' MSME limit \
+with a written agreement), across every creditor in scope regardless of MSME classification -- a \
+raw ageing fact, not a s.43B(h) applicability conclusion (the clause 22(iii)(b) 45-day total is \
+the classification-scoped candidate). {lag_note}"
         ),
         Vec::new(),
     );
@@ -649,9 +650,9 @@ clause22_iii_b_45day_total for the classification-scoped candidate). {lag_note}"
         Value::Int(over_15_total),
         Unit::Paise,
         &format!(
-            "Books-fact sum of FIFO lots older than {over_15_days} days \
-(rules.s43b_h.msme_days_without_agreement), same scope as over_45_total, shown beside it, never \
-instead of it. {lag_note}"
+            "Books-fact sum of FIFO lots older than {over_15_days} days (the rules' MSME limit \
+without a written agreement), same scope as the {over_45_days}-day books-fact sum, shown beside it, \
+never instead of it. {lag_note}"
         ),
         Vec::new(),
     );
@@ -682,9 +683,10 @@ unconditional on classification).",
         Unit::Paise,
         "3CD-22(ii): total amount required to be paid to micro/small (non-trader, non-medium, \
 registered) enterprise suppliers during the year (GN 42.26(a)) -- every bill raised on a creditor \
-classified micro/small in client config, whether paid during the year, outstanding at year end, \
+classified micro/small in the client's setup, whether paid during the year, outstanding at year end, \
 or capitalised (a credit line to the creditor ledger either way). Suppliers classified 'unknown' \
-are excluded (see the per-creditor NEEDS_DOCUMENT findings above), so this is a floor, not the \
+are excluded (each is reported in its own finding asking for the supplier's category), so this is \
+a floor, not the \
 true total, until every supplier is classified.",
         Vec::new(),
     );
@@ -696,7 +698,8 @@ true total, until every supplier is classified.",
 outstanding on the last day of the PY, and not paid within the s.15 MSMED time -- summed only \
 over creditors classified micro/small (non-trader, registered) (CPC OI 11h <-> 22(iii)(b)). \
 EXCLUDES the opening (pre-year) balance's own lot on every creditor (GN 42.25: a due of an earlier \
-year is not a 22(iii)(b) amount -- see opening_dues_26a_candidate_total below). Shown beside the \
+year is not a 22(iii)(b) amount -- that lot is reported as the clause 26(i)(A)(b) candidate \
+instead). Shown beside the \
 15-day figure, never in its place: with no written agreement on file the default amount for this \
 clause is the 15-day figure (GN 42.14(b)).",
         Vec::new(),
@@ -707,7 +710,8 @@ clause is the 15-day figure (GN 42.14(b)).",
         Unit::Paise,
         "3CD-22(iii)(b), no-written-agreement (15-day) view -- the DEFAULT amount for this clause \
 (GN 42.14(b): with no written agreement on file the MSMED limit is 15 days, not 45), same \
-population as the 45-day figure above (including the same opening-lot exclusion), shown beside it \
+population as the clause 22(iii)(b) 45-day view (including the same opening-lot exclusion), shown \
+beside it \
 because whether a written agreement exists is not in these books.",
         Vec::new(),
     );
@@ -717,7 +721,7 @@ because whether a written agreement exists is not in these books.",
             Value::Int(opening_dues_26a_candidate_total),
             Unit::Paise,
             "3CD-22-1 (GN 42.25): the still-unpaid remainder of each micro/small creditor's \
-OPENING (pre-year) balance -- excluded from every clause 22 figure above because it relates to a \
+OPENING (pre-year) balance -- excluded from every clause 22 figure because it relates to a \
 period earlier than this PY, not to this year's own claimed dues. Reported here as a candidate \
 for clause 26(i)(A)(b) instead (GN 46.5: only a sum NOT allowable in an earlier year belongs in \
 26(i)(A); that needs last year's own return/3CD, which this module does not have).",
@@ -727,8 +731,8 @@ for clause 26(i)(A)(b) instead (GN 46.5: only a sum NOT allowable in an earlier 
             "opening_dues_26a_candidate_creditor_count",
             support::count(TEST_ID, opening_dues_26a_candidate_creditor_count)?,
             Unit::Count,
-            "Micro/small creditor ledgers with a still-unpaid opening-balance remainder reported \
-above.",
+            "Micro/small creditor ledgers with a still-unpaid remainder of their OPENING (pre-year) \
+balance.",
             Vec::new(),
         );
         // `dict.fromkeys`: first occurrence of each whole ref, in order.
@@ -775,15 +779,16 @@ if so, in what amount."
             Value::Int(unknown_classification_total),
             Unit::Paise,
             "Sum of the (larger, 15-day-view) aged amount on creditors with an aged open lot but \
-no MSME classification in client config -- pending Udyam evidence, excluded from every clause \
-22(ii)/22(iii)(b) s.43B(h) total above until classified.",
+no MSME classification in the client's setup -- pending Udyam evidence, excluded from every clause \
+22(ii)/22(iii)(b) s.43B(h) total until classified.",
             Vec::new(),
         );
         let f_unknown = r.fig(
             "unknown_classification_creditor_count",
             support::count(TEST_ID, unknown_classification_creditor_count)?,
             Unit::Count,
-            "Creditor ledgers with an aged open lot and no MSME classification in client config.",
+            "Creditor ledgers with an aged open lot and no MSME classification in the client's \
+setup.",
             Vec::new(),
         );
         r.findings.push(Finding {
@@ -815,10 +820,10 @@ supplier is not registered) for each creditor with an open balance at 31 March."
         Value::Int(post_year_confirmed_breach_total),
         Unit::Paise,
         "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) \
-that `post_year_payments` shows were actually settled after that window in the following year (or \
-never settled) -- a disallowance for the claim year under audit, confirmed from next-year payment \
-data, not assumed. Not folded into over_45_total/over_15_total/clause22_iii_b_* above (those are \
-the at-31-March view only); add this figure to them for the full-year picture.",
+that the next-year payment data shows were actually settled after that window in the following \
+year (or never settled) -- a disallowance for the claim year under audit, confirmed from next-year \
+payment data, not assumed. Not folded into the books-fact aged sums or the clause 22(iii)(b) totals \
+(those are the at-31-March view only); add this figure to them for the full-year picture.",
         Vec::new(),
     );
     let f_pending = r.fig(
@@ -827,7 +832,7 @@ the at-31-March view only); add this figure to them for the full-year picture.",
         Unit::Paise,
         "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) \
 with no next-year payment data supplied at all -- whether the window was eventually met cannot be \
-determined from these books; NEEDS_DOCUMENT, never assumed met or missed.",
+determined from these books; a document is needed, never assumed met or missed.",
         Vec::new(),
     );
     if post_year_pending_confirmation_total != 0 {
@@ -868,7 +873,7 @@ open balance, for the period just after 31 March."
         Value::Int(mse_interest_paise),
         Unit::Paise,
         "3CD-22(i): s.16 MSMED interest debited to P&L (inadmissible under s.23), summed over \
-ledgers client config tags as MSMED-interest ledgers (CPC OI 17 <-> 22(i)). NIL (0) if the \
+ledgers the client's setup tags as MSMED-interest ledgers (CPC OI 17 <-> 22(i)). NIL (0) if the \
 auditee neither provided nor paid any such interest, per GN 42.21 -- not itself a finding that \
 none is due; see the mercantile-system observation in GN 42.22 (a CA judgement, not computed \
 here).",
