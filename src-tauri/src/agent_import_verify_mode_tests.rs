@@ -150,6 +150,7 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             vouchers.push(missing);
         }
         let line = ImportLedgerLine {
+            ledger_identities: None,
             endpoint_origin: None,
             identity_scheme: None,
             amends_batch_id: None,

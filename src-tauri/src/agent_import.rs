@@ -270,6 +270,19 @@ pub(super) struct ImportLedgerLine {
     status: String,
     pre_import_mark: PreImportMark,
     vouchers: Vec<ImportVoucher>,
+    /// Each ledger the batch names, with the GUID the build's own catalogue
+    /// read bound it to (bridge#239). A post refuses when any of them now
+    /// resolves to another GUID. Absent on records built before this field
+    /// existed: such a batch is refused for posting and must be rebuilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ledger_identities: Option<Vec<BoundLedger>>,
+}
+
+/// One ledger name and the GUID it was bound to at build time.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct BoundLedger {
+    name: String,
+    guid: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -535,6 +548,17 @@ impl Server {
                     truncated: false,
                 });
             }
+            // Bind each named ledger to the GUID this read observed (#239): a
+            // post refuses a ledger renamed and replaced under its name since.
+            let build_binding = ledger_masters
+                .bind_selected(requested_ledger_names(&payload))
+                .map_err(|_| "import_masters_changed".to_string())?
+                .pairs()
+                .map(|(name, guid)| BoundLedger {
+                    name: name.to_string(),
+                    guid: guid.to_string(),
+                })
+                .collect::<Vec<_>>();
             // Only a payload carrying a cash/bank voucher reads the group
             // collection, so a Journal-only batch keeps the request sequence its
             // own qualification was measured on.
@@ -707,6 +731,7 @@ impl Server {
                 status: "built".to_string(),
                 pre_import_mark: mark,
                 vouchers: payload.vouchers,
+                ledger_identities: Some(build_binding),
             };
             let imports = self.imports_dir()?;
             let path = imports.join(format!("{batch_id}.xml"));

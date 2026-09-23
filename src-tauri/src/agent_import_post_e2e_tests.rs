@@ -230,6 +230,33 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
     })
 }
 
+/// Record the build's ledger binding as `build_import_xml` does (#239): each
+/// named ledger with the GUID the captured catalogue gives it.
+fn bind_to_captured_catalogue(line: &mut ImportLedgerLine) {
+    let payload = ImportPayload {
+        company_guid: line.company_guid.clone(),
+        vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
+    };
+    let binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue(),
+        "WR2 Unicode Lab",
+        GUID,
+    )
+    .unwrap()
+    .bind_selected(requested_ledger_names(&payload))
+    .unwrap();
+    line.ledger_identities = Some(
+        binding
+            .pairs()
+            .map(|(name, guid)| BoundLedger {
+                name: name.to_string(),
+                guid: guid.to_string(),
+            })
+            .collect(),
+    );
+}
+
 /// A built, never-dispatched batch for the captured laboratory company, with
 /// its XML file, exactly as `build_import_xml` leaves one.
 fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
@@ -250,6 +277,7 @@ fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -614,6 +642,7 @@ fn saved_bank_batch(server: &Server, voucher: Value) -> (ImportLedgerLine, Value
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -1236,6 +1265,7 @@ fn saved_captured_batch(server: &Server) -> Value {
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -1662,4 +1692,158 @@ async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
             ["verification_status"]
         );
     }
+}
+
+// bridge#239: the ledgers a batch names must still carry the GUIDs its build
+// bound them to; a name alone cannot tell a ledger renamed and replaced.
+
+/// A saved Journal refused before approval by its build-time binding, on the
+/// MCP tool or on the desktop's post. A changed GUID is found on the post's
+/// catalogue read, the last one sent; a record without identities is refused
+/// before any request. No intent is recorded either way.
+async fn refused_by_build_binding(
+    identities: Option<Vec<BoundLedger>>,
+    desktop: bool,
+) -> (Value, usize, usize, bool) {
+    let mut plans = before_approval();
+    let expected = if identities.is_some() {
+        // The Currency read and mode probe after the catalogue are never sent.
+        plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
+        plans.len()
+    } else {
+        plans.clear();
+        0
+    };
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (mut line, args) = saved_batch(&server);
+    line.ledger_identities = identities;
+    server.append_import_ledger(&line).unwrap();
+    let scripted = ScriptedApproval::approving();
+    let result = if desktop {
+        let outcome = SCRIPTED_APPROVAL
+            .scope(
+                scripted.clone(),
+                server.post_import_checked(&args, Some(&line.sha256), PostScope::JournalOnly),
+            )
+            .await
+            .expect("a refusal is reported as the post's outcome");
+        // What the desktop's webview receives.
+        super::super::desktop_journal::DesktopJournalOperation::from_outcome(outcome).result
+            ["result"]
+            .clone()
+    } else {
+        SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await["structuredContent"]["result"]
+            .clone()
+    };
+    let observed = sent(simulator).len();
+    let intent = String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\"");
+    assert!(scripted.previews().is_empty(), "approval must not be asked");
+    (result, observed, expected, intent)
+}
+
+#[tokio::test]
+async fn a_ledger_replaced_under_its_name_since_the_build_is_refused_before_approval() {
+    for desktop in [false, true] {
+        let identities = vec![
+            BoundLedger {
+                name: "Cash".into(),
+                guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff".into(),
+            },
+            BoundLedger {
+                name: "WR2 Sales".into(),
+                guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000d0".into(),
+            },
+        ];
+        let (result, observed, expected, intent) =
+            refused_by_build_binding(Some(identities), desktop).await;
+        assert_eq!(
+            result["error"]["code"], "import_masters_changed_since_build",
+            "{result}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+        if !desktop {
+            assert_eq!(
+                result["error"]["ledgers_changed"],
+                json!(["Cash"]),
+                "{result}"
+            );
+        }
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("(Cash)"));
+        assert_eq!(observed, expected, "{result}");
+        assert!(!intent);
+    }
+}
+
+#[tokio::test]
+async fn a_batch_built_before_ledger_binding_is_refused_before_any_request() {
+    for desktop in [false, true] {
+        let (result, observed, expected, intent) = refused_by_build_binding(None, desktop).await;
+        assert_eq!(
+            result["error"]["code"], "import_batch_predates_ledger_binding",
+            "{result}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Build the batch again"));
+        assert_eq!(observed, expected, "{result}");
+        assert!(!intent);
+    }
+}
+
+/// The approval preview says the ledgers were checked by identity.
+#[tokio::test]
+async fn the_preview_says_the_ledgers_were_checked_by_identity() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(before_approval())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let scripted = ScriptedApproval::declining();
+    let _ = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let previews = scripted.previews();
+    assert_eq!(previews.len(), 1);
+    assert!(previews[0].contains("Ledgers checked by identity against the build"));
+}
+
+/// A batch dispatched before Bridge recorded ledger identities still
+/// reconciles: `post_import` on it goes to the readback, never to the
+/// "build it again" refusal, since a dispatched batch must not be rebuilt.
+#[tokio::test]
+async fn a_dispatched_batch_without_identities_still_reconciles() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (mut line, args) = saved_batch(&server);
+    line.ledger_identities = None;
+    server.append_import_ledger(&line).unwrap();
+    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    {
+        let _lock = server.lock_import_admission().unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_for(
+                &line, &native,
+            ))
+            .unwrap();
+    }
+    let response = server.call_tool("post_import", args).await;
+    let observed = sent(simulator).len();
+    let result = &response["structuredContent"]["result"];
+    assert_ne!(
+        result["error"]["code"], "import_batch_predates_ledger_binding",
+        "{response}"
+    );
+    assert_ne!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(observed > 0, "the readback reads Tally: {response}");
 }

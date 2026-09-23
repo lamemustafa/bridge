@@ -235,8 +235,13 @@ or an owner decision to amend the requirement instead:
    does, a busy book refuses more often; it fails closed). A change that does not move the mark is
    not caught. Any change that does refuses, including unrelated ones; the operator re-runs. During the approval wait, a ledger renamed and a new one created under
    its old name is refused by the catalogue binding's (name, GUID) check (`import_masters_changed`).
-   Open: the same between build and post, since the saved batch records ledger names only (next
-   item); the one round trip from the aim snapshot to the POST; and a check after the POST.
+   Between build and post, which can be days apart, the build now records each named ledger with
+   the GUID its catalogue read bound it to. Before approval, a post refuses any ledger that now
+   resolves to another GUID (`import_masters_changed_since_build`, naming it). A batch saved
+   before that record existed refuses with `import_batch_predates_ledger_binding` and must be
+   rebuilt. The record is trusted local state, as in follow-up 10: its hash covers the rendered
+   file, not these GUIDs. Open: the one round trip from the aim snapshot to the POST, and a check
+   after the POST.
 9. **Aiming by name (scope, "How the write is aimed"), #574. Narrowed.** Live on licensed 7.1
    Silver (2026-09-21/22): a name matching no loaded company fails closed over the gateway
    whichever company is selected; a rename between build and post is refused at admission; a
@@ -286,6 +291,8 @@ Contra**. Every safeguard of the Journal path applies to all four:
 - a fresh REMOTEID recorded before dispatch (#582);
 - complete identity admission, re-checked inside the endpoint queue
   before the POST (#574);
+- each named ledger bound to its GUID at build, and checked against it before
+  approval (#239, follow-up 8);
 - a company with exactly one Currency master, checked before approval and
   again inside the queue (#551, follow-up 13);
 - the native approval;

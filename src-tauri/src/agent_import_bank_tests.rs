@@ -641,12 +641,32 @@ async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualif
     .expect("multi-entry payload");
     let simulator = SequenceSimulator::spawn(bank_build_plans()).expect("bank build plan");
     let directory = tempfile::tempdir().unwrap();
-    let response = bank_server(directory.path(), simulator.address().port())
+    let server = bank_server(directory.path(), simulator.address().port());
+    let response = server
         .call_tool_response("build_import_xml", serde_json::to_value(&payload).unwrap())
         .await
         .value;
     let result = &response["structuredContent"]["result"];
     assert_eq!(result["voucher_count"], 1, "{response}");
+    // The build records each ledger with the GUID its catalogue read bound it
+    // to (#239), exactly as the captured catalogue gives them.
+    let saved = server
+        .latest_import_snapshot(result["batch_id"].as_str().unwrap())
+        .unwrap()
+        .unwrap()
+        .batch;
+    let bound = |name: &str, suffix: &str| BoundLedger {
+        name: name.into(),
+        guid: format!("61c6de69-1748-461c-ad3f-162cb949df9f-{suffix}"),
+    };
+    assert_eq!(
+        saved.ledger_identities,
+        Some(vec![
+            bound("Bridge Nested Debtor WR4", "000000d5"),
+            bound("Cash", "0000001f"),
+            bound("WR2 Sales", "000000d0"),
+        ])
+    );
     assert_eq!(
         result["live_evidence"],
         json!([{"observation":"hand_built_gateway_readback",
@@ -1290,6 +1310,7 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
         voucher.voucher_type = voucher_type.clone();
         voucher.voucher_number = None;
         let line = ImportLedgerLine {
+            ledger_identities: None,
             endpoint_origin: None,
             identity_scheme: None,
             amends_batch_id: None,
