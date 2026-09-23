@@ -269,7 +269,9 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 once per book (and again at `105b6c37`; see "Engine re-sync" below). `tests/edge_books.rs` builds each book in Rust, runs each named test with its module
 check, compares the whole dump with `compare` -- every field of it, the spec and test versions
 included -- and compares the row order. Every mutation written for this crate is recorded in
-`parity/mutations.json` with its author, and `parity/mutations.py` re-runs them. Of 52 hand-written
+`parity/mutations.json` with its author, and `parity/mutations.py` re-runs them and records each
+verdict in `parity/mutation-results.json`; its docstring states what a verdict rests on and what is
+proven at merge versus nightly. Of 52 hand-written
 mutations of the four modules and the NARRATION parse (32 from an independent reviewer, 20 from the
 author; see the PR), the crate's suite fails on every one, and the edge books alone on 50: the other
 two alter how the read's XML is parsed, which the edge books bypass by building the book directly,
