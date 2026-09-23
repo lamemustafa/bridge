@@ -1974,6 +1974,20 @@ deductor_aliases = 5\n"
     }
 
     #[test]
+    fn an_empty_partner_interest_ledger_binds_but_is_not_financial_statements_interest() {
+        // The reference binds "" like any name (here the book has a ledger of that name) and its
+        // partner_interest_ledgers then keeps only a truthy one.
+        let e = engagement("\n[partners.a]\ninterest_ledger = \"\"\n");
+        let b = book_with_interest_ledger("", "", None);
+        let (bound, _) = e.bind(&b).unwrap();
+        assert!(bound.partner_interest_ledgers.is_empty());
+        assert_eq!(
+            bound.partners.partners["a"]["interest_ledger"].as_str(),
+            Some("")
+        );
+    }
+
+    #[test]
     fn an_identity_used_only_by_a_partner_capital_ledger_is_not_unused() {
         let e = engagement(&format!(
             "\n[ledger_ids]\n\"A Capital\" = {G_ROUNDOFF:?}\n\
