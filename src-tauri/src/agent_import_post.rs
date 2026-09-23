@@ -154,6 +154,24 @@ impl Server {
             Some(false) => "masters_moved",
             None => "masters_unconfirmed",
         };
+        let approved = approved
+            .pairs()
+            .map(|(name, guid)| (name.to_string(), guid.to_string()))
+            .collect::<Vec<_>>();
+        self.ledgers_still_approved(identity, company_name, &approved, trigger, accumulated)
+            .await
+    }
+
+    /// Whether each approved (name, GUID) still resolves by name to its GUID,
+    /// as a masters check verdict with `trigger` saying why it ran (#239).
+    pub(super) async fn ledgers_still_approved(
+        &self,
+        identity: &super::super::VerifiedCompanyIdentity,
+        company_name: &str,
+        approved: &[(String, String)],
+        trigger: &str,
+        accumulated: &mut Evidence,
+    ) -> Value {
         match self
             .read_import_ledger_catalogue(identity, company_name)
             .await
@@ -162,10 +180,10 @@ impl Server {
             Ok((_, catalogue, _, evidence)) => {
                 *accumulated = combine_evidence(accumulated.clone(), evidence);
                 let changed = approved
-                    .pairs()
+                    .iter()
                     .filter(|(name, guid)| {
                         catalogue
-                            .bind_selected([name.to_string()])
+                            .bind_selected([name.clone()])
                             .ok()
                             .and_then(|now| {
                                 now.pairs()
@@ -174,7 +192,7 @@ impl Server {
                             })
                             != Some(true)
                     })
-                    .map(|(name, _)| name.to_string())
+                    .map(|(name, _)| name.clone())
                     .collect::<Vec<_>>();
                 if changed.is_empty() {
                     json!({"state":"unchanged","trigger":trigger})
@@ -362,6 +380,9 @@ impl Server {
             // approval. It covers intent, the one POST, its response append and
             // immediate readback; recovery remains the durable batch journal.
             let _endpoint_dispatch_lease = dispatch_lease::acquire(&self.settings.endpoint)?;
+            // Before anything can be sent, so a crash, a concurrent reader or a
+            // failed later write reads a doubt, never an absent record (#239).
+            self.record_masters_check_pending(batch_id)?;
             let posted = self
                 .runtime
                 .post_approved_import(
@@ -556,14 +577,9 @@ impl Server {
                     &mut accumulated,
                 )
                 .await;
-            // A doubt is recorded beside the proof before the readback, so no
-            // later reconcile, which compares by name, can clear it (#239).
-            let mut masters_after_post = masters_after_post;
-            if masters_doubt(Some(&masters_after_post)).is_some()
-                && !self.record_masters_doubt(batch_id, &masters_after_post)
-            {
-                masters_after_post["recorded"] = json!(false);
-            }
+            // The verdict replaces the pending record before the readback, so no
+            // later reconcile, which compares by name, can clear a doubt (#239).
+            let masters_after_post = self.record_masters_verdict(batch_id, masters_after_post);
             masters_verdict = Some(masters_after_post.clone());
             let mut proof = self
                 .verify_import_after_current_dispatch(args, masters_after_post)
@@ -787,12 +803,7 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     if state == "unchanged" || (state == "not_checked" && masters["reason"] == "masters_unmoved") {
         return None;
     }
-    const REVIEW: &str = "Review the voucher in Tally, and correct or delete it there if it went to the wrong ledger; do not rebuild this event.";
-    let unrecorded = if masters["recorded"] == false {
-        " Bridge could not record this doubt, so a later verify_import of this batch may report it as verified."
-    } else {
-        ""
-    };
+    const REVIEW: &str = "Review the voucher in Tally and correct it there if it went to the wrong ledger. It is already posted, so do not rebuild this event.";
     Some(if state == "posted_under_changed_masters" {
         let ledgers = masters["ledgers"]
             .as_array()
@@ -803,12 +814,17 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
             .join(", ");
         (
             "posted_under_changed_masters",
-            format!("Posted to Tally, but these ledgers now resolve to a different master than when you approved the voucher: {ledgers}. {REVIEW}{unrecorded}"),
+            format!("Posted to Tally, but these ledgers no longer resolve to the master you approved: {ledgers}. {REVIEW}"),
         )
     } else {
+        let again = if state == super::MASTERS_CHECK_PENDING || state == "check_unavailable" {
+            " A later verify_import of this batch checks again."
+        } else {
+            ""
+        };
         (
             "masters_after_post_unconfirmed",
-            format!("Posted to Tally, but the company's masters may have changed while it was posted, and Bridge could not confirm its ledgers. {REVIEW}{unrecorded}"),
+            format!("Posted to Tally, but Bridge could not confirm that its ledgers are still the masters you approved.{again} {REVIEW}"),
         )
     })
 }

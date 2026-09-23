@@ -1334,6 +1334,7 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
             "posted_under_changed_masters",
         ),
         ("check_unavailable", "masters_after_post_unconfirmed"),
+        ("check_pending", "masters_after_post_unconfirmed"),
         // A state this build does not know, or a not_checked for any other
         // reason than unmoved masters, is a doubt too.
         ("not_checked", "masters_after_post_unconfirmed"),
@@ -1348,14 +1349,11 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
         let message = result["error"]["message"].as_str().unwrap();
         assert!(message.starts_with("Posted to Tally"), "{message}");
         assert!(message.contains("do not rebuild this event"), "{message}");
-        assert!(!message.contains("could not record"), "{message}");
-        let unrecorded = finalized(json!({"state": state, "recorded": false}));
-        assert!(
-            unrecorded["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("Bridge could not record this doubt"),
-            "{unrecorded}"
+        // Only a check that could not finish is promised a later one.
+        assert_eq!(
+            message.contains("checks again"),
+            state == "check_unavailable" || state == "check_pending",
+            "{message}"
         );
     }
     for masters in [

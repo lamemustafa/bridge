@@ -961,7 +961,41 @@ impl Server {
             // posted: a later readback, which compares by name, never clears it.
             let masters_after_post = match masters_after_post {
                 Some(masters) => Some(masters),
-                None if dispatched => read_masters_doubt(&self.imports_dir()?, &line.batch_id),
+                None if dispatched => {
+                    match read_masters_check(&self.imports_dir()?, &line.batch_id) {
+                        // The check after the post did not finish: finish it
+                        // now against the ledgers bound at build, which the
+                        // post required to match the approved ones (#616).
+                        // Only once the vouchers are found: before the POST
+                        // lands, a verdict would vouch for a post not yet made.
+                        Some(check)
+                            if check["state"] == MASTERS_CHECK_PENDING
+                                && verification_status(&proof, line.vouchers.len())
+                                    == "posted_verified" =>
+                        {
+                            let bound = line
+                                .ledger_identities
+                                .iter()
+                                .flatten()
+                                .map(|bound| (bound.name.clone(), bound.guid.clone()))
+                                .collect::<Vec<_>>();
+                            let verdict = if bound.is_empty() {
+                                json!({"state":"check_unavailable","trigger":MASTERS_CHECK_PENDING})
+                            } else {
+                                self.ledgers_still_approved(
+                                    &identity,
+                                    &company.name,
+                                    &bound,
+                                    MASTERS_CHECK_PENDING,
+                                    &mut accumulated,
+                                )
+                                .await
+                            };
+                            Some(self.record_masters_verdict(&line.batch_id, verdict))
+                        }
+                        recorded => recorded,
+                    }
+                }
                 None => None,
             };
             let mut proof = proof;
@@ -1035,7 +1069,10 @@ impl Server {
         // write leaves the previous baseline, or none, and an amendment of a
         // voucher it lacks then refuses: the safe direction, so it does not
         // fail this verification.
-        let _ = record_verified_baseline(&imports, &update.batch_id, proof);
+        // A proof in doubt about its ledgers (#239) is no baseline.
+        if post::masters_doubt(proof.get("masters_after_post")).is_none() {
+            let _ = record_verified_baseline(&imports, &update.batch_id, proof);
+        }
         Ok(())
     }
 
@@ -2453,17 +2490,20 @@ pub(super) fn local_evidence(label: &str) -> Evidence {
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
-fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
-    imports.join(format!("{batch_id}.masters_doubt.json"))
+/// The state of a masters check that has not finished (#239).
+pub(super) const MASTERS_CHECK_PENDING: &str = "check_pending";
+
+fn masters_check_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_check.json"))
 }
 
-/// The masters doubt recorded when this batch was posted, if any (#239).
-fn read_masters_doubt(imports: &Path, batch_id: &str) -> Option<Value> {
-    // Only a record that is absent means no doubt. One that exists but cannot
-    // be opened, read or parsed is still a doubt: never silently admitted.
-    let unreadable = || Some(json!({"state":"check_unavailable"}));
+/// The masters check recorded for this batch (#239). Absent only for a batch
+/// dispatched before the record existed. A record that exists but cannot be
+/// opened, read or parsed reads as pending: a doubt, never an admission.
+fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
+    let unreadable = || Some(json!({"state": MASTERS_CHECK_PENDING}));
     let mut file =
-        match super::local_file::open_local_file(&masters_doubt_path(imports, batch_id), false) {
+        match super::local_file::open_local_file(&masters_check_path(imports, batch_id), false) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
             Err(_) => return unreadable(),
@@ -2475,24 +2515,56 @@ fn read_masters_doubt(imports: &Path, batch_id: &str) -> Option<Value> {
     serde_json::from_slice(&bytes).ok().or_else(unreadable)
 }
 
+fn write_masters_check(imports: &Path, batch_id: &str, check: &Value) -> Result<(), String> {
+    let staged = imports.join(format!("{batch_id}.masters_check.json.next"));
+    let bytes =
+        serde_json::to_vec_pretty(check).map_err(|_| "proof_serialization_failed".to_string())?;
+    write_private(&staged, &bytes)?;
+    fs::rename(&staged, masters_check_path(imports, batch_id))
+        .map_err(|_| "import_file_write_failed".to_string())
+}
+
 impl Server {
-    /// Record a masters doubt for this batch once; an existing record is kept.
-    /// Staged and renamed, like the verified baseline. Returns whether a
-    /// record is now in place; when it is not, only this call's result
-    /// carries the doubt, and its message says so.
-    pub(super) fn record_masters_doubt(&self, batch_id: &str, masters: &Value) -> bool {
-        let Ok(imports) = self.imports_dir() else {
-            return false;
-        };
-        let path = masters_doubt_path(&imports, batch_id);
-        if path.exists() {
-            return true;
+    /// Mark this batch's masters check pending before it can be dispatched. A
+    /// crash before the check finishes, a concurrent reader, or a failed later
+    /// write then reads a doubt, never an absent record; a post whose record
+    /// cannot be written is not sent. A finished verdict, which only a
+    /// dispatched attempt leaves, is never replaced.
+    pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
+        let unavailable = |_| "post_masters_record_unavailable".to_string();
+        let _lock = self.lock_import_admission().map_err(unavailable)?;
+        let imports = self.imports_dir().map_err(unavailable)?;
+        match read_masters_check(&imports, batch_id) {
+            Some(recorded) if recorded["state"] != MASTERS_CHECK_PENDING => Ok(()),
+            _ => write_masters_check(&imports, batch_id, &json!({"state": MASTERS_CHECK_PENDING}))
+                .map_err(unavailable),
         }
-        let staged = imports.join(format!("{batch_id}.masters_doubt.json.next"));
-        let Ok(bytes) = serde_json::to_vec_pretty(masters) else {
-            return false;
+    }
+
+    /// Record a finished check's verdict and return what the batch's record
+    /// now says. A doubt already recorded is never replaced. A check that
+    /// could not run (`check_unavailable`) is not recorded, so the record
+    /// stays pending and a later readback checks again. If the verdict cannot
+    /// be written, the record stays pending and so does this result.
+    pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
+        if verdict["state"] == "check_unavailable" {
+            return verdict;
+        }
+        let pending = json!({"state": MASTERS_CHECK_PENDING});
+        let (Ok(_lock), Ok(imports)) = (self.lock_import_admission(), self.imports_dir()) else {
+            return pending;
         };
-        write_private(&staged, &bytes).is_ok() && fs::rename(&staged, &path).is_ok()
+        if let Some(recorded) = read_masters_check(&imports, batch_id) {
+            if recorded["state"] != MASTERS_CHECK_PENDING
+                && post::masters_doubt(Some(&recorded)).is_some()
+            {
+                return recorded;
+            }
+        }
+        match write_masters_check(&imports, batch_id, &verdict) {
+            Ok(()) => verdict,
+            Err(_) => pending,
+        }
     }
 }
 

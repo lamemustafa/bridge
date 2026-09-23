@@ -400,13 +400,16 @@ been observed live on a synthetic Silver 7.1 company, each reading back
    clean create response together with matching readback confirms the first
    posting as `posted_verified`. Unless the company's master AlterID is proven
    unmoved across the POST, Bridge re-reads the ledgers and reports it in
-   `masters_after_post`. If an approved ledger now resolves to another GUID
-   (`posted_under_changed_masters`), or that check cannot be completed
-   (`masters_after_post_unconfirmed`), the voucher is in Tally but the result is
-   `reconciliation_required`: review it in Tally, correct or delete it there if
-   needed, and do not rebuild the event. Bridge records this doubt with the
-   batch, and a later `verify_import` keeps reporting it, even after the voucher
-   is corrected in Tally.
+   `masters_after_post`. If an approved ledger no longer resolves to its
+   approved GUID (`posted_under_changed_masters`), or that check cannot be
+   completed (`masters_after_post_unconfirmed`), the voucher is in Tally but the
+   result is `reconciliation_required`: review it in Tally, correct it there if
+   needed, and do not rebuild the event. Bridge records the check with the
+   batch. A changed ledger stays reported on every later `verify_import`, even
+   after the voucher is corrected in Tally; a check that could not finish is
+   finished by the next `verify_import` that finds the voucher. If Bridge cannot
+   record the check, the post is refused before anything is sent
+   (`post_masters_record_unavailable`).
 
 Keep the selected company free of other imports and ledger changes while posting,
 and leave Tally's product/licence mode unchanged. Bridge serializes its own writers;

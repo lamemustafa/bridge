@@ -1881,23 +1881,40 @@ async fn post_with_masters_after(
         )
         .await;
     let observed = sent(simulator).len();
-    let record = server.imports_dir().unwrap().join(format!(
-        "{}.masters_doubt.json",
-        args["batch_id"].as_str().unwrap()
-    ));
-    let recorded = fs::read(&record)
-        .ok()
-        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap());
-    // The record beside the proof is exactly the doubt this result reports.
+    // Every post leaves a record: the verdict it reports, or, when the check
+    // could not run, the pending mark a later readback finishes.
+    let recorded = masters_check_of(&server, args["batch_id"].as_str().unwrap());
     let reported = &response["structuredContent"]["result"]["masters_after_post"];
-    match &recorded {
-        Some(recorded) => assert_eq!(recorded, reported, "{response}"),
-        None => assert!(
-            masters_doubt(Some(reported)).is_none(),
-            "a doubt is recorded: {response}"
-        ),
+    if reported["state"] == "check_unavailable" {
+        assert_eq!(recorded, json!({"state": "check_pending"}), "{response}");
+    } else {
+        assert_eq!(&recorded, reported, "{response}");
+    }
+    // A verified post is an amendment's baseline; a doubted one never is.
+    let baseline = server
+        .imports_dir()
+        .unwrap()
+        .join(format!(
+            "{}.baseline.json",
+            args["batch_id"].as_str().unwrap()
+        ))
+        .exists();
+    let result = &response["structuredContent"]["result"];
+    if result["dispatch"]["state"] == "posted_verified" {
+        assert!(baseline, "{response}");
+    }
+    if masters_doubt(Some(reported)).is_some() {
+        assert!(!baseline, "{response}");
     }
     (response, observed, scripted)
+}
+
+fn masters_check_of(server: &Server, batch_id: &str) -> Value {
+    let path = server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{batch_id}.masters_check.json"));
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
 /// The readback after a post, and in a later reconcile of the posted batch.
@@ -2007,9 +2024,21 @@ async fn moved_masters_that_cannot_be_re_read_are_not_verified() {
 }
 
 /// A later `post_import` of a dispatched batch only reconciles: it reads the
-/// voucher back by name, and a doubt recorded at the post outlives it.
-async fn reconcile_with_doubt_record(record: Option<&[u8]>) -> (Value, usize, usize) {
-    let plans = reconcile_readback();
+/// voucher back by name, and the masters check recorded at the post decides
+/// whether that is enough. `after` is scripted after the readback.
+async fn reconcile_with_masters_check(
+    record: Option<&[u8]>,
+    after: Vec<ScenarioPlan>,
+) -> (Value, usize, usize, Server, tempfile::TempDir) {
+    let mut plans = reconcile_readback();
+    plans.extend(after);
+    reconcile_scripted(record, plans).await
+}
+
+async fn reconcile_scripted(
+    record: Option<&[u8]>,
+    plans: Vec<ScenarioPlan>,
+) -> (Value, usize, usize, Server, tempfile::TempDir) {
     let scripted = plans.len();
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -2023,7 +2052,7 @@ async fn reconcile_with_doubt_record(record: Option<&[u8]>) -> (Value, usize, us
                 &line, &native,
             ))
             .unwrap();
-        // A clean response was saved, so only the readback decides.
+        // A clean response was saved, so only the readback and the check decide.
         server
             .append_import_record_while_admitted(&ledger::StatusRecord::response(
                 &line,
@@ -2039,20 +2068,31 @@ async fn reconcile_with_doubt_record(record: Option<&[u8]>) -> (Value, usize, us
             server
                 .imports_dir()
                 .unwrap()
-                .join(format!("{}.masters_doubt.json", line.batch_id)),
+                .join(format!("{}.masters_check.json", line.batch_id)),
             record,
         )
         .unwrap();
     }
     let args = json!({"company_guid":GUID,"batch_id":line.batch_id});
     let response = server.call_tool("post_import", args).await;
-    (response, sent(simulator).len(), scripted)
+    let observed = sent(simulator).len();
+    (response, observed, scripted, server, directory)
+}
+
+const BATCH: &str = "bridge-6c79872c-aab6-4be5-a181-18182c8148be";
+
+fn replaced_cash() -> String {
+    replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    )
 }
 
 #[tokio::test]
 async fn a_doubted_post_stays_doubted_when_reconciled_later() {
-    // The control: with no record the same readback reconciles.
-    let (response, observed, scripted) = reconcile_with_doubt_record(None).await;
+    // The control: a batch dispatched before the record existed reconciles.
+    let (response, observed, scripted, ..) = reconcile_with_masters_check(None, Vec::new()).await;
     let result = &response["structuredContent"]["result"];
     assert_eq!(
         result["dispatch"]["state"], "previous_attempt_reconciled",
@@ -2060,8 +2100,8 @@ async fn a_doubted_post_stays_doubted_when_reconciled_later() {
     );
     assert_eq!(observed, scripted, "{response}");
     let doubt = json!({"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Cash"]});
-    let (response, observed, scripted) =
-        reconcile_with_doubt_record(Some(&serde_json::to_vec(&doubt).unwrap())).await;
+    let (response, observed, scripted, server, _directory) =
+        reconcile_with_masters_check(Some(&serde_json::to_vec(&doubt).unwrap()), Vec::new()).await;
     let result = &response["structuredContent"]["result"];
     assert_eq!(
         result["dispatch"]["state"], "reconciliation_required",
@@ -2069,13 +2109,79 @@ async fn a_doubted_post_stays_doubted_when_reconciled_later() {
     );
     assert_eq!(result["error"]["code"], "posted_under_changed_masters");
     assert_eq!(result["masters_after_post"], doubt);
-    assert_eq!(observed, scripted, "{response}");
+    assert_eq!(observed, scripted, "no second check: {response}");
+    assert_eq!(masters_check_of(&server, BATCH), doubt);
 }
 
-/// A record that exists but cannot be parsed is still a doubt.
+/// A check the post could not finish (a crash, a lost read) is finished by the
+/// next readback that finds the voucher, against the ledgers bound at build.
 #[tokio::test]
-async fn an_unreadable_doubt_record_is_still_a_doubt() {
-    let (response, _, _) = reconcile_with_doubt_record(Some(b"{not json")).await;
+async fn a_pending_check_is_finished_by_the_next_readback() {
+    let pending = br#"{"state":"check_pending"}"#;
+    let (response, observed, scripted, server, _directory) =
+        reconcile_with_masters_check(Some(pending), paired(catalogue())).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["dispatch"]["state"], "previous_attempt_reconciled",
+        "{response}"
+    );
+    assert_eq!(
+        result["masters_after_post"],
+        json!({"state":"unchanged","trigger":"check_pending"})
+    );
+    assert_eq!(observed, scripted, "{response}");
+    assert_eq!(masters_check_of(&server, BATCH)["state"], "unchanged");
+
+    let (response, _, _, server, _directory) =
+        reconcile_with_masters_check(Some(pending), paired(replaced_cash())).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "posted_under_changed_masters",
+        "{response}"
+    );
+    assert_eq!(result["masters_after_post"]["ledgers"], json!(["Cash"]));
+    assert_eq!(
+        masters_check_of(&server, BATCH)["state"],
+        "posted_under_changed_masters"
+    );
+
+    // A readback that does not find the voucher finishes nothing: before
+    // the POST lands, a verdict would vouch for a post not yet made. The
+    // catalogue is scripted, so a check that ran anyway would be served.
+    let mut plans = probe();
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(probe());
+    plans.extend(paired(catalogue()));
+    let (response, _, _, server, _directory) = reconcile_scripted(Some(pending), plans).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["counts"]["not_found"], 1, "{response}");
+    assert_eq!(
+        masters_check_of(&server, BATCH),
+        json!({"state":"check_pending"})
+    );
+
+    // A check that still cannot run leaves the record pending for next time.
+    let (response, _, _, server, _directory) =
+        reconcile_with_masters_check(Some(pending), Vec::new()).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "masters_after_post_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(
+        masters_check_of(&server, BATCH),
+        json!({"state":"check_pending"})
+    );
+}
+
+/// A record that exists but cannot be opened or parsed is a pending check,
+/// never an absent one.
+#[tokio::test]
+async fn an_unreadable_masters_record_is_still_a_doubt() {
+    let (response, ..) = reconcile_with_masters_check(Some(b"{not json"), Vec::new()).await;
     let result = &response["structuredContent"]["result"];
     assert_eq!(
         result["dispatch"]["state"], "reconciliation_required",
@@ -2084,18 +2190,26 @@ async fn an_unreadable_doubt_record_is_still_a_doubt() {
     assert_eq!(result["error"]["code"], "masters_after_post_unconfirmed");
 }
 
-/// A readback that fails after the post still reports and records the doubt.
+#[test]
+fn an_unopenable_masters_record_reads_as_pending() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at("127.0.0.1:9".parse().unwrap(), directory.path());
+    let imports = server.imports_dir().unwrap();
+    fs::create_dir(imports.join("batch-a.masters_check.json")).unwrap();
+    assert_eq!(
+        read_masters_check(&imports, "batch-a"),
+        Some(json!({"state":"check_pending"}))
+    );
+    assert_eq!(read_masters_check(&imports, "batch-b"), None);
+}
+
+/// A readback that fails after a doubted post still reports and records it.
 #[tokio::test]
 async fn a_failed_readback_after_a_doubted_post_still_carries_the_doubt() {
-    let replaced = replaced_once(
-        &catalogue(),
-        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
-        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
-    );
     let mut plans = before_approval();
     plans.extend(after_approval(xml(created_one())));
     plans.push(xml(masters_moved_to(8)));
-    plans.extend(paired(replaced));
+    plans.extend(paired(replaced_cash()));
     // No readback is scripted: the sentinel answers it, so it fails.
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -2114,72 +2228,104 @@ async fn a_failed_readback_after_a_doubted_post_still_carries_the_doubt() {
         result["masters_after_post"]["state"], "posted_under_changed_masters",
         "{response}"
     );
-    let record = server.imports_dir().unwrap().join(format!(
-        "{}.masters_doubt.json",
-        args["batch_id"].as_str().unwrap()
-    ));
-    let recorded: Value = serde_json::from_slice(&fs::read(record).unwrap()).unwrap();
-    assert_eq!(recorded, result["masters_after_post"]);
+    assert_eq!(
+        masters_check_of(&server, BATCH),
+        result["masters_after_post"]
+    );
 }
 
-/// The first doubt recorded for a batch is kept: a later one never replaces it.
+/// A verdict replaces a pending record; a recorded doubt is never replaced;
+/// a check that could not run is not recorded; a verdict that cannot be
+/// written leaves the record, and the result, pending.
 #[test]
-fn a_masters_doubt_record_is_written_once() {
+fn a_masters_verdict_replaces_only_a_pending_check_or_a_clear_one() {
     let directory = tempfile::tempdir().unwrap();
     let server = server_at("127.0.0.1:9".parse().unwrap(), directory.path());
-    let first = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
-    assert!(server.record_masters_doubt("batch-a", &first));
-    assert!(server.record_masters_doubt("batch-a", &json!({"state":"check_unavailable"})));
-    let path = server
-        .imports_dir()
-        .unwrap()
-        .join("batch-a.masters_doubt.json");
-    let recorded: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert_eq!(recorded, first);
+    let imports = server.imports_dir().unwrap();
+    server.record_masters_check_pending("batch-a").unwrap();
+    let unchanged = json!({"state":"unchanged","trigger":"masters_moved"});
+    let doubt = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
+    let unavailable = json!({"state":"check_unavailable","trigger":"masters_moved"});
+    assert_eq!(
+        server.record_masters_verdict("batch-a", unavailable.clone()),
+        unavailable
+    );
+    assert_eq!(
+        read_masters_check(&imports, "batch-a"),
+        Some(json!({"state":"check_pending"}))
+    );
+    assert_eq!(
+        server.record_masters_verdict("batch-a", unchanged.clone()),
+        unchanged
+    );
+    assert_eq!(
+        server.record_masters_verdict("batch-a", doubt.clone()),
+        doubt
+    );
+    assert_eq!(
+        server.record_masters_verdict("batch-a", unchanged.clone()),
+        doubt
+    );
+    assert_eq!(read_masters_check(&imports, "batch-a"), Some(doubt));
+
+    server.record_masters_check_pending("batch-b").unwrap();
+    fs::create_dir(imports.join("batch-b.masters_check.json.next")).unwrap();
+    assert_eq!(
+        server.record_masters_verdict("batch-b", unchanged),
+        json!({"state":"check_pending"})
+    );
 }
 
-/// A doubt that cannot be recorded still downgrades this result, and its
-/// message says a later readback may not see it.
+/// A post whose pending masters record cannot be written is refused before
+/// its dispatch intent, so nothing is sent.
 #[tokio::test]
-async fn a_doubt_that_cannot_be_recorded_says_so() {
-    let replaced = replaced_once(
-        &catalogue(),
-        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
-        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
-    );
+async fn a_post_whose_masters_record_cannot_be_written_is_not_sent() {
+    // The queue's plans stay in the sequence, so a post that went ahead would
+    // be served and observed here.
     let mut plans = before_approval();
+    let expected = plans.len();
     plans.extend(after_approval(xml(created_one())));
-    plans.push(xml(masters_moved_to(8)));
-    plans.extend(paired(replaced));
-    plans.extend(reconcile_readback());
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let args = saved_captured_batch(&server);
-    let batch = args["batch_id"].as_str().unwrap().to_string();
-    // A directory where the record is staged makes its write fail.
     let imports = server.imports_dir().unwrap();
-    fs::create_dir(imports.join(format!("{batch}.masters_doubt.json.next"))).unwrap();
+    fs::create_dir(imports.join(format!("{BATCH}.masters_check.json.next"))).unwrap();
+    let before = journal(directory.path());
     let response = SCRIPTED_APPROVAL
         .scope(
             ScriptedApproval::approving(),
             server.call_tool("post_import", args),
         )
         .await;
-    drop(sent(simulator));
+    let observed = sent(simulator);
     let result = &response["structuredContent"]["result"];
     assert_eq!(
-        result["dispatch"]["state"], "reconciliation_required",
+        result["error"]["code"], "post_masters_record_unavailable",
         "{response}"
     );
-    assert_eq!(result["error"]["code"], "posted_under_changed_masters");
-    assert_eq!(result["masters_after_post"]["recorded"], false);
-    assert!(
-        result["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("Bridge could not record this doubt"),
-        "{response}"
+    assert_eq!(result["attempt_recorded"], false, "{response}");
+    assert_eq!(
+        observed.len(),
+        expected,
+        "nothing past approval: {response}"
     );
-    assert!(!imports.join(format!("{batch}.masters_doubt.json")).exists());
+    assert_eq!(
+        appended_kinds(&before, &journal(directory.path())),
+        ["verification_status"]
+    );
+}
+
+/// A pending mark never replaces a finished verdict: a process that lost the
+/// dispatch race cannot erase the winner's doubt.
+#[test]
+fn a_pending_mark_never_replaces_a_verdict() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at("127.0.0.1:9".parse().unwrap(), directory.path());
+    let imports = server.imports_dir().unwrap();
+    let doubt = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
+    server.record_masters_check_pending("batch-a").unwrap();
+    server.record_masters_verdict("batch-a", doubt.clone());
+    server.record_masters_check_pending("batch-a").unwrap();
+    assert_eq!(read_masters_check(&imports, "batch-a"), Some(doubt));
 }
