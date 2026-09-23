@@ -10,6 +10,7 @@ import {
   asOfBoundValueForAsOf,
   asOfYyyymmdd,
   bulkPartyStatementsInvokeArgument,
+  bulkPartyStatementsPreviewInvokeArgument,
   partyStatementInvokeArgument,
   settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
@@ -116,6 +117,7 @@ type LoadResult =
       synced_at_unix_ms: number;
       working_paper_export_id?: string;
       working_paper_unavailable_reason_code?: string;
+      party_statement_source_id?: string;
       // Absent when the read path cannot establish it. Absent is not zero and
       // must never render as zero.
       unallocated_total?: string;
@@ -548,7 +550,11 @@ export function OutstandingsScreen({
   // NOT known and those two are absent.
   const ageingDisclosure = report && completeResult?.unallocated_total === undefined
     && outstandingsAgeingDisclosure(report.has_unaged_receivable);
+  // Statements come only from the source Bridge holds for this read
+  // (bridge#551): without its handle, no statement control is offered.
+  const statementSourceAvailable = completeResult?.party_statement_source_id !== undefined;
   const batchStatementRowsAvailable = completeResult !== null
+    && statementSourceAvailable
     && (completeResult.statement_open_bills !== undefined
       || completeResult.statement_unallocated_by_party !== undefined);
   // A present unallocated control identifies the native path that computed
@@ -566,14 +572,16 @@ export function OutstandingsScreen({
     // Disable both batch-export controls before opening the native picker so
     // two click handlers cannot race each other in the renderer.
     try {
-      const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
-      if (!selection) return;
-      approvalIdToRevoke = selection.approval_id;
+      // The held source is checked before the folder picker opens, so a
+      // result whose statements are gone costs no folder choice.
       const preview = await previewBulkPartyStatements(completeResult);
       if (preview.party_count === 0) {
         onExportNoticeChange({ message: "No parties with outstanding balances are available for statements." });
         return;
       }
+      const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
+      if (!selection) return;
+      approvalIdToRevoke = selection.approval_id;
       const label = format === "xlsx" ? "Excel" : "PDF";
       const confirmed = window.confirm(
         `Create ${preview.party_count} ${label} statement${preview.party_count === 1 ? "" : "s"} in:\n${selection.destination}\n\nThe dashboard shows only its largest parties. This batch includes every party with a non-zero outstanding balance.`,
@@ -945,7 +953,7 @@ export function OutstandingsScreen({
                             <button
                               type="button"
                               className="party-statement-action"
-                              disabled={exporting !== null}
+                              disabled={exporting !== null || !statementSourceAvailable}
                               onClick={async () => {
                                 if (!beginExport("party")) return;
                                 try {
@@ -964,7 +972,7 @@ export function OutstandingsScreen({
                             <button
                               type="button"
                               className="party-statement-action"
-                              disabled={exporting !== null}
+                              disabled={exporting !== null || !statementSourceAvailable}
                               onClick={async () => {
                                 if (!beginExport("party")) return;
                                 try {
@@ -1006,16 +1014,21 @@ export function OutstandingsScreen({
   );
 }
 
+const STATEMENT_SOURCE_UNAVAILABLE =
+  "This outstandings result is no longer available for statements. Refresh outstandings and try again.";
+
 /// Builds one party's statement in the selected format via the Rust command
-/// and writes it to Downloads. Sends the complete statement source rows this
-/// screen already holds from `fetch_tally_outstandings` -- Bridge never reads
-/// Tally a second time to produce a statement.
+/// and writes it to Downloads. Names the statement source Bridge holds from
+/// `fetch_tally_outstandings` -- Bridge never reads Tally a second time to
+/// produce a statement, and the rows never come from this screen.
 async function exportPartyStatement(
   result: InrCompleteResult,
   party: string,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<string>("export_party_statement", partyStatementInvokeArgument(result, party, format));
+  const argument = partyStatementInvokeArgument(result, party, format);
+  if (!argument) throw new Error(STATEMENT_SOURCE_UNAVAILABLE);
+  return invoke<string>("export_party_statement", argument);
 }
 
 type BulkPartyStatementResult = {
@@ -1027,18 +1040,22 @@ type BulkPartyStatementResult = {
 
 type BulkPartyStatementsPreview = { party_count: number };
 
-/// Uses the complete statement-source rows returned by the finished read. The
-/// dashboard's top-ten and drill-down projections are intentionally not used:
-/// a batch must not silently omit a party beyond a display cap.
+/// Uses the complete statement source Bridge holds from the finished read.
+/// The dashboard's top-ten and drill-down projections are intentionally not
+/// used: a batch must not silently omit a party beyond a display cap.
 async function exportBulkPartyStatements(
   result: InrCompleteResult,
   selection: BulkPartyStatementDestinationSelection,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<BulkPartyStatementResult>(
-    "export_bulk_party_statements",
-    bulkPartyStatementsInvokeArgument(result, selection.destination, selection.approval_id, format),
+  const argument = bulkPartyStatementsInvokeArgument(
+    result,
+    selection.destination,
+    selection.approval_id,
+    format,
   );
+  if (!argument) throw new Error(STATEMENT_SOURCE_UNAVAILABLE);
+  return invoke<BulkPartyStatementResult>("export_bulk_party_statements", argument);
 }
 
 async function revokePartyStatementDestination(approvalId: string) {
@@ -1048,12 +1065,9 @@ async function revokePartyStatementDestination(approvalId: string) {
 /// Uses the same complete source rows and backend counting rule as the writer,
 /// so the confirmation names the exact scope before any files are created.
 async function previewBulkPartyStatements(result: InrCompleteResult) {
-  return invoke<BulkPartyStatementsPreview>("preview_bulk_party_statements", {
-    request: {
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  });
+  const argument = bulkPartyStatementsPreviewInvokeArgument(result);
+  if (!argument) throw new Error(STATEMENT_SOURCE_UNAVAILABLE);
+  return invoke<BulkPartyStatementsPreview>("preview_bulk_party_statements", argument);
 }
 
 /// Builds the complete dual-ageing workbook from the finished native read.

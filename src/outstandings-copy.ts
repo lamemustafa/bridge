@@ -195,13 +195,13 @@ export function workingPaperUnavailableState(
   if (reasonCode === "working_paper_resource_limit") {
     return {
       title: "Excel working paper unavailable",
-      message: "The outstandings report is complete, but this working paper exceeds Bridge’s safe export limits. The other report exports remain available.",
+      message: "The outstandings report is complete, but it exceeds Bridge’s safe export limits for the working paper and party statements. The CSV export remains available.",
     };
   }
   if (reasonCode === "working_paper_complete_source_unavailable") {
     return {
       title: "Excel working paper unavailable for this read",
-      message: "This completed read does not carry the native bill and unallocated controls needed to substantiate an all-party working paper. The other report exports remain available.",
+      message: "This completed read does not carry the native bill and unallocated controls needed to substantiate an all-party working paper or party statements. The CSV export remains available.",
     };
   }
   if (reasonCode === "working_paper_export_store_unavailable") {

@@ -451,6 +451,7 @@ async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() 
         request,
         &TallyRuntime::default(),
         &crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default(),
+        &crate::reports::outstandings_working_paper_store::PartyStatementSourceStore::default(),
     )
     .await
     .unwrap();
@@ -461,6 +462,7 @@ async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() 
         response.result
     );
     assert!(response.working_paper_export_id.is_none());
+    assert!(response.party_statement_source_id.is_none());
     simulator.cancel();
     // The company list, then the currency read's 14 requests, and no more.
     assert_eq!(requests_sent(simulator), 15);
@@ -689,5 +691,62 @@ async fn the_sweep_refuses_a_book_that_is_not_single_currency_inr_before_any_bil
         }
         // The currency read's 14 requests, and not one more.
         assert_eq!(requests_sent(simulator), 14, "{expected}");
+    }
+}
+
+/// bridge#551: a completed desktop read issues the working paper's one-use
+/// handle and a separate statement handle over the same held source.
+/// Exporting the working paper consumes only its own handle: statements
+/// remain exportable, once per party, from the rows Bridge holds.
+#[tokio::test]
+async fn a_completed_read_holds_its_statement_source_apart_from_the_working_paper() {
+    let mut plans = vec![xml(companies())];
+    plans.extend(currency_then_native_plans(currency_source()));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let rows = parse_companies_from_collection(&companies()).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.guid.as_deref() == Some("eebb9a9f-1679-4468-9e8f-814c729674cb"))
+        .unwrap();
+    let request: crate::commands::OutstandingsRequest = serde_json::from_value(serde_json::json!({
+        "config": {"host": simulator.address().ip().to_string(), "port": simulator.address().port()},
+        "selected_company": {
+            "display_name": row.name,
+            "company_guid": row.guid,
+            "company_number": row.company_number,
+            "books_from_yyyymmdd": row.books_from,
+        },
+        "currency_assertion": "INR",
+        "as_of_yyyymmdd": "20260801",
+    }))
+    .unwrap();
+    let working_papers =
+        crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default();
+    let statements =
+        crate::reports::outstandings_working_paper_store::PartyStatementSourceStore::default();
+    let response = crate::commands::read_screen_outstandings(
+        request,
+        &TallyRuntime::default(),
+        &working_papers,
+        &statements,
+    )
+    .await
+    .unwrap();
+    simulator.cancel();
+    let OutstandingsLoadResult::Complete {
+        statement_open_bills,
+        ..
+    } = &response.result
+    else {
+        panic!("{:?}", response.result);
+    };
+    assert!(!statement_open_bills.is_empty());
+    let statement_id = response.party_statement_source_id.clone().unwrap();
+    let working_paper_id = response.working_paper_export_id.clone().unwrap();
+    assert_ne!(statement_id, working_paper_id);
+    working_papers.take(&working_paper_id).unwrap();
+    for _ in 0..2 {
+        let source = crate::commands::party_statement_source(&statements, &statement_id).unwrap();
+        assert_eq!(&source.open_bills, statement_open_bills);
     }
 }
