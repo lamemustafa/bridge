@@ -22,8 +22,9 @@
 //! the voucher type, the voucher number when the batch set one, each entry's
 //! ledger, amount and side, and the narration. It does not cover `REFERENCE`,
 //! bill-wise or cost-centre allocations, or the party ledger, which the
-//! verification read does not fetch, so an edit to any of them in Tally is
-//! overwritten without being detected.
+//! verification read does not fetch. An edit to any of them made after Bridge
+//! first verified the build is caught instead by the voucher's ALTERID (#239;
+//! see `compare_and_swap`); one made before that verification is not.
 use super::*;
 
 /// Every build that shares one wire identity, in journal order.
@@ -137,7 +138,9 @@ impl Lineage {
 
     /// The compare-and-swap. Returns per-voucher evidence when every amended
     /// voucher is in the book as some build of this lineage wrote it, in the
-    /// fields the module doc lists, and per-voucher refusals otherwise.
+    /// fields the module doc lists, and has an ALTERID equal to one Bridge
+    /// recorded when it first verified such a build; per-voucher refusals
+    /// otherwise.
     pub(super) fn compare_and_swap(
         &self,
         vouchers: &[ImportVoucher],
@@ -169,7 +172,10 @@ impl Lineage {
             }
             let row = canonical_read_voucher(row)?;
             let mut last_diffs = Vec::new();
-            let mut matched = None;
+            // Every build whose compared fields the book still matches: a build
+            // that changed only an uncompared field (a reference) matches too,
+            // whether or not it was ever imported.
+            let mut matching = Vec::new();
             for (batch_id, recorded) in self.versions(txn_id) {
                 let recorded = canonical_import_voucher(recorded)?;
                 let entries_match =
@@ -183,32 +189,41 @@ impl Lineage {
                     diffs.push(json!("narration"));
                 }
                 if diffs.is_empty() {
-                    matched = Some(batch_id);
+                    matching.push(batch_id);
                 }
                 last_diffs = diffs;
             }
             // The fields above are all the read carries. Anything else a person
             // changed (a reference, an allocation) shows only as the voucher's
-            // ALTERID moving past the one Bridge recorded the first time it
-            // verified that build (#239). Any difference refuses, and so does
-            // a build Bridge never verified: nothing proves it unchanged.
-            let matched = match matched {
-                Some(batch_id) => match (baselines.alter_id(batch_id, txn_id), row.alter_id) {
-                    (Some(verified), Some(current)) if verified == current => Some(batch_id),
-                    (Some(verified), current) => {
-                        refused.push(json!({"bridge_txn_id":txn_id,
+            // ALTERID moving past one Bridge recorded when it first verified a
+            // build (#239). ALTERID is one company-wide sequence, so a current
+            // value equal to any matching build's baseline means the voucher
+            // has not been altered since that reading. A build never imported
+            // has no baseline and is passed over. No equal baseline refuses:
+            // as altered when some matching build has one, as never verified
+            // when none does.
+            let equal = matching.iter().copied().find(|batch_id| {
+                row.alter_id.is_some() && baselines.alter_id(batch_id, txn_id) == row.alter_id
+            });
+            let matched = match (matching.last(), equal) {
+                (None, _) => None,
+                (Some(_), Some(batch_id)) => Some(batch_id),
+                (Some(_), None) => {
+                    let verified = matching.iter().rev().find_map(|batch_id| {
+                        baselines
+                            .alter_id(batch_id, txn_id)
+                            .map(|alter_id| (*batch_id, alter_id))
+                    });
+                    refused.push(match verified {
+                        Some((batch_id, verified)) => json!({"bridge_txn_id":txn_id,
                             "reason":"voucher_altered_since_verified","book_matches_batch_id":batch_id,
-                            "verified_alter_id":verified,"alter_id":current,"guid":row.guid}));
-                        continue;
-                    }
-                    (None, _) => {
-                        refused.push(json!({"bridge_txn_id":txn_id,
-                            "reason":"voucher_never_verified","book_matches_batch_id":batch_id,
-                            "alter_id":row.alter_id,"guid":row.guid}));
-                        continue;
-                    }
-                },
-                None => None,
+                            "verified_alter_id":verified,"alter_id":row.alter_id,"guid":row.guid}),
+                        None => json!({"bridge_txn_id":txn_id,
+                            "reason":"voucher_never_verified","book_matches_batch_ids":matching,
+                            "alter_id":row.alter_id,"guid":row.guid}),
+                    });
+                    continue;
+                }
             };
             match matched {
                 Some(batch_id) => {

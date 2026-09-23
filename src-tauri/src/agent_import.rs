@@ -1011,8 +1011,9 @@ impl Server {
         // The first verified ALTERID of each voucher, for a later amendment to
         // compare against (#239). Kept beside the proof, not in the journal, so
         // an older binary still reads the journal after a rollback. A failed
-        // write leaves no baseline, and an amendment then refuses: the safe
-        // direction, so it does not fail this verification.
+        // write leaves the previous baseline, or none, and an amendment of a
+        // voucher it lacks then refuses: the safe direction, so it does not
+        // fail this verification.
         let _ = record_verified_baseline(&imports, &update.batch_id, proof);
         Ok(())
     }
@@ -1311,9 +1312,9 @@ const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher
 
 const AMENDMENT_NOT_POSTABLE: &str = "No import XML was sent to Tally. Bridge does not post amendments (post_import refuses them), so import the written file by hand, promptly, then use verify_import; do not call post_import for this batch.";
 
-const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Verify right after importing: that first verification is what a later amendment compares against. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
 
-const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured. voucher_altered_since_verified means Tally has altered the voucher since Bridge first verified it (its ALTERID moved), which can be an edit to a field Bridge does not compare, such as a reference or an allocation; voucher_never_verified means Bridge has no record of verifying that build, so nothing shows the voucher unchanged. For either, correct the voucher in Tally directly, or build a fresh batch for it.";
+const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured. voucher_altered_since_verified means the voucher's ALTERID is not the one Bridge recorded when it first verified a build the book matches, or was not read: Tally has altered the voucher since, which can be an edit to a field Bridge does not compare, such as a reference or an allocation. Correct the voucher in Tally directly; a fresh batch would duplicate it unless the existing voucher is first cancelled or deleted in Tally. voucher_never_verified means no build the book matches has a verification Bridge recorded for this voucher: most often the last import was never verified, or it was verified before Bridge kept these records. If that import was yours and nothing has changed since, verify the batch named in book_matches_batch_ids and build the amendment again; that verification records the voucher as it is now, including any edit made since the import. Otherwise correct the voucher in Tally directly.";
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
 /// admission. Older manual imports retain their original verification path.
@@ -1503,7 +1504,7 @@ fn build_import_guidance(
     if writes_enabled && native_post_eligible {
         (
             warnings(
-                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import afterward and do not call post_import for that batch.",
+                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import right after importing and do not call post_import for that batch.",
             ),
             "Call post_import with this company_guid and batch_id; the local user must review and approve it before one posting attempt.",
         )
@@ -2461,7 +2462,11 @@ fn record_verified_baseline(imports: &Path, batch_id: &str, proof: &Value) -> Re
     if amend::record_first_verified(&mut baseline, proof) {
         let bytes = serde_json::to_vec_pretty(&baseline)
             .map_err(|_| "verified_baseline_serialization_failed".to_string())?;
-        write_private(&path, &bytes)?;
+        // Staged and renamed, so a failed write leaves the previous file whole
+        // rather than a truncated one that would refuse every amendment.
+        let staged = imports.join(format!("{batch_id}.baseline.json.next"));
+        write_private(&staged, &bytes)?;
+        fs::rename(&staged, &path).map_err(|_| "verified_baseline_publish_failed".to_string())?;
     }
     Ok(())
 }

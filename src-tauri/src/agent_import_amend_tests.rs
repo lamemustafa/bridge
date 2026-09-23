@@ -810,7 +810,7 @@ async fn an_amendment_of_a_voucher_altered_or_never_verified_writes_nothing() {
         assert!(result["next_step"]
             .as_str()
             .unwrap()
-            .contains("correct the voucher in Tally directly, or build a fresh batch for it"));
+            .contains("Correct the voucher in Tally directly"));
         assert_eq!(std::fs::read_dir(&imports).unwrap().count(), files_before);
         assert_eq!(simulator.finish().unwrap().len(), 30);
     }
@@ -843,4 +843,74 @@ fn a_verified_baseline_file_is_written_once_per_voucher() {
     .unwrap();
     assert!(record_verified_baseline(directory.path(), ORIGINAL, &proof(42)).is_err());
     assert_eq!(read_verified_baseline(directory.path(), ORIGINAL), None);
+}
+
+fn baselines(pairs: &[(&str, u64)]) -> amend::VerifiedBaselines {
+    amend::VerifiedBaselines(
+        pairs
+            .iter()
+            .map(|(batch_id, alter_id)| {
+                (
+                    batch_id.to_string(),
+                    amend::VerifiedBaseline {
+                        vouchers: [("txn-001".to_string(), *alter_id)].into_iter().collect(),
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+/// An amendment built but never imported, differing only in a field the read
+/// does not carry, matches the book too; it has no verification of its own and
+/// must not hide the build that was verified (#239).
+#[test]
+fn an_unimported_amendment_does_not_hide_the_verified_build() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    // Same compared fields as the original: it matches the untouched book.
+    let stale = build(AMENDMENT, Some(ORIGINAL), "12.50", "20260901");
+    let lineage = lineage_of(&journal(&[&original, &stale]), ORIGINAL).unwrap();
+    let proposal = build(UNRELATED, None, "18.00", "20260901").vouchers;
+    let admitted = lineage
+        .compare_and_swap(
+            &proposal,
+            &book(vec![book_row(&original)]),
+            &baselines(&[(ORIGINAL, 40)]),
+        )
+        .unwrap()
+        .expect("the verified original still vouches for the book");
+    assert_eq!(admitted[0]["book_matches_batch_id"], ORIGINAL);
+}
+
+/// The usual flow: the original verified, an amendment imported and verified,
+/// then a second amendment. The book matches the first amendment only, and its
+/// own verification decides (#239).
+#[test]
+fn a_second_amendment_is_decided_by_the_first_amendments_verification() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let first = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260901");
+    let lineage = lineage_of(&journal(&[&original, &first]), ORIGINAL).unwrap();
+    let proposal = build(UNRELATED, None, "18.00", "20260901").vouchers;
+    let refusal = |alter_id: u64, recorded: &[(&str, u64)]| {
+        let mut row = book_row(&first);
+        row.alter_id = Some(alter_id);
+        lineage
+            .compare_and_swap(&proposal, &book(vec![row]), &baselines(recorded))
+            .unwrap()
+            .err()
+            .map(|refused| refused[0]["reason"].clone())
+    };
+    // Imported and verified at 41: admitted.
+    assert_eq!(refusal(41, &[(ORIGINAL, 40), (AMENDMENT, 41)]), None);
+    // Altered since that verification.
+    assert_eq!(
+        refusal(42, &[(ORIGINAL, 40), (AMENDMENT, 41)]),
+        Some(json!("voucher_altered_since_verified"))
+    );
+    // The amendment was imported but never verified: the original's record
+    // does not vouch for a book that no longer matches the original.
+    assert_eq!(
+        refusal(41, &[(ORIGINAL, 40)]),
+        Some(json!("voucher_never_verified"))
+    );
 }

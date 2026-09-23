@@ -286,22 +286,28 @@ or an owner decision to amend the requirement instead:
     returns one, the voucher type, the voucher number when the batch set one, each entry's ledger,
     amount and side, and the narration. Two gaps remain, and each needs its own fix:
     - **Fields not compared.** A voucher's reference, its bill-wise and cost-centre allocations,
-      and which ledger Tally records as its party are not fetched by the verification read, so an
-      edit to any of them, whenever it was made, is not seen. An in-place alteration replaces a
+      and which ledger Tally records as its party are not fetched by the verification read, so the
+      field comparison cannot see an edit to them. An in-place alteration replaces a
       voucher's entries rather than merging them (TALLY_PROTOCOL_REFERENCE §9.3, measured over the
       gateway), and an amendment's entries carry no allocations, so allocations made in Tally,
       including those Bridge's own build advice asks for after a Payment or Receipt import, are
       expected to be lost. That loss, and what happens to a reference, are not measured directly.
-      Since #239's baseline change, the build also refuses a voucher whose `ALTERID` differs from
-      the one Bridge recorded the first time it verified that build (`voucher_altered_since_verified`),
-      and a build Bridge never verified (`voucher_never_verified`). The value is kept in a write-once
+      Since #239's baseline change, the build also admits a voucher only when its `ALTERID` equals
+      one Bridge recorded the first time it verified a build the book still matches; otherwise it
+      refuses (`voucher_altered_since_verified`, or `voucher_never_verified` when no such build has
+      a record). `ALTERID` is one company-wide increasing sequence, so equality with any recorded
+      value means nothing has altered the voucher since that reading. The value is kept in a write-once
       `<batch>.baseline.json` beside the proof, not in the journal, so an older binary still reads the
       journal after a rollback. That catches an edit to any field made after the first verification,
       if a Tally edit advances the voucher's `ALTERID`: measured for gateway alterations (§9.3), not
       yet for an edit made in Tally's own screens. An edit made between the import and the first
       verification becomes part of the baseline and is not caught; every amendable batch was imported
       by hand, since a batch Bridge posted cannot be amended, so the build asks for a verify right
-      after each import.
+      after each import. Batches verified before this change have no record; their first
+      verification after it becomes the baseline, so an edit made before that is not caught for
+      them. Any alteration refuses, including one that is not a content edit (for example a bank
+      reconciliation date set in Tally), which is the right answer when the amendment would
+      replace the voucher's entries.
     - **The build-to-import window.** The comparison runs when the amendment is built. The import
       is done by hand through Tally's Import menu, and Bridge refuses to post an amendment
       (`import_post_amendment_requires_file_import`), so nothing re-checks the vouchers just before

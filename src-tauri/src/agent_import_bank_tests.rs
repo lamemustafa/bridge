@@ -620,6 +620,12 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
         .as_str()
         .unwrap()
         .starts_with("Confirm the loaded company matches this batch"));
+    // Its first verification is what a later amendment compares against
+    // (#239), so the manual import step asks for it at once.
+    assert!(result["next_step"]
+        .as_str()
+        .unwrap()
+        .contains("call verify_import right away"));
     // A cash/bank payload reads the group collection twice, exactly as it reads
     // the catalogue twice, and the whole sequence is consumed.
     assert_eq!(simulator.finish().expect("requests").len(), 44);
