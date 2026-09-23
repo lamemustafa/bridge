@@ -504,38 +504,300 @@ async fn a_ledger_in_another_currency_on_a_one_master_book_refuses_the_read() {
     assert_eq!(requests, 44);
 }
 
-/// bridge#551: only a base among several masters can find a ledger in another
-/// currency, and none is admitted before bridge#601. Where one is found, every
-/// figure is withheld, naming the ledger, rather than reported for the whole
-/// book or for part of it.
-#[test]
-fn a_foreign_ledger_withholds_every_figure() {
-    let foreign =
-        |ledger: &str| bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger {
-            ledger: ledger.to_string(),
-            currency: "$".to_string(),
-        };
-    let snapshot = |foreign| ClassifiedLedgerSnapshot {
-        base: Vec::new(),
-        foreign,
-        unobserved: 0,
+const FOREX_GUID: &str = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+
+fn fixture(bytes: &[u8]) -> ScenarioPlan {
+    xml(decode(bytes))
+}
+
+fn forex_originalname_currency() -> String {
+    decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+    ))
+}
+
+fn forex_company_currency() -> String {
+    decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_forex_edited.utf16le.xml"
+    ))
+}
+
+/// The classified currency read of a two-master book: the plain Currency
+/// collection, the same with `ORIGINALNAME`, then the Company collection as a
+/// pair (`company` twice, then `company_again` on the second send), inside the
+/// identity and extent bracket.
+fn classified_currency_plans(
+    with_original_names: String,
+    company: String,
+    company_again: String,
+) -> Vec<ScenarioPlan> {
+    let identity = xml(companies());
+    let extent = xml(extents());
+    let mut plans = vec![identity.clone()];
+    pair(&mut plans, extent.clone());
+    pair(&mut plans, xml(multi_currency_source()));
+    pair(&mut plans, xml(with_original_names));
+    plans.extend([xml(company), status(), xml(company_again), status()]);
+    pair(&mut plans, extent);
+    plans.push(identity);
+    plans
+}
+
+/// FOREX's classified currency read, from captures (the plain two-master read
+/// of 2026-08-23, the `ORIGINALNAME` read and the edited Company collection of
+/// 2026-09-23).
+fn forex_classified_currency_plans() -> Vec<ScenarioPlan> {
+    classified_currency_plans(
+        forex_originalname_currency(),
+        forex_company_currency(),
+        forex_company_currency(),
+    )
+}
+
+fn request_sha256(request: &str) -> String {
+    sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+        request,
+    ))
+}
+
+async fn forex_classified_read(
+    plans: Vec<ScenarioPlan>,
+) -> anyhow::Result<ClassifiedCompanyCurrencyRead> {
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let read = TallyRuntime::default()
+        .detect_classified_base_currency_with_extent(
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), FOREX_GUID),
+        )
+        .await;
+    simulator.cancel();
+    read
+}
+
+/// bridge#551, labelled edits of the FOREX captures: the company's
+/// `CURRENCYNAME` naming the `$` master identifies a base that is not INR,
+/// and one naming no master identifies none, although the book holds an INR
+/// master either way. A Company collection that changes between the pair's
+/// two sends, or an `ORIGINALNAME` re-read whose masters differ from the plain
+/// read's, refuses as drift.
+#[tokio::test]
+async fn a_book_whose_company_names_no_inr_base_is_refused() {
+    let company = forex_company_currency();
+    let forex_row = company.find("BRIDGE CORPUS FOREX").unwrap();
+    let rupee = "<CURRENCYNAME TYPE=\"String\">\u{20b9}</CURRENCYNAME>";
+    assert!(company.find(rupee).unwrap() > forex_row);
+    assert!(company.find(rupee).unwrap() < company.find("BRIDGE SHAPE LAB").unwrap());
+    let naming = |value: &str| {
+        company.replacen(
+            rupee,
+            &format!("<CURRENCYNAME TYPE=\"String\">{value}</CURRENCYNAME>"),
+            1,
+        )
     };
-    assert_eq!(
-        foreign_ledger_withholds_figures(&snapshot(Vec::new())),
-        None
+    for (value, code) in [
+        ("$", "company_base_currency_not_inr"),
+        ("\u{20ac}", "company_base_currency_undetermined"),
+    ] {
+        let read = forex_classified_read(classified_currency_plans(
+            forex_originalname_currency(),
+            naming(value),
+            naming(value),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(read.admit_inr_classified().err(), Some(code), "{value}");
+    }
+
+    let drift = |plans| async {
+        forex_classified_read(plans)
+            .await
+            .unwrap_err()
+            .chain()
+            .find_map(|cause| {
+                cause
+                    .downcast_ref::<PairedReadValidationError>()
+                    .map(PairedReadValidationError::safe_code)
+            })
+    };
+    assert!(matches!(
+        drift(classified_currency_plans(
+            forex_originalname_currency(),
+            company.clone(),
+            naming("$"),
+        ))
+        .await,
+        Some("company_currency_name_changed")
+    ));
+    let changed = forex_originalname_currency().replace(
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">US Dollar</MAILINGNAME>",
     );
-    match foreign_ledger_withholds_figures(&snapshot(vec![
-        foreign("FX Debtor A"),
-        foreign("FX Debtor B"),
-    ])) {
-        Some(OutstandingsLoadResult::Partial { reason, .. }) => {
-            assert_eq!(reason.reason_code, "foreign_currency_ledger_present");
+    assert_ne!(changed, forex_originalname_currency());
+    assert!(matches!(
+        drift(classified_currency_plans(changed, company.clone(), company)).await,
+        Some("currency_master_changed")
+    ));
+}
+
+/// FOREX's native outstandings read in the order the read sends it: its
+/// bills, groups and ledgers captured 2026-09-22/23, with the shared company
+/// and extent fixtures from earlier sessions.
+fn forex_native_plans() -> Vec<ScenarioPlan> {
+    let extent = xml(extents());
+    let mut plans = vec![status(), xml(companies()), xml(companies())];
+    pair(&mut plans, extent.clone());
+    for plan in [
+        fixture(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/bills_receivable_forex_live.utf16le.xml"
+        )),
+        fixture(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/groups_forex_live.utf16le.xml"
+        )),
+        fixture(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/bills_payable_forex_live.utf16le.xml"
+        )),
+        fixture(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/ledgers_currency_forex_live.utf16le.xml"
+        )),
+    ] {
+        pair(&mut plans, plan);
+    }
+    pair(&mut plans, extent);
+    plans.extend([xml(companies()), status(), xml(companies())]);
+    plans
+}
+
+/// bridge#551, end to end from captures: FOREX has an `I₹` and a `$` master.
+/// The classified read identifies the rupee master as the base through the
+/// company's `CURRENCYNAME`, and admits it as INR. The outstandings read
+/// then leaves the three `$` ledgers and their four bills out of every
+/// figure, and says so: a partial result whose figures describe the rupee
+/// ledgers only (TALLY_PROTOCOL_REFERENCE §8.2d, §9.10a.2).
+#[tokio::test]
+async fn forex_outstandings_leave_the_dollar_ledgers_out_and_say_so() {
+    let mut plans = forex_classified_currency_plans();
+    plans.extend(forex_native_plans());
+    let plan_count = plans.len();
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let config = TallyConfig {
+        host: simulator.address().ip().to_string(),
+        port: simulator.address().port(),
+    };
+    let identity = identity_for_guid(&companies(), FOREX_GUID);
+    let runtime = TallyRuntime::default();
+    let witness = runtime
+        .detect_classified_base_currency_with_extent(config.clone(), &identity)
+        .await
+        .unwrap()
+        .admit_inr_classified()
+        .unwrap();
+    let (result, _) = runtime
+        .fetch_agent_outstandings_with_evidence(
+            config,
+            &identity,
+            TallyDate::parse("20250930").unwrap(),
+            witness,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await
+        .unwrap();
+    let requests = simulator.finish().unwrap();
+    let OutstandingsLoadResult::BaseCurrencyLedgersOnly {
+        reason,
+        foreign_currency_ledgers_excluded,
+        base_currency_ledgers,
+        ..
+    } = result
+    else {
+        panic!("{result:?}");
+    };
+    assert_eq!(reason.reason_code, "foreign_currency_ledgers_excluded");
+    let excluded = foreign_currency_ledgers_excluded
+        .iter()
+        .map(|ledger| (ledger.ledger.as_str(), ledger.currency.as_str()))
+        .collect::<Vec<_>>();
+    let dollars = ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"];
+    assert_eq!(excluded, dollars.map(|ledger| (ledger, "$")));
+    // The 14 rupee bills only, 34,500; the four dollar bills (350,100 read as
+    // rupees) are in no figure and no statement row.
+    assert_eq!(
+        base_currency_ledgers.report.receivable_total.as_str(),
+        "34500"
+    );
+    assert_eq!(base_currency_ledgers.statement_open_bills.len(), 14);
+    for row in &base_currency_ledgers.statement_open_bills {
+        assert!(!dollars.contains(&row.party.as_str()), "{row:?}");
+    }
+    for party in &base_currency_ledgers.statement_unallocated_by_party {
+        assert!(!dollars.contains(&party.party.as_str()), "{party:?}");
+    }
+    // Every scripted response was served, and each read sent its own request:
+    // the plain currency read, the ORIGINALNAME re-read, the Company read.
+    assert_eq!(requests.len(), plan_count);
+    for (indexes, request) in [
+        (
+            [5, 7],
+            render_company_currency_request("BRIDGE CORPUS FOREX"),
+        ),
+        (
+            [9, 11],
+            render_company_currency_request_with_originalname("BRIDGE CORPUS FOREX"),
+        ),
+        (
+            [13, 15],
+            render_company_base_currency_request("BRIDGE CORPUS FOREX"),
+        ),
+    ] {
+        for index in indexes {
             assert_eq!(
-                reason.foreign_currency_ledger_name.as_deref(),
-                Some("FX Debtor A")
+                requests[index].request_body_sha256,
+                request_sha256(&request)
             );
         }
-        other => panic!("{other:?}"),
+    }
+}
+
+/// bridge#551: on a book with one master the classified read sends exactly
+/// the plain currency read, no `ORIGINALNAME` re-read and no Company read,
+/// and admits as `admit_inr` does: the captured `INR` master, and not the
+/// same master with its mailing name changed.
+#[tokio::test]
+async fn a_one_master_classified_read_sends_only_the_plain_currency_read() {
+    let captured = currency_source();
+    let rupees = captured.replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">Rupees</MAILINGNAME>",
+    );
+    assert_ne!(rupees, captured);
+    for (currency, admitted) in [(captured, true), (rupees, false)] {
+        let plans = currency_plans(currency);
+        let plan_count = plans.len();
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let read = TallyRuntime::default()
+            .detect_classified_base_currency_with_extent(
+                TallyConfig {
+                    host: simulator.address().ip().to_string(),
+                    port: simulator.address().port(),
+                },
+                &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            )
+            .await
+            .unwrap();
+        let requests = simulator.finish().unwrap();
+        assert_eq!(requests.len(), plan_count);
+        let plain = request_sha256(&render_company_currency_request("Bridge Ageing Lab"));
+        assert_eq!(requests[5].request_body_sha256, plain);
+        assert_eq!(requests[7].request_body_sha256, plain);
+        match read.admit_inr_classified() {
+            Ok(_) => assert!(admitted),
+            Err(code) => {
+                assert!(!admitted, "{code}");
+                assert_eq!(code, "company_base_currency_not_inr");
+            }
+        }
     }
 }
 

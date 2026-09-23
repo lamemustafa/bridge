@@ -347,12 +347,42 @@ fn xml_escape(value: &str) -> String {
 /// assert it is a step the product can answer for itself.
 /// - Measured 2026-08-07 on three lab companies: one `CURRENCY` row each,
 ///   `NAME` `"Rs."`, `MAILINGNAME` `"Indian Rupees"` or `"INR"`.
-/// - `ORIGINALNAME` is not fetched yet. The parser reads it when present; it
-///   joins this `FETCH` with its first consumer, the several-masters
-///   outstandings read (bridge#551, TALLY_PROTOCOL_REFERENCE §9.10a.2).
+/// - Every monetary read sends this request, so it does not fetch
+///   `ORIGINALNAME`; only the outstandings read that identifies a base among
+///   several masters sends [`render_company_currency_request_with_originalname`]
+///   (bridge#551, TALLY_PROTOCOL_REFERENCE §9.10a.2).
 pub fn render_company_currency_request(company: &str) -> String {
+    render_currency_collection(company, "NAME, MAILINGNAME, DECIMALPLACES")
+}
+
+/// [`render_company_currency_request`] with `ORIGINALNAME` appended to its
+/// `FETCH`: the field a company's own `CURRENCYNAME` names its base master by
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2). Sent only by the outstandings read
+/// that identifies a base among several masters, and only after the plain
+/// read found several (bridge#551). Measured on licensed TallyPrime 7.1 only;
+/// how another release answers the field is unmeasured.
+pub fn render_company_currency_request_with_originalname(company: &str) -> String {
+    render_currency_collection(company, "NAME, MAILINGNAME, DECIMALPLACES, ORIGINALNAME")
+}
+
+fn render_currency_collection(company: &str, fetch: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyCurrencies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyCurrencies" ISMODIFY="No"><TYPE>Currency</TYPE><FETCH>NAME, MAILINGNAME, DECIMALPLACES</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyCurrencies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyCurrencies" ISMODIFY="No"><TYPE>Currency</TYPE><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+    )
+}
+
+/// Renders a request for each loaded company's `CURRENCYNAME`, the
+/// `ORIGINALNAME` of its base Currency master (TALLY_PROTOCOL_REFERENCE
+/// §9.10a.2).
+/// - A plain `Company` collection, with no formula and no filter. It lists
+///   every loaded company, whatever `SVCURRENTCOMPANY` names, so the caller
+///   picks the row by GUID ([`super::parse_company_currency_name`]).
+/// - Sent only when a company defines more than one Currency master
+///   (bridge#551).
+pub fn render_company_base_currency_request(company: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyBaseCurrency</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyBaseCurrency" ISMODIFY="No"><TYPE>Company</TYPE><FETCH>NAME, GUID, CURRENCYNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
     )
 }

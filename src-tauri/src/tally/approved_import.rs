@@ -163,9 +163,9 @@ pub(crate) enum ApprovedImportAdmissionError {
     #[error("post_company_scope_unconfirmed")]
     CompanyScopeUnconfirmed,
     /// The company defines more than one Currency master. Bridge's amounts are
-    /// plain base-currency figures, and which master is the base cannot be
-    /// identified yet (bridge#601), so no leg can be shown to be in it
-    /// (bridge#551). Carries every master's NAME, for the refusal to name.
+    /// plain base-currency figures, and the write path does not compare a
+    /// leg's currency with an identified base yet, so no leg can be shown to
+    /// be in it (bridge#551). Carries every master's NAME, for the refusal to name.
     #[error("import_multi_currency_unsupported")]
     MultiCurrencyBook { currencies: Vec<String> },
     /// The company's Currency masters read as none, or the response does not

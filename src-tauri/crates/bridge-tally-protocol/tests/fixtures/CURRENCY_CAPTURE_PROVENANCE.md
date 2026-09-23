@@ -62,9 +62,9 @@ The provenance above covers the three 2026-08-23 captures only. These two answer
   before and after.
 - **Date:** 2026-09-23, 10:57–10:59 +0530, one request at a time, read-only.
 - **Encoding:** BOM-less UTF-16LE, exactly as received.
-- **Request:** `render_company_currency_request` with `ORIGINALNAME` appended to its `FETCH`. The
-  production request does not send `ORIGINALNAME` yet; it joins with its first consumer
-  (bridge#551).
+- **Request:** `render_company_currency_request` with `ORIGINALNAME` appended to its `FETCH`:
+  byte-identical to `render_company_currency_request_with_originalname`, which only the
+  outstandings read sends, and only on a book with several masters (bridge#551).
 - **Control:** the same session also sent the request without `ORIGINALNAME` (not committed).
   Removing the two `ORIGINALNAME` elements from each committed response leaves it byte-identical
   to that control, on both books: the field adds nothing else to the response.

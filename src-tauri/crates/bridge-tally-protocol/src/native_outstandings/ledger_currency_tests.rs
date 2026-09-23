@@ -373,7 +373,7 @@ fn amount(value: &str) -> ExactDecimal {
 }
 
 /// The book's rupee master is `I₹`, one of its two masters. Built through the
-/// test-only constructor until bridge#601 identifies a base among several.
+/// test-only constructor, as a classification test needs no currency read.
 fn forex_snapshot() -> crate::native_outstandings::ClassifiedLedgerSnapshot {
     parse_native_ledger_snapshot_classified(
         &decode(include_bytes!(

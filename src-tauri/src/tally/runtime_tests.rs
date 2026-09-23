@@ -3,7 +3,9 @@ use crate::commands::VerifiedCompanyIdentity;
 use crate::tally::TallyProduct;
 use anyhow::Context;
 use bridge_tally_core::CapabilityProfile;
-use bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot;
+use bridge_tally_protocol::native_outstandings::{
+    compute_native_outstandings, parse_native_ledger_snapshot,
+};
 use std::collections::BTreeMap;
 use tally_protocol_simulator::Fixture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -62,6 +62,31 @@ foreign ledger from a base one; its currency can.
 - **Rows:** 13 ledgers, `STATUS 1`. Every row, bill-wise debtors, `Cash` and non-party ledgers alike,
   carries `CURRENCYNAME` `Rs.`, the master's NAME. Every amount is a plain decimal.
 
+## `groups_forex_live`, `bills_payable_forex_live`: the rest of FOREX's outstandings read (bridge#551)
+
+Captured so that a classified outstandings read can be tested end to end on FOREX from captures
+only, with `ledgers_currency_forex_live` and `bills_receivable_forex_live` above.
+
+- **Host / gateway:** TallyPrime **Silver (licensed)** 7.1, `education_mode` false; `/status`
+  byte-identical before and after.
+- **Date:** 2026-09-23, 10:57–10:59 +0530, one request at a time, read-only. Book `BRIDGE CORPUS
+  FOREX` (synthetic), period `20250401`–`20250930`.
+- **Requests:** the production renderers of master `2db6a9c5`: the group snapshot
+  (`render_native_group_snapshot_request`) and Bills Payable (`render_native_bills_request`).
+- **Encoding:** BOM-less UTF-16LE, the undecoded wire bytes.
+- **Same session:** that session's Bills Receivable and ledger-snapshot responses are byte-identical
+  to `bills_receivable_forex_live` and `ledgers_currency_forex_live` (captured 2026-09-22).
+
+| file | bytes | sha256 |
+|---|---|---|
+| `groups_forex_live.utf16le.xml` | 54,282 | `9beb3431445a7edca3bb2dcceccb110d69ff40dc447a9667d64ea4f3632d2bc4` |
+| `bills_payable_forex_live.utf16le.xml` | 46 | `8d37111f1de57f9c4d5ea3e984d10db165c5a8b28a0c0ec6b2688ffbc61d5ad3` |
+
+- **`groups_forex_live`:** `STATUS 1`, 28 groups. Every GUID in it has FOREX's company-GUID prefix
+  `b14e9b2d`: the collection is scoped to the one company named.
+- **`bills_payable_forex_live`:** the bare `<ENVELOPE></ENVELOPE>` that a `Data` report returns when
+  the book has no open payable bill. A second send in the same session returned the same 46 bytes.
+
 ## Known limits
 
 - One release (7.1), one machine, two books.
