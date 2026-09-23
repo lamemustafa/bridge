@@ -280,6 +280,20 @@ or an owner decision to amend the requirement instead:
     the same window as the catalogue re-read (#239). This refuses every post
     into a book that defines a second currency, even one whose legs are all in the base. When
     #601 can name the base, each leg's own `CURRENCYNAME` is compared with it instead.
+14. **Amendments overwrite a human edit made after the build, #239 (R10). Named, not closed.**
+    An amendment (`amends_batch_id`) is refused unless each voucher it alters is still in the book
+    as a build of that batch wrote it: its date, a bank voucher's effective date, its type, its
+    number, its entries and its narration are compared. That comparison runs when the amendment is
+    built. The import itself is done by hand through Tally's Import menu, and Bridge refuses to
+    post an amendment (`import_post_amendment_requires_file_import`), so nothing can re-check the
+    vouchers just before they are altered. An edit made in Tally between the build and the import
+    is overwritten without warning. A voucher's reference is not compared at all: the verification
+    read does not fetch it, and adding it is a change to a pinned read that needs a live capture
+    first. Whether an import without a reference keeps or clears one a person added in Tally is not
+    measured. The build's own warning says both; the tool description now says the check runs at
+    build, not at import. Closing this needs either Bridge posting amendments through its own
+    queue (where the check could run last before the POST, as the #574 aim check does) or a
+    measured reference in the read.
 
 ## Amendment — owner decision, 2026-09-22: direct voucher posting
 
