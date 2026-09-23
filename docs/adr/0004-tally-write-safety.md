@@ -402,15 +402,15 @@ looked. There is no mutation-time witness either. So Bridge can only check befor
 read after it; it cannot make the two atomic. One policy applies to every edition, with no Gold
 gate (owner, 21 September): what matters is a second writer, not the licence tier.
 
-**What is checked before the POST.** Each refuses before the dispatch intent, so nothing is sent.
+**What is checked before anything is sent.** Each refuses before a post's dispatch intent, or, for an amendment, before its file is written; nothing reaches Tally.
 
 | Check | Where | Evidence |
 |---|---|---|
 | The target company's name and GUID, on the last Tally request before the POST | #574, follow-up 9 | Simulator; the multi-company snapshot shape is measured, not captured |
-| Exactly one Currency master | #613, follow-up 13 | Live on a two-master synthetic book, 2026-09-23 |
+| Exactly one Currency master | #613, follow-up 13 | Live: refused before approval on a two-master synthetic book, 2026-09-23 (#613, live-check comment) |
 | The target's master AlterID (`ALTMSTID`) unchanged from just before the queue's catalogue re-read to that last request | #615, follow-up 8 | Simulator; a gateway rename moves `ALTMSTID` (§11c.5) |
 | Each ledger's (name, GUID) unchanged from the build to the approval and on to the queue | #616, follow-up 8 | Simulator |
-| An amendment's vouchers unchanged since Bridge first verified them, by fields and by `ALTERID` | #620, follow-up 14 | Simulator; a gateway alteration advances `ALTERID` (§9.3) |
+| An amendment's vouchers unchanged since Bridge first verified them, by fields and by `ALTERID`, at build (Bridge never posts an amendment) | #620, follow-up 14 | Simulator; a gateway alteration advances `ALTERID` (§9.3) |
 
 **The windows that remain.** Each is named where an operator or an agent reads it.
 1. **Between the last request and the POST.** Only local work runs there: the recheck and the
@@ -436,7 +436,9 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
 The approval still asks the operator to pause other edits and imports while Bridge posts. With
 these checks, that is advice that narrows the remaining windows, not the only guard.
 
-**Evidence since the 2026-09-22 amendment.** Native posts of a Payment, a Receipt, a Contra and a
-three-entry Receipt were observed live on licensed 7.1 Silver on 2026-09-22 (#600), on a
-synthetic company: each read back `posted_verified` and was then deleted by its recorded
-REMOTEID. That amendment's "not yet observed live" is superseded.
+**Evidence since the 2026-09-22 amendment.** Native posts through `post_import` of a Payment, a
+Receipt, a Contra and a three-entry Receipt were observed live on licensed 7.1 Silver on
+2026-09-22, on a synthetic company: each read back `posted_verified` and was then deleted by its
+recorded REMOTEID (#600, live-qualification comment of 2026-09-22). That three-entry Receipt was a
+native post, distinct from #466's gateway import of a Bridge-built file. The 2026-09-22
+amendment's "has not yet been observed live" is superseded.
