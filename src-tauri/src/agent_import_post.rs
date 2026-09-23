@@ -1270,13 +1270,13 @@ fn admit_fresh_saved_voucher(
     Ok(preview)
 }
 
-fn has_unsafe_review_layout_character(value: &str) -> bool {
+pub(super) fn has_unsafe_review_layout_character(value: &str) -> bool {
     value
         .chars()
         .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
 }
 
-fn has_unreviewable_format_character(value: &str) -> bool {
+pub(super) fn has_unreviewable_format_character(value: &str) -> bool {
     use icu_properties::{
         props::{DefaultIgnorableCodePoint, GeneralCategory},
         CodePointMapData, CodePointSetData,

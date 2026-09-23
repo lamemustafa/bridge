@@ -1,0 +1,435 @@
+//! `acknowledge_post_review` (#239): a person records that they reviewed a
+//! post whose masters check found a changed ledger. Every test drives the
+//! tool call, against the captured readback the post tests use.
+use super::*;
+
+const DOUBT: &str =
+    r#"{"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Cash"]}"#;
+const ACK: &str = "acknowledge_post_review";
+
+/// A dispatched batch whose saved response is `response`, with the masters
+/// records `check` and `doubt` written as given.
+fn seeded(
+    simulator: &SequenceSimulator,
+    directory: &std::path::Path,
+    response: ledger::DispatchResponse,
+    check: Option<&[u8]>,
+    doubt: Option<&[u8]>,
+) -> (Server, Value) {
+    let server = server_at(simulator.address(), directory);
+    let line = saved_captured_line(&server);
+    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    {
+        let _lock = server.lock_import_admission().unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_for(
+                &line, &native,
+            ))
+            .unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::response(
+                &line,
+                ledger::DispatchResponse {
+                    request_sha256: native.request_sha256.clone(),
+                    ..response
+                },
+            ))
+            .unwrap();
+    }
+    let imports = server.imports_dir().unwrap();
+    if let Some(check) = check {
+        fs::write(imports.join(format!("{BATCH}.masters_check.json")), check).unwrap();
+    }
+    if let Some(doubt) = doubt {
+        fs::write(imports.join(format!("{BATCH}.masters_doubt.json")), doubt).unwrap();
+    }
+    let args = json!({"company_guid":GUID,"batch_id":line.batch_id});
+    (server, args)
+}
+
+fn clean() -> ledger::DispatchResponse {
+    super::super::tests::dispatch_response("success", 1, 0)
+}
+
+fn ack_path(server: &Server) -> std::path::PathBuf {
+    server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{BATCH}.masters_ack.json"))
+}
+
+fn doubted(simulator: &SequenceSimulator, directory: &std::path::Path) -> (Server, Value) {
+    seeded(
+        simulator,
+        directory,
+        clean(),
+        Some(DOUBT.as_bytes()),
+        Some(DOUBT.as_bytes()),
+    )
+}
+
+/// The captured readback with the voucher's ALTERID replaced.
+fn readback_at_alter_id(alter_id: u64) -> Vec<ScenarioPlan> {
+    readback_of(replaced_once(
+        &captured_posted_journal(),
+        "<ALTERID TYPE=\"Number\"> 10</ALTERID>",
+        &format!("<ALTERID TYPE=\"Number\"> {alter_id}</ALTERID>"),
+    ))
+}
+
+/// The captured readback with the voucher's narration changed and its
+/// ALTERID left as it was, as an edit that did not move it would read.
+fn readback_with_edited_narration() -> Vec<ScenarioPlan> {
+    readback_of(replaced_once(
+        &captured_posted_journal(),
+        "Bridge MCP batch namespace qualification [BRIDGE:",
+        "Bridge MCP batch namespace qualification edited [BRIDGE:",
+    ))
+}
+
+fn readback_of(journal: String) -> Vec<ScenarioPlan> {
+    let mut plans = probe();
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(journal.clone()));
+    plans.extend(paired(journal));
+    plans
+}
+
+async fn acknowledge(server: &Server, args: Value, scripted: ScriptedApproval) -> Value {
+    SCRIPTED_APPROVAL
+        .scope(scripted, server.call_tool(ACK, args))
+        .await
+}
+
+#[tokio::test]
+async fn an_approved_review_is_recorded_once_and_changes_no_verdict() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    plans.extend(reconcile_readback());
+    let scripted_plans = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let approval = ScriptedApproval::approving();
+
+    let response = acknowledge(&server, args.clone(), approval.clone()).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["operator_review"]["state"], "current", "{response}");
+    assert_eq!(approval.reviews().len(), 1, "{response}");
+    assert!(approval.previews().is_empty(), "no post dialog: {response}");
+    let review = &approval.reviews()[0];
+    assert!(review.contains("Cash"), "the doubt is shown: {review}");
+    assert!(
+        review.contains("ALTERID: 10"),
+        "the voucher as read: {review}"
+    );
+    let record: Value = serde_json::from_slice(&fs::read(ack_path(&server)).unwrap()).unwrap();
+    assert_eq!(record["batch_id"], BATCH);
+    assert_eq!(record["alter_id"], 10);
+    assert_eq!(
+        record["doubt_sha256"],
+        crate::agent::sha256_hex(DOUBT.as_bytes())
+    );
+
+    // A later readback keeps every verdict it had, and reports the review.
+    let verified = server.call_tool("verify_import", args).await;
+    let result = &verified["structuredContent"]["result"];
+    assert_eq!(
+        result["dispatch"]["state"], "reconciliation_required",
+        "{verified}"
+    );
+    assert_eq!(result["error"]["code"], "posted_under_changed_masters");
+    assert_eq!(result["operator_review"]["state"], "current", "{verified}");
+    assert_eq!(
+        server
+            .latest_import_snapshot(BATCH)
+            .unwrap()
+            .unwrap()
+            .batch
+            .status,
+        "verification_incomplete"
+    );
+    assert_eq!(sent(simulator).len(), scripted_plans);
+}
+
+#[tokio::test]
+async fn a_declined_review_writes_nothing() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(reconcile_readback())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let approval = ScriptedApproval::declining();
+    let response = acknowledge(&server, args, approval.clone()).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["error"]["code"], "ack_review_declined", "{response}");
+    assert_eq!(approval.reviews().len(), 1);
+    assert!(!ack_path(&server).exists());
+}
+
+/// Each refusal names its reason, shows no dialog and writes nothing.
+async fn refused(
+    plans: Vec<ScenarioPlan>,
+    response: ledger::DispatchResponse,
+    check: Option<&[u8]>,
+    doubt: Option<&[u8]>,
+    code: &str,
+) {
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = seeded(&simulator, directory.path(), response, check, doubt);
+    let approval = ScriptedApproval::approving();
+    let outcome = acknowledge(&server, args, approval.clone()).await;
+    assert_eq!(
+        outcome["structuredContent"]["result"]["error"]["code"], code,
+        "{outcome}"
+    );
+    assert!(approval.reviews().is_empty(), "{code}: no dialog");
+    assert!(!ack_path(&server).exists(), "{code}: nothing written");
+}
+
+#[tokio::test]
+async fn a_batch_without_an_observed_doubt_is_refused() {
+    let unchanged = br#"{"state":"unchanged","trigger":"masters_moved"}"#;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(unchanged),
+        None,
+        "ack_no_observed_doubt",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_pending_check_is_refused_not_acknowledged() {
+    // The readback finishes a pending check only with the catalogue it
+    // scripts; none is scripted, so the check stays pending.
+    let pending = br#"{"state":"check_pending"}"#;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(pending),
+        None,
+        "ack_check_pending",
+    )
+    .await;
+    // Beside a doubt too: a check marked pending again is not settled.
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(pending),
+        Some(DOUBT.as_bytes()),
+        "ack_check_pending",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_unreadable_masters_record_is_refused() {
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(b"not json"),
+        Some(DOUBT.as_bytes()),
+        "ack_masters_record_unreadable",
+    )
+    .await;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(DOUBT.as_bytes()),
+        Some(b"{\"state\":"),
+        "ack_masters_record_unreadable",
+    )
+    .await;
+    // A doubt file holding anything but that verdict is not one to bind to.
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(DOUBT.as_bytes()),
+        Some(br#"{"state":"unchanged"}"#),
+        "ack_masters_record_unreadable",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_response_that_was_not_clean_is_refused() {
+    let altered = super::super::tests::dispatch_response("success", 1, 1);
+    refused(
+        reconcile_readback(),
+        altered,
+        Some(DOUBT.as_bytes()),
+        Some(DOUBT.as_bytes()),
+        "ack_response_not_clean",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_readback_that_does_not_match_is_refused() {
+    let mut plans = probe();
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(probe());
+    refused(
+        plans,
+        clean(),
+        Some(DOUBT.as_bytes()),
+        Some(DOUBT.as_bytes()),
+        "ack_readback_not_matched",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_review_is_recorded_only_once() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let first = acknowledge(&server, args.clone(), ScriptedApproval::approving()).await;
+    assert_eq!(
+        first["structuredContent"]["result"]["operator_review"]["state"], "current",
+        "{first}"
+    );
+    let recorded = fs::read(ack_path(&server)).unwrap();
+    let approval = ScriptedApproval::approving();
+    let second = acknowledge(&server, args, approval.clone()).await;
+    assert_eq!(
+        second["structuredContent"]["result"]["error"]["code"], "ack_already_recorded",
+        "{second}"
+    );
+    assert!(approval.reviews().is_empty(), "refused before the dialog");
+    assert_eq!(fs::read(ack_path(&server)).unwrap(), recorded);
+}
+
+#[tokio::test]
+async fn a_doubt_that_changes_while_the_dialog_is_open_is_refused() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let doubt_path = server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{BATCH}.masters_doubt.json"));
+    let approval = ScriptedApproval::approving_after(move || {
+        let other = r#"{"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Sales"]}"#;
+        fs::write(&doubt_path, other).unwrap();
+    });
+    let response = acknowledge(&server, args, approval).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_changed_while_reviewing",
+        "{response}"
+    );
+    assert!(!ack_path(&server).exists());
+}
+
+#[tokio::test]
+async fn a_voucher_that_changes_while_the_dialog_is_open_is_refused() {
+    for second in [readback_at_alter_id(11), readback_with_edited_narration()] {
+        let mut plans = reconcile_readback();
+        plans.extend(second);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (server, args) = doubted(&simulator, directory.path());
+        let response = acknowledge(&server, args, ScriptedApproval::approving()).await;
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"], "ack_changed_while_reviewing",
+            "{response}"
+        );
+        assert!(!ack_path(&server).exists());
+    }
+}
+
+/// A recorded review covers only the doubt it showed and the voucher as it
+/// was: each binding, changed alone, makes it stale.
+#[tokio::test]
+async fn a_recorded_review_goes_stale_when_anything_it_bound_changes() {
+    type Change = fn(&Server);
+    let untouched: Change = |_| {};
+    let new_doubt: Change = |server| {
+        let other = r#"{"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Sales"]}"#;
+        let path = server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{BATCH}.masters_doubt.json"));
+        fs::write(path, other).unwrap();
+    };
+    let other_batch: Change = |server| {
+        let path = ack_path(server);
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        record["batch_id"] = json!("bridge-00000000-0000-4000-8000-000000000001");
+        fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    };
+    let cases: [(&str, Vec<ScenarioPlan>, Change); 4] = [
+        ("alter_id", readback_at_alter_id(11), untouched),
+        ("fingerprint", readback_with_edited_narration(), untouched),
+        ("doubt", reconcile_readback(), new_doubt),
+        ("identity", reconcile_readback(), other_batch),
+    ];
+    for (name, later, change) in cases {
+        let mut plans = reconcile_readback();
+        plans.extend(reconcile_readback());
+        plans.extend(later);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (server, args) = doubted(&simulator, directory.path());
+        let recorded = acknowledge(&server, args.clone(), ScriptedApproval::approving()).await;
+        assert_eq!(
+            recorded["structuredContent"]["result"]["operator_review"]["state"], "current",
+            "{name}: {recorded}"
+        );
+        change(&server);
+        let verified = server.call_tool("verify_import", args).await;
+        let result = &verified["structuredContent"]["result"];
+        assert_eq!(
+            result["operator_review"]["state"], "stale",
+            "{name}: {verified}"
+        );
+        assert_eq!(
+            result["dispatch"]["state"], "reconciliation_required",
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_tool_needs_the_posting_opt_in() {
+    let listed = |writes: bool| {
+        crate::agent::catalog::registered_tool_definitions(true, writes)
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == ACK)
+    };
+    assert!(listed(true));
+    assert!(!listed(false));
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(crate::agent::Settings {
+        writes_enabled: false,
+        ..server_at(simulator.address(), directory.path())
+            .settings
+            .clone()
+    });
+    let approval = ScriptedApproval::approving();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":GUID,"batch_id":BATCH}),
+        approval.clone(),
+    )
+    .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "import_posting_disabled",
+        "{response}"
+    );
+    assert!(approval.reviews().is_empty());
+    assert!(sent(simulator).is_empty());
+}

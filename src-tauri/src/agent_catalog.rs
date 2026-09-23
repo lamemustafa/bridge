@@ -309,6 +309,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
         "parse_bank_statement",
         "verify_import",
         "post_import",
+        "acknowledge_post_review",
         "outstandings",
         "ledger_masters",
         "ledger_movement",
@@ -336,7 +337,9 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
             .filter(|name| {
                 import_enabled || !matches!(*name, "build_import_xml" | "parse_bank_statement")
             })
-            .filter(|name| writes_enabled || *name != "post_import")
+            .filter(|name| {
+                writes_enabled || !matches!(*name, "post_import" | "acknowledge_post_review")
+            })
             // LAB-ONLY: registered only when the `lab-writes` feature is
             // compiled in AND `BRIDGE_LAB_WRITES=1` is set (checked fresh on
             // every catalog build, not cached at startup).
@@ -366,6 +369,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                     ),
                     "post_import" => (
                         "Ask the local user to review and approve ONE saved Journal, Payment, Receipt or Contra in a native dialog, then attempt posting once and read it back. Requires opt-in. A Payment, Receipt or Contra is refused (import_bank_classification_changed) if any leg's cash/bank classification changed since the build, checked before approval and again after approval inside the endpoint queue, before the final duplicate check and the post. Every post is aimed by a last all-company snapshot, refused as post_company_scope_changed (or post_company_scope_unconfirmed if unreadable) unless exactly one loaded company has the target's GUID and name and no other loaded company's name could match it; the result's post_location says which companies' voucher marks moved after it, and masters_after_post whether the approved ledgers still resolve to the same masters after the post: when one no longer resolves to its approved GUID (posted_under_changed_masters), the voucher is in Tally but the result is reconciliation_required, never posted_verified, on this and every later verify_import; ask the user to review the voucher in Tally, and do not rebuild the event. When that could not be confirmed (masters_after_post_unconfirmed), it is the same until a later verify_import that finds the voucher completes the check. A post whose check cannot be recorded is refused before it is sent (post_masters_record_unavailable). A company with more than one currency defined is refused (import_multi_currency_unsupported), before approval and again in the queue: Bridge does not post into multi-currency books yet (import_base_currency_undetermined if no usable currency master is read). A change to the company's masters from just before the queue's catalogue re-read to the aim snapshot refuses as post_masters_moved (or post_masters_unconfirmed), when it moves the company's master AlterID (ALTMSTID): measured for ledger renames and creates made through the gateway; a regroup, an edit in Tally's own screens, and whether posting a voucher moves it, are not yet measured. Re-run after a refusal. A ledger now on another GUID than at build (renamed and replaced, or deleted and recreated) refuses as import_masters_changed_since_build, naming it: the name now means a different ledger, so confirm the intended one with validate_masters before building again. A batch built before Bridge recorded ledger identities refuses as import_batch_predates_ledger_binding; build it again. Rebuild only when attempt_recorded is false. Repeating the original batch only reconciles; never rebuild the same event after a timeout. The model cannot approve it. No master creation, sales, purchase, tax, inventory, alteration or deletion.",
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string","minLength":43,"maxLength":43}}}),
+                    ),
+                    "acknowledge_post_review" => (
+                        "Ask the local user, in a native dialog, to record that they reviewed ONE voucher Bridge posted whose masters check found a ledger now resolving to another master (posted_under_changed_masters). Requires the same opt-in as post_import. The model cannot approve it. It changes nothing in Tally and no verification status: the batch still reads reconciliation_required, and verify_import adds operator_review (current, stale, absent or unreadable) beside that verdict. Nothing else reads operator_review yet, and it unblocks nothing. It is admitted only when that doubt is the sole reason: the saved post response is clean and the voucher reads back once, matched, not cancelled or optional (ack_response_not_clean, ack_readback_not_matched); a check still pending, an unreadable masters record or no observed doubt is refused (ack_check_pending, ack_masters_record_unreadable, ack_no_observed_doubt). The dialog shows the doubt and the voucher as read; if either changes before the record is written, nothing is written (ack_changed_while_reviewing). One record per batch (ack_already_recorded). The record binds the doubt it showed and the voucher's GUID, MASTERID, ALTERID and every field the verification read returns (date, effective date, type, number, narration, cancelled, optional, and each entry's ledger, amount and sign), so an edit to any of those makes it stale. NOT covered: a reference, bill-wise, cost-centre or bank allocations, GST or other statutory detail, and the party ledger, which that read does not return; an edit only to those is caught only if it moves the voucher's ALTERID, which is not yet measured for an edit made in Tally's own screens.",
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string","minLength":43,"maxLength":43}}}),
                     ),
                     "verify_import" => (
@@ -440,6 +447,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                 let mut tool = json!({"name": name, "description": description, "inputSchema": input_schema});
                 if name == "post_import" {
                     tool["annotations"] = json!({"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true});
+                }
+                if name == "acknowledge_post_review" {
+                    // It writes one local record and nothing to Tally.
+                    tool["annotations"] = json!({"readOnlyHint":false,"destructiveHint":false,"idempotentHint":false,"openWorldHint":true});
                 }
                 if name == "parse_bank_statement" {
                     tool["annotations"] = json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":false});

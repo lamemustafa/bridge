@@ -41,6 +41,8 @@ pub(crate) mod desktop_journal_review;
 mod desktop_journal_tests;
 use crate::endpoint_coordination as dispatch_lease;
 use crate::local_files::file::lock_error as import_admission_lock_error;
+#[path = "agent_import_ack.rs"]
+mod ack;
 #[path = "agent_import_amend.rs"]
 mod amend;
 #[path = "agent_import_ledger.rs"]
@@ -819,7 +821,18 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false, &mut None, None)
+        self.verify_import_with_dispatch(args, false, &mut None, None, &mut None)
+            .await
+    }
+
+    /// [`Self::verify_import`] for `acknowledge_post_review`, which also needs
+    /// the rows the readback observed, to bind the voucher a person reviews.
+    async fn verify_for_review(
+        &self,
+        args: &Value,
+        rows: &mut Option<Vec<ReadVoucher>>,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, false, &mut None, None, rows)
             .await
     }
 
@@ -833,7 +846,7 @@ impl Server {
     ) -> Result<ToolOutcome, ToolFailure> {
         let mut served = None;
         let outcome = self
-            .verify_import_with_dispatch(args, false, &mut served, None)
+            .verify_import_with_dispatch(args, false, &mut served, None, &mut None)
             .await?;
         post::admit_post_window(served).map_err(|code| {
             ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
@@ -849,7 +862,7 @@ impl Server {
         args: &Value,
         masters_after_post: Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true, &mut None, Some(masters_after_post))
+        self.verify_import_with_dispatch(args, true, &mut None, Some(masters_after_post), &mut None)
             .await
     }
 
@@ -859,6 +872,7 @@ impl Server {
         current_dispatch: bool,
         served: &mut Option<super::WindowServed>,
         masters_after_post: Option<Value>,
+        observed_rows: &mut Option<Vec<ReadVoucher>>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -1002,6 +1016,14 @@ impl Server {
             if let Some(masters) = &masters_after_post {
                 proof["masters_after_post"] = masters.clone();
             }
+            // Whether a person's recorded review still covers this doubt and
+            // this voucher (#239). Beside the verdict, never instead of it.
+            if dispatched {
+                if let Some(review) = ack::operator_review(&self.imports_dir()?, &line, &observed.rows) {
+                    proof["operator_review"] = review;
+                }
+            }
+            *observed_rows = Some(observed.rows.clone());
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
                 if current_dispatch {

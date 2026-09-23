@@ -2209,9 +2209,15 @@ fn preparation_without_posting_lists_the_import_tools_but_not_post_import() {
         assert!(preparing.contains(tool), "{tool}");
     }
     assert!(!preparing.contains("post_import"));
+    assert!(!preparing.contains("acknowledge_post_review"));
+    // The posting opt-in adds posting and recording a review of a doubted
+    // post (#239), and nothing else.
     let posting = names(tool_definitions(true, true));
     assert_eq!(
         posting.difference(&preparing).cloned().collect::<Vec<_>>(),
-        ["post_import".to_string()]
+        [
+            "acknowledge_post_review".to_string(),
+            "post_import".to_string()
+        ]
     );
 }

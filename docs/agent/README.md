@@ -344,7 +344,10 @@ users who accept those risks. Existing
 saved settings are respected, so an installation that saved the earlier default
 may still have posting on; check the setting.
 For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
-This enables `build_import_xml`, `parse_bank_statement`, and `post_import`;
+This enables `build_import_xml`, `parse_bank_statement`, `post_import` and
+`acknowledge_post_review`, which asks the local user, in its own native dialog, to
+record that they reviewed a post whose masters check found a changed ledger. That
+record changes no verification status and nothing in Tally (#239).
 `verify_import` remains available so an uncertain saved batch can be checked
 after posting is turned off. `BRIDGE_AGENT_ENABLE_IMPORT=true` alone exposes
 the manual file workflow and bank-statement proposal preparation, while

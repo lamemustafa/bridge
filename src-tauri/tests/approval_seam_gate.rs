@@ -48,6 +48,9 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
     for (item, gate) in [
         ("use confirm as approve;", "#[cfg(not(test))]"),
         ("use test_seam::approve;", "#[cfg(test)]"),
+        // The review dialog for a doubted post (#239), gated the same way.
+        ("use confirm_review as approve_review;", "#[cfg(not(test))]"),
+        ("use test_seam::approve_review;", "#[cfg(test)]"),
         ("pub(crate) mod test_seam {", "#[cfg(test)]"),
     ] {
         if lines.iter().filter(|line| **line == item).count() != 1 {
@@ -56,8 +59,24 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
             problems.push(format!("`{item}` must sit directly under `{gate}`"));
         }
     }
-    if !source.contains("approve(preview).await?;") {
-        problems.push("the approval call site must be `approve(preview).await?;`".into());
+    // Each dialog is asked from exactly one place, and each answer builds only
+    // its own type: a post approval is an `ApprovedImport`, a review a
+    // `ReviewAcknowledged`, and nothing converts one into the other.
+    for call_site in [
+        "approve(preview).await?;\n        Ok(Self {",
+        "approve_review(preview).await?;\n        Ok(Self(()))",
+    ] {
+        if source.matches(call_site).count() != 1 {
+            problems.push(format!("expected exactly one call site `{call_site}`"));
+        }
+    }
+    for call in ["approve(preview)", "approve_review(preview)"] {
+        if source.matches(call).count() != 1 {
+            problems.push(format!("`{call}` must be called exactly once"));
+        }
+    }
+    if source.contains("impl From<") || source.contains("impl Into<") {
+        problems.push("no conversion may exist between the approval types".into());
     }
     // Any other attribute that names `test` inside a cfg (`any(test, ..)`,
     // `cfg_attr(test, ..)`) could widen or relocate the gate, including one on
@@ -195,6 +214,26 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
         ),
         source.replace("approve(preview).await?;", "confirm(preview).await?;"),
         source.replace(
+            "approve_review(preview).await?;",
+            "confirm_review(preview).await?;",
+        ),
+        source.replace(
+            "#[cfg(not(test))]\nuse confirm_review as approve_review;",
+            "#[cfg(not(debug_assertions))]\nuse confirm_review as approve_review;",
+        ),
+        source.replace(
+            "#[cfg(test)]\nuse test_seam::approve_review;",
+            "use test_seam::approve_review;",
+        ),
+        // A review answer must never build a post approval.
+        source.replace(
+            "approve_review(preview).await?;\n        Ok(Self(()))",
+            "approve(preview).await?;\n        Ok(Self(()))",
+        ),
+        format!(
+            "{source}\nimpl From<ReviewAcknowledged> for ApprovedImport {{ fn from(_: ReviewAcknowledged) -> Self {{ unreachable!() }} }}\n"
+        ),
+        source.replace(
             "#[cfg(test)]\nuse test_seam::approve;",
             "use test_seam::approve;",
         ),
@@ -236,6 +275,34 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
         assert_ne!(benign, source);
         assert_eq!(seam_gate_problems(&benign), Vec::<String>::new());
     }
+}
+
+/// The post path accepts only a post approval: its signature names
+/// `ApprovedImport`, so passing a review answer is a compile error (#239).
+fn post_path_problems(runtime: &str) -> Vec<String> {
+    let signature = "request: super::approved_import::ApprovedImport,";
+    let name = "async fn post_approved_import<";
+    let start = runtime.find(name).map(|start| start + name.len());
+    match start.and_then(|start| {
+        runtime[start..]
+            .find(')')
+            .map(|end| &runtime[start..start + end])
+    }) {
+        Some(parameters) if parameters.contains(signature) => Vec::new(),
+        _ => vec![format!("post_approved_import must take `{signature}`")],
+    }
+}
+
+#[test]
+fn the_post_path_accepts_only_a_post_approval() {
+    let runtime = read("src-tauri/src/tally/runtime.rs");
+    assert_eq!(post_path_problems(&runtime), Vec::<String>::new());
+    let broken = runtime.replace(
+        "request: super::approved_import::ApprovedImport,",
+        "request: super::approved_import::ReviewAcknowledged,",
+    );
+    assert_ne!(broken, runtime);
+    assert!(!post_path_problems(&broken).is_empty());
 }
 
 #[test]

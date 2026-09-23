@@ -10,6 +10,8 @@ use tokio::io::AsyncWriteExt;
 const MAX_PREVIEW_BYTES: usize = 8_000;
 #[cfg(not(windows))]
 const POST_LABEL: &str = "Post voucher";
+#[cfg(not(windows))]
+const REVIEW_LABEL: &str = "I reviewed it";
 
 #[derive(Clone)]
 pub(crate) struct ApprovedImport {
@@ -138,6 +140,21 @@ impl ApprovedImport {
     }
 }
 
+/// A person's answer to the review dialog for a doubted post (#239): that
+/// they checked the voucher in Tally. It changes nothing in Tally and
+/// authorises no post: it is a different type from [`ApprovedImport`], built
+/// only by [`ReviewAcknowledged::confirm`], and nothing converts one into the
+/// other.
+#[must_use]
+pub(crate) struct ReviewAcknowledged(());
+
+impl ReviewAcknowledged {
+    pub(crate) async fn confirm(preview: &str) -> Result<Self, String> {
+        approve_review(preview).await?;
+        Ok(Self(()))
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub(crate) enum ApprovedImportAdmissionError {
     #[error("education_voucher_date_unsupported")]
@@ -191,6 +208,14 @@ use confirm as approve;
 #[cfg(test)]
 use test_seam::approve;
 
+/// The native review dialog every acknowledgement goes through, gated exactly
+/// as [`approve`] is.
+#[cfg(not(test))]
+use confirm_review as approve_review;
+
+#[cfg(test)]
+use test_seam::approve_review;
+
 /// A scripted answer to the native approval, for this crate's unit tests only
 /// (bridge#583). It is compiled only under bare `cfg(test)`, which Cargo sets
 /// for no shipped build and no feature, variable or flag can set at runtime;
@@ -209,6 +234,9 @@ pub(crate) mod test_seam {
     pub(crate) struct ScriptedApproval {
         approve: bool,
         previews: Arc<Mutex<Vec<String>>>,
+        /// Every preview the review dialog was asked about, kept apart from
+        /// the post dialog's so a test can tell which dialog a person saw.
+        reviews: Arc<Mutex<Vec<String>>>,
         /// Run while the approval is pending, as something else changing the
         /// book or the journal while an operator reads the dialog would.
         while_pending: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -235,12 +263,17 @@ pub(crate) mod test_seam {
             Self {
                 approve,
                 previews: Arc::default(),
+                reviews: Arc::default(),
                 while_pending: None,
             }
         }
 
         pub(crate) fn previews(&self) -> Vec<String> {
             self.previews.lock().unwrap().clone()
+        }
+
+        pub(crate) fn reviews(&self) -> Vec<String> {
+            self.reviews.lock().unwrap().clone()
         }
     }
 
@@ -271,6 +304,26 @@ pub(crate) mod test_seam {
         }
     }
 
+    /// The test-build review dialog, scripted by the same decision and
+    /// declining the same way when unscoped.
+    pub(super) async fn approve_review(preview: &str) -> Result<(), String> {
+        let decision = SCRIPTED_APPROVAL
+            .try_with(|scripted| {
+                scripted.reviews.lock().unwrap().push(preview.to_string());
+                if let Some(while_pending) = &scripted.while_pending {
+                    while_pending();
+                }
+                scripted.approve
+            })
+            .unwrap_or(false);
+        std::hint::black_box(SEAM_MARKER);
+        if decision {
+            Ok(())
+        } else {
+            Err("ack_review_declined".into())
+        }
+    }
+
     /// The real approval keeps its own preview limit; the scripted one does
     /// not repeat it, so the limit is held here, on the real path, where it
     /// refuses before any process is started.
@@ -282,15 +335,52 @@ pub(crate) mod test_seam {
             Err("import_review_too_large".to_string())
         );
     }
+
+    /// The same for the review dialog (#239), which has its own limit code.
+    #[tokio::test]
+    async fn the_real_review_refuses_an_oversized_preview_before_starting_a_process() {
+        let oversized = "x".repeat(super::MAX_PREVIEW_BYTES + 1);
+        assert_eq!(
+            super::confirm_review(&oversized).await,
+            Err("ack_review_too_large".to_string())
+        );
+    }
 }
 
 async fn confirm(preview: &str) -> Result<(), String> {
     if preview.len() > MAX_PREVIEW_BYTES {
         return Err("import_review_too_large".into());
     }
+    if run_dialog("--confirm-journal", preview).await? {
+        Ok(())
+    } else {
+        Err("import_approval_declined".into())
+    }
+}
+
+/// The review dialog for a doubted post (#239): its own subprocess mode, so
+/// its title and button never read as approving a post.
+async fn confirm_review(preview: &str) -> Result<(), String> {
+    if preview.len() > MAX_PREVIEW_BYTES {
+        return Err("ack_review_too_large".into());
+    }
+    // The shared launcher names the post dialog in its failures; this one is not.
+    let approved = run_dialog("--confirm-review", preview)
+        .await
+        .map_err(|code| code.replacen("import_approval", "ack_review", 1))?;
+    if approved {
+        Ok(())
+    } else {
+        Err("ack_review_declined".into())
+    }
+}
+
+/// Show `preview` in the native dialog `mode` selects, in a subprocess of this
+/// executable, and return whether the person chose its positive button.
+async fn run_dialog(mode: &str, preview: &str) -> Result<bool, String> {
     let executable = std::env::current_exe().map_err(|_| "import_approval_unavailable")?;
     let mut child = tokio::process::Command::new(executable)
-        .arg("--confirm-journal")
+        .arg(mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -311,16 +401,21 @@ async fn confirm(preview: &str) -> Result<(), String> {
     })
     .await
     .map_err(|_| "import_approval_timed_out")??;
-    if result.success() {
-        Ok(())
-    } else {
-        Err("import_approval_declined".into())
-    }
+    Ok(result.success())
 }
 
 /// Entry point for the same executable's private native-dialog subprocess.
 /// Runs before Tokio starts, because macOS dialogs require the main thread.
 pub fn run_confirmation() -> bool {
+    read_preview().is_some_and(|preview| show_review(&preview))
+}
+
+/// Entry point for the review dialog's subprocess (#239), under the same rules.
+pub fn run_review_confirmation() -> bool {
+    read_preview().is_some_and(|preview| show_post_review(&preview))
+}
+
+fn read_preview() -> Option<String> {
     let mut preview = String::new();
     if std::io::stdin()
         .take(MAX_PREVIEW_BYTES as u64 + 1)
@@ -330,9 +425,47 @@ pub fn run_confirmation() -> bool {
         || preview.is_empty()
         || preview.len() > MAX_PREVIEW_BYTES
     {
-        return false;
+        return None;
     }
-    show_review(&preview)
+    Some(preview)
+}
+
+/// The acknowledgement dialog. It posts nothing, so neither its title nor its
+/// button may read as approving a post.
+#[cfg(not(windows))]
+fn show_post_review(preview: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("Bridge — record that you reviewed one voucher")
+        .set_description(preview)
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Cancel".into(),
+            REVIEW_LABEL.into(),
+        ))
+        .show()
+        == rfd::MessageDialogResult::Custom(REVIEW_LABEL.into())
+}
+
+#[cfg(windows)]
+fn show_post_review(preview: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
+    };
+    let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Bridge — record that you reviewed this voucher?"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: as for `show_review`: both buffers are NUL-terminated and live
+    // for the synchronous dialog, and no parent HWND is borrowed.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
+        ) == IDYES
+    }
 }
 
 #[cfg(not(windows))]

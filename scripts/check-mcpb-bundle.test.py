@@ -145,8 +145,9 @@ class BundleSmokeTests(unittest.TestCase):
         tools = smoke.expected_tools(default)
         self.assertTrue({"build_import_xml", "parse_bank_statement", "verify_import"} <= tools)
         self.assertNotIn("post_import", tools)
+        self.assertNotIn("acknowledge_post_review", tools)
         enabled = smoke.expected_tools(dict(default, BRIDGE_AGENT_ENABLE_WRITES="true"))
-        self.assertEqual(enabled - tools, {"post_import"})
+        self.assertEqual(enabled - tools, {"post_import", "acknowledge_post_review"})
 
     def test_import_mapping_must_be_the_constant_true(self):
         template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"
