@@ -839,7 +839,7 @@ fn load_vouchers(
             vtype: vtype.to_string(),
             base_type: base_type.clone(),
             number: v.child_text("VOUCHERNUMBER").to_string(),
-            reference: String::new(), // read in the next commit
+            reference: v.child_text("REFERENCE").to_string(),
             status,
             lines,
             narration: v.child_text("NARRATION").to_string(),
