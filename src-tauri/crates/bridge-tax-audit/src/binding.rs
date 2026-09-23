@@ -765,9 +765,11 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
 
     // `[partners.*]`'s three name locations, in the reference's LEDGER_PATHS order: every entry's
     // `capital_ledgers`, then every `interest_ledger`, then every `remuneration_ledger`. `*` visits
-    // every entry that is a table, `deed` included (it names no ledger). Entries are visited in key
-    // order where the reference visits them in the file's; only which refusal is reported first can
-    // differ.
+    // every entry that is a table, `deed` included (it names no ledger). Two orders differ from the
+    // reference's, and only which refusal is reported first (and, for a label used in several places,
+    // the order of its locations in the rename report) can differ as a result: entries are visited in
+    // key order where the reference visits them in the file's, and these locations are bound after
+    // `[tds_tcs_26as]` and `[loans]` where the reference's LEDGER_PATHS binds them before both.
     let mut partner_entries: BTreeMap<String, toml::Value> =
         table_at(&engagement.raw_cfg, &["partners"])?
             .map(|t| t.iter().map(|(k, v)| (k.clone(), v.clone())).collect())

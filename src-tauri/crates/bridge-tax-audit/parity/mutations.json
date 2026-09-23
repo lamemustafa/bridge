@@ -3326,5 +3326,109 @@
   "file": "src/lib.rs",
   "from": "            } else {\n                Err(PyIntError::OutOfRange)\n            }",
   "to": "            } else {\n                Err(PyIntError::Invalid)\n            }"
+ },
+ {
+  "id": "D2-01",
+  "by": "author (Lane B)",
+  "what": "rules: an entity type without s194t read as applying",
+  "file": "src/rules.rs",
+  "from": "            .unwrap_or(false))",
+  "to": "            .unwrap_or(true))"
+ },
+ {
+  "id": "D2-02",
+  "by": "author (Lane B)",
+  "what": "rules: no [entity] table read as no entry",
+  "file": "src/rules.rs",
+  "from": "            .ok_or_else(|| AuditError::Config(\"rules: no [entity] table\".to_string()))",
+  "to": "            .map_or(Ok(None), Ok)"
+ },
+ {
+  "id": "D2-03",
+  "by": "author (Lane B)",
+  "what": "binding: partner capital ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "        (\"capital_ledgers\", true),\n",
+  "to": ""
+ },
+ {
+  "id": "D2-04",
+  "by": "author (Lane B)",
+  "what": "binding: partner remuneration ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "        (\"remuneration_ledger\", false),\n",
+  "to": ""
+ },
+ {
+  "id": "D2-05",
+  "by": "author (Lane B)",
+  "what": "binding: an empty partner interest ledger kept for financial_statements",
+  "file": "src/binding.rs",
+  "from": "(!name.is_empty()).then(|| (k.clone(), name.to_string()))",
+  "to": "true.then(|| (k.clone(), name.to_string()))"
+ },
+ {
+  "id": "D2-06",
+  "by": "author (Lane B)",
+  "what": "partners: a day in debit counts",
+  "file": "src/partners_40b_194t.rs",
+  "from": "        if economic > 0 {",
+  "to": "        if economic != 0 {"
+ },
+ {
+  "id": "D2-07",
+  "by": "author (Lane B)",
+  "what": "partners: an event applies the day after its date",
+  "file": "src/partners_40b_194t.rs",
+  "from": "while idx < events.len() && events[idx].0 <= day {",
+  "to": "while idx < events.len() && events[idx].0 < day {"
+ },
+ {
+  "id": "D2-08",
+  "by": "author (Lane B)",
+  "what": "partners: remuneration wins a voucher carrying both ledgers",
+  "file": "src/partners_40b_194t.rs",
+  "from": "            if is_interest {",
+  "to": "            if is_interest && !is_remuneration {"
+ },
+ {
+  "id": "D2-09",
+  "by": "author (Lane B)",
+  "what": "partners: a capital ledger named twice counts its opening once",
+  "file": "src/partners_40b_194t.rs",
+  "from": "    let opening_paise = p\n        .capital_ledgers\n        .iter()\n        .filter_map(|n| book.tb.get(n))",
+  "to": "    let opening_paise = capital\n        .iter()\n        .filter_map(|n| book.tb.get(*n))"
+ },
+ {
+  "id": "D2-10",
+  "by": "author (Lane B)",
+  "what": "partners: the higher of deed and statutory rate",
+  "file": "src/partners_40b_194t.rs",
+  "from": "|d| d.min(s40b_rate)",
+  "to": "|d| d.max(s40b_rate)"
+ },
+ {
+  "id": "D2-11",
+  "by": "author (Lane B)",
+  "what": "partners: s.194T at the limit is a finding",
+  "file": "src/partners_40b_194t.rs",
+  "from": "if subject_paise > i128::from(tds_limit_paise) {",
+  "to": "if subject_paise >= i128::from(tds_limit_paise) {"
+ },
+ {
+  "id": "D2-12",
+  "by": "author (Lane B)",
+  "what": "partners: a TDS ledger anywhere counts as seen",
+  "file": "src/partners_40b_194t.rs",
+  "from": ".is_some_and(|led| led.under(DUTIES_TAXES_GROUP))",
+  "to": ".is_some_and(|_led| true)"
+ },
+ {
+  "id": "D2-13",
+  "by": "author (Lane B)",
+  "what": "partners: both applicability keys required",
+  "file": "src/partners_40b_194t.rs",
+  "from": "let applicable = s194t_on || s40b_rate > 0;",
+  "to": "let applicable = s194t_on && s40b_rate > 0;"
  }
 ]
