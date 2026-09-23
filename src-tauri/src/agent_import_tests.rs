@@ -2393,6 +2393,7 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
     let outcome = server
         .verify_import_after_current_dispatch(
             &json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}),
+            json!({"state":"not_checked","reason":"masters_unmoved"}),
         )
         .await
         .expect("current dispatch verification");

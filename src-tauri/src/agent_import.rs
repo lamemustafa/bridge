@@ -819,7 +819,7 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false, &mut None)
+        self.verify_import_with_dispatch(args, false, &mut None, None)
             .await
     }
 
@@ -833,7 +833,7 @@ impl Server {
     ) -> Result<ToolOutcome, ToolFailure> {
         let mut served = None;
         let outcome = self
-            .verify_import_with_dispatch(args, false, &mut served)
+            .verify_import_with_dispatch(args, false, &mut served, None)
             .await?;
         post::admit_post_window(served).map_err(|code| {
             ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
@@ -841,11 +841,15 @@ impl Server {
         Ok(outcome)
     }
 
+    /// The readback right after this call's own POST. `masters_after_post`
+    /// is the check of the company's masters across the post (#239); it goes
+    /// into the proof before it is persisted, so a downgrade is recorded too.
     pub(in crate::agent) async fn verify_import_after_current_dispatch(
         &self,
         args: &Value,
+        masters_after_post: Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true, &mut None)
+        self.verify_import_with_dispatch(args, true, &mut None, Some(masters_after_post))
             .await
     }
 
@@ -854,6 +858,7 @@ impl Server {
         args: &Value,
         current_dispatch: bool,
         served: &mut Option<super::WindowServed>,
+        masters_after_post: Option<Value>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -952,14 +957,64 @@ impl Server {
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": observed_evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": voucher_read_sha256}
             });
+            // This call's own check, or the doubt recorded when this batch was
+            // posted: a later readback, which compares by name, never clears it.
+            let masters_after_post = match masters_after_post {
+                Some(masters) => Some(masters),
+                None if dispatched => {
+                    match read_masters_check(&self.imports_dir()?, &line.batch_id) {
+                        // The check after the post did not finish: finish it
+                        // now against the ledgers bound at build, which the
+                        // post required to match the approved ones (#616).
+                        // Only once the vouchers are found: before the POST
+                        // lands, a verdict would vouch for a post not yet made.
+                        Some(check)
+                            if check["state"] == MASTERS_CHECK_PENDING
+                                && verification_status(&proof, line.vouchers.len())
+                                    == "posted_verified" =>
+                        {
+                            let bound = line
+                                .ledger_identities
+                                .iter()
+                                .flatten()
+                                .map(|bound| (bound.name.clone(), bound.guid.clone()))
+                                .collect::<Vec<_>>();
+                            let verdict = if bound.is_empty() {
+                                json!({"state":"check_unavailable","trigger":MASTERS_CHECK_PENDING})
+                            } else {
+                                self.ledgers_still_approved(
+                                    &identity,
+                                    &company.name,
+                                    &bound,
+                                    MASTERS_CHECK_PENDING,
+                                    &mut accumulated,
+                                )
+                                .await
+                            };
+                            Some(self.record_masters_verdict(&line.batch_id, verdict))
+                        }
+                        recorded => recorded,
+                    }
+                }
+                None => None,
+            };
+            let mut proof = proof;
+            if let Some(masters) = &masters_after_post {
+                proof["masters_after_post"] = masters.clone();
+            }
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
                 if current_dispatch {
-                    post::finalize_current_dispatch(&mut payload, dispatch_response.as_ref());
+                    post::finalize_current_dispatch(
+                        &mut payload,
+                        dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
+                    );
                 } else {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,
                         dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
                     );
                 }
             }
@@ -2432,6 +2487,91 @@ pub(super) fn local_evidence(label: &str) -> Evidence {
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
+/// The state of a masters check that has not finished (#239).
+pub(super) const MASTERS_CHECK_PENDING: &str = "check_pending";
+
+fn masters_check_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_check.json"))
+}
+
+fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_doubt.json"))
+}
+
+/// The masters check recorded for this batch (#239). An observed doubt is
+/// kept in a file of its own that nothing removes or replaces, and it
+/// overrides the check record. Absent only for a batch dispatched before
+/// these records existed.
+fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
+    read_masters_record(&masters_doubt_path(imports, batch_id))
+        .or_else(|| read_masters_record(&masters_check_path(imports, batch_id)))
+}
+
+/// A record that exists but cannot be opened, read or parsed reads as a
+/// pending check: a doubt, never an admission.
+fn read_masters_record(path: &Path) -> Option<Value> {
+    let unreadable = || Some(json!({"state": MASTERS_CHECK_PENDING}));
+    let mut file = match super::local_file::open_local_file(path, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return unreadable(),
+    };
+    let mut bytes = Vec::new();
+    if std::io::Read::read_to_end(&mut file, &mut bytes).is_err() {
+        return unreadable();
+    }
+    serde_json::from_slice(&bytes).ok().or_else(unreadable)
+}
+
+/// Staged under a name no other writer uses, then renamed into place, so
+/// writers need no lock and never collide.
+fn write_masters_record(path: &Path, record: &Value) -> Result<(), String> {
+    let staged = path.with_extension(format!("{}.next", Uuid::new_v4()));
+    let bytes =
+        serde_json::to_vec_pretty(record).map_err(|_| "proof_serialization_failed".to_string())?;
+    write_private(&staged, &bytes)?;
+    fs::rename(&staged, path).map_err(|_| {
+        let _ = fs::remove_file(&staged);
+        "import_file_write_failed".to_string()
+    })
+}
+
+impl Server {
+    /// Mark this batch's masters check pending before it can be dispatched. A
+    /// crash before the check finishes, a concurrent reader, or a failed later
+    /// write then reads a doubt, never an absent record; a post whose record
+    /// cannot be written is not sent. It never touches an observed doubt.
+    pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
+        let unavailable = |_| "post_masters_record_unavailable".to_string();
+        let imports = self.imports_dir().map_err(unavailable)?;
+        write_masters_record(
+            &masters_check_path(&imports, batch_id),
+            &json!({"state": MASTERS_CHECK_PENDING}),
+        )
+        .map_err(unavailable)
+    }
+
+    /// Record a finished check's verdict and return what the batch's records
+    /// now say. An observed doubt goes first to its own file, which then
+    /// outranks any later verdict. A check that could not run
+    /// (`check_unavailable`) is not recorded, so a later readback checks
+    /// again; a verdict that cannot be written leaves the check pending.
+    pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
+        if verdict["state"] == "check_unavailable" {
+            return verdict;
+        }
+        let pending = json!({"state": MASTERS_CHECK_PENDING});
+        let Ok(imports) = self.imports_dir() else {
+            return pending;
+        };
+        if verdict["state"] == "posted_under_changed_masters" {
+            let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
+        }
+        let _ = write_masters_record(&masters_check_path(&imports, batch_id), &verdict);
+        read_masters_check(&imports, batch_id).unwrap_or(pending)
+    }
+}
+
 fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
     imports.join(format!("{batch_id}.baseline.json"))
 }
@@ -2439,6 +2579,11 @@ fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
 /// A build's verified baseline, or `None` when it has none or it cannot be
 /// read. Either way an amendment of that build refuses.
 fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    // A batch in doubt about its ledgers, or whose check is still pending
+    // (#239), is no baseline, whenever its baseline was written.
+    if post::masters_doubt(read_masters_check(imports, batch_id).as_ref()).is_some() {
+        return None;
+    }
     let mut file =
         super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
             .ok()?;

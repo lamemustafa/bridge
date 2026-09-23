@@ -393,3 +393,85 @@ post deleted by its recorded REMOTEID (#579, live-qualification comment of
 Receipt or Contra has not yet been observed live. The code paths are covered by
 simulator tests through the `post_import` tool call (#583 seam), including a
 ledger and, separately, a group re-parented after approval.
+
+## Amendment — 2026-09-23: concurrent writers (#239)
+
+**What Tally gives.** Tally offers no conditional import: nothing binds a POST to a company GUID,
+a master version or an `ALTERID`, and an import succeeds by name whatever changed since Bridge
+looked. There is no mutation-time witness either. So Bridge can only check before the POST and
+read after it; it cannot make the two atomic. One policy applies to every edition, with no Gold
+gate (owner, 21 September): what matters is a second writer, not the licence tier.
+
+**What is checked before anything is sent.** Each refuses before a post's dispatch intent, or, for an amendment, before its file is written, so nothing is posted.
+
+| Check | Where | Evidence |
+|---|---|---|
+| The target company's name and GUID, on the last Tally request before the POST | #574, follow-up 9 | Simulator; the multi-company snapshot shape is measured, not captured |
+| Exactly one Currency master | #613, follow-up 13 | Live: refused before approval on a two-master synthetic book, 2026-09-23 (#613, live-check comment) |
+| The target's master AlterID (`ALTMSTID`) unchanged from just before the queue's catalogue re-read to that last request | #615, follow-up 8 | Simulator; a gateway rename moves `ALTMSTID` (§11c.5) |
+| Each ledger's (name, GUID) unchanged from the build to the approval and on to the queue | #616, follow-up 8 | Simulator |
+| An amendment's vouchers unchanged since Bridge first verified them, by fields and by `ALTERID`, at build (Bridge never posts an amendment) | #620, follow-up 14 | Simulator; a gateway alteration advances `ALTERID` (§9.3) |
+
+**The windows that remain.** Each is named where an operator or an agent reads it.
+1. **Between the last request and the POST.** Only local work runs there: the recheck and the
+   durable intent. A change made in Tally during it is not seen before the POST; it is posted
+   into, and only the check after the POST (window 3) can flag it.
+2. **Changes that do not move `ALTMSTID`.** Whether a regroup, or any edit made in Tally's own
+   screens rather than through the gateway, moves the mark is not yet measured. A change that
+   does not move it is missed by the check in the queue and by the check after the POST alike.
+3. **After the POST.** The readback compares ledgers by name, and a posted voucher's ledger lines
+   carry no ledger GUID over XML (measured 2026-09-23 on one Bridge-posted Journal; #239,
+   R-2 measurement comment). So unless the target's master mark is proven unmoved between the
+   snapshot before the POST and the one after it, Bridge reads the ledger catalogue again and
+   resolves each approved ledger's name to its GUID. A snapshot after the POST that is lost or
+   unreadable counts as moved. If any ledger now resolves to another GUID
+   (`masters_after_post: posted_under_changed_masters`), or the check cannot be completed
+   (`masters_after_post_unconfirmed`), the post is reported `reconciliation_required`, never
+   `posted_verified`, with a message that the voucher is in Tally, should be reviewed there, and
+   must not be rebuilt. A ledger renamed after the POST that gives its approved name back to its
+   approved GUID cannot be told apart from the one posted into. The per-voucher readback status
+   still says what the name comparison found; only the dispatch state carries the doubt.
+
+   The check is recorded beside the batch's proof, without a lock. Before anything can be sent,
+   Bridge marks it pending, and refuses the post if that mark cannot be written; after the POST,
+   the verdict replaces the mark. A crash before the check finishes, a check that cannot read the
+   catalogue, a cancel during it, or a verdict that cannot be written leaves the mark pending,
+   which every later `verify_import` or reconcile reads as a doubt. The first of those that finds
+   the vouchers finishes the check, against the ledger identities recorded at build (#616), and
+   records its verdict. An observed doubt is also written to a file of its own that nothing
+   removes and only another doubt replaces, and readers check it first, so no later verdict,
+   pending mark or race can clear it; the readback compares by name and cannot either. It stays even after a person
+   corrects the voucher in Tally, and while a doubt or a pending check stands, the batch is no
+   baseline for an amendment. Bridge has no way to clear it. Follow-up: an explicit operator
+   acknowledgement through the native approval dialog ("I reviewed this voucher in Tally"),
+   recording who and when; never a clear an agent can call.
+
+   Residuals, stated rather than closed:
+   - a pending check finished by a later readback, perhaps days later, lengthens the window in
+     which a ledger swapped away and back goes unseen;
+   - the records are renamed into place but their directory is not synced, so a power loss can
+     lose a pending mark or a doubt file whose dispatch record survived, and the batch then reads
+     as its remaining record says, or as one dispatched before these records existed;
+   - an observed doubt whose own file cannot be written is kept only by the check record, where
+     a later verdict or a losing second post's pending mark can replace it; if neither can be
+     written, it is lost;
+   - a readback that finishes a pending check in the moment before the post's own doubt lands
+     can report the voucher verified once; later reads, and any amendment, see the doubt;
+   - a losing second post's pending mark can replace a clean verdict, and the next readback
+     then checks the catalogue as it is by then, so a legitimate later change to a ledger can
+     leave a lasting doubt: failing closed, but with no clear in Bridge.
+4. **Amendments.** The window between the build and the manual import, and between that import
+   and its first verification (follow-up 14). Only amendments posted through Bridge's own queue
+   would close the first.
+5. **Not #239.** A person entering the same transaction by hand is a duplicate, not a concurrent
+   change. It belongs to the bank-voucher duplicate check.
+
+The approval still asks the operator to pause other edits and imports while Bridge posts. With
+these checks, that is advice that narrows the remaining windows, not the only guard.
+
+**Evidence since the 2026-09-22 amendment.** Native posts through `post_import` of a Payment, a
+Receipt, a Contra and a three-entry Receipt were observed live on licensed 7.1 Silver on
+2026-09-22, on a synthetic company: each read back `posted_verified` and was then deleted by its
+recorded REMOTEID (#600, live-qualification comment of 2026-09-22). That three-entry Receipt was a
+native post, distinct from #466's gateway import of a Bridge-built file. The 2026-09-22
+amendment's "has not yet been observed live" is superseded.
