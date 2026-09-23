@@ -1,0 +1,555 @@
+{
+ "comment": "loans_interest: a firm; every mode and Note 1 code; s.194A over the threshold; the running balance and the s.269SS/269T flags; insurer, co-operative-bank and reporting-exempt lenders; a clipped debit opening; a repayment reportable only through interest credited; a narration with both quotes.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Bank A",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_core-000"
+  },
+  {
+   "name": "Bank Interest",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_core-001"
+  },
+  {
+   "name": "Bank Term Loan",
+   "chain": [
+    "Secured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-002"
+  },
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_core-003"
+  },
+  {
+   "name": "Coop Bank Loan",
+   "chain": [
+    "Secured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-004"
+  },
+  {
+   "name": "Debtor X",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_core-005"
+  },
+  {
+   "name": "Friend Loan",
+   "chain": [
+    "Unsecured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-006"
+  },
+  {
+   "name": "Govt Loan",
+   "chain": [
+    "Secured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-007"
+  },
+  {
+   "name": "Insurer Loan",
+   "chain": [
+    "Secured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-008"
+  },
+  {
+   "name": "Interest on NBFC Loan",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_core-009"
+  },
+  {
+   "name": "Interest to Relative",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_core-010"
+  },
+  {
+   "name": "NBFC Loan",
+   "chain": [
+    "Unsecured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-011"
+  },
+  {
+   "name": "Relative Loan",
+   "chain": [
+    "Unsecured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_core-012"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank A",
+   "opening": 0,
+   "debit": 8010000,
+   "credit": 2300000,
+   "closing": 5710000
+  },
+  {
+   "ledger": "Bank Interest",
+   "opening": 0,
+   "debit": 1500000,
+   "credit": 0,
+   "closing": 1500000
+  },
+  {
+   "ledger": "Bank Term Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 6500000,
+   "closing": -6500000
+  },
+  {
+   "ledger": "Cash",
+   "opening": 5000000,
+   "debit": 7800000,
+   "credit": 410000,
+   "closing": 12390000
+  },
+  {
+   "ledger": "Coop Bank Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 2500000,
+   "closing": -2500000
+  },
+  {
+   "ledger": "Debtor X",
+   "opening": 0,
+   "debit": 2200000,
+   "credit": 150000,
+   "closing": 2050000
+  },
+  {
+   "ledger": "Friend Loan",
+   "opening": 20000,
+   "debit": 2300000,
+   "credit": 2300000,
+   "closing": 20000
+  },
+  {
+   "ledger": "Govt Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3000000,
+   "closing": -3000000
+  },
+  {
+   "ledger": "Insurer Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 2200000,
+   "closing": -2200000
+  },
+  {
+   "ledger": "Interest on NBFC Loan",
+   "opening": 0,
+   "debit": 1300000,
+   "credit": 0,
+   "closing": 1300000
+  },
+  {
+   "ledger": "Interest to Relative",
+   "opening": 0,
+   "debit": 600000,
+   "credit": 0,
+   "closing": 600000
+  },
+  {
+   "ledger": "NBFC Loan",
+   "opening": -500000,
+   "debit": 450000,
+   "credit": 2800000,
+   "closing": -2850000
+  },
+  {
+   "ledger": "Relative Loan",
+   "opening": 0,
+   "debit": 100000,
+   "credit": 2100000,
+   "closing": -2000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "li-001",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "NBFC Loan",
+     -1500000
+    ],
+    [
+     "Bank A",
+     1500000
+    ]
+   ]
+  },
+  {
+   "guid": "li-002",
+   "date": "2025-05-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     700000
+    ],
+    [
+     "NBFC Loan",
+     -700000
+    ]
+   ]
+  },
+  {
+   "guid": "li-003",
+   "date": "2025-06-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     600000
+    ],
+    [
+     "NBFC Loan",
+     -600000
+    ]
+   ]
+  },
+  {
+   "guid": "li-004",
+   "date": "2025-07-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "NBFC Loan",
+     300000
+    ],
+    [
+     "Cash",
+     -300000
+    ]
+   ],
+   "narration": "EMI paid 'in cash' by \"staff\""
+  },
+  {
+   "guid": "li-005",
+   "date": "2025-08-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "NBFC Loan",
+     100000
+    ],
+    [
+     "Debtor X",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "li-006",
+   "date": "2025-09-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "NBFC Loan",
+     50000
+    ],
+    [
+     "Debtor X",
+     -50000
+    ]
+   ]
+  },
+  {
+   "guid": "li-007",
+   "date": "2025-04-20",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Friend Loan",
+     -1500000
+    ],
+    [
+     "Cash",
+     1500000
+    ]
+   ],
+   "narration": "cash from friend"
+  },
+  {
+   "guid": "li-008",
+   "date": "2025-05-20",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Friend Loan",
+     -800000
+    ],
+    [
+     "Cash",
+     800000
+    ]
+   ],
+   "narration": ""
+  },
+  {
+   "guid": "li-009",
+   "date": "2025-10-20",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Friend Loan",
+     2300000
+    ],
+    [
+     "Bank A",
+     -2300000
+    ]
+   ]
+  },
+  {
+   "guid": "li-010",
+   "date": "2025-04-25",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Relative Loan",
+     -1500000
+    ],
+    [
+     "Bank A",
+     1500000
+    ]
+   ]
+  },
+  {
+   "guid": "li-011",
+   "date": "2025-06-25",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest to Relative",
+     600000
+    ],
+    [
+     "Relative Loan",
+     -600000
+    ]
+   ]
+  },
+  {
+   "guid": "li-012",
+   "date": "2025-07-25",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Relative Loan",
+     100000
+    ],
+    [
+     "Cash",
+     -100000
+    ]
+   ],
+   "narration": "part repaid"
+  },
+  {
+   "guid": "li-013",
+   "date": "2025-05-02",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Coop Bank Loan",
+     -2500000
+    ],
+    [
+     "Cash",
+     2500000
+    ]
+   ],
+   "narration": "coop"
+  },
+  {
+   "guid": "li-014",
+   "date": "2025-05-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Insurer Loan",
+     -2200000
+    ],
+    [
+     "Debtor X",
+     2200000
+    ]
+   ]
+  },
+  {
+   "guid": "li-015",
+   "date": "2025-05-04",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank Term Loan",
+     -5000000
+    ],
+    [
+     "Bank A",
+     5000000
+    ]
+   ]
+  },
+  {
+   "guid": "li-016",
+   "date": "2025-06-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Bank Interest",
+     1500000
+    ],
+    [
+     "Bank Term Loan",
+     -1500000
+    ]
+   ]
+  },
+  {
+   "guid": "li-017",
+   "date": "2025-05-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Govt Loan",
+     -3000000
+    ],
+    [
+     "Cash",
+     3000000
+    ]
+   ]
+  },
+  {
+   "guid": "li-018",
+   "date": "2025-11-05",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Bank A",
+     10000
+    ],
+    [
+     "Cash",
+     -10000
+    ]
+   ]
+  },
+  {
+   "guid": "li-019",
+   "date": "2025-12-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "NBFC Loan",
+     -100000
+    ],
+    [
+     "Bank A",
+     100000
+    ]
+   ],
+   "status": "optional"
+  }
+ ],
+ "tests": [
+  "loans_interest"
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Bank A"
+ ],
+ "entity_type": "firm",
+ "loans": {
+  "NBFC Loan": {
+   "lender": "Invented Finance Ltd",
+   "lender_type": "nbfc",
+   "interest_ledger": "Interest on NBFC Loan"
+  },
+  "Friend Loan": {
+   "lender": "Invented Friend",
+   "lender_type": "person"
+  },
+  "Relative Loan": {
+   "lender": "Invented Relative",
+   "lender_type": "person",
+   "interest_ledger": "Interest to Relative"
+  },
+  "Coop Bank Loan": {
+   "lender": "Invented Co-operative Bank",
+   "lender_type": "cooperative_bank"
+  },
+  "Insurer Loan": {
+   "lender": "Invented Insurer",
+   "lender_type": "insurer"
+  },
+  "Bank Term Loan": {
+   "lender": "Invented Bank",
+   "lender_type": "bank",
+   "interest_ledger": "Bank Interest"
+  },
+  "Govt Loan": {
+   "lender": "Invented Government Body",
+   "lender_type": "government"
+  }
+ }
+}

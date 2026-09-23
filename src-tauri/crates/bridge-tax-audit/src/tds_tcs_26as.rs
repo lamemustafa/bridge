@@ -708,7 +708,7 @@ Fixed-Assets voucher -- a booking fact, not a tax-treatment conclusion (see 'Veh
         (
             "ais_refund_paise",
             ais_sum("refund")?,
-            "AIS Part B4 (refund), 'refund_amount' column, summed. No books-side figure is \
+            "AIS Part B4 (refund), the refund amount column, summed. No books-side figure is \
 attempted (limit).",
         ),
     ] {

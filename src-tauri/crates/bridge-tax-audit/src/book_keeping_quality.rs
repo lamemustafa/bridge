@@ -151,57 +151,19 @@ fn guid_hash12(guid: &str) -> String {
         .collect()
 }
 
-/// Python's default `sys.get_int_max_str_digits()`.
-const PY_INT_MAX_STR_DIGITS: usize = 4300;
-
 /// Python's `int(text)` for a MASTERID string: `Ok(None)` where `int()` raises `ValueError` (the
-/// voucher is then "unparseable"), `Err` where `int()` reads a number this port does not.
-///
-/// `int()` strips exactly the characters Rust's `char::is_whitespace` holds (measured over every
-/// code point, Python 3.13) -- not `str.strip()`'s set, which adds U+001C..U+001F -- then takes an
-/// optional sign and decimal digits with single underscores between them. Its decimal digits are
-/// Python's `\d` ([`support::py_is_decimal`]); a well-formed MASTERID holding a non-ASCII one is
-/// refused rather than read, as is one beyond i64. Text `int()` rejects -- including more than
-/// 4,300 digits -- is unparseable here too, non-ASCII digits or not.
-///
-/// Not the crate's `py_int`: that reads a config value and gives one error both where `int()`
-/// raises and where it reads a number the port does not, while this test must count the first as
-/// unparseable and refuse only the second; its string branch also strips `str.strip()`'s set,
-/// refuses i64::MIN and has no 4,300-digit limit.
+/// voucher is then "unparseable"), `Err` where `int()` reads a number this port cannot hold (beyond
+/// i64). The reading itself is the crate's one `int()` reader, [`support::py_int_str`]: `int()`'s own
+/// whitespace set (not `str.strip()`'s), an optional sign, digits (any Unicode decimal, as `int()` reads
+/// them) with single underscores between them, and the 4,300-digit limit.
 fn masterid_int(text: &str) -> Result<Option<i64>> {
-    let t = text.trim();
-    let (negative, digits) = match t.chars().next() {
-        Some('-') => (true, &t[1..]),
-        Some('+') => (false, &t[1..]),
-        _ => (false, t),
-    };
-    let well_formed = !digits.is_empty()
-        && digits
-            .split('_')
-            .all(|g| !g.is_empty() && g.chars().all(support::py_is_decimal));
-    if !well_formed {
-        return Ok(None);
+    match support::py_int_str(text) {
+        Ok(n) => Ok(Some(n)),
+        Err(support::PyIntError::Invalid) => Ok(None),
+        Err(support::PyIntError::OutOfRange) => Err(AuditError::Config(format!(
+            "{TEST_ID}: MASTERID {text:?} is beyond i64"
+        ))),
     }
-    // Python 3.13's `int()` raises past 4,300 digits (`sys.get_int_max_str_digits()`), counting
-    // every digit, leading zeros and non-ASCII ones included, and no sign, whitespace or `_`.
-    if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {
-        return Ok(None);
-    }
-    if !digits.is_ascii() {
-        return Err(AuditError::Config(format!(
-            "{TEST_ID}: MASTERID {text:?} has a non-ASCII digit, which Python's int() reads"
-        )));
-    }
-    // The sign is parsed with the digits, so i64::MIN is read, not refused.
-    let signed = format!(
-        "{}{}",
-        if negative { "-" } else { "" },
-        digits.replace('_', "")
-    );
-    signed
-        .parse::<i64>()
-        .map(Some)
-        .map_err(|_| AuditError::Config(format!("{TEST_ID}: MASTERID {text:?} is beyond i64")))
 }
 
 /// `sale < cost` for an integer and a float, exactly, as Python compares them (the integer is
@@ -1299,9 +1261,10 @@ mod tests {
         ] {
             assert_eq!(masterid_int(text).unwrap(), want, "{text:?}");
         }
-        // int() reads these; the port refuses rather than read them differently.
-        assert!(masterid_int("\u{0661}\u{0662}").is_err());
-        assert!(masterid_int("1_\u{663}").is_err());
+        // int() reads a non-ASCII decimal as its digit (Python 3.13: int("\u{661}\u{662}") == 12);
+        // beyond i64 it reads a number the port cannot hold.
+        assert_eq!(masterid_int("\u{0661}\u{0662}").unwrap(), Some(12));
+        assert_eq!(masterid_int("1_\u{663}").unwrap(), Some(13));
         assert!(masterid_int("99999999999999999999").is_err());
         // Python rejects more than 4,300 digits (zeros count; underscores do not), so those are
         // unparseable, even non-ASCII ones; exactly 4,300 zeros is 0.

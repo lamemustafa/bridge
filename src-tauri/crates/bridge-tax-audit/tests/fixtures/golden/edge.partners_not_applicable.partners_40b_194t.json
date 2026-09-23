@@ -1,0 +1,38 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "partners_40b_194t",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "e3b0c44298fc1c14",
+  "population_note_text": "",
+  "figures": [
+    {
+      "id": "partners_40b_194t.applicable",
+      "value": "no",
+      "unit": "text",
+      "definition_sha256_16": "2381f51fb2248582",
+      "definition_text": "Whether s.40(b)/s.194T apply to this engagement: read from rules.entity(...).s40b_interest_rate_bp and rules.entity(...).s194t for this engagement's entity_type -- never from the entity_type string itself. 'no' when both are absent/zero/false.",
+      "evidence": []
+    }
+  ],
+  "findings": [],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [],
+  "module_invariant_violations": []
+}

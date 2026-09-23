@@ -10,8 +10,8 @@
       "id": "cash_payments_40a3.s269ss269t_amount_covered_64a41ff9a7e2_977bdd42",
       "value": 2000000,
       "unit": "paise",
-      "definition_sha256_16": "0b416628df943696",
-      "definition_text": "Loan-ledger line (tag 977bdd42) on voucher b5c-00000028, cash accepted in the same voucher (covered by the client's [loans] configuration).",
+      "definition_sha256_16": "c90646a1ecf9eb6c",
+      "definition_text": "Loan-ledger line (tag 977bdd42) on voucher b5c-00000028, cash accepted in the same voucher (covered by the client's list of loans).",
       "evidence": [
         {
           "kind": "voucher",
@@ -24,8 +24,8 @@
       "id": "cash_payments_40a3.s269ss269t_amount_covered_ed7cfd4f0b63_977bdd42",
       "value": 3000000,
       "unit": "paise",
-      "definition_sha256_16": "a7221a745686bf93",
-      "definition_text": "Loan-ledger line (tag 977bdd42) on voucher b5c-00000025, cash accepted in the same voucher (covered by the client's [loans] configuration).",
+      "definition_sha256_16": "d912dee1935dc6ee",
+      "definition_text": "Loan-ledger line (tag 977bdd42) on voucher b5c-00000025, cash accepted in the same voucher (covered by the client's list of loans).",
       "evidence": [
         {
           "kind": "voucher",
@@ -38,8 +38,8 @@
       "id": "cash_payments_40a3.s269ss269t_amount_uncovered_6e85c2190386_bb7e7b30",
       "value": 2500000,
       "unit": "paise",
-      "definition_sha256_16": "bb054af19e819e41",
-      "definition_text": "Loan-ledger line (tag bb7e7b30) on voucher b5c-00000019, cash repaid in the same voucher (uncovered by the client's [loans] configuration).",
+      "definition_sha256_16": "73f50a81737db53d",
+      "definition_text": "Loan-ledger line (tag bb7e7b30) on voucher b5c-00000019, cash repaid in the same voucher (uncovered by the client's list of loans).",
       "evidence": [
         {
           "kind": "voucher",
@@ -52,32 +52,32 @@
       "id": "cash_payments_40a3.s269ss269t_candidate_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "a173349600d8a0c7",
-      "definition_text": "Population, non-Contra vouchers with a cash line and a Loans (Liability)-chain line of abs amount >= the s.269SS/269T limit (2000000 paise).",
+      "definition_sha256_16": "3c1b3db6040710d9",
+      "definition_text": "Population, non-Contra vouchers with a cash line and a Loans (Liability)-chain line of an amount, taken without its sign, at or over the s.269SS/269T limit (₹20,000).",
       "evidence": []
     },
     {
       "id": "cash_payments_40a3.s269ss269t_candidate_total",
       "value": 7500000,
       "unit": "paise",
-      "definition_sha256_16": "bbf1fbc74ef8942a",
-      "definition_text": "Sum of abs(loan-line amount) across all s.269SS/269T candidates above.",
+      "definition_sha256_16": "138268f7d90c2b75",
+      "definition_text": "Sum of the Loans (Liability)-chain line amounts, each taken without its sign, across the s.269SS/269T candidates (population, non-Contra vouchers with a cash line and such a line at or over the limit).",
       "evidence": []
     },
     {
       "id": "cash_payments_40a3.s269ss269t_candidate_uncovered_by_loans_interest_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "f144f7c4a6df7da6",
-      "definition_text": "Of the s.269SS/269T candidates above, how many are on a loan ledger NOT in the client's [loans] configuration -- these are the only ones this module tags for Clause 31; every other candidate is covered by the loan-ledger scan instead (2026-09-17 double-count fix).",
+      "definition_sha256_16": "f727ee4de7027dd6",
+      "definition_text": "s.269SS/269T candidates (population, non-Contra vouchers with a cash line and a Loans (Liability)-chain line at or over the limit) on a loan ledger NOT in the client's list of loans -- the only ones this test tags for Clause 31; every other candidate is covered by 'Loans and interest' instead.",
       "evidence": []
     },
     {
       "id": "cash_payments_40a3.s269st_at_or_over_limit_count",
       "value": 4,
       "unit": "count",
-      "definition_sha256_16": "c84915b6adafab88",
-      "definition_text": "(date, party) pairs where the day's total is at or over the s.269ST(a) limb (i) limit (20000000 paise per person per day).",
+      "definition_sha256_16": "d1cb2ed8cb702b93",
+      "definition_text": "(date, party) pairs where the day's total is at or over the s.269ST(a) limb (i) limit (₹2,00,000 per person per day).",
       "evidence": []
     },
     {
@@ -92,8 +92,8 @@
       "id": "cash_payments_40a3.s269st_party_days_any_amount_total",
       "value": 104373457,
       "unit": "paise",
-      "definition_sha256_16": "42272e0fe97f0db7",
-      "definition_text": "Sum of cash received across all (date, party) pairs above, any amount.",
+      "definition_sha256_16": "b6d19da9c6734b41",
+      "definition_text": "Sum of cash received across every (date, party ledger) pair with a cash receipt on a population, non-Contra voucher, party ledger not under 'Sales Accounts', any amount.",
       "evidence": [
         {
           "kind": "voucher",
@@ -151,8 +151,8 @@
       "id": "cash_payments_40a3.s269st_payment_at_or_over_limit_count",
       "value": 5,
       "unit": "count",
-      "definition_sha256_16": "e654ca772b964a2c",
-      "definition_text": "(date, party) pairs where the day's cash payment total is at or over the s.269ST(a) limb (a) threshold (20000000 paise per person per day) -- reportable in clause 31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
+      "definition_sha256_16": "8f8629d398594be3",
+      "definition_text": "(date, party) pairs where the day's cash payment total is at or over the s.269ST(a) limb (a) threshold (₹2,00,000 per person per day) -- reportable in clause 31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
       "evidence": []
     },
     {
@@ -167,8 +167,8 @@
       "id": "cash_payments_40a3.s269st_payment_party_days_any_amount_total",
       "value": 145485051,
       "unit": "paise",
-      "definition_sha256_16": "8c86cb1053b7214c",
-      "definition_text": "Sum of cash paid across all (date, party) pairs above, any amount.",
+      "definition_sha256_16": "581c2a370cc96236",
+      "definition_text": "Sum of cash paid across every (date, party ledger) pair with a cash payment on a population, non-Contra voucher, party ledger not under 'Purchase Accounts', any amount.",
       "evidence": [
         {
           "kind": "voucher",
@@ -412,8 +412,8 @@
       "id": "cash_payments_40a3.s40a3_excluded_total_capital",
       "value": 1200000,
       "unit": "paise",
-      "definition_sha256_16": "f82ab2eed0eb0cd8",
-      "definition_text": "Cash paid to ledgers under Tally group 'Capital Account' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 1 (date, payee) pairs.",
+      "definition_sha256_16": "53aeea208640a9c9",
+      "definition_text": "Cash paid to ledgers under Tally group 'Capital Account' (excluded from s.40A(3) scope by the rules); 1 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
@@ -426,8 +426,8 @@
       "id": "cash_payments_40a3.s40a3_excluded_total_duties_taxes",
       "value": 5900000,
       "unit": "paise",
-      "definition_sha256_16": "9772cc682a7ef2b4",
-      "definition_text": "Cash paid to ledgers under Tally group 'Duties & Taxes' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 3 (date, payee) pairs.",
+      "definition_sha256_16": "43b88de98790d83b",
+      "definition_text": "Cash paid to ledgers under Tally group 'Duties & Taxes' (excluded from s.40A(3) scope by the rules); 3 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
@@ -450,8 +450,8 @@
       "id": "cash_payments_40a3.s40a3_excluded_total_fixed_assets",
       "value": 39500000,
       "unit": "paise",
-      "definition_sha256_16": "761893c825b509e3",
-      "definition_text": "Cash paid to ledgers under Tally group 'Fixed Assets' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 3 (date, payee) pairs.",
+      "definition_sha256_16": "224e10cbb7225fe3",
+      "definition_text": "Cash paid to ledgers under Tally group 'Fixed Assets' (excluded from s.40A(3) scope by the rules); 3 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
@@ -474,8 +474,8 @@
       "id": "cash_payments_40a3.s40a3_excluded_total_loans_advances_asset",
       "value": 800000,
       "unit": "paise",
-      "definition_sha256_16": "81c575625525b146",
-      "definition_text": "Cash paid to ledgers under Tally group 'Loans & Advances (Asset)' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 1 (date, payee) pairs.",
+      "definition_sha256_16": "e04bbc8d8e0a05d6",
+      "definition_text": "Cash paid to ledgers under Tally group 'Loans & Advances (Asset)' (excluded from s.40A(3) scope by the rules); 1 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
@@ -488,8 +488,8 @@
       "id": "cash_payments_40a3.s40a3_excluded_total_loans_liability",
       "value": 2500000,
       "unit": "paise",
-      "definition_sha256_16": "56f330041a83e3e3",
-      "definition_text": "Cash paid to ledgers under Tally group 'Loans (Liability)' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 1 (date, payee) pairs.",
+      "definition_sha256_16": "32beaf70e5fbe929",
+      "definition_text": "Cash paid to ledgers under Tally group 'Loans (Liability)' (excluded from s.40A(3) scope by the rules); 1 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
@@ -590,24 +590,24 @@
       "id": "cash_payments_40a3.s40a3_over_limit_in_scope_count",
       "value": 10,
       "unit": "count",
-      "definition_sha256_16": "1c6c9b67d995aa69",
-      "definition_text": "In-scope (date, payee) pairs where the day's total exceeds the s.40A(3) limit (1000000 paise per person per day).",
+      "definition_sha256_16": "7686f9a6ffe4f134",
+      "definition_text": "In-scope (date, payee) pairs where the day's total exceeds the s.40A(3) limit (₹10,000 per person per day).",
       "evidence": []
     },
     {
       "id": "cash_payments_40a3.s40a3_payee_days_any_amount_count",
       "value": 15,
       "unit": "count",
-      "definition_sha256_16": "7b21bf0cdfa1bda0",
-      "definition_text": "Distinct (date, payee ledger) pairs with a cash payment on a population, non-Contra voucher, payee classified as expenditure (not excluded by rules.s40a3.excluded_group_roles).",
+      "definition_sha256_16": "09d653aa443bd158",
+      "definition_text": "Distinct (date, payee ledger) pairs with a cash payment on a population, non-Contra voucher, payee classified as expenditure (not in a group the rules exclude from s.40A(3)).",
       "evidence": []
     },
     {
       "id": "cash_payments_40a3.s40a3_payee_days_any_amount_total",
       "value": 95585051,
       "unit": "paise",
-      "definition_sha256_16": "0f2658fce71b2cbe",
-      "definition_text": "Sum of cash paid across all in-scope (date, payee) pairs above, any amount.",
+      "definition_sha256_16": "4a6c107b00b43bb6",
+      "definition_text": "Sum of cash paid across every (date, payee ledger) pair with a cash payment on a population, non-Contra voucher, payee classified as expenditure, any amount.",
       "evidence": [
         {
           "kind": "voucher",
@@ -859,10 +859,10 @@
       ],
       "title_sha256_16": "b5ca4edd7dab5047",
       "title_text": "Cash accepted against a loan ledger on 2025-07-09, at or over the s.269SS/269T limit",
-      "limits_sha256_16": "23af3a77d5e75c11",
+      "limits_sha256_16": "96623659ecfb7c67",
       "limits_text": [
         "Books only: confirm the counterparty is not government, a banking company, a co-operative bank, or another person/case excepted by s.269SS/269T, and that no other exception in the Act applies.",
-        "No Clause 31 tag here: this loan ledger is in the client's [loans] configuration, so the loan-ledger scan already tags the matching entry 3CD-31(a)/3CD-31(c) -- this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
+        "No Clause 31 tag here: this loan ledger is in the client's list of loans, so 'Loans and interest' already tags the matching entry 3CD-31(a)/3CD-31(c) -- this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
       ],
       "ask_client_sha256_16": "092bb454b09d1f8d",
       "ask_client_text": [
@@ -897,10 +897,10 @@
       ],
       "title_sha256_16": "e2d39f4f5be1efe5",
       "title_text": "Cash repaid against a loan ledger on 2025-06-17, at or over the s.269SS/269T limit",
-      "limits_sha256_16": "d71661b09064a6d2",
+      "limits_sha256_16": "f6ce0038d92b1d12",
       "limits_text": [
         "Books only: confirm the counterparty is not government, a banking company, a co-operative bank, or another person/case excepted by s.269SS/269T, and that no other exception in the Act applies.",
-        "This loan ledger is NOT in the client's [loans] configuration (loan_ledgers_configured), so the loan-ledger scan never sees it -- this is the only place this entry is reported for Clause 31; add the ledger to that configuration to get the full lender-classification/running-balance test instead."
+        "This loan ledger is NOT in the client's list of loans, so 'Loans and interest' never sees it -- this is the only place this entry is reported for Clause 31; add the ledger to that list to get the full lender-classification/running-balance test instead."
       ],
       "ask_client_sha256_16": "092bb454b09d1f8d",
       "ask_client_text": [
@@ -934,10 +934,10 @@
       ],
       "title_sha256_16": "e2784b59223b5c98",
       "title_text": "Cash accepted against a loan ledger on 2025-07-04, at or over the s.269SS/269T limit",
-      "limits_sha256_16": "23af3a77d5e75c11",
+      "limits_sha256_16": "96623659ecfb7c67",
       "limits_text": [
         "Books only: confirm the counterparty is not government, a banking company, a co-operative bank, or another person/case excepted by s.269SS/269T, and that no other exception in the Act applies.",
-        "No Clause 31 tag here: this loan ledger is in the client's [loans] configuration, so the loan-ledger scan already tags the matching entry 3CD-31(a)/3CD-31(c) -- this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
+        "No Clause 31 tag here: this loan ledger is in the client's list of loans, so 'Loans and interest' already tags the matching entry 3CD-31(a)/3CD-31(c) -- this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
       ],
       "ask_client_sha256_16": "092bb454b09d1f8d",
       "ask_client_text": [
@@ -971,10 +971,10 @@
       ],
       "title_sha256_16": "f9949eed4f3e7464",
       "title_text": "Cash received from one party at or over the s.269ST(a) limb (i) limit on 2025-06-23",
-      "limits_sha256_16": "c017e30c9d6601b8",
+      "limits_sha256_16": "25fdcb810ed3cc2a",
       "limits_text": [
         "Books test covers limb (i) (aggregate per person per day) only. Limbs (ii) (a single transaction) and (iii) (receipts relating to one event or occasion from a person) need bill-wise/event linkage the books do not carry; a same-party pattern across several days that never reaches this limit on one day is not tested here.",
-        "No Clause 31 tag here (2026-09-17 double-count fix, gap register/orchestrator review): this is the same (party, date) cash-mode receipt high_value_register.py's own party-day scan already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
+        "No Clause 31 tag here: this is the same (party, date) cash-mode receipt that the party-day scan of 'High-value transactions' already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
       ],
       "ask_client_sha256_16": "4e5df75a8bc77dd8",
       "ask_client_text": [
@@ -1008,10 +1008,10 @@
       ],
       "title_sha256_16": "4b7bb92798d73db8",
       "title_text": "Cash received from one party at or over the s.269ST(a) limb (i) limit on 2025-06-25",
-      "limits_sha256_16": "c017e30c9d6601b8",
+      "limits_sha256_16": "25fdcb810ed3cc2a",
       "limits_text": [
         "Books test covers limb (i) (aggregate per person per day) only. Limbs (ii) (a single transaction) and (iii) (receipts relating to one event or occasion from a person) need bill-wise/event linkage the books do not carry; a same-party pattern across several days that never reaches this limit on one day is not tested here.",
-        "No Clause 31 tag here (2026-09-17 double-count fix, gap register/orchestrator review): this is the same (party, date) cash-mode receipt high_value_register.py's own party-day scan already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
+        "No Clause 31 tag here: this is the same (party, date) cash-mode receipt that the party-day scan of 'High-value transactions' already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
       ],
       "ask_client_sha256_16": "4e5df75a8bc77dd8",
       "ask_client_text": [
@@ -1033,9 +1033,9 @@
       ],
       "evidence": [
         {
-          "kind": "ledger",
-          "id": "‹cash leg with no identified party›",
-          "label": ""
+          "kind": "row",
+          "id": "cash_payments_40a3:unidentified_party",
+          "label": "‹cash leg with no identified party›"
         },
         {
           "kind": "voucher",
@@ -1045,10 +1045,10 @@
       ],
       "title_sha256_16": "ee8d55caf33be52b",
       "title_text": "Cash received from one party at or over the s.269ST(a) limb (i) limit on 2025-06-26",
-      "limits_sha256_16": "c017e30c9d6601b8",
+      "limits_sha256_16": "25fdcb810ed3cc2a",
       "limits_text": [
         "Books test covers limb (i) (aggregate per person per day) only. Limbs (ii) (a single transaction) and (iii) (receipts relating to one event or occasion from a person) need bill-wise/event linkage the books do not carry; a same-party pattern across several days that never reaches this limit on one day is not tested here.",
-        "No Clause 31 tag here (2026-09-17 double-count fix, gap register/orchestrator review): this is the same (party, date) cash-mode receipt high_value_register.py's own party-day scan already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
+        "No Clause 31 tag here: this is the same (party, date) cash-mode receipt that the party-day scan of 'High-value transactions' already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
       ],
       "ask_client_sha256_16": "4e5df75a8bc77dd8",
       "ask_client_text": [
@@ -1082,10 +1082,10 @@
       ],
       "title_sha256_16": "02e12cdd44d27a00",
       "title_text": "Cash received from one party at or over the s.269ST(a) limb (i) limit on 2025-07-07",
-      "limits_sha256_16": "c017e30c9d6601b8",
+      "limits_sha256_16": "25fdcb810ed3cc2a",
       "limits_text": [
         "Books test covers limb (i) (aggregate per person per day) only. Limbs (ii) (a single transaction) and (iii) (receipts relating to one event or occasion from a person) need bill-wise/event linkage the books do not carry; a same-party pattern across several days that never reaches this limit on one day is not tested here.",
-        "No Clause 31 tag here (2026-09-17 double-count fix, gap register/orchestrator review): this is the same (party, date) cash-mode receipt high_value_register.py's own party-day scan already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
+        "No Clause 31 tag here: this is the same (party, date) cash-mode receipt that the party-day scan of 'High-value transactions' already tags 3CD-31(ba) for every party, so this finding is an observation only, never counted a second time in the Clause 31 filing-aid total."
       ],
       "ask_client_sha256_16": "4e5df75a8bc77dd8",
       "ask_client_text": [
@@ -1221,9 +1221,9 @@
       ],
       "evidence": [
         {
-          "kind": "ledger",
-          "id": "‹cash leg with no identified party›",
-          "label": ""
+          "kind": "row",
+          "id": "cash_payments_40a3:unidentified_party",
+          "label": "‹cash leg with no identified party›"
         },
         {
           "kind": "voucher",
@@ -1361,11 +1361,11 @@
       ],
       "title_sha256_16": "82dc272befad297c",
       "title_text": "Cash paid to one payee over the s.40A(3) daily limit on 2025-06-13",
-      "limits_sha256_16": "9259fabf484c0282",
+      "limits_sha256_16": "4350bc5553e9156e",
       "limits_text": [
         "Books only: Rule 6DD exceptions (e.g. bank/cooperative-bank closure, payments to government, payments where banking facilities are not available) are not visible from vouchers; ask the client whether any exception applies to this payment.",
         "A single cash entry on this ledger and day may be a lump/year-end total covering several smaller payments to different people or on different days that the books do not itemise separately; confirm before treating it as one payee-day breach.",
-        "goods_carriage_candidate is a heuristic regex match on the ledger name only (freight/transport/carrier/logistics keywords), not a finding of fact that the payee operates a goods carriage; confirm with the client before relying on the higher ₹35,000 limit."
+        "The possible goods-carriage flag is a heuristic match on the ledger name only (freight/transport/carrier/logistics keywords), not a finding of fact that the payee operates a goods carriage; confirm with the client before relying on the higher ₹35,000 limit."
       ],
       "ask_client_sha256_16": "764d41d5b385c5e2",
       "ask_client_text": [
@@ -1614,11 +1614,11 @@
       ],
       "title_sha256_16": "2f8e51c8e46394ce",
       "title_text": "Cash paid to one payee over the s.40A(3) daily limit on 2025-07-10",
-      "limits_sha256_16": "9259fabf484c0282",
+      "limits_sha256_16": "4350bc5553e9156e",
       "limits_text": [
         "Books only: Rule 6DD exceptions (e.g. bank/cooperative-bank closure, payments to government, payments where banking facilities are not available) are not visible from vouchers; ask the client whether any exception applies to this payment.",
         "A single cash entry on this ledger and day may be a lump/year-end total covering several smaller payments to different people or on different days that the books do not itemise separately; confirm before treating it as one payee-day breach.",
-        "goods_carriage_candidate is a heuristic regex match on the ledger name only (freight/transport/carrier/logistics keywords), not a finding of fact that the payee operates a goods carriage; confirm with the client before relying on the higher ₹35,000 limit."
+        "The possible goods-carriage flag is a heuristic match on the ledger name only (freight/transport/carrier/logistics keywords), not a finding of fact that the payee operates a goods carriage; confirm with the client before relying on the higher ₹35,000 limit."
       ],
       "ask_client_sha256_16": "764d41d5b385c5e2",
       "ask_client_text": [
@@ -1748,18 +1748,7 @@
     "POP-4",
     "REND-0"
   ],
-  "result_invariant_violations": [
-    {
-      "invariant": "EVID-1",
-      "subject": "cash_payments_40a3",
-      "detail": "unresolved ledger:‹cash leg with no identified party›"
-    },
-    {
-      "invariant": "EVID-1",
-      "subject": "cash_payments_40a3",
-      "detail": "unresolved ledger:‹cash leg with no identified party›"
-    }
-  ],
+  "result_invariant_violations": [],
   "module_invariants_evaluated": [],
   "module_invariant_violations": []
 }

@@ -151,7 +151,7 @@ pub fn run(
         Value::Text(TURNOVER_DEFINITION.to_string()),
         Unit::Text,
         "This test's own turnover definition, stated once and cited by every turnover figure \
-below.",
+of this test.",
         Vec::new(),
     );
     facts.push(("turnover_definition".to_string(), f_def));
@@ -162,16 +162,15 @@ below.",
             "turnover",
             Value::Int(t),
             Unit::Paise,
-            "Books turnover, per the definition above, supplied by the caller from \
-financial_statements.py's own 'sales' figure -- never recomputed here.",
+            "Books turnover, per this test's turnover definition, supplied to this test from \
+the sales figure of 'Financial statements' -- never recomputed here.",
             Vec::new(),
         ),
         None => r.fig(
             "turnover",
             Value::Text("not supplied".to_string()),
             Unit::Text,
-            "Books turnover was not supplied to this test (turnover_inputs has no \
-'books_turnover_paise').",
+            "Books turnover was not supplied to this test.",
             Vec::new(),
         ),
     };
@@ -197,9 +196,9 @@ turnover."
             Value::Int(input.turnover_paise),
             Unit::Paise,
             &format!(
-                "Turnover per {upper}, as supplied by the caller -- never recomputed by this test; \
-may not use the same population or section coverage as the books definition above (see the \
-source test's own report)."
+                "Turnover per {upper}, as supplied to this test -- never recomputed by this test; \
+may not use the same population or section coverage as this test's books turnover definition (see \
+the source test's own report)."
             ),
             Vec::new(),
         );
@@ -219,7 +218,7 @@ source test's own report)."
                 &format!("{source}_turnover_diff_from_books"),
                 Value::Int(diff),
                 Unit::Paise,
-                &format!("turnover - {source}_turnover."),
+                &format!("Books turnover less the turnover per {upper}."),
                 Vec::new(),
             );
             facts.push((format!("{source}_turnover_diff_from_books"), f_diff));
@@ -240,8 +239,8 @@ the cash-share breakdown does not matter",
         ),
         Some(_) if !cash_known => (
             "undetermined",
-            "turnover is between the two possible thresholds and cash_share receipts/payments were \
-not supplied",
+            "turnover is between the two possible thresholds and the cash share of receipts and \
+payments was not supplied",
         ),
         Some(_) if !within_5pct => (
             "yes",
@@ -254,8 +253,8 @@ risk",
             "undetermined",
             "turnover is between the two possible thresholds; books cash share is within 5% on \
 both legs, but a books-only breakdown can UNDERSTATE the true cash share (a non-account-payee \
-cheque/draft counts as cash but is not visible in Tally as such -- cash_44ab.py's own limit); if \
-the true share is not within 5%, the threshold reverts to ₹1 crore and turnover already exceeds \
+cheque/draft counts as cash but is not visible in Tally as such -- a limit of 'Cash share of \
+receipts and payments'); if the true share is not within 5%, the threshold reverts to ₹1 crore and turnover already exceeds \
 it, so this cannot be asserted as a confident 'no'",
         ),
     };
@@ -265,7 +264,7 @@ it, so this cannot be asserted as a confident 'no'",
         Unit::Text,
         &format!(
             "s.44AB(a): 'yes' when turnover certainly exceeds the applicable threshold however \
-cash_share resolves, 'no' when it certainly does not, else 'undetermined'. This call: {reason}."
+the cash share resolves, 'no' when it certainly does not, else 'undetermined'. This call: {reason}."
         ),
         Vec::new(),
     );
@@ -277,8 +276,8 @@ cash_share resolves, 'no' when it certainly does not, else 'undetermined'. This 
         Value::Text(if profession { "yes" } else { "no" }.to_string()),
         Unit::Text,
         "s.44ADA (presumptive taxation for professionals) and its correlated audit trigger are \
-out of scope of this test for every entity; this figure only flags whether eng.entity_type text \
-suggests a profession, in which case s.44ADA needs separate CA analysis this test does not provide.",
+out of scope of this test for every entity; this figure only flags whether the engagement's \
+entity type text suggests a profession, in which case s.44ADA needs separate CA analysis this test does not provide.",
         Vec::new(),
     );
     facts.push(("s44ada_professions_in_scope".to_string(), f_44ada));
@@ -287,19 +286,19 @@ suggests a profession, in which case s.44ADA needs separate CA analysis this tes
         (
             "due_date_audit_report",
             &rules.due_date_audit_report,
-            "rules[due_dates].audit_report: s.44AB audit report due date, subject to CBDT \
-extension, if audit is required.",
+            "From the rules table: the s.44AB audit report due date, subject to CBDT extension, if \
+audit is required.",
         ),
         (
             "due_date_return_audit_case",
             &rules.due_date_return_audit_case,
-            "rules[due_dates].return_audit_case: return due date if audit is required.",
+            "From the rules table: the return due date if audit is required.",
         ),
         (
             "due_date_return_non_audit_case",
             &rules.due_date_return_non_audit_firm,
-            "rules[due_dates].return_non_audit_firm: return due date if audit is NOT required \
-(Explanation 2 to s.139(1)).",
+            "From the rules table: the return due date if audit is NOT required (Explanation 2 to \
+s.139(1)).",
         ),
     ] {
         let id = r.fig(
@@ -373,7 +372,7 @@ above is not understated by a non-account-payee cheque or draft booked as bank."
                 "presumptive_history_status",
                 Value::Text("not supplied".to_string()),
                 Unit::Text,
-                "presumptive_history was not passed to this test.",
+                "Presumptive-taxation history was not passed to this test.",
                 Vec::new(),
             );
             r.findings.push(Finding {
@@ -409,8 +408,8 @@ require an audit under s.44AB(e) independently of the turnover threshold above."
                 Value::Text("supplied".to_string()),
                 Unit::Text,
                 &format!(
-                    "presumptive_history supplied for AY {ay}: opted_44ad={opted} (client config, \
-verbatim; this test does not interpret it beyond restating it)."
+                    "Presumptive-taxation history supplied for AY {ay}: opted under s.44AD: {opted} \
+(the client's setup, verbatim; this test does not interpret it beyond restating it)."
                 ),
                 Vec::new(),
             );
@@ -424,7 +423,7 @@ year; full lookback needs CA judgement"
                 evidence: vec![EvidenceRef::new("config", "presumptive_history")],
                 confidence: Confidence::JudgementRequired,
                 limits: vec![format!(
-                    "presumptive_history covers AY {ay} only, as supplied; s.44AD(4)/(5) looks at \
+                    "The presumptive-taxation history covers AY {ay} only, as supplied; s.44AD(4)/(5) looks at \
 every year in the lookback window, not one data point, so this test never computes a yes/no \
 s.44AB(e) conclusion from it."
                 )],
@@ -651,13 +650,17 @@ mod tests {
     /// The history is restated as Python's f"...{ay}...{opted!r}" writes it, never interpreted.
     #[test]
     fn presumptive_history_is_restated_as_the_reference_writes_it() {
-        assert!(history_definition("ay = \"2024-25\"\nopted_44ad = true\n")
-            .starts_with("presumptive_history supplied for AY 2024-25: opted_44ad=True "));
-        assert!(history_definition("ay = 2024\n")
-            .starts_with("presumptive_history supplied for AY 2024: opted_44ad=None "));
+        assert!(
+            history_definition("ay = \"2024-25\"\nopted_44ad = true\n").starts_with(
+                "Presumptive-taxation history supplied for AY 2024-25: opted under s.44AD: True "
+            )
+        );
+        assert!(history_definition("ay = 2024\n").starts_with(
+            "Presumptive-taxation history supplied for AY 2024: opted under s.44AD: None "
+        ));
         assert!(history_definition("opted_44ad = \"it's\"\n")
-            .starts_with("presumptive_history supplied for AY unspecified: opted_44ad=\"it's\" "));
-        assert!(history_definition("opted_44ad = \"no\"\n").contains("opted_44ad='no' "));
+            .starts_with("Presumptive-taxation history supplied for AY unspecified: opted under s.44AD: \"it's\" "));
+        assert!(history_definition("opted_44ad = \"no\"\n").contains("opted under s.44AD: 'no' "));
         let h = history("opted_44ad = 1.5\n");
         assert!(run(
             &rules(),

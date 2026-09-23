@@ -293,8 +293,8 @@ balance sheet settles it."
         "own_account_terms_count",
         count(terms.len())?,
         Unit::Count,
-        "Own-account narration terms configured (roles.own_account_narration_terms). Zero means \
-part 3 looked at nothing.",
+        "Own-account narration terms set for this client. Zero means the own-account check looked at \
+nothing.",
         Vec::new(),
     );
     let mut out_v: Vec<(&Voucher, i64)> = Vec::new();
@@ -332,7 +332,8 @@ part 3 looked at nothing.",
         "own_account_booked_as_withdrawal_count",
         count(out_v.len())?,
         Unit::Count,
-        "Number of those entries.",
+        "Number of Contra entries debiting cash whose bank narration names the assessee's own account \
+(money sent to another account, booked as cash in hand).",
         Vec::new(),
     );
     let f_in = r.fig(
@@ -347,7 +348,8 @@ part 3 looked at nothing.",
         "own_account_booked_as_deposit_count",
         count(in_v.len())?,
         Unit::Count,
-        "Number of those entries.",
+        "Number of Contra entries crediting cash whose bank narration names the assessee's own \
+account (money received from another account, booked as cash deposited).",
         Vec::new(),
     );
     if !out_v.is_empty() || !in_v.is_empty() {
@@ -495,7 +497,7 @@ the expense; any other receipt does not, and an unexplained credit is a s.68 que
             &format!("journal_cash_count_{h}"),
             count(rows.len())?,
             Unit::Count,
-            &format!("Journal entries in that total (ledger tag {h})."),
+            &format!("Journal entries paying cash to expense ledger (tag {h})."),
             Vec::new(),
         );
         let f_rep = r.fig(
@@ -503,8 +505,8 @@ the expense; any other receipt does not, and an unexplained credit is a s.68 que
             Value::Int(total(&repeated)?),
             Unit::Paise,
             &format!(
-                "Of those, entries whose narration text is identical to another such entry's \
-(ledger tag {h})."
+                "Cash paid through Journal entries to expense ledger (tag {h}) whose narration text \
+is identical to another such entry's."
             ),
             ev(repeated.iter().map(|(v, _)| *v)),
         );
@@ -512,21 +514,30 @@ the expense; any other receipt does not, and an unexplained credit is a s.68 que
             &format!("journal_cash_repeated_narration_count_{h}"),
             count(repeated.len())?,
             Unit::Count,
-            &format!("Number of entries in that repeated-narration total (ledger tag {h})."),
+            &format!(
+                "Journal entries paying cash to expense ledger (tag {h}) whose narration text is \
+identical to another such entry's."
+            ),
             Vec::new(),
         );
         let f_un = r.fig(
             &format!("journal_cash_unnarrated_total_{h}"),
             Value::Int(total(&unnarrated)?),
             Unit::Paise,
-            &format!("Of those, entries with no narration at all (ledger tag {h})."),
+            &format!(
+                "Cash paid through Journal entries to expense ledger (tag {h}) that carry no \
+narration at all."
+            ),
             ev(unnarrated.iter().map(|(v, _)| *v)),
         );
         let f_un_n = r.fig(
             &format!("journal_cash_unnarrated_count_{h}"),
             count(unnarrated.len())?,
             Unit::Count,
-            &format!("Number of unnarrated entries (ledger tag {h})."),
+            &format!(
+                "Journal entries paying cash to expense ledger (tag {h}) that carry no narration at \
+all."
+            ),
             Vec::new(),
         );
         let mut evidence = ev(rows.iter().map(|(v, _)| *v));
