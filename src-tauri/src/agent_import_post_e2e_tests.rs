@@ -1847,3 +1847,119 @@ async fn a_dispatched_batch_without_identities_still_reconciles() {
     assert_ne!(result["attempt_recorded"], json!(false), "{response}");
     assert!(observed > 0, "the readback reads Tally: {response}");
 }
+
+// bridge#239: the company's masters across the post. Only when the target's
+// master mark moved between the aim snapshot and the snapshot after the POST
+// is the catalogue read again, and the approved ledgers resolved by name.
+
+/// The captured post read back, with `marks_after` answering the snapshot
+/// after the POST and `catalogue` the extra read (if any) before the readback.
+/// Returns the response, the requests observed and the requests scripted.
+async fn post_with_masters_after(
+    marks_after: String,
+    catalogue: Vec<ScenarioPlan>,
+) -> (Value, usize, usize) {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(marks_after));
+    plans.extend(catalogue);
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(paired(captured_posted_journal()));
+    let scripted = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let args = saved_captured_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    (response, observed, scripted)
+}
+
+/// The snapshot after the POST with the target's master mark at `masters`
+/// (the aim snapshot has it at 7).
+fn masters_moved_to(masters: u64) -> String {
+    replaced_once(
+        &company_marks(11, 50, "WR2 Unicode Lab"),
+        "<ALTMSTID>7</ALTMSTID>",
+        &format!("<ALTMSTID>{masters}</ALTMSTID>"),
+    )
+}
+
+#[tokio::test]
+async fn unmoved_masters_are_not_checked_and_cost_no_request() {
+    let (response, observed, scripted) =
+        post_with_masters_after(company_marks(11, 50, "WR2 Unicode Lab"), Vec::new()).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["masters_after_post"]["state"], "not_checked",
+        "{response}"
+    );
+    assert_eq!(result["masters_after_post"]["reason"], "masters_unmoved");
+    assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(observed, scripted, "no extra read: {response}");
+}
+
+#[tokio::test]
+async fn moved_masters_with_every_approved_ledger_unchanged_stay_verified() {
+    let (response, observed, scripted) =
+        post_with_masters_after(masters_moved_to(8), paired(catalogue())).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["masters_after_post"]["state"], "unchanged",
+        "{response}"
+    );
+    assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(observed, scripted, "{response}");
+}
+
+#[tokio::test]
+async fn a_ledger_now_on_another_guid_after_the_post_is_flagged_not_verified() {
+    let replaced = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    let (response, observed, scripted) =
+        post_with_masters_after(masters_moved_to(8), paired(replaced)).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["masters_after_post"]["state"], "posted_under_changed_masters",
+        "{response}"
+    );
+    assert_eq!(result["masters_after_post"]["ledgers"], json!(["Cash"]));
+    assert_eq!(result["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(result["error"]["code"], "posted_under_changed_masters");
+    let message = result["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with("Posted to Tally"), "{message}");
+    assert!(
+        message.contains("Do not post this batch again"),
+        "{message}"
+    );
+    assert_eq!(observed, scripted, "{response}");
+}
+
+#[tokio::test]
+async fn moved_masters_that_cannot_be_re_read_are_not_verified() {
+    // T2's live answer: the catalogue read is refused, so nothing confirms
+    // the approved ledgers.
+    let refused = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA>\
+                   <LINEERROR>Could not set 'SVCurrentCompany' to 'WR2 Unicode Lab'</LINEERROR>\
+                   </DATA></BODY></ENVELOPE>"
+        .to_string();
+    let (response, _, _) = post_with_masters_after(masters_moved_to(8), paired(refused)).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["masters_after_post"]["state"], "check_unavailable",
+        "{response}"
+    );
+    assert_eq!(result["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(result["error"]["code"], "masters_after_post_unconfirmed");
+}

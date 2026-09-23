@@ -418,11 +418,15 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
 2. **Changes that do not move `ALTMSTID`.** A regroup, and any edit made in Tally's own screens
    rather than through the gateway, are not yet measured. Until they are, such a change inside
    the queue is caught only if it moves the mark.
-3. **After the POST.** The readback compares ledgers by name. A posted voucher's ledger lines carry
-   no ledger GUID over XML (measured 2026-09-23 on one Bridge-posted Journal), so the planned check
-   after the POST resolves the readback's names through a fresh catalogue read. A ledger renamed
-   after the POST, with a new ledger created under its old name before that read, cannot be told
-   apart from the one posted into.
+3. **After the POST.** The readback compares ledgers by name, and a posted voucher's ledger lines
+   carry no ledger GUID over XML (measured 2026-09-23 on one Bridge-posted Journal). So when the
+   target's master mark moved between the snapshot before the POST and the one after it, Bridge
+   reads the ledger catalogue again and resolves each approved ledger's name to its GUID. If any
+   now resolves to another GUID (`masters_after_post: posted_under_changed_masters`), or the read
+   fails (`check_unavailable`), the post is reported `reconciliation_required`, never
+   `posted_verified`, with a message that the voucher is in Tally and must not be posted again. A
+   ledger renamed after the POST that gives its approved name back to its approved GUID cannot be
+   told apart from the one posted into, and a later `verify_import` compares by name only.
 4. **Amendments.** The window between the build and the manual import, and between that import
    and its first verification (follow-up 14). Only amendments posted through Bridge's own queue
    would close the first.

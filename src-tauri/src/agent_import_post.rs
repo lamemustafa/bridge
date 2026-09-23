@@ -122,6 +122,67 @@ impl Server {
         }
     }
 
+    /// The company's masters across the post (#239). Only when the target's
+    /// master mark moved between the aim snapshot and the snapshot read after
+    /// the POST is the ledger catalogue read again, and each approved ledger's
+    /// name resolved to its GUID: a posted voucher's lines carry names, not
+    /// GUIDs. A ledger renamed after the POST that gives its approved name back
+    /// to its approved GUID cannot be seen.
+    async fn masters_after_post(
+        &self,
+        marks_before: &str,
+        marks_after: Option<&[location::LoadedCompanyMarks]>,
+        identity: &super::super::VerifiedCompanyIdentity,
+        company_name: &str,
+        approved: &bridge_tally_protocol::StandardLedgerCatalogBinding,
+        accumulated: &mut Evidence,
+    ) -> Value {
+        let Ok(before) = location::parse_all_company_marks(marks_before) else {
+            return json!({"state":"not_checked","reason":"before_snapshot_unreadable"});
+        };
+        let Some(after) = marks_after else {
+            return json!({"state":"not_checked","reason":"after_snapshot_unavailable"});
+        };
+        match location::target_masters_unchanged(
+            &before,
+            after,
+            identity.company_guid(),
+            company_name,
+        ) {
+            Some(true) => json!({"state":"not_checked","reason":"masters_unmoved"}),
+            None => json!({"state":"not_checked","reason":"target_not_single"}),
+            Some(false) => match self
+                .read_import_ledger_catalogue(identity, company_name)
+                .await
+            {
+                Err(_) => json!({"state":"check_unavailable"}),
+                Ok((_, catalogue, _, evidence)) => {
+                    *accumulated = combine_evidence(accumulated.clone(), evidence);
+                    let changed = approved
+                        .pairs()
+                        .filter(|(name, guid)| {
+                            catalogue
+                                .bind_selected([name.to_string()])
+                                .ok()
+                                .and_then(|now| {
+                                    now.pairs()
+                                        .next()
+                                        .map(|(_, current)| current.eq_ignore_ascii_case(guid))
+                                })
+                                != Some(true)
+                        })
+                        .map(|(name, _)| name.to_string())
+                        .collect::<Vec<_>>();
+                    if changed.is_empty() {
+                        json!({"state":"unchanged"})
+                    } else {
+                        json!({"state":"posted_under_changed_masters","ledgers":changed})
+                    }
+                }
+            },
+        }
+    }
+
     pub(in crate::agent) async fn post_import(
         &self,
         args: &Value,
@@ -275,6 +336,8 @@ impl Server {
             .map_err(|error| error.to_string())?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
+            // Kept for the check across the post (#239).
+            let approved_binding = ledger_binding.clone();
             let company_marks_request = crate::tally::agent_read_request::AgentReadRequest::parse(
                 super::super::read_profiles::render_agent_company_high_water(&company.name),
             )
@@ -285,7 +348,7 @@ impl Server {
                 voucher_date,
                 verification_request,
                 ledger_catalogue_request,
-                ledger_binding,
+                ledger_binding.clone(),
                 group_collection_request,
                 currency_request,
                 company_marks_request.clone(),
@@ -479,7 +542,19 @@ impl Server {
             journaled?;
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
-            let mut proof = self.verify_import_after_current_dispatch(args).await?;
+            let masters_after_post = self
+                .masters_after_post(
+                    &posted.company_marks_before,
+                    marks_after.as_deref(),
+                    &identity,
+                    &company.name,
+                    &approved_binding,
+                    &mut accumulated,
+                )
+                .await;
+            let mut proof = self
+                .verify_import_after_current_dispatch(args, masters_after_post)
+                .await?;
             accumulated = combine_evidence(accumulated.clone(), proof.evidence.clone());
             proof.evidence = accumulated.clone();
             if let Some(located) = post_location.clone() {
@@ -681,11 +756,28 @@ pub(super) fn finalize_previous_attempt_reconciliation(
 pub(super) fn finalize_current_dispatch(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
+    masters_after_post: Option<&Value>,
 ) {
     let verified = verification_status(&payload["result"], 1) == "posted_verified";
     let clean = persisted_response_is_clean(response);
+    // A master changed across the post and its ledgers either now belong to
+    // other masters or could not be re-read (#239): the voucher is in Tally,
+    // but not proven to be the one approved.
+    let masters_doubt = masters_after_post
+        .and_then(|masters| masters["state"].as_str())
+        .and_then(|state| match state {
+            "posted_under_changed_masters" => Some((
+                "posted_under_changed_masters",
+                "Posted to Tally, but a ledger it names now belongs to a different master than when you approved it. Review the voucher in Tally. Do not post this batch again.",
+            )),
+            "check_unavailable" => Some((
+                "masters_after_post_unconfirmed",
+                "Posted to Tally, but the company's masters changed while it was posted and Bridge could not read its ledgers again to confirm them. Review the voucher in Tally. Do not post this batch again.",
+            )),
+            _ => None,
+        });
     payload["result"]["dispatch"] = json!({
-        "state": if clean && verified { "posted_verified" } else { "reconciliation_required" },
+        "state": if clean && verified && masters_doubt.is_none() { "posted_verified" } else { "reconciliation_required" },
         "counters":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.counters())),
         "application_status":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.application_status())),
         "response_state": persisted_response_state(response),
@@ -694,6 +786,8 @@ pub(super) fn finalize_current_dispatch(
     });
     if !clean || !verified {
         mark_reconciliation_required(payload);
+    } else if let Some((code, message)) = masters_doubt {
+        payload["result"]["error"] = json!({"code": code, "message": message});
     }
 }
 

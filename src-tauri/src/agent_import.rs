@@ -819,7 +819,7 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false, &mut None)
+        self.verify_import_with_dispatch(args, false, &mut None, None)
             .await
     }
 
@@ -833,7 +833,7 @@ impl Server {
     ) -> Result<ToolOutcome, ToolFailure> {
         let mut served = None;
         let outcome = self
-            .verify_import_with_dispatch(args, false, &mut served)
+            .verify_import_with_dispatch(args, false, &mut served, None)
             .await?;
         post::admit_post_window(served).map_err(|code| {
             ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
@@ -841,11 +841,15 @@ impl Server {
         Ok(outcome)
     }
 
+    /// The readback right after this call's own POST. `masters_after_post`
+    /// is the check of the company's masters across the post (#239); it goes
+    /// into the proof before it is persisted, so a downgrade is recorded too.
     pub(in crate::agent) async fn verify_import_after_current_dispatch(
         &self,
         args: &Value,
+        masters_after_post: Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true, &mut None)
+        self.verify_import_with_dispatch(args, true, &mut None, Some(masters_after_post))
             .await
     }
 
@@ -854,6 +858,7 @@ impl Server {
         args: &Value,
         current_dispatch: bool,
         served: &mut Option<super::WindowServed>,
+        masters_after_post: Option<Value>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -952,10 +957,18 @@ impl Server {
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": observed_evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": voucher_read_sha256}
             });
+            let mut proof = proof;
+            if let Some(masters) = &masters_after_post {
+                proof["masters_after_post"] = masters.clone();
+            }
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
                 if current_dispatch {
-                    post::finalize_current_dispatch(&mut payload, dispatch_response.as_ref());
+                    post::finalize_current_dispatch(
+                        &mut payload,
+                        dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
+                    );
                 } else {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,

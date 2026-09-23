@@ -562,7 +562,7 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     let mut payload = json!({
         "result": {"counts": {"posted_verified": 1}, "duplicates": []}
     });
-    finalize_current_dispatch(&mut payload, Some(&response));
+    finalize_current_dispatch(&mut payload, Some(&response), None);
     assert_eq!(payload["result"]["dispatch"]["state"], "posted_verified");
     assert_eq!(
         payload["result"]["dispatch"]["response_state"],
@@ -599,10 +599,9 @@ fn missing_counter_evidence_cannot_confirm_current_or_previous_dispatch() {
             counter => saved["outcome"]["counters"]["counter_presence"][counter] = json!(false),
         }
         let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
-        for finalize in [
-            finalize_current_dispatch,
-            finalize_previous_attempt_reconciliation,
-        ] {
+        let current: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+            |payload, response| finalize_current_dispatch(payload, response, None);
+        for finalize in [current, finalize_previous_attempt_reconciliation] {
             let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
             finalize(&mut payload, Some(&response));
             assert_eq!(
@@ -1313,5 +1312,43 @@ fn a_changed_ledger_is_named_in_plain_words_only_when_nothing_was_attempted() {
         .contains("Build the batch again"));
     for attempted in [json!(true), Value::Null] {
         assert_eq!(unbound(attempted), "generic");
+    }
+}
+
+/// bridge#239: a clean, verified post is still not posted_verified when its
+/// masters changed across the post; the message says the voucher is in Tally
+/// and must not be posted again.
+#[test]
+fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
+    let response = dispatch_response("success", 1, 0);
+    let finalized = |masters: Value| {
+        let mut payload = json!({"result": {"counts": {"posted_verified": 1}, "duplicates": []}});
+        finalize_current_dispatch(&mut payload, Some(&response), Some(&masters));
+        payload["result"].clone()
+    };
+    for (state, code) in [
+        (
+            "posted_under_changed_masters",
+            "posted_under_changed_masters",
+        ),
+        ("check_unavailable", "masters_after_post_unconfirmed"),
+    ] {
+        let result = finalized(json!({"state": state}));
+        assert_eq!(
+            result["dispatch"]["state"], "reconciliation_required",
+            "{state}"
+        );
+        assert_eq!(result["error"]["code"], code);
+        let message = result["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with("Posted to Tally"), "{message}");
+        assert!(
+            message.contains("Do not post this batch again"),
+            "{message}"
+        );
+    }
+    for state in ["unchanged", "not_checked"] {
+        let result = finalized(json!({"state": state}));
+        assert_eq!(result["dispatch"]["state"], "posted_verified", "{state}");
+        assert!(result.get("error").is_none());
     }
 }

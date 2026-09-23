@@ -385,6 +385,11 @@ Bridge-built files of those types have been imported and verified.
    A batch built before this record existed is refused with
    `import_batch_predates_ledger_binding`, before any Tally request; build it
    again. Rebuild only when `attempt_recorded` is `false`.
+   After the post, `masters_after_post` reports whether the company's masters
+   changed across it. When they did and an approved ledger now resolves to
+   another GUID (`posted_under_changed_masters`), or the check could not run
+   (`check_unavailable`), the voucher is in Tally but the result is
+   `reconciliation_required`: review it in Tally and never post the batch again.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the
