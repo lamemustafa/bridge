@@ -2,7 +2,7 @@
 //! working-paper export. The webview receives only an opaque identifier.
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use uuid::Uuid;
@@ -11,6 +11,10 @@ use super::outstandings_working_paper::OutstandingsWorkingPaperSource;
 use crate::tally::OutstandingsLoadResult;
 
 const EXPORT_HANDLE_TTL: Duration = Duration::from_secs(15 * 60);
+/// A statement source lives as long as a working day at the screen: the
+/// operator sends statements one party at a time from the result on screen
+/// (bridge#551). Any refresh of the company revokes it sooner.
+const STATEMENT_SOURCE_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 const MAX_STORED_EXPORTS: usize = 4;
 const MAX_BILL_ROWS: usize = 200_000;
 const MAX_UNALLOCATED_ROWS: usize = 100_000;
@@ -22,12 +26,18 @@ struct StoredExport {
     id: String,
     expires_at: Instant,
     revocation_key: String,
-    source: OutstandingsWorkingPaperSource,
+    source: Arc<OutstandingsWorkingPaperSource>,
 }
 
-#[derive(Default)]
 pub struct WorkingPaperExportStore {
     entries: Mutex<VecDeque<StoredExport>>,
+    ttl: Duration,
+}
+
+impl Default for WorkingPaperExportStore {
+    fn default() -> Self {
+        Self::with_ttl(EXPORT_HANDLE_TTL)
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -41,6 +51,13 @@ pub enum WorkingPaperExportStoreError {
 }
 
 impl WorkingPaperExportStore {
+    fn with_ttl(ttl: Duration) -> Self {
+        Self {
+            entries: Mutex::default(),
+            ttl,
+        }
+    }
+
     /// Replaces every older approval for `company_revocation_key` with the source from
     /// the newest completed read. Passing `None` still revokes the older
     /// approval: a partial or otherwise ineligible refresh must not leave a
@@ -49,6 +66,16 @@ impl WorkingPaperExportStore {
         &self,
         company_revocation_key: &str,
         source: Option<OutstandingsWorkingPaperSource>,
+    ) -> Result<Option<String>, WorkingPaperExportStoreError> {
+        self.replace_shared_for_company(company_revocation_key, source.map(Arc::new))
+    }
+
+    /// As [`Self::replace_for_company`], holding a source another store also
+    /// holds, so one completed read is kept once in memory.
+    pub fn replace_shared_for_company(
+        &self,
+        company_revocation_key: &str,
+        source: Option<Arc<OutstandingsWorkingPaperSource>>,
     ) -> Result<Option<String>, WorkingPaperExportStoreError> {
         let mut entries = self
             .entries
@@ -67,7 +94,7 @@ impl WorkingPaperExportStore {
         let id = Uuid::new_v4().to_string();
         entries.push_back(StoredExport {
             id: id.clone(),
-            expires_at: now + EXPORT_HANDLE_TTL,
+            expires_at: now + self.ttl,
             revocation_key: company_revocation_key.to_string(),
             source,
         });
@@ -78,6 +105,31 @@ impl WorkingPaperExportStore {
         &self,
         id: &str,
     ) -> Result<OutstandingsWorkingPaperSource, WorkingPaperExportStoreError> {
+        self.with_live_entry(id, |entries, position| {
+            entries.remove(position).map(|entry| entry.source)
+        })
+        .map(|source| Arc::try_unwrap(source).unwrap_or_else(|shared| (*shared).clone()))
+    }
+
+    /// The source behind `id`, left in place: every party's statement comes
+    /// from the same read (bridge#551).
+    pub fn get(
+        &self,
+        id: &str,
+    ) -> Result<Arc<OutstandingsWorkingPaperSource>, WorkingPaperExportStoreError> {
+        self.with_live_entry(id, |entries, position| {
+            entries.get(position).map(|entry| Arc::clone(&entry.source))
+        })
+    }
+
+    fn with_live_entry(
+        &self,
+        id: &str,
+        read: impl FnOnce(
+            &mut VecDeque<StoredExport>,
+            usize,
+        ) -> Option<Arc<OutstandingsWorkingPaperSource>>,
+    ) -> Result<Arc<OutstandingsWorkingPaperSource>, WorkingPaperExportStoreError> {
         if id.len() > 64 || Uuid::parse_str(id).is_err() {
             return Err(WorkingPaperExportStoreError::InvalidOrExpired);
         }
@@ -91,10 +143,44 @@ impl WorkingPaperExportStore {
             .iter()
             .position(|entry| entry.id == id)
             .ok_or(WorkingPaperExportStoreError::InvalidOrExpired)?;
-        entries
-            .remove(position)
-            .map(|entry| entry.source)
-            .ok_or(WorkingPaperExportStoreError::InvalidOrExpired)
+        read(&mut entries, position).ok_or(WorkingPaperExportStoreError::InvalidOrExpired)
+    }
+}
+
+/// The server-held source of party statements (bridge#551): the same
+/// completed read as the working paper, under its own handle so that a
+/// working-paper export, which consumes its handle, never takes the
+/// statements with it. The webview sends the handle, never the rows. A
+/// handle lives [`STATEMENT_SOURCE_TTL`] and is revoked by the company's next
+/// completed refresh.
+pub struct PartyStatementSourceStore(WorkingPaperExportStore);
+
+impl Default for PartyStatementSourceStore {
+    fn default() -> Self {
+        Self(WorkingPaperExportStore::with_ttl(STATEMENT_SOURCE_TTL))
+    }
+}
+
+impl PartyStatementSourceStore {
+    #[cfg(test)]
+    pub(crate) fn with_ttl(ttl: Duration) -> Self {
+        Self(WorkingPaperExportStore::with_ttl(ttl))
+    }
+
+    pub fn replace_for_company(
+        &self,
+        company_revocation_key: &str,
+        source: Option<Arc<OutstandingsWorkingPaperSource>>,
+    ) -> Result<Option<String>, WorkingPaperExportStoreError> {
+        self.0
+            .replace_shared_for_company(company_revocation_key, source)
+    }
+
+    pub fn get(
+        &self,
+        id: &str,
+    ) -> Result<Arc<OutstandingsWorkingPaperSource>, WorkingPaperExportStoreError> {
+        self.0.get(id)
     }
 }
 

@@ -13,7 +13,8 @@ use crate::reports::bulk_party_statement::{
 };
 use crate::reports::outstandings_working_paper::build_outstandings_working_paper;
 use crate::reports::outstandings_working_paper_store::{
-    source_from_complete_result, WorkingPaperExportStore,
+    source_from_complete_result, PartyStatementSourceStore, WorkingPaperExportStore,
+    WorkingPaperExportStoreError,
 };
 use crate::reports::outstandings_working_paper_xlsx::render_outstandings_working_paper_xlsx;
 use crate::reports::party_ledger_master::build_party_ledger_master_workbook;
@@ -37,10 +38,9 @@ use crate::tally::validators::{
 pub use crate::tally::VerifiedCompanyIdentity;
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, ConnectionStatus,
-    EndpointKey, OpenBillRow, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
-    RuntimeTallyConnector, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyRuntime,
-    TallySessionSnapshot, TallyTelemetryPreviewExport, UnallocatedParty,
-    VerifiedCompanyIdentityError,
+    EndpointKey, OutstandingsCurrencyAssertion, OutstandingsLoadResult, RuntimeTallyConnector,
+    SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyRuntime, TallySessionSnapshot,
+    TallyTelemetryPreviewExport, VerifiedCompanyIdentityError,
 };
 use bridge_tally_core::{
     CapabilityFeatureId, CapabilityPackId, CapabilityState, CompanyRef as CoreCompanyRef,
@@ -1705,6 +1705,12 @@ pub struct FetchOutstandingsResponse {
     pub working_paper_export_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_paper_unavailable_reason_code: Option<&'static str>,
+    /// The handle party statements are exported by (bridge#551). Present only
+    /// when the read completed with a source the working paper could also use
+    /// (see `working_paper_unavailable_reason_code` for why not) and the
+    /// statement store held it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub party_statement_source_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1963,8 +1969,15 @@ pub async fn fetch_tally_outstandings(
     request: OutstandingsRequest,
     runtime: State<'_, TallyRuntime>,
     working_paper_exports: State<'_, WorkingPaperExportStore>,
+    party_statement_sources: State<'_, PartyStatementSourceStore>,
 ) -> Result<FetchOutstandingsResponse, TallyCommandError> {
-    read_screen_outstandings(request, &runtime, &working_paper_exports).await
+    read_screen_outstandings(
+        request,
+        &runtime,
+        &working_paper_exports,
+        &party_statement_sources,
+    )
+    .await
 }
 
 /// The body of [`fetch_tally_outstandings`], over plain references so that a
@@ -1975,6 +1988,7 @@ pub(crate) async fn read_screen_outstandings(
     request: OutstandingsRequest,
     runtime: &TallyRuntime,
     working_paper_exports: &WorkingPaperExportStore,
+    party_statement_sources: &PartyStatementSourceStore,
 ) -> Result<FetchOutstandingsResponse, TallyCommandError> {
     let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
     let canonical_origin = EndpointKey::from_config(&request.config)
@@ -2008,13 +2022,19 @@ pub(crate) async fn read_screen_outstandings(
             Ok(None) => (None, None),
             Err(_) => (None, Some("working_paper_resource_limit")),
         };
-    // A successful refresh supersedes every older working-paper approval for
-    // this company even when the new result cannot issue one. Replacement is
-    // performed in one store lock so a stale snapshot never survives beside
-    // the result that displaced it in the webview.
+    // A successful refresh supersedes every older working-paper approval and
+    // statement source for this company even when the new result cannot
+    // issue one. Each store replaces under its own lock, so a stale snapshot
+    // never survives beside the result that displaced it in the webview. Both
+    // stores hold the one source.
+    let working_paper_source = working_paper_source.map(std::sync::Arc::new);
+    let party_statement_source_id = party_statement_sources
+        .replace_for_company(&working_paper_company_key, working_paper_source.clone())
+        .ok()
+        .flatten();
     let (working_paper_export_id, working_paper_unavailable_reason_code) =
         match working_paper_exports
-            .replace_for_company(&working_paper_company_key, working_paper_source)
+            .replace_shared_for_company(&working_paper_company_key, working_paper_source)
         {
             Ok(export_id) => (export_id, source_unavailable_reason_code),
             Err(_) => (None, Some("working_paper_export_store_unavailable")),
@@ -2023,6 +2043,7 @@ pub(crate) async fn read_screen_outstandings(
         result,
         working_paper_export_id,
         working_paper_unavailable_reason_code,
+        party_statement_source_id,
     })
 }
 
@@ -2073,7 +2094,7 @@ fn company_sweep_result(
     }
 }
 
-enum CompanySweepFailure {
+pub(crate) enum CompanySweepFailure {
     ReasonCode(&'static str),
     /// A company-list transport/protocol failure is not evidence that the
     /// operator selected the wrong tuple. Keep the command's typed reason so
@@ -2106,6 +2127,43 @@ fn establish_inr_currency(
         return Ok(OutstandingsCurrencyAssertion::Inr);
     }
     Err("company_currency_probe_failed")
+}
+
+/// One company of the sweep: its own currency read, the INR admission, then
+/// outstandings under that read, whose single master's NAME each ledger's own
+/// currency is compared with (bridge#551).
+pub(crate) async fn sweep_company_outstandings(
+    runtime: &TallyRuntime,
+    config: &TallyConfig,
+    identity: &VerifiedCompanyIdentity,
+    as_of: &TallyDate,
+    currency_assertion: OutstandingsCurrencyAssertion,
+    ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
+) -> Result<OutstandingsLoadResult, CompanySweepFailure> {
+    let Ok(currency) = runtime
+        .detect_base_currency_with_extent(config.clone(), identity)
+        .await
+    else {
+        return Err(CompanySweepFailure::ReasonCode(
+            "company_currency_probe_failed",
+        ));
+    };
+    if let Some(reason_code) =
+        company_sweep_currency_preflight_failure(currency.currency_count(), currency.is_inr())
+    {
+        return Err(CompanySweepFailure::ReasonCode(reason_code));
+    }
+    runtime
+        .fetch_outstandings_under_currency_read(
+            config.clone(),
+            identity,
+            as_of.clone(),
+            currency,
+            currency_assertion,
+            ageing_anchor,
+        )
+        .await
+        .map_err(|_| CompanySweepFailure::OutstandingsRead)
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2143,30 +2201,15 @@ pub async fn fetch_tally_outstandings_all_companies(
         {
             Err(error) => Err(CompanySweepFailure::CompanyVerification(error)),
             Ok(identity) => {
-                match runtime
-                    .detect_base_currency(request.config.clone(), &identity)
-                    .await
-                {
-                    Err(_) => Err(CompanySweepFailure::ReasonCode(
-                        "company_currency_probe_failed",
-                    )),
-                    Ok(currency) => match company_sweep_currency_preflight_failure(
-                        currency.currency_count,
-                        currency.is_inr,
-                    ) {
-                        Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
-                        None => runtime
-                            .fetch_outstandings(
-                                request.config.clone(),
-                                &identity,
-                                as_of.clone(),
-                                request.currency_assertion,
-                                request.ageing_anchor,
-                            )
-                            .await
-                            .map_err(|_| CompanySweepFailure::OutstandingsRead),
-                    },
-                }
+                sweep_company_outstandings(
+                    &runtime,
+                    &request.config,
+                    &identity,
+                    &as_of,
+                    request.currency_assertion,
+                    request.ageing_anchor,
+                )
+                .await
             }
         };
         entries.push(CompanyOutstandingsEntry {
@@ -2504,22 +2547,18 @@ pub async fn reveal_exported_file(path: String) -> Result<(), String> {
         .map_err(|error| format!("Bridge could not open the folder: {error}"))
 }
 
+/// A party statement names its source by the handle
+/// `fetch_tally_outstandings` issued with the completed read; the company,
+/// as-of date, ageing anchor and every row come from the server-held source
+/// (bridge#551). A request carrying rows is refused.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExportPartyStatementRequest {
-    pub company: String,
-    pub as_of_yyyymmdd: String,
+    pub source_id: String,
     pub party: String,
     /// XLSX remains the default for callers that predate the PDF option.
     #[serde(default)]
     pub format: PartyStatementFormat,
-    #[serde(default)]
-    pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
-    /// The `open_bills`/`unallocated_by_party` rows the frontend already
-    /// holds from `fetch_tally_outstandings`. This command reads no Tally
-    /// endpoint of its own -- `OutstandingsLoadResult::Complete` already
-    /// carries every fact a statement needs.
-    pub open_bills: Vec<OpenBillRow>,
-    pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2538,12 +2577,11 @@ pub enum PartyStatementFormat {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExportBulkPartyStatementsRequest {
-    pub company: String,
-    pub as_of_yyyymmdd: String,
+    /// The server-held statement source, as for [`ExportPartyStatementRequest`].
+    pub source_id: String,
     pub format: PartyStatementFormat,
-    #[serde(default)]
-    pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
     /// Returned by the native folder picker. The command verifies it against
     /// that picker result, then still checks it exists and is a directory
     /// before any statement name is joined to it.
@@ -2551,18 +2589,15 @@ pub struct ExportBulkPartyStatementsRequest {
     /// Opaque, single-use proof returned with the native picker destination.
     /// A renderer cannot mint this proof for an arbitrary local path.
     pub approval_id: String,
-    /// These are complete statement-source rows from the finished local read,
-    /// not the dashboard's display projections.
-    pub open_bills: Vec<OpenBillRow>,
-    pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PreviewBulkPartyStatementsRequest {
-    /// The same complete rows the export command will consume. This command
-    /// performs no I/O or Tally read; it only makes the pending scope explicit.
-    pub open_bills: Vec<OpenBillRow>,
-    pub unallocated_by_party: Vec<UnallocatedParty>,
+    /// The same server-held source the export command will consume. This
+    /// command performs no I/O or Tally read; it only makes the pending scope
+    /// explicit.
+    pub source_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2641,12 +2676,34 @@ fn require_utf8_destination(path: std::path::PathBuf) -> Result<String, String> 
 #[tauri::command]
 pub async fn preview_bulk_party_statements(
     request: PreviewBulkPartyStatementsRequest,
+    party_statement_sources: State<'_, PartyStatementSourceStore>,
 ) -> Result<BulkPartyStatementsPreview, String> {
+    let source = party_statement_source(&party_statement_sources, &request.source_id)?;
     Ok(BulkPartyStatementsPreview {
         party_count: bulk_party_statement_party_count(
-            &request.open_bills,
-            &request.unallocated_by_party,
+            &source.open_bills,
+            &source.unallocated_by_party,
         ),
+    })
+}
+
+/// The server-held source a statement request names, or the operator-facing
+/// reason it is gone (bridge#551).
+pub(crate) fn party_statement_source(
+    sources: &PartyStatementSourceStore,
+    source_id: &str,
+) -> Result<
+    std::sync::Arc<crate::reports::outstandings_working_paper::OutstandingsWorkingPaperSource>,
+    String,
+> {
+    sources.get(source_id).map_err(|error| match error {
+        WorkingPaperExportStoreError::Unavailable => {
+            "Bridge could not reach the statement source. Refresh outstandings and try again."
+                .to_string()
+        }
+        _ => "This outstandings result is no longer available for statements. Refresh \
+              outstandings and try again."
+            .to_string(),
     })
 }
 
@@ -2658,20 +2715,28 @@ pub async fn preview_bulk_party_statements(
 pub async fn export_bulk_party_statements(
     request: ExportBulkPartyStatementsRequest,
     approvals: State<'_, PartyStatementDestinationApprovals>,
+    party_statement_sources: State<'_, PartyStatementSourceStore>,
 ) -> Result<
     crate::reports::bulk_party_statement::BulkPartyStatementResult,
     BulkPartyStatementExportError,
 > {
-    export_bulk_party_statements_at_selected_destination(request, &approvals)
+    export_bulk_party_statements_at_selected_destination(
+        request,
+        &approvals,
+        &party_statement_sources,
+    )
 }
 
 fn export_bulk_party_statements_at_selected_destination(
     request: ExportBulkPartyStatementsRequest,
     approvals: &PartyStatementDestinationApprovals,
+    party_statement_sources: &PartyStatementSourceStore,
 ) -> Result<
     crate::reports::bulk_party_statement::BulkPartyStatementResult,
     BulkPartyStatementExportError,
 > {
+    let source = party_statement_source(party_statement_sources, &request.source_id)
+        .map_err(BulkPartyStatementExportError::Existing)?;
     let approved_destination = approvals
         .consume(
             &request.approval_id,
@@ -2687,12 +2752,12 @@ fn export_bulk_party_statements_at_selected_destination(
         PartyStatementFormat::Xlsx => {
             write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
                 destination: &approved_destination,
-                company: &request.company,
-                as_of_yyyymmdd: &request.as_of_yyyymmdd,
+                company: &source.company,
+                as_of_yyyymmdd: &source.as_of_yyyymmdd,
                 format: "xlsx",
-                open_bills: &request.open_bills,
-                unallocated_by_party: &request.unallocated_by_party,
-                ageing_anchor: request.ageing_anchor,
+                open_bills: &source.open_bills,
+                unallocated_by_party: &source.unallocated_by_party,
+                ageing_anchor: source.source_ageing_anchor,
                 render: |statement: &crate::reports::party_statement::PartyStatement| {
                     render_party_statement_xlsx(statement).map_err(|error| error.to_string())
                 },
@@ -2701,12 +2766,12 @@ fn export_bulk_party_statements_at_selected_destination(
         PartyStatementFormat::Pdf => {
             write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
                 destination: &approved_destination,
-                company: &request.company,
-                as_of_yyyymmdd: &request.as_of_yyyymmdd,
+                company: &source.company,
+                as_of_yyyymmdd: &source.as_of_yyyymmdd,
                 format: "pdf",
-                open_bills: &request.open_bills,
-                unallocated_by_party: &request.unallocated_by_party,
-                ageing_anchor: request.ageing_anchor,
+                open_bills: &source.open_bills,
+                unallocated_by_party: &source.unallocated_by_party,
+                ageing_anchor: source.source_ageing_anchor,
                 render: |statement: &crate::reports::party_statement::PartyStatement| {
                     render_party_statement_pdf(statement).map_err(|error| error.to_string())
                 },
@@ -2758,16 +2823,18 @@ pub async fn export_outstandings_working_paper(
 pub async fn export_party_statement(
     app: tauri::AppHandle,
     request: ExportPartyStatementRequest,
+    party_statement_sources: State<'_, PartyStatementSourceStore>,
 ) -> Result<String, String> {
     use tauri::Manager as _;
 
+    let source = party_statement_source(&party_statement_sources, &request.source_id)?;
     let statement = build_party_statement_with_ageing_anchor(
-        &request.company,
-        &request.as_of_yyyymmdd,
+        &source.company,
+        &source.as_of_yyyymmdd,
         &request.party,
-        &request.open_bills,
-        &request.unallocated_by_party,
-        request.ageing_anchor,
+        &source.open_bills,
+        &source.unallocated_by_party,
+        source.source_ageing_anchor,
     )
     .map_err(|error| match error {
         PartyStatementError::PartyNotFound => {

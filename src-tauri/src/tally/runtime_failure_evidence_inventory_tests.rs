@@ -110,11 +110,11 @@ async fn outstandings_partial_retains_both_drifting_bodies_and_prior_reports() {
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let identity = identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb");
         let (load, evidence) = TallyRuntime::default()
-            .fetch_outstandings_native(
+            .fetch_agent_outstandings_with_evidence(
                 config(&simulator),
                 &identity,
                 TallyDate::parse("20260801").unwrap(),
-                OutstandingsCurrencyAssertion::Inr,
+                inr_witness_for_tests(&extents(), &identity),
                 OutstandingsAgeingAnchor::DueDate,
             )
             .await

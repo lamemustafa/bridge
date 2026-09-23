@@ -127,51 +127,45 @@ export function allCompaniesOutstandingsInvokeArgument(
   };
 }
 
-type StatementExportSource = {
-  report: { company_name: string; as_of_yyyymmdd: string };
-  ageing_anchor: OutstandingsAgeingAnchor;
-  statement_open_bills?: unknown[];
-  statement_unallocated_by_party?: Array<{ party: string; amount: string }>;
-};
+type StatementExportSource = { party_statement_source_id?: string };
 
-/** Keeps statement exports pinned to the returned report's actual as-of date. */
+/**
+ * Names the Rust-held statement source returned with the completed read
+ * (bridge#551). The company, as-of date, ageing basis and every row come from
+ * that source; the webview never supplies them. `null` when the read issued
+ * no source.
+ */
 export function partyStatementInvokeArgument(
   result: StatementExportSource,
   party: string,
   format: "xlsx" | "pdf",
 ) {
-  return {
-    request: {
-      company: result.report.company_name,
-      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
-      party,
-      format,
-      ageing_anchor: result.ageing_anchor,
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  };
+  if (!result.party_statement_source_id) return null;
+  return { request: { source_id: result.party_statement_source_id, party, format } };
 }
 
-/** Keeps batch statement exports pinned to the returned report's actual date. */
+/** As {@link partyStatementInvokeArgument}, for the whole batch. */
 export function bulkPartyStatementsInvokeArgument(
   result: StatementExportSource,
   destination: string,
   approvalId: string,
   format: "xlsx" | "pdf",
 ) {
+  if (!result.party_statement_source_id) return null;
   return {
     request: {
-      company: result.report.company_name,
-      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
+      source_id: result.party_statement_source_id,
       destination,
       approval_id: approvalId,
       format,
-      ageing_anchor: result.ageing_anchor,
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
     },
   };
+}
+
+/** The scope preview's argument: the same held source as the batch. */
+export function bulkPartyStatementsPreviewInvokeArgument(result: StatementExportSource) {
+  if (!result.party_statement_source_id) return null;
+  return { request: { source_id: result.party_statement_source_id } };
 }
 
 /** Uses only the opaque Rust-owned binding returned with the completed read. */

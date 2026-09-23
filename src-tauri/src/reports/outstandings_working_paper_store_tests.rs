@@ -3,6 +3,7 @@ use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::{
     AgeingBillCounts, AgeingBuckets, OutstandingsReport,
 };
+use std::sync::Arc;
 
 fn zero_complete(source_bytes: usize, unallocated_known: bool) -> OutstandingsLoadResult {
     OutstandingsLoadResult::Complete {
@@ -171,9 +172,76 @@ fn command_response_flattens_the_opaque_handle_into_the_existing_shape() {
         result: zero_complete(1, true),
         working_paper_export_id: Some("synthetic-handle".to_string()),
         working_paper_unavailable_reason_code: None,
+        party_statement_source_id: Some("synthetic-statements".to_string()),
     };
     let json = serde_json::to_value(response).expect("response serializes");
     assert_eq!(json["state"], "complete");
     assert_eq!(json["working_paper_export_id"], "synthetic-handle");
+    assert_eq!(json["party_statement_source_id"], "synthetic-statements");
     assert_eq!(json["report"]["company_name"], "Synthetic Books");
+}
+
+fn synthetic_source() -> OutstandingsWorkingPaperSource {
+    OutstandingsWorkingPaperSource {
+        company: "Synthetic Books".to_string(),
+        company_guid: "synthetic-guid".to_string(),
+        as_of_yyyymmdd: "20260825".to_string(),
+        currency_assertion: crate::tally::OutstandingsCurrencyAssertion::Inr,
+        synced_at_unix_ms: 1,
+        source_bytes: 1,
+        source_ageing_anchor: crate::tally::OutstandingsAgeingAnchor::DueDate,
+        receivable_bill_total: bridge_tally_core::ExactDecimal::zero(),
+        payable_bill_total: bridge_tally_core::ExactDecimal::zero(),
+        unallocated_total: bridge_tally_core::ExactDecimal::zero(),
+        open_bills: Vec::new(),
+        unallocated_by_party: Vec::new(),
+    }
+}
+
+/// bridge#551: a statement source serves every party of one read, so reading
+/// it leaves it in place; a refresh of the same company revokes it, and a
+/// forged handle reads nothing.
+#[test]
+fn a_statement_source_serves_many_reads_until_a_refresh_revokes_it() {
+    let store = PartyStatementSourceStore::default();
+    let id = store
+        .replace_for_company("synthetic-guid", Some(Arc::new(synthetic_source())))
+        .expect("handle issued")
+        .expect("source produces a handle");
+    for _ in 0..2 {
+        assert_eq!(
+            store.get(&id).expect("still held").company,
+            "Synthetic Books"
+        );
+    }
+    for forged in ["not-an-id", "00000000-0000-4000-8000-000000000009"] {
+        assert_eq!(
+            store.get(forged).unwrap_err(),
+            WorkingPaperExportStoreError::InvalidOrExpired,
+            "{forged}"
+        );
+    }
+    store
+        .replace_for_company("synthetic-guid", None)
+        .expect("refresh without a source");
+    assert_eq!(
+        store.get(&id).unwrap_err(),
+        WorkingPaperExportStoreError::InvalidOrExpired
+    );
+}
+
+/// A statement handle outlives the working paper's fifteen minutes, but not
+/// its own lifetime: an expired handle reads nothing.
+#[test]
+fn a_statement_source_expires_with_its_own_lifetime() {
+    assert!(STATEMENT_SOURCE_TTL > EXPORT_HANDLE_TTL);
+    let expired = PartyStatementSourceStore::with_ttl(std::time::Duration::ZERO);
+    let id = expired
+        .replace_for_company("synthetic-guid", Some(Arc::new(synthetic_source())))
+        .expect("handle issued")
+        .expect("source produces a handle");
+    assert_eq!(
+        expired.get(&id).unwrap_err(),
+        WorkingPaperExportStoreError::InvalidOrExpired
+    );
 }

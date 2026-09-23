@@ -44,6 +44,19 @@ export function outstandingsPartialReason(
       ? `Tally reported a foreign-currency closing balance for ledger ${foreignCurrencyLedgerName}`
       : "Tally reported a foreign-currency closing balance";
   }
+  if (value === "ledger_currency_base_unmatched") {
+    return foreignCurrencyLedgerName
+      ? `Tally keeps ledger ${foreignCurrencyLedgerName} in a currency other than this company's base currency`
+      : "Bridge could not match this company's ledgers to its base currency";
+  }
+  if (value === "ledger_currency_unobserved") {
+    return "Tally did not report the currency of every ledger in this multi-currency company";
+  }
+  if (value === "foreign_currency_ledger_present") {
+    return foreignCurrencyLedgerName
+      ? `Tally keeps ledger ${foreignCurrencyLedgerName} in a foreign currency`
+      : "Tally keeps a ledger in a foreign currency";
+  }
   if (value === "tally_segment_latency_trending_restart_recommended") {
     return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
   }
@@ -136,6 +149,18 @@ export function outstandingsPartialState(
       tallyReadAttempted: true,
     };
   }
+  if (
+    reasonCode === "ledger_currency_base_unmatched"
+    || reasonCode === "ledger_currency_unobserved"
+    || reasonCode === "foreign_currency_ledger_present"
+  ) {
+    return {
+      title: "Outstandings are not available for this company",
+      message: `${outstandingsPartialReason(reasonCode, requestedAsOf, tallyAsOf, foreignCurrencyLedgerName)}. Bridge withheld the totals rather than count amounts in another currency as rupees.`,
+      retryable: false,
+      tallyReadAttempted: true,
+    };
+  }
   if (reasonCode === "company_foreign_currency_ledger_balance") {
     return {
       title: "Outstandings are not available for this company",
@@ -170,13 +195,13 @@ export function workingPaperUnavailableState(
   if (reasonCode === "working_paper_resource_limit") {
     return {
       title: "Excel working paper unavailable",
-      message: "The outstandings report is complete, but this working paper exceeds Bridge’s safe export limits. The other report exports remain available.",
+      message: "The outstandings report is complete, but it exceeds Bridge’s safe export limits for the working paper and party statements. The CSV export remains available.",
     };
   }
   if (reasonCode === "working_paper_complete_source_unavailable") {
     return {
       title: "Excel working paper unavailable for this read",
-      message: "This completed read does not carry the native bill and unallocated controls needed to substantiate an all-party working paper. The other report exports remain available.",
+      message: "This completed read does not carry the native bill and unallocated controls needed to substantiate an all-party working paper or party statements. The CSV export remains available.",
     };
   }
   if (reasonCode === "working_paper_export_store_unavailable") {

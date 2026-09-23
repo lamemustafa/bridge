@@ -666,7 +666,11 @@ impl Server {
             }
             verification_window_identities(&preflight, &date_from, &date_to)?;
             let amendment = match &lineage {
-                Some(lineage) => match lineage.compare_and_swap(&payload.vouchers, &preflight)? {
+                Some(lineage) => match lineage.compare_and_swap(
+                    &payload.vouchers,
+                    &preflight,
+                    &verified_baselines(&self.imports_dir()?, lineage),
+                )? {
                     Ok(vouchers) => Some(json!({
                         "amends_batch_id": payload.amends_batch_id,
                         "identity_batch_id": lineage.identity_batch_id,
@@ -815,7 +819,7 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false, &mut None)
+        self.verify_import_with_dispatch(args, false, &mut None, None)
             .await
     }
 
@@ -829,7 +833,7 @@ impl Server {
     ) -> Result<ToolOutcome, ToolFailure> {
         let mut served = None;
         let outcome = self
-            .verify_import_with_dispatch(args, false, &mut served)
+            .verify_import_with_dispatch(args, false, &mut served, None)
             .await?;
         post::admit_post_window(served).map_err(|code| {
             ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
@@ -837,11 +841,15 @@ impl Server {
         Ok(outcome)
     }
 
+    /// The readback right after this call's own POST. `masters_after_post`
+    /// is the check of the company's masters across the post (#239); it goes
+    /// into the proof before it is persisted, so a downgrade is recorded too.
     pub(in crate::agent) async fn verify_import_after_current_dispatch(
         &self,
         args: &Value,
+        masters_after_post: Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true, &mut None)
+        self.verify_import_with_dispatch(args, true, &mut None, Some(masters_after_post))
             .await
     }
 
@@ -850,6 +858,7 @@ impl Server {
         args: &Value,
         current_dispatch: bool,
         served: &mut Option<super::WindowServed>,
+        masters_after_post: Option<Value>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -948,14 +957,64 @@ impl Server {
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": observed_evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": voucher_read_sha256}
             });
+            // This call's own check, or the doubt recorded when this batch was
+            // posted: a later readback, which compares by name, never clears it.
+            let masters_after_post = match masters_after_post {
+                Some(masters) => Some(masters),
+                None if dispatched => {
+                    match read_masters_check(&self.imports_dir()?, &line.batch_id) {
+                        // The check after the post did not finish: finish it
+                        // now against the ledgers bound at build, which the
+                        // post required to match the approved ones (#616).
+                        // Only once the vouchers are found: before the POST
+                        // lands, a verdict would vouch for a post not yet made.
+                        Some(check)
+                            if check["state"] == MASTERS_CHECK_PENDING
+                                && verification_status(&proof, line.vouchers.len())
+                                    == "posted_verified" =>
+                        {
+                            let bound = line
+                                .ledger_identities
+                                .iter()
+                                .flatten()
+                                .map(|bound| (bound.name.clone(), bound.guid.clone()))
+                                .collect::<Vec<_>>();
+                            let verdict = if bound.is_empty() {
+                                json!({"state":"check_unavailable","trigger":MASTERS_CHECK_PENDING})
+                            } else {
+                                self.ledgers_still_approved(
+                                    &identity,
+                                    &company.name,
+                                    &bound,
+                                    MASTERS_CHECK_PENDING,
+                                    &mut accumulated,
+                                )
+                                .await
+                            };
+                            Some(self.record_masters_verdict(&line.batch_id, verdict))
+                        }
+                        recorded => recorded,
+                    }
+                }
+                None => None,
+            };
+            let mut proof = proof;
+            if let Some(masters) = &masters_after_post {
+                proof["masters_after_post"] = masters.clone();
+            }
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
                 if current_dispatch {
-                    post::finalize_current_dispatch(&mut payload, dispatch_response.as_ref());
+                    post::finalize_current_dispatch(
+                        &mut payload,
+                        dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
+                    );
                 } else {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,
                         dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
                     );
                 }
             }
@@ -1003,7 +1062,15 @@ impl Server {
             markdown.as_bytes(),
             || self.append_import_record_while_admitted(&ledger::StatusRecord::from(update)),
             |_| Ok(()),
-        )
+        )?;
+        // The first verified ALTERID of each voucher, for a later amendment to
+        // compare against (#239). Kept beside the proof, not in the journal, so
+        // an older binary still reads the journal after a rollback. A failed
+        // write leaves the previous baseline, or none, and an amendment of a
+        // voucher it lacks then refuses: the safe direction, so it does not
+        // fail this verification.
+        let _ = record_verified_baseline(&imports, &update.batch_id, proof);
+        Ok(())
     }
 
     pub(super) async fn read_ledger_catalogue(
@@ -1296,13 +1363,13 @@ impl Server {
     }
 }
 
-const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build, and only these fields: the date, a bank voucher's effective date when Tally returned one, the voucher type, the voucher number when the batch set one, each entry's ledger, amount and side, and the narration. It did not compare a voucher's reference, its bill-wise or cost-centre allocations, or which ledger Tally records as its party, because the verification read does not fetch them. An in-place alteration replaces a voucher's entries rather than merging them (measured over the gateway), and this file's entries carry no allocations, so allocations made in Tally, including those Bridge advises adding after an import, are expected to be lost; that loss, and what happens to a reference, were not measured directly. An edit made in Tally between this build and the import is overwritten without warning. Import promptly, and build the amendment again if anyone may have changed these vouchers. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
+const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build, and only these fields: the date, a bank voucher's effective date when Tally returned one, the voucher type, the voucher number when the batch set one, each entry's ledger, amount and side, and the narration. It did not compare a voucher's reference, its bill-wise or cost-centre allocations, or which ledger Tally records as its party, because the verification read does not fetch them; instead it refused any voucher whose ALTERID has moved since Bridge first verified it, which catches an edit to those fields made after that verification, provided a Tally edit advances the voucher's ALTERID (measured over the gateway; not yet for an edit made in Tally's own screens). An edit made before that first verification is not caught, so verify right after every import. An in-place alteration replaces a voucher's entries rather than merging them (measured over the gateway), and this file's entries carry no allocations, so allocations made in Tally, including those Bridge advises adding after an import, are expected to be lost; that loss, and what happens to a reference, were not measured directly. An edit made in Tally between this build and the import is overwritten without warning. Import promptly, and build the amendment again if anyone may have changed these vouchers. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
 
 const AMENDMENT_NOT_POSTABLE: &str = "No import XML was sent to Tally. Bridge does not post amendments (post_import refuses them), so import the written file by hand, promptly, then use verify_import; do not call post_import for this batch.";
 
-const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Verify right after importing: that first verification is what a later amendment compares against. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
 
-const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured.";
+const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured. voucher_altered_since_verified means the voucher's ALTERID is not the one Bridge recorded when it first verified a build the book matches, or was not read: Tally has altered the voucher since, which can be an edit to a field Bridge does not compare, such as a reference or an allocation. Correct the voucher in Tally directly; a fresh batch would duplicate it unless the existing voucher is first cancelled or deleted in Tally. voucher_never_verified means no build the book matches has a verification Bridge recorded for this voucher: most often the last import was never verified, or it was verified before Bridge kept these records. Verifying now records this voucher exactly as it stands in Tally, including any changes made since Bridge built it. Check the voucher in Tally first; if someone has edited it, correct it there instead of amending. If it is unchanged, verify the batch named in book_matches_batch_ids and build the amendment again.";
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
 /// admission. Older manual imports retain their original verification path.
@@ -1488,11 +1555,11 @@ fn build_import_guidance(
             .chain(multi_entry_warning)
             .collect::<Vec<_>>())
     };
-    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import";
+    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import right away: its first verification records each voucher's state for any later amendment";
     if writes_enabled && native_post_eligible {
         (
             warnings(
-                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import afterward and do not call post_import for that batch.",
+                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import right after importing and do not call post_import for that batch.",
             ),
             "Call post_import with this company_guid and batch_id; the local user must review and approve it before one posting attempt.",
         )
@@ -2420,6 +2487,148 @@ pub(super) fn local_evidence(label: &str) -> Evidence {
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
+/// The state of a masters check that has not finished (#239).
+pub(super) const MASTERS_CHECK_PENDING: &str = "check_pending";
+
+fn masters_check_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_check.json"))
+}
+
+fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_doubt.json"))
+}
+
+/// The masters check recorded for this batch (#239). An observed doubt is
+/// kept in a file of its own that nothing removes or replaces, and it
+/// overrides the check record. Absent only for a batch dispatched before
+/// these records existed.
+fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
+    read_masters_record(&masters_doubt_path(imports, batch_id))
+        .or_else(|| read_masters_record(&masters_check_path(imports, batch_id)))
+}
+
+/// A record that exists but cannot be opened, read or parsed reads as a
+/// pending check: a doubt, never an admission.
+fn read_masters_record(path: &Path) -> Option<Value> {
+    let unreadable = || Some(json!({"state": MASTERS_CHECK_PENDING}));
+    let mut file = match super::local_file::open_local_file(path, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return unreadable(),
+    };
+    let mut bytes = Vec::new();
+    if std::io::Read::read_to_end(&mut file, &mut bytes).is_err() {
+        return unreadable();
+    }
+    serde_json::from_slice(&bytes).ok().or_else(unreadable)
+}
+
+/// Staged under a name no other writer uses, then renamed into place, so
+/// writers need no lock and never collide.
+fn write_masters_record(path: &Path, record: &Value) -> Result<(), String> {
+    let staged = path.with_extension(format!("{}.next", Uuid::new_v4()));
+    let bytes =
+        serde_json::to_vec_pretty(record).map_err(|_| "proof_serialization_failed".to_string())?;
+    write_private(&staged, &bytes)?;
+    fs::rename(&staged, path).map_err(|_| {
+        let _ = fs::remove_file(&staged);
+        "import_file_write_failed".to_string()
+    })
+}
+
+impl Server {
+    /// Mark this batch's masters check pending before it can be dispatched. A
+    /// crash before the check finishes, a concurrent reader, or a failed later
+    /// write then reads a doubt, never an absent record; a post whose record
+    /// cannot be written is not sent. It never touches an observed doubt.
+    pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
+        let unavailable = |_| "post_masters_record_unavailable".to_string();
+        let imports = self.imports_dir().map_err(unavailable)?;
+        write_masters_record(
+            &masters_check_path(&imports, batch_id),
+            &json!({"state": MASTERS_CHECK_PENDING}),
+        )
+        .map_err(unavailable)
+    }
+
+    /// Record a finished check's verdict and return what the batch's records
+    /// now say. An observed doubt goes first to its own file, which then
+    /// outranks any later verdict. A check that could not run
+    /// (`check_unavailable`) is not recorded, so a later readback checks
+    /// again; a verdict that cannot be written leaves the check pending.
+    pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
+        if verdict["state"] == "check_unavailable" {
+            return verdict;
+        }
+        let pending = json!({"state": MASTERS_CHECK_PENDING});
+        let Ok(imports) = self.imports_dir() else {
+            return pending;
+        };
+        if verdict["state"] == "posted_under_changed_masters" {
+            let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
+        }
+        let _ = write_masters_record(&masters_check_path(&imports, batch_id), &verdict);
+        read_masters_check(&imports, batch_id).unwrap_or(pending)
+    }
+}
+
+fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.baseline.json"))
+}
+
+/// A build's verified baseline, or `None` when it has none or it cannot be
+/// read. Either way an amendment of that build refuses.
+fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    // A batch in doubt about its ledgers, or whose check is still pending
+    // (#239), is no baseline, whenever its baseline was written.
+    if post::masters_doubt(read_masters_check(imports, batch_id).as_ref()).is_some() {
+        return None;
+    }
+    let mut file =
+        super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
+            .ok()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Record each voucher's first verified ALTERID; a voucher already recorded
+/// keeps its value. Called under the import admission lock.
+fn record_verified_baseline(imports: &Path, batch_id: &str, proof: &Value) -> Result<(), String> {
+    let path = verified_baseline_path(imports, batch_id);
+    let mut baseline = if path.exists() {
+        // An unreadable baseline is never rewritten: nothing proves which
+        // values were first, so amendments of this build stay refused.
+        read_verified_baseline(imports, batch_id)
+            .ok_or_else(|| "verified_baseline_unreadable".to_string())?
+    } else {
+        amend::VerifiedBaseline::default()
+    };
+    if amend::record_first_verified(&mut baseline, proof) {
+        let bytes = serde_json::to_vec_pretty(&baseline)
+            .map_err(|_| "verified_baseline_serialization_failed".to_string())?;
+        // Staged and renamed, so a failed write leaves the previous file whole
+        // rather than a truncated one that would refuse every amendment.
+        let staged = imports.join(format!("{batch_id}.baseline.json.next"));
+        write_private(&staged, &bytes)?;
+        fs::rename(&staged, &path).map_err(|_| "verified_baseline_publish_failed".to_string())?;
+    }
+    Ok(())
+}
+
+fn verified_baselines(imports: &Path, lineage: &amend::Lineage) -> amend::VerifiedBaselines {
+    amend::VerifiedBaselines(
+        lineage
+            .builds
+            .iter()
+            .filter_map(|build| {
+                read_verified_baseline(imports, &build.batch.batch_id)
+                    .map(|baseline| (build.batch.batch_id.clone(), baseline))
+            })
+            .collect(),
+    )
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = super::local_file::open_local_file(path, true)
         .map_err(|_| "import_file_write_failed".to_string())?;

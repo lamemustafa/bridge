@@ -122,6 +122,87 @@ impl Server {
         }
     }
 
+    /// The company's masters across the post (#239). Only when the snapshots
+    /// either side of the POST prove the target's master mark unchanged is
+    /// nothing read. Otherwise (the mark moved, or either snapshot could not
+    /// be read or did not hold exactly one target row) the ledger catalogue is
+    /// read again and each approved ledger's name resolved to its GUID: a
+    /// posted voucher's lines carry names, not GUIDs (#239, lab comment of
+    /// 2026-09-23).
+    async fn masters_after_post(
+        &self,
+        marks_before: &str,
+        marks_after: Option<&[location::LoadedCompanyMarks]>,
+        identity: &super::super::VerifiedCompanyIdentity,
+        company_name: &str,
+        approved: &bridge_tally_protocol::StandardLedgerCatalogBinding,
+        accumulated: &mut Evidence,
+    ) -> Value {
+        let unchanged = location::parse_all_company_marks(marks_before)
+            .ok()
+            .zip(marks_after)
+            .and_then(|(before, after)| {
+                location::target_masters_unchanged(
+                    &before,
+                    after,
+                    identity.company_guid(),
+                    company_name,
+                )
+            });
+        let trigger = match unchanged {
+            Some(true) => return json!({"state":"not_checked","reason":"masters_unmoved"}),
+            Some(false) => "masters_moved",
+            None => "masters_unconfirmed",
+        };
+        let approved = approved
+            .pairs()
+            .map(|(name, guid)| (name.to_string(), guid.to_string()))
+            .collect::<Vec<_>>();
+        self.ledgers_still_approved(identity, company_name, &approved, trigger, accumulated)
+            .await
+    }
+
+    /// Whether each approved (name, GUID) still resolves by name to its GUID,
+    /// as a masters check verdict with `trigger` saying why it ran (#239).
+    pub(super) async fn ledgers_still_approved(
+        &self,
+        identity: &super::super::VerifiedCompanyIdentity,
+        company_name: &str,
+        approved: &[(String, String)],
+        trigger: &str,
+        accumulated: &mut Evidence,
+    ) -> Value {
+        match self
+            .read_import_ledger_catalogue(identity, company_name)
+            .await
+        {
+            Err(_) => json!({"state":"check_unavailable","trigger":trigger}),
+            Ok((_, catalogue, _, evidence)) => {
+                *accumulated = combine_evidence(accumulated.clone(), evidence);
+                let changed = approved
+                    .iter()
+                    .filter(|(name, guid)| {
+                        catalogue
+                            .bind_selected([name.clone()])
+                            .ok()
+                            .and_then(|now| {
+                                now.pairs()
+                                    .next()
+                                    .map(|(_, current)| current.eq_ignore_ascii_case(guid))
+                            })
+                            != Some(true)
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>();
+                if changed.is_empty() {
+                    json!({"state":"unchanged","trigger":trigger})
+                } else {
+                    json!({"state":"posted_under_changed_masters","trigger":trigger,"ledgers":changed})
+                }
+            }
+        }
+    }
+
     pub(in crate::agent) async fn post_import(
         &self,
         args: &Value,
@@ -155,6 +236,8 @@ impl Server {
         let mut post_location: Option<Value> = None;
         // The Currency masters of a book refused for having several (#551).
         let mut currencies_seen: Option<Vec<String>> = None;
+        // The masters check across the post, kept for a failed readback (#239).
+        let mut masters_verdict: Option<Value> = None;
         // The ledgers whose GUID changed since the build (#239).
         let mut ledgers_changed: Option<Vec<String>> = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
@@ -275,6 +358,8 @@ impl Server {
             .map_err(|error| error.to_string())?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
+            // Kept for the check across the post (#239).
+            let approved_binding = ledger_binding.clone();
             let company_marks_request = crate::tally::agent_read_request::AgentReadRequest::parse(
                 super::super::read_profiles::render_agent_company_high_water(&company.name),
             )
@@ -285,7 +370,7 @@ impl Server {
                 voucher_date,
                 verification_request,
                 ledger_catalogue_request,
-                ledger_binding,
+                ledger_binding.clone(),
                 group_collection_request,
                 currency_request,
                 company_marks_request.clone(),
@@ -295,6 +380,9 @@ impl Server {
             // approval. It covers intent, the one POST, its response append and
             // immediate readback; recovery remains the durable batch journal.
             let _endpoint_dispatch_lease = dispatch_lease::acquire(&self.settings.endpoint)?;
+            // Before anything can be sent, so a crash, a concurrent reader or a
+            // failed later write reads a doubt, never an absent record (#239).
+            self.record_masters_check_pending(batch_id)?;
             let posted = self
                 .runtime
                 .post_approved_import(
@@ -479,7 +567,23 @@ impl Server {
             journaled?;
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
-            let mut proof = self.verify_import_after_current_dispatch(args).await?;
+            let masters_after_post = self
+                .masters_after_post(
+                    &posted.company_marks_before,
+                    marks_after.as_deref(),
+                    &identity,
+                    &company.name,
+                    &approved_binding,
+                    &mut accumulated,
+                )
+                .await;
+            // The verdict replaces the pending record before the readback, so no
+            // later reconcile, which compares by name, can clear a doubt (#239).
+            let masters_after_post = self.record_masters_verdict(batch_id, masters_after_post);
+            masters_verdict = Some(masters_after_post.clone());
+            let mut proof = self
+                .verify_import_after_current_dispatch(args, masters_after_post)
+                .await?;
             accumulated = combine_evidence(accumulated.clone(), proof.evidence.clone());
             proof.evidence = accumulated.clone();
             if let Some(located) = post_location.clone() {
@@ -511,6 +615,9 @@ impl Server {
                 );
                 if let Some(located) = post_location {
                     outcome.payload["result"]["post_location"] = located;
+                }
+                if let Some(masters) = masters_verdict {
+                    outcome.payload["result"]["masters_after_post"] = masters;
                 }
                 if let Some(currencies) = currencies_seen {
                     name_refused_currencies(&mut outcome.payload, &currencies);
@@ -664,28 +771,74 @@ fn persisted_response_state(response: Option<&ledger::DispatchResponse>) -> &'st
 pub(super) fn finalize_previous_attempt_reconciliation(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
+    masters_after_post: Option<&Value>,
 ) {
-    let reconciled = verification_status(&payload["result"], 1) == "posted_verified"
+    let name_verified = verification_status(&payload["result"], 1) == "posted_verified"
         && persisted_response_is_clean(response);
+    // A doubt recorded when this batch was posted outlives the readback, which
+    // compares by name and cannot clear it (#239).
+    let doubt = masters_doubt(masters_after_post);
+    let reconciled = name_verified && doubt.is_none();
     payload["result"]["dispatch"] = json!({
         "state": if reconciled { "previous_attempt_reconciled" } else { "reconciliation_required" },
         "resent": false,
         "response_state": persisted_response_state(response),
         "response": response,
     });
-    if !reconciled {
+    if !name_verified {
         mark_reconciliation_required(payload);
+    } else if let Some((code, message)) = doubt {
+        payload["result"]["error"] = json!({"code": code, "message": message});
     }
+}
+
+/// Whether the masters check across a post leaves doubt that the voucher went
+/// to the ledgers approved (#239), as the refusal code and plain message. Only
+/// an unchanged resolution, or a mark proven unmoved, admits: any other state,
+/// including one this build does not know, is doubt. `None` means no check was
+/// made or recorded, which is not doubt.
+pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'static str, String)> {
+    let masters = masters_after_post?;
+    let state = masters["state"].as_str().unwrap_or_default();
+    if state == "unchanged" || (state == "not_checked" && masters["reason"] == "masters_unmoved") {
+        return None;
+    }
+    const REVIEW: &str = "Review the voucher in Tally and correct it there if it went to the wrong ledger. It is already posted, so do not rebuild this event.";
+    Some(if state == "posted_under_changed_masters" {
+        let ledgers = masters["ledgers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            "posted_under_changed_masters",
+            format!("Posted to Tally, but these ledgers no longer resolve to the master you approved: {ledgers}. {REVIEW}"),
+        )
+    } else {
+        let again = if state == super::MASTERS_CHECK_PENDING || state == "check_unavailable" {
+            " A later verify_import of this batch checks again."
+        } else {
+            ""
+        };
+        (
+            "masters_after_post_unconfirmed",
+            format!("Posted to Tally, but Bridge could not confirm that its ledgers are still the masters you approved.{again} {REVIEW}"),
+        )
+    })
 }
 
 pub(super) fn finalize_current_dispatch(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
+    masters_after_post: Option<&Value>,
 ) {
     let verified = verification_status(&payload["result"], 1) == "posted_verified";
     let clean = persisted_response_is_clean(response);
+    let masters_doubt = masters_doubt(masters_after_post);
     payload["result"]["dispatch"] = json!({
-        "state": if clean && verified { "posted_verified" } else { "reconciliation_required" },
+        "state": if clean && verified && masters_doubt.is_none() { "posted_verified" } else { "reconciliation_required" },
         "counters":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.counters())),
         "application_status":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.application_status())),
         "response_state": persisted_response_state(response),
@@ -694,6 +847,8 @@ pub(super) fn finalize_current_dispatch(
     });
     if !clean || !verified {
         mark_reconciliation_required(payload);
+    } else if let Some((code, message)) = masters_doubt {
+        payload["result"]["error"] = json!({"code": code, "message": message});
     }
 }
 

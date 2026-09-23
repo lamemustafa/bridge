@@ -25,6 +25,9 @@ pub enum NativeOutstandingsError {
     /// report's verification is INVERTED (no `STATUS` at all is success),
     /// and the ledger collection's `STATUS` must read `1`.
     TallyReportedFailure,
+    /// The ledgers' own currencies could not be classified against the base
+    /// currency (bridge#551): see [`super::LedgerCurrencyRefusal`].
+    LedgerCurrency(super::LedgerCurrencyRefusal),
 }
 
 impl fmt::Display for NativeOutstandingsError {
@@ -46,6 +49,7 @@ impl fmt::Display for NativeOutstandingsError {
             Self::TallyReportedFailure => {
                 formatter.write_str("Tally reported failure for the native outstandings request")
             }
+            Self::LedgerCurrency(refusal) => formatter.write_str(refusal.code()),
         }
     }
 }
@@ -124,6 +128,10 @@ pub struct NativeOutstandingsResult {
     /// truth, but a refused as-of date is materially different from scattered
     /// source-data disagreement and must reach the operator distinctly.
     pub overdue_crosscheck: NativeOverdueCrosscheck,
+    /// Ledgers kept in another currency and left out of every figure above,
+    /// with their bills (bridge#551). Empty when nothing was excluded, which
+    /// is the only case in which the figures describe the whole book.
+    pub foreign_currency_ledgers_excluded: Vec<super::ForeignCurrencyLedger>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

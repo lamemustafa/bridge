@@ -240,21 +240,66 @@ async fn agent_outstandings_rejects_unadmitted_currency_before_native_read() {
 /// unchanged extent, as `agent_outstandings_currency_witness_brackets_native_source`
 /// scripts it with no fault.
 fn currency_then_native_plans(currency: String) -> Vec<ScenarioPlan> {
-    let extent = extents();
+    currency_then_native_plans_with_ledgers(currency, ageing_ledgers())
+}
+
+fn ageing_ledgers() -> String {
+    decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-ledgers.utf16le.xml"
+    ))
+}
+
+fn currency_then_native_plans_with_ledgers(currency: String, ledgers: String) -> Vec<ScenarioPlan> {
     let mut plans = currency_plans(currency);
-    plans.extend([status(), xml(companies()), xml(companies())]);
+    plans.extend(native_plans_with_ledgers(ledgers));
+    plans
+}
+
+fn native_plans_with_ledgers(ledgers: String) -> Vec<ScenarioPlan> {
+    let extent = extents();
+    let mut plans = vec![status(), xml(companies()), xml(companies())];
     pair(&mut plans, xml(extent.clone()));
     for bytes in [
         include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-receivable.utf16le.xml").as_slice(),
         include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-groups.utf16le.xml").as_slice(),
         include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-payable.utf16le.xml").as_slice(),
-        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-ledgers.utf16le.xml").as_slice(),
     ] {
         pair(&mut plans, xml(decode(bytes)));
     }
+    pair(&mut plans, xml(ledgers));
     pair(&mut plans, xml(extent));
     plans.extend([xml(companies()), status(), xml(companies())]);
     plans
+}
+
+/// bridge#551: the captured ageing ledgers predate `CURRENCYNAME`. Each row
+/// gets the field in the captured position (`ledgers_currency_forex_live`):
+/// the book's single master `I₹` on every row but `Ageing Customer A`.
+fn ageing_ledgers_with_currency(customer_a: &str) -> String {
+    let captured = ageing_ledgers();
+    let mut pieces = captured.split("<LEDGER ");
+    let mut ledgers = pieces.next().unwrap().to_string();
+    let mut rows = 0;
+    for piece in pieces {
+        let tag_end = piece.find('>').unwrap() + 1;
+        let currency = if piece.starts_with("NAME=\"Ageing Customer A\"") {
+            customer_a
+        } else {
+            "I\u{20b9}"
+        };
+        ledgers.push_str("<LEDGER ");
+        ledgers.push_str(&piece[..tag_end]);
+        ledgers.push_str(&format!(
+            "\r\n     <CURRENCYNAME TYPE=\"String\">{currency}</CURRENCYNAME>"
+        ));
+        ledgers.push_str(&piece[tag_end..]);
+        rows += 1;
+    }
+    assert_eq!(rows, 6);
+    assert!(ledgers.contains(&format!(
+        "<LEDGER NAME=\"Ageing Customer A\" RESERVEDNAME=\"\">\r\n     <CURRENCYNAME TYPE=\"String\">{customer_a}</CURRENCYNAME>"
+    )));
+    ledgers
 }
 
 async fn operator_outstandings(
@@ -406,6 +451,7 @@ async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() 
         request,
         &TallyRuntime::default(),
         &crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default(),
+        &crate::reports::outstandings_working_paper_store::PartyStatementSourceStore::default(),
     )
     .await
     .unwrap();
@@ -416,7 +462,291 @@ async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() 
         response.result
     );
     assert!(response.working_paper_export_id.is_none());
+    assert!(response.party_statement_source_id.is_none());
     simulator.cancel();
     // The company list, then the currency read's 14 requests, and no more.
     assert_eq!(requests_sent(simulator), 15);
+}
+
+/// bridge#551: on a book with one Currency master, every ledger's own
+/// currency must be that master's NAME. One that is not refuses the read
+/// in-band, naming the ledger, instead of any figure; one that is reads
+/// through.
+#[tokio::test]
+async fn a_ledger_in_another_currency_on_a_one_master_book_refuses_the_read() {
+    let (result, requests) = operator_outstandings(currency_then_native_plans_with_ledgers(
+        currency_source(),
+        ageing_ledgers_with_currency("$"),
+    ))
+    .await;
+    match result.unwrap() {
+        OutstandingsLoadResult::Partial { reason, .. } => {
+            assert_eq!(reason.reason_code, "ledger_currency_base_unmatched");
+            assert_eq!(
+                reason.foreign_currency_ledger_name.as_deref(),
+                Some("Ageing Customer A")
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    // The snapshot is the last native read, so the read runs to its end.
+    assert_eq!(requests, 44);
+
+    let (result, requests) = operator_outstandings(currency_then_native_plans_with_ledgers(
+        currency_source(),
+        ageing_ledgers_with_currency("I\u{20b9}"),
+    ))
+    .await;
+    assert!(
+        matches!(result.unwrap(), OutstandingsLoadResult::Complete { .. }),
+        "the same book with every ledger in its master reads through"
+    );
+    assert_eq!(requests, 44);
+}
+
+/// bridge#551: only a base among several masters can find a ledger in another
+/// currency, and none is admitted before bridge#601. Where one is found, every
+/// figure is withheld, naming the ledger, rather than reported for the whole
+/// book or for part of it.
+#[test]
+fn a_foreign_ledger_withholds_every_figure() {
+    let foreign =
+        |ledger: &str| bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger {
+            ledger: ledger.to_string(),
+            currency: "$".to_string(),
+        };
+    let snapshot = |foreign| ClassifiedLedgerSnapshot {
+        base: Vec::new(),
+        foreign,
+        unobserved: 0,
+    };
+    assert_eq!(
+        foreign_ledger_withholds_figures(&snapshot(Vec::new())),
+        None
+    );
+    match foreign_ledger_withholds_figures(&snapshot(vec![
+        foreign("FX Debtor A"),
+        foreign("FX Debtor B"),
+    ])) {
+        Some(OutstandingsLoadResult::Partial { reason, .. }) => {
+            assert_eq!(reason.reason_code, "foreign_currency_ledger_present");
+            assert_eq!(
+                reason.foreign_currency_ledger_name.as_deref(),
+                Some("FX Debtor A")
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// bridge#551: a witness without a base has nothing to compare a ledger with,
+/// so every ledger refuses as unmatched, naming none. No production witness
+/// lacks one today (every path admits exactly one master, and the currency
+/// parser refuses a blank NAME); the refusal keeps a future one fail-closed.
+#[tokio::test]
+async fn a_witness_without_a_base_refuses_every_ledger() {
+    let simulator = SequenceSimulator::spawn(native_plans_with_ledgers(ageing_ledgers())).unwrap();
+    let identity = identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb");
+    let mut witness = inr_witness_for_tests(&extents(), &identity);
+    witness.base = None;
+    let (result, _) = TallyRuntime::default()
+        .fetch_agent_outstandings_with_evidence(
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity,
+            TallyDate::parse("20260801").unwrap(),
+            witness,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await
+        .unwrap();
+    simulator.cancel();
+    match result {
+        OutstandingsLoadResult::Partial { reason, .. } => {
+            assert_eq!(reason.reason_code, "ledger_currency_base_unmatched");
+            assert_eq!(reason.foreign_currency_ledger_name, None);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// bridge#551: the all-companies sweep reads each company under its own
+/// currency read, so a ledger in another currency on a one-master book
+/// refuses there too, and the same book with every ledger in its master
+/// reads through.
+#[tokio::test]
+async fn the_sweep_compares_each_ledgers_currency_with_its_own_read() {
+    for (customer_a, refused) in [("$", true), ("I\u{20b9}", false)] {
+        let simulator = SequenceSimulator::spawn(currency_then_native_plans_with_ledgers(
+            currency_source(),
+            ageing_ledgers_with_currency(customer_a),
+        ))
+        .unwrap();
+        let result = crate::commands::sweep_company_outstandings(
+            &TallyRuntime::default(),
+            &TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            &TallyDate::parse("20260801").unwrap(),
+            OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await;
+        simulator.cancel();
+        match result {
+            Ok(OutstandingsLoadResult::Partial { reason, .. }) if refused => {
+                assert_eq!(reason.reason_code, "ledger_currency_base_unmatched");
+                assert_eq!(
+                    reason.foreign_currency_ledger_name.as_deref(),
+                    Some("Ageing Customer A")
+                );
+            }
+            Ok(OutstandingsLoadResult::Complete { .. }) if !refused => {}
+            Ok(other) => panic!("{customer_a}: {other:?}"),
+            Err(_) => panic!("{customer_a}: the sweep failed"),
+        }
+    }
+}
+
+/// bridge#551: every currency refusal is an in-band partial naming the ledger
+/// it concerns, when it concerns one.
+#[test]
+fn a_currency_refusal_is_a_partial_naming_its_ledger() {
+    for (refusal, code, ledger) in [
+        (
+            LedgerCurrencyRefusal::Unobserved {
+                ledger: "Synthetic Debtor".to_string(),
+            },
+            "ledger_currency_unobserved",
+            Some("Synthetic Debtor"),
+        ),
+        (
+            LedgerCurrencyRefusal::BaseUnmatched {
+                ledger: Some("Synthetic FX Debtor".to_string()),
+            },
+            "ledger_currency_base_unmatched",
+            Some("Synthetic FX Debtor"),
+        ),
+        (
+            LedgerCurrencyRefusal::BaseUnmatched { ledger: None },
+            "ledger_currency_base_unmatched",
+            None,
+        ),
+    ] {
+        match admit_native_ledger_snapshot(Err(anyhow::Error::from(
+            NativeOutstandingsError::LedgerCurrency(refusal),
+        ))) {
+            Ok(NativeLedgerSnapshotAdmission::Partial(OutstandingsLoadResult::Partial {
+                reason,
+                ..
+            })) => {
+                assert_eq!(reason.reason_code, code);
+                assert_eq!(reason.foreign_currency_ledger_name.as_deref(), ledger);
+            }
+            _ => panic!("{code}: not an in-band partial"),
+        }
+    }
+}
+
+/// The sweep admits only a book with one Currency master that Tally names INR,
+/// and refuses any other after its currency read, before any bill: a book
+/// with several masters (captured), and one master named something else.
+#[tokio::test]
+async fn the_sweep_refuses_a_book_that_is_not_single_currency_inr_before_any_bill() {
+    let foreign = currency_source().replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+    );
+    assert_ne!(foreign, currency_source());
+    for (currency, expected) in [
+        (
+            multi_currency_source(),
+            "company_base_currency_undetermined",
+        ),
+        (foreign, "company_base_currency_not_inr"),
+    ] {
+        let simulator = SequenceSimulator::spawn(currency_then_native_plans(currency)).unwrap();
+        let result = crate::commands::sweep_company_outstandings(
+            &TallyRuntime::default(),
+            &TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            &TallyDate::parse("20260801").unwrap(),
+            OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await;
+        simulator.cancel();
+        match result {
+            Err(crate::commands::CompanySweepFailure::ReasonCode(code)) => {
+                assert_eq!(code, expected);
+            }
+            _ => panic!("{expected}: not refused"),
+        }
+        // The currency read's 14 requests, and not one more.
+        assert_eq!(requests_sent(simulator), 14, "{expected}");
+    }
+}
+
+/// bridge#551: a completed desktop read issues the working paper's one-use
+/// handle and a separate statement handle over the same held source.
+/// Exporting the working paper consumes only its own handle: statements
+/// remain exportable, once per party, from the rows Bridge holds.
+#[tokio::test]
+async fn a_completed_read_holds_its_statement_source_apart_from_the_working_paper() {
+    let mut plans = vec![xml(companies())];
+    plans.extend(currency_then_native_plans(currency_source()));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let rows = parse_companies_from_collection(&companies()).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.guid.as_deref() == Some("eebb9a9f-1679-4468-9e8f-814c729674cb"))
+        .unwrap();
+    let request: crate::commands::OutstandingsRequest = serde_json::from_value(serde_json::json!({
+        "config": {"host": simulator.address().ip().to_string(), "port": simulator.address().port()},
+        "selected_company": {
+            "display_name": row.name,
+            "company_guid": row.guid,
+            "company_number": row.company_number,
+            "books_from_yyyymmdd": row.books_from,
+        },
+        "currency_assertion": "INR",
+        "as_of_yyyymmdd": "20260801",
+    }))
+    .unwrap();
+    let working_papers =
+        crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default();
+    let statements =
+        crate::reports::outstandings_working_paper_store::PartyStatementSourceStore::default();
+    let response = crate::commands::read_screen_outstandings(
+        request,
+        &TallyRuntime::default(),
+        &working_papers,
+        &statements,
+    )
+    .await
+    .unwrap();
+    simulator.cancel();
+    let OutstandingsLoadResult::Complete {
+        statement_open_bills,
+        ..
+    } = &response.result
+    else {
+        panic!("{:?}", response.result);
+    };
+    assert!(!statement_open_bills.is_empty());
+    let statement_id = response.party_statement_source_id.clone().unwrap();
+    let working_paper_id = response.working_paper_export_id.clone().unwrap();
+    assert_ne!(statement_id, working_paper_id);
+    working_papers.take(&working_paper_id).unwrap();
+    for _ in 0..2 {
+        let source = crate::commands::party_statement_source(&statements, &statement_id).unwrap();
+        assert_eq!(&source.open_bills, statement_open_bills);
+    }
 }

@@ -22,8 +22,9 @@
 //! the voucher type, the voucher number when the batch set one, each entry's
 //! ledger, amount and side, and the narration. It does not cover `REFERENCE`,
 //! bill-wise or cost-centre allocations, or the party ledger, which the
-//! verification read does not fetch, so an edit to any of them in Tally is
-//! overwritten without being detected.
+//! verification read does not fetch. An edit to any of them made after Bridge
+//! first verified the build is caught instead by the voucher's ALTERID (#239;
+//! see `compare_and_swap`); one made before that verification is not.
 use super::*;
 
 /// Every build that shares one wire identity, in journal order.
@@ -137,11 +138,14 @@ impl Lineage {
 
     /// The compare-and-swap. Returns per-voucher evidence when every amended
     /// voucher is in the book as some build of this lineage wrote it, in the
-    /// fields the module doc lists, and per-voucher refusals otherwise.
+    /// fields the module doc lists, and has an ALTERID equal to one Bridge
+    /// recorded when it first verified such a build; per-voucher refusals
+    /// otherwise.
     pub(super) fn compare_and_swap(
         &self,
         vouchers: &[ImportVoucher],
         observed: &ImportReadSource,
+        baselines: &VerifiedBaselines,
     ) -> Result<Result<Vec<Value>, Vec<Value>>, String> {
         let mut admitted = Vec::new();
         let mut refused = Vec::new();
@@ -168,7 +172,10 @@ impl Lineage {
             }
             let row = canonical_read_voucher(row)?;
             let mut last_diffs = Vec::new();
-            let mut matched = None;
+            // Every build whose compared fields the book still matches: a build
+            // that changed only an uncompared field (a reference) matches too,
+            // whether or not it was ever imported.
+            let mut matching = Vec::new();
             for (batch_id, recorded) in self.versions(txn_id) {
                 let recorded = canonical_import_voucher(recorded)?;
                 let entries_match =
@@ -182,10 +189,44 @@ impl Lineage {
                     diffs.push(json!("narration"));
                 }
                 if diffs.is_empty() {
-                    matched = Some(batch_id);
+                    matching.push(batch_id);
                 }
                 last_diffs = diffs;
             }
+            // The fields above are all the read carries. Anything else a person
+            // changed (a reference, an allocation) shows only as the voucher's
+            // ALTERID moving past one Bridge recorded when it first verified a
+            // build (#239). A voucher's ALTERID advances on every alteration
+            // (TALLY_PROTOCOL_REFERENCE §9.3, measured over the gateway; an edit
+            // in Tally's own screens is not yet measured), so a current value
+            // equal to any matching build's baseline means the voucher has not
+            // been altered since that reading. A build never imported
+            // has no baseline and is passed over. No equal baseline refuses:
+            // as altered when some matching build has one, as never verified
+            // when none does.
+            let equal = matching.iter().copied().find(|batch_id| {
+                row.alter_id.is_some() && baselines.alter_id(batch_id, txn_id) == row.alter_id
+            });
+            let matched = match (matching.last(), equal) {
+                (None, _) => None,
+                (Some(_), Some(batch_id)) => Some(batch_id),
+                (Some(_), None) => {
+                    let verified = matching.iter().rev().find_map(|batch_id| {
+                        baselines
+                            .alter_id(batch_id, txn_id)
+                            .map(|alter_id| (*batch_id, alter_id))
+                    });
+                    refused.push(match verified {
+                        Some((batch_id, verified)) => json!({"bridge_txn_id":txn_id,
+                            "reason":"voucher_altered_since_verified","book_matches_batch_id":batch_id,
+                            "verified_alter_id":verified,"alter_id":row.alter_id,"guid":row.guid}),
+                        None => json!({"bridge_txn_id":txn_id,
+                            "reason":"voucher_never_verified","book_matches_batch_ids":matching,
+                            "alter_id":row.alter_id,"guid":row.guid}),
+                    });
+                    continue;
+                }
+            };
             match matched {
                 Some(batch_id) => {
                     let mut entry = json!({"bridge_txn_id":txn_id,
@@ -237,4 +278,45 @@ fn canonical_read_voucher(voucher: &ReadVoucher) -> Result<ReadVoucher, String> 
         entry.amount = canonical_verification_amount(&entry.amount)?;
     }
     Ok(voucher)
+}
+
+/// The ALTERID each voucher carried the first time Bridge verified it posted,
+/// per build (#239). Written once per voucher and never changed afterwards, so
+/// a later verify, which still reports a voucher posted after a person edits a
+/// field it does not compare, cannot move it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct VerifiedBaseline {
+    pub(super) vouchers: BTreeMap<String, u64>,
+}
+
+/// The baselines of every build in a lineage, by batch id.
+#[derive(Debug, Default)]
+pub(super) struct VerifiedBaselines(pub(super) BTreeMap<String, VerifiedBaseline>);
+
+impl VerifiedBaselines {
+    fn alter_id(&self, batch_id: &str, txn_id: &str) -> Option<u64> {
+        self.0.get(batch_id)?.vouchers.get(txn_id).copied()
+    }
+}
+
+/// Add to `existing` each voucher `proof` reports posted_verified with an
+/// ALTERID, leaving every voucher already recorded exactly as it was.
+pub(super) fn record_first_verified(existing: &mut VerifiedBaseline, proof: &Value) -> bool {
+    let mut added = false;
+    for voucher in proof["vouchers"].as_array().into_iter().flatten() {
+        if voucher["status"] != "posted_verified" {
+            continue;
+        }
+        let (Some(txn_id), Some(alter_id)) = (
+            voucher["bridge_txn_id"].as_str(),
+            voucher["alter_id"].as_u64(),
+        ) else {
+            continue;
+        };
+        if !existing.vouchers.contains_key(txn_id) {
+            existing.vouchers.insert(txn_id.to_string(), alter_id);
+            added = true;
+        }
+    }
+    added
 }

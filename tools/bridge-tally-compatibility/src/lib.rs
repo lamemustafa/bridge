@@ -300,7 +300,10 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // `src-tauri/src/agent_import_post_location.rs` (bridge#574) confirms which
 // loaded company a native post is aimed at, last before the POST, and reports
 // which companies' voucher marks moved after it.
-pub const MAX_SURFACE_FILES: usize = 276;
+// `native_outstandings/ledger_currency.rs` (bridge#551) classifies each
+// ledger's own currency against the base, which decides whether an
+// outstandings read reports any figure.
+pub const MAX_SURFACE_FILES: usize = 277;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

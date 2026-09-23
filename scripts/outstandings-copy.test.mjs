@@ -53,6 +53,22 @@ test("a foreign-currency ledger names the blocked book without inviting a repeat
   assert.equal(state.tallyReadAttempted, true);
 });
 
+test("a ledger kept in another currency names the ledger without inviting a repeat", () => {
+  for (const code of ["ledger_currency_base_unmatched", "foreign_currency_ledger_present"]) {
+    const state = outstandingsPartialState(code, undefined, undefined, "Synthetic FX Debtor");
+    assert.match(state.title, /not available for this company/i, code);
+    assert.match(state.message, /ledger Synthetic FX Debtor/, code);
+    assert.match(state.message, /rather than count amounts in another currency as rupees/i, code);
+    assert.equal(state.retryable, false, code);
+    assert.equal(state.tallyReadAttempted, true, code);
+  }
+  for (const code of ["ledger_currency_base_unmatched", "ledger_currency_unobserved"]) {
+    const state = outstandingsPartialState(code);
+    assert.doesNotMatch(state.message, /could not prove every requested segment/i, code);
+    assert.equal(state.retryable, false, code);
+  }
+});
+
 test("missing, empty, or zero-only counters name the unconfirmed effective-date boundary", () => {
   const state = outstandingsPartialState(
     "native_outstandings_as_of_unconfirmed_without_effective_date_evidence",
@@ -170,9 +186,15 @@ test("working-paper failures stay distinct from completed report availability", 
   assert.match(resource.title, /working paper unavailable/i);
   assert.match(resource.message, /report is complete/i);
   assert.match(resource.message, /safe export limits/i);
+  // bridge#551: statements come from the same held source, so they are
+  // unavailable too, and the copy must not promise them.
+  assert.match(resource.message, /party statements/i);
+  assert.doesNotMatch(resource.message, /other report exports remain available/i);
 
   const source = workingPaperUnavailableState("working_paper_complete_source_unavailable");
   assert.match(source.message, /native bill and unallocated controls/i);
+  assert.match(source.message, /party statements/i);
+  assert.doesNotMatch(source.message, /other report exports remain available/i);
 
   const store = workingPaperUnavailableState("working_paper_export_store_unavailable");
   assert.match(store.message, /one-use working-paper snapshot/i);

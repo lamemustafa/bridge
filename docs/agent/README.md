@@ -356,9 +356,9 @@ for the user. That client permission does not approve an accounting entry.
 One native-approved Journal and restart reconciliation have been observed on
 macOS against a synthetic Silver 7.1 instance. This remains a preview: Windows
 interactive approval and Gold/Education live posting have not been established.
-Native posting of a Payment, Receipt or Contra is admitted under the same
-safeguards (ADR 0004, amended 2026-09-22) but has not yet been observed live;
-Bridge-built files of those types have been imported and verified.
+Native posts of a Payment, a Receipt, a Contra and a three-entry Receipt have
+been observed live on a synthetic Silver 7.1 company, each reading back
+`posted_verified` (ADR 0004, amended 2026-09-23).
 
 1. Validate the exact existing ledger names and build **one Journal, Payment,
    Receipt or Contra** using the file workflow above. Sales, purchases, tax,
@@ -398,7 +398,18 @@ Bridge-built files of those types have been imported and verified.
    before one POST through the existing serial Tally queue. It saves response
    commitments/counters and performs mandatory accounting readback. Only a
    clean create response together with matching readback confirms the first
-   posting as `posted_verified`.
+   posting as `posted_verified`. Unless the company's master AlterID is proven
+   unmoved across the POST, Bridge re-reads the ledgers and reports it in
+   `masters_after_post`. If an approved ledger no longer resolves to its
+   approved GUID (`posted_under_changed_masters`), or that check cannot be
+   completed (`masters_after_post_unconfirmed`), the voucher is in Tally but the
+   result is `reconciliation_required`: review it in Tally, correct it there if
+   needed, and do not rebuild the event. Bridge records the check with the
+   batch. A changed ledger stays reported on every later `verify_import`, even
+   after the voucher is corrected in Tally; a check that could not finish is
+   finished by the next `verify_import` that finds the voucher. If Bridge cannot
+   record the check, the post is refused before anything is sent
+   (`post_masters_record_unavailable`).
 
 Keep the selected company free of other imports and ledger changes while posting,
 and leave Tally's product/licence mode unchanged. Bridge serializes its own writers;
