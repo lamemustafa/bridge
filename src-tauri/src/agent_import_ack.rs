@@ -167,10 +167,12 @@ fn admit_review(
     if result["dispatch"]["response_state"] != "response_clean" {
         return Err("ack_response_not_clean".into());
     }
-    // `posted_verified` already requires the voucher accounting-effective:
-    // neither cancelled nor optional (`verify_batch`).
+    // `verify_batch` today reports `posted_verified` only for a voucher that
+    // is neither cancelled nor optional. This checks it again here rather than
+    // rely on that staying true.
     let row = marked_row(line, rows)
         .filter(|_| verification_status(result, 1) == "posted_verified")
+        .filter(|row| row.cancelled == Some(false) && row.optional == Some(false))
         .ok_or_else(|| "ack_readback_not_matched".to_string())?;
     let (Some(voucher_guid), Some(voucher_master_id), Some(alter_id)) =
         (row.guid.clone(), row.master_id.clone(), row.alter_id)
@@ -341,10 +343,12 @@ pub(super) fn operator_review(
         && record.doubt_sha256 == sha256_hex(&raw);
     let row = marked_row(line, rows);
     let voucher_unchanged = record.voucher_fingerprint_fields == FINGERPRINT_FIELDS
-        // The fingerprint covers the GUID and MASTERID; the ALTERID is bound
-        // on its own.
+        // The fingerprint also covers the GUID and MASTERID today; they are
+        // compared on their own as well, and the ALTERID only here.
         && row.is_some_and(|row| {
-            row.alter_id == Some(record.alter_id)
+            row.guid.as_deref() == Some(record.voucher_guid.as_str())
+                && row.master_id.as_deref() == Some(record.voucher_master_id.as_str())
+                && row.alter_id == Some(record.alter_id)
                 && voucher_fingerprint(row) == record.voucher_fingerprint_sha256
         });
     Some(json!({
