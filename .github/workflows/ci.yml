@@ -687,6 +687,46 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/prune-package-compiler-cache.mjs --apply
 
+  tax-audit-mutations:
+    name: Tax-audit mutation records
+    # No build: this checks the committed results file, never re-runs a mutation.
+    # parity/mutations.py's docstring states the guarantee it enforces.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test the mutation runner
+        run: python3 -m unittest discover -s src-tauri/crates/bridge-tax-audit/parity -p 'test_mutations.py'
+      # Every mutation applies exactly once, and every mutation this change selects
+      # has a killed record made on exactly this merged crate tree.
+      - name: Check the change's mutations are proven on this tree
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 src-tauri/crates/bridge-tax-audit/parity/mutations.py --verify --changed-since "$BASE_SHA"
+      - name: Refuse a crate change while the nightly mutation run is failing
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git diff --name-only "$BASE_SHA" HEAD -- src-tauri/crates/bridge-tax-audit)" ]; then
+            echo "No bridge-tax-audit change."
+            exit 0
+          fi
+          open="$(gh issue list --label mutation-nightly --state open --limit 100 --json number --jq '[.[].number] | join(" ")')"
+          if [ -n "$open" ]; then
+            echo "The nightly tax-audit mutation run is failing (issue $open); fix it before changing the crate." >&2
+            exit 1
+          fi
+
   required-checks:
     name: Required checks
     # Always runs so it can report a single, stable required status for branch
