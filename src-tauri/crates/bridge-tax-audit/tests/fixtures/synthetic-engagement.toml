@@ -24,6 +24,13 @@ round_off_ledgers = ["Round Off"]
 # Creditors group.
 creditor_groups = ["Sundry Creditors"]
 trade_creditors_source = { kind = "groups" }
+# book_keeping_quality only: all five are REQUIRED by the reference engine (book_keeping_quality_config,
+# tax_ledgers_by_head); none is configured for this invented book.
+payment_channel_debtors = []
+gst_payment_ledgers = []
+writeoff_discount_ledgers = []
+reissue_narration_terms = []
+tax_ledgers = {}
 
 # cash_payments_40a3 only: [loans.loan_ledgers.<ledger>] names a ledger the client has already
 # configured for the (not yet ported) loans_interest test; "Sunrise NBFC Loan" is covered here,

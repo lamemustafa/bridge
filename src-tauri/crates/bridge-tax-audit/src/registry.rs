@@ -39,6 +39,11 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, c| crate::applicability_44ab_on(e, b, r, &c.turnover_inputs),
     },
     PortedTest {
+        id: "book_keeping_quality",
+        min_figures: 12,
+        run_on: |e, b, r, _| crate::book_keeping_quality_on(e, b, r),
+    },
+    PortedTest {
         id: "cash_44ab",
         min_figures: 7,
         run_on: |e, b, r, _| crate::cash_44ab_on(e, b, r),

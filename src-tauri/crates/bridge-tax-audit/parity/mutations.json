@@ -2446,5 +2446,509 @@
   "file": "src/lib.rs",
   "from": "    if let Some(key) = bound.tds_tcs_26as_missing {",
   "to": "    if let Some(key) = bound.tds_tcs_26as_missing.filter(|_| false) {"
+ },
+ {
+  "id": "E1B-01",
+  "by": "author",
+  "what": "lag over 30 includes 30",
+  "file": "src/book_keeping_quality.rs",
+  "from": "*lag > LAG_OVER_DAYS)",
+  "to": "*lag >= LAG_OVER_DAYS)"
+ },
+ {
+  "id": "E1B-02",
+  "by": "author",
+  "what": "clock keeps the earliest sale date",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Some(c) if *c >= v.date => c,",
+  "to": "Some(c) if *c <= v.date => c,"
+ },
+ {
+  "id": "E1B-03",
+  "by": "author",
+  "what": "equal MASTERIDs reversed",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    ordered.sort_by_key(|(mid, _)| *mid); // stable, as Python's sort",
+  "to": "    ordered.reverse();\n    ordered.sort_by_key(|(mid, _)| *mid);"
+ },
+ {
+  "id": "E1B-04",
+  "by": "author",
+  "what": "after-last-sale includes the last sale",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|(mid, _)| *mid > last)",
+  "to": ".filter(|(mid, _)| *mid >= last)"
+ },
+ {
+  "id": "E1B-05",
+  "by": "author",
+  "what": "unparseable MASTERID read as 0",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    if !well_formed {\n        return Ok(None);\n    }",
+  "to": "    if !well_formed {\n        return Ok(Some(0));\n    }"
+ },
+ {
+  "id": "E1B-06",
+  "by": "author",
+  "what": "a repeated GUID keeps its first lag",
+  "file": "src/book_keeping_quality.rs",
+  "from": "lag.insert(v.guid.as_str(), (days, *v));",
+  "to": "lag.entry(v.guid.as_str()).or_insert((days, *v));"
+ },
+ {
+  "id": "E1B-07",
+  "by": "author",
+  "what": "receipt window ends at 2 days",
+  "file": "src/book_keeping_quality.rs",
+  "from": "const RECEIPT_MATCH_MAX_DAYS: i64 = 3;",
+  "to": "const RECEIPT_MATCH_MAX_DAYS: i64 = 2;"
+ },
+ {
+  "id": "E1B-08",
+  "by": "author",
+  "what": "receipt window starts a day early",
+  "file": "src/book_keeping_quality.rs",
+  "from": "const RECEIPT_MATCH_MIN_DAYS: i64 = 0;",
+  "to": "const RECEIPT_MATCH_MIN_DAYS: i64 = -1;"
+ },
+ {
+  "id": "E1B-09",
+  "by": "author",
+  "what": "a receipt can match twice",
+  "file": "src/book_keeping_quality.rs",
+  "from": "                used.insert(rguid);\n",
+  "to": ""
+ },
+ {
+  "id": "E1B-10",
+  "by": "author",
+  "what": "invoices matched by GUID, not date",
+  "file": "src/book_keeping_quality.rs",
+  "from": "ordered.sort_by(|a, b| (&a.1.date, a.0).cmp(&(&b.1.date, b.0)));\n    let mut used",
+  "to": "ordered.sort_by(|a, b| a.0.cmp(b.0));\n    let mut used"
+ },
+ {
+  "id": "E1B-11",
+  "by": "author",
+  "what": "purchase rate takes a negative quantity",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            if q > 0.0 {\n                let e = amt",
+  "to": "            if q != 0.0 {\n                let e = amt"
+ },
+ {
+  "id": "E1B-12",
+  "by": "author",
+  "what": "purchase rate uses the signed amount",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".checked_add(a.checked_abs().ok_or_else(overflow)?)",
+  "to": ".checked_add(a)"
+ },
+ {
+  "id": "E1B-13",
+  "by": "author",
+  "what": "cash line classified before the channel line",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    if debits.iter().any(|l| debtors.contains(*l)) {\n        0\n    } else if debits.iter().any(|l| cash.contains(*l)) {\n        1",
+  "to": "    if debits.iter().any(|l| cash.contains(*l)) {\n        1\n    } else if debits.iter().any(|l| debtors.contains(*l)) {\n        0"
+ },
+ {
+  "id": "E1B-14",
+  "by": "author",
+  "what": "int below float compared inexactly",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        i128::from(sale) <= f\n",
+  "to": "        i128::from(sale) < f\n"
+ },
+ {
+  "id": "E1B-15",
+  "by": "author",
+  "what": "cost rounded half away from zero",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let r = x.round_ties_even();",
+  "to": "let r = x.round();"
+ },
+ {
+  "id": "E1B-16",
+  "by": "author",
+  "what": "a zero-quantity sale line priced",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if r == 0.0 || q <= 0.0 {",
+  "to": "if r == 0.0 || q < 0.0 {"
+ },
+ {
+  "id": "E1B-17",
+  "by": "author",
+  "what": "a stock ledger counted per line",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let touched: BTreeSet<&String> = v",
+  "to": "let touched: Vec<&String> = v"
+ },
+ {
+  "id": "E1B-18",
+  "by": "author",
+  "what": "GST head sums debit, not closing",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".map(|l| book.tb.get(*l).map_or(0, |t| t.closing_paise)),",
+  "to": ".map(|l| book.tb.get(*l).map_or(0, |t| t.debit_paise)),"
+ },
+ {
+  "id": "E1B-19",
+  "by": "author",
+  "what": "re-issue narration not upper-cased",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        let narration = support::py_upper(&v.narration);\n        if terms_upper",
+  "to": "        let narration = v.narration.clone();\n        if terms_upper"
+ },
+ {
+  "id": "E1B-20",
+  "by": "author",
+  "what": "a write-off keeps its last line, not the sum of its lines",
+  "file": "src/book_keeping_quality.rs",
+  "from": "row.1 = row.1.checked_add(amt).ok_or_else(overflow)?;",
+  "to": "row.1 = amt;"
+ },
+ {
+  "id": "E1B-21",
+  "by": "author",
+  "what": "write-off debtor must be directly under Sundry Debtors",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".is_some_and(|led| led.under(SUNDRY_DEBTORS_GROUP))",
+  "to": ".is_some_and(|led| led.parent == SUNDRY_DEBTORS_GROUP)"
+ },
+ {
+  "id": "E1B-22",
+  "by": "author",
+  "what": "contra direction sign inverted",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if narration.contains(keyword) && (cash_net > 0) != (expected_sign > 0) {",
+  "to": "if narration.contains(keyword) && (cash_net > 0) == (expected_sign > 0) {"
+ },
+ {
+  "id": "E1B-23",
+  "by": "author",
+  "what": "contra keywords matched case-sensitively",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        let narration = support::py_upper(&v.narration);\n        for (keyword",
+  "to": "        let narration = v.narration.clone();\n        for (keyword"
+ },
+ {
+  "id": "E1B-24",
+  "by": "author",
+  "what": "BKQ-1 tolerance widened",
+  "file": "src/book_keeping_quality.rs",
+  "from": "const TOL_PAISE: i64 = 100;",
+  "to": "const TOL_PAISE: i64 = 1000;"
+ },
+ {
+  "id": "E1B-25",
+  "by": "author",
+  "what": "BKQ-1 checks touched ledgers instead",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if fig.value != Value::Int(0) {",
+  "to": "if fig.value == Value::Int(0) {"
+ },
+ {
+  "id": "E1B-26",
+  "by": "author",
+  "what": "invoices counted per year, not month",
+  "file": "src/book_keeping_quality.rs",
+  "from": "*per_month.entry(&v.date.as_str()[..6]).or_default() += 1;",
+  "to": "*per_month.entry(&v.date.as_str()[..4]).or_default() += 1;"
+ },
+ {
+  "id": "E1B-27",
+  "by": "author",
+  "what": "next-day count takes same-day",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|lag| **lag == 1)",
+  "to": ".filter(|lag| **lag <= 1)"
+ },
+ {
+  "id": "E1B-28",
+  "by": "author",
+  "what": "comparison margin always claimed available",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let comparison_available = named.lines > 0 && named.sales_paise != 0;",
+  "to": "let comparison_available = named.lines > 0;"
+ },
+ {
+  "id": "E1B-29",
+  "by": "author",
+  "what": "a non-ASCII MASTERID digit not treated as a digit",
+  "file": "src/book_keeping_quality.rs",
+  "from": "g.chars().all(support::py_is_decimal)",
+  "to": "g.bytes().all(|b| b.is_ascii_digit())"
+ },
+ {
+  "id": "E1B-30",
+  "by": "author",
+  "what": "slug separators not collapsed",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        } else if !in_run {\n            out.push('_');",
+  "to": "        } else {\n            out.push('_');"
+ },
+ {
+  "id": "E1B-31",
+  "by": "author",
+  "what": "payment-channel receipts include Sales",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        if v.base_type == SALES_BASE_TYPE {\n            continue;\n        }\n        let credit",
+  "to": "        let credit"
+ },
+ {
+  "id": "E1B-32",
+  "by": "author",
+  "what": "gross value counts every line",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|l| l.amount_paise > 0)\n            .map(|l| l.amount_paise),\n    )\n}",
+  "to": ".map(|l| l.amount_paise.abs()),\n    )\n}"
+ },
+ {
+  "id": "E1B-33",
+  "by": "author",
+  "what": "MASTERID stripped with str.strip()'s set, not int()'s",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    let t = text.trim();\n",
+  "to": "    let t = support::py_strip(text);\n"
+ },
+ {
+  "id": "E1B-34",
+  "by": "author",
+  "what": "a non-ASCII digit refused even where int() rejects the text",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    let t = text.trim();\n",
+  "to": "    if text.chars().any(|c| !c.is_ascii() && support::py_is_decimal(c)) {\n        return Err(AuditError::Config(String::new()));\n    }\n    let t = text.trim();\n"
+ },
+ {
+  "id": "E1B-O01",
+  "by": "reviewer",
+  "what": "receipts tried in GUID order, not (date, GUID)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        list.sort_unstable();\n",
+  "to": ""
+ },
+ {
+  "id": "E1B-O03",
+  "by": "reviewer",
+  "what": "invoice ties broken by descending GUID",
+  "file": "src/book_keeping_quality.rs",
+  "from": "ordered.sort_by(|a, b| (&a.1.date, a.0).cmp(&(&b.1.date, b.0)));\n    let mut used",
+  "to": "ordered.sort_by(|a, b| a.1.date.cmp(&b.1.date).then(b.0.cmp(a.0)));\n    let mut used"
+ },
+ {
+  "id": "E1B-O04",
+  "by": "reviewer",
+  "what": "purchase quantities accumulated in reverse population order",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    let mut qty: BTreeMap<&str, f64> = BTreeMap::new();\n    for v in pop {",
+  "to": "    let mut qty: BTreeMap<&str, f64> = BTreeMap::new();\n    for v in pop.iter().rev() {"
+ },
+ {
+  "id": "E1B-O05",
+  "by": "reviewer",
+  "what": "sale costs accumulated after rounding each",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        b.cost_paise += cost;",
+  "to": "        b.cost_paise += cost.round();"
+ },
+ {
+  "id": "E1B-O07",
+  "by": "reviewer",
+  "what": "re-issue terms not upper-cased",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".map(|t| support::py_upper(t))",
+  "to": ".map(|t| t.clone())"
+ },
+ {
+  "id": "E1B-O08",
+  "by": "reviewer",
+  "what": "invoice amount counts credit lines too",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|l| debtors.contains(&l.ledger) && l.amount_paise > 0)",
+  "to": ".filter(|l| debtors.contains(&l.ledger) && l.amount_paise != 0)"
+ },
+ {
+  "id": "E1B-O09",
+  "by": "reviewer",
+  "what": "sales lag themselves",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            });\n            continue;\n        }\n        let Some(c) = clock",
+  "to": "            });\n        }\n        let Some(c) = clock"
+ },
+ {
+  "id": "E1B-O10",
+  "by": "reviewer",
+  "what": "BKQ-1 boundary moved to >= 100",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if movement.checked_abs().ok_or_else(overflow)? > TOL_PAISE {",
+  "to": "if movement.checked_abs().ok_or_else(overflow)? >= TOL_PAISE {"
+ },
+ {
+  "id": "E1B-O11",
+  "by": "reviewer",
+  "what": "write-off ledger debit accepts a zero line",
+  "file": "src/book_keeping_quality.rs",
+  "from": "inputs.writeoff_discount_ledgers.contains(&l.ledger) && l.amount_paise > 0)",
+  "to": "inputs.writeoff_discount_ledgers.contains(&l.ledger) && l.amount_paise >= 0)"
+ },
+ {
+  "id": "E1B-O12",
+  "by": "reviewer",
+  "what": "zero debtor lines kept as write-offs",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            if l.amount_paise >= 0 {\n                continue;\n            }\n            if book",
+  "to": "            if l.amount_paise > 0 {\n                continue;\n            }\n            if book"
+ },
+ {
+  "id": "E1B-O13",
+  "by": "reviewer",
+  "what": "a zero net cash Contra is not skipped",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        if cash_net == 0 {\n            continue;\n        }\n",
+  "to": ""
+ },
+ {
+  "id": "E1B-O14",
+  "by": "reviewer",
+  "what": "payment ledger movement reads credit",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Value::Int(tb.map_or(0, |t| t.debit_paise)),",
+  "to": "Value::Int(tb.map_or(0, |t| t.credit_paise)),"
+ },
+ {
+  "id": "E1B-O15",
+  "by": "reviewer",
+  "what": "GST finding needs either head or payment",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if !head_facts.is_empty() && !payment_facts.is_empty() {",
+  "to": "if !head_facts.is_empty() || !payment_facts.is_empty() {"
+ },
+ {
+  "id": "E1B-O16",
+  "by": "reviewer",
+  "what": "margin section needs lines only",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if pc.lines > 0 && pc.sales_paise != 0 {",
+  "to": "if pc.lines > 0 {"
+ },
+ {
+  "id": "E1B-O17",
+  "by": "reviewer",
+  "what": "per-month min and max swapped",
+  "file": "src/book_keeping_quality.rs",
+  "from": "per_month.values().min(), per_month.values().max()",
+  "to": "per_month.values().max(), per_month.values().min()"
+ },
+ {
+  "id": "E1B-O18",
+  "by": "reviewer",
+  "what": "matched evidence cites every invoice",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            evidence(&within3, |d| d.0),",
+  "to": "            evidence(&invoices, |d| d.0),"
+ },
+ {
+  "id": "E1B-O19",
+  "by": "reviewer",
+  "what": "unparseable count emitted when zero",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    if eo.unparseable > 0 {",
+  "to": "    if eo.unparseable >= 0 {"
+ },
+ {
+  "id": "E1B-O20",
+  "by": "reviewer",
+  "what": "negative MASTERID read as positive",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if negative { \"-\" } else { \"\" }",
+  "to": "\"\""
+ },
+ {
+  "id": "E1B-O21",
+  "by": "reviewer",
+  "what": "contra hash truncated to 10 hex",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".take(6)\n        .map(|b| format!(\"{b:02x}\"))",
+  "to": ".take(5)\n        .map(|b| format!(\"{b:02x}\"))"
+ },
+ {
+  "id": "E1B-O22",
+  "by": "reviewer",
+  "what": "named and cash buckets swapped",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let [pc, _, named] = margin_buckets",
+  "to": "let [pc, named, _] = margin_buckets"
+ },
+ {
+  "id": "E1B-O23",
+  "by": "reviewer",
+  "what": "write-off cited by a non-voucher id, as before the reference's fix",
+  "file": "src/book_keeping_quality.rs",
+  "from": "EvidenceRef::with_label(\"voucher\", &guid, &label)",
+  "to": "EvidenceRef::with_label(\"voucher\", &format!(\"{guid}:row\"), &label)"
+ },
+ {
+  "id": "E1B-O24",
+  "by": "reviewer",
+  "what": "tax head ledgers not bound by identity",
+  "file": "src/binding.rs",
+  "from": "let bound = lbinder.bind_list(&names_at(names, &location)?, &location)?;",
+  "to": "let bound = names_at(names, &location)?;"
+ },
+ {
+  "id": "E1B-O25",
+  "by": "reviewer",
+  "what": "payment_channel_debtors not bound by identity",
+  "file": "src/binding.rs",
+  "from": "            *slot = Some(lbinder.bind_list(&names_at(value, &location)?, &location)?);",
+  "to": "            *slot = Some(if key == \"payment_channel_debtors\" { names_at(value, &location)? } else { lbinder.bind_list(&names_at(value, &location)?, &location)? });"
+ },
+ {
+  "id": "E1B-O29",
+  "by": "reviewer",
+  "what": "stock ledgers from the direct parent only",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    let stock_ledgers = book.ledgers_under_any(&[STOCK_GROUP.to_string()]);",
+  "to": "    let stock_ledgers: BTreeSet<String> = book.ledgers.values().filter(|l| l.parent == STOCK_GROUP).map(|l| l.name.clone()).collect();"
+ },
+ {
+  "id": "E1B-35",
+  "by": "author",
+  "what": "the int() digit limit moved one digit up",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS + 1 {"
+ },
+ {
+  "id": "E1B-36",
+  "by": "author",
+  "what": "underscores counted as digits toward the int() limit",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if digits.chars().count() > PY_INT_MAX_STR_DIGITS {"
+ },
+ {
+  "id": "E1B-37",
+  "by": "author",
+  "what": "write-off citations not deduplicated",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".collect::<BTreeSet<(String, String)>>()\n            .into_iter()",
+  "to": ".collect::<Vec<(String, String)>>()\n            .into_iter()"
+ },
+ {
+  "id": "E1B-38",
+  "by": "author",
+  "what": "the debtor dropped from a write-off citation's label",
+  "file": "src/book_keeping_quality.rs",
+  "from": "format!(\"{}, {debtor}\", support::voucher_label(v)),",
+  "to": "support::voucher_label(v),"
+ },
+ {
+  "id": "E1B-39",
+  "by": "author",
+  "what": "write-off rows keyed by debtor alone, not voucher position and debtor",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".entry((n, l.ledger.clone()))",
+  "to": ".entry((0, l.ledger.clone()))"
  }
 ]

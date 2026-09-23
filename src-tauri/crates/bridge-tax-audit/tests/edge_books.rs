@@ -25,9 +25,9 @@ use bridge_tax_audit::documents::traces_documents_from_json;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-    statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts,
-    Tds26asConfig, TdsConfig,
+    book_keeping_quality, cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny,
+    stale_balances_41_1, statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
+    twentysixas_receipts, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -297,6 +297,32 @@ fn tds_26as_config(s: &Value) -> Tds26asConfig {
     }
 }
 
+/// `book_keeping_quality`'s inputs from the spec's `book_keeping_quality` table, as
+/// `parity/edge_golden.py` passes them: every key optional and empty when absent, `tax_ledgers`
+/// flattened to ledger -> head.
+fn bkq_inputs(s: &Value) -> book_keeping_quality::Inputs {
+    let b = &s["book_keeping_quality"];
+    let set = |k: &str| strs(&b[k]).into_iter().collect();
+    let mut tax_ledgers_by_head = BTreeMap::new();
+    if let Some(heads) = b["tax_ledgers"].as_object() {
+        for (head, ledgers) in heads {
+            for ledger in strs(ledgers) {
+                assert!(
+                    tax_ledgers_by_head.insert(ledger, head.clone()).is_none(),
+                    "an edge book lists a ledger under one GST head only"
+                );
+            }
+        }
+    }
+    book_keeping_quality::Inputs {
+        payment_channel_debtors: set("payment_channel_debtors"),
+        tax_ledgers_by_head,
+        gst_payment_ledgers: set("gst_payment_ledgers"),
+        reissue_narration_terms: strs(&b["reissue_narration_terms"]),
+        writeoff_discount_ledgers: set("writeoff_discount_ledgers"),
+    }
+}
+
 /// Build the book, run every test the spec names, and compare each whole dump with the reference's.
 fn check(name: &str) {
     let s = spec(name);
@@ -369,6 +395,11 @@ fn check(name: &str) {
                 let c = statutory_dues_43b::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
+            "book_keeping_quality" => {
+                let r = book_keeping_quality::run(&book, &rules, &cash, &bkq_inputs(&s)).unwrap();
+                let c = book_keeping_quality::check_invariants(&book, &r).unwrap();
+                (r, c)
+            }
             "tds_payees" => {
                 let entity_type = s["entity_type"].as_str().unwrap_or("individual");
                 let r = tds_payees::run(&book, &rules, entity_type, &tds_config(&s)).unwrap();
@@ -412,7 +443,8 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 9] = [
+const EDGE_TESTS: [&str; 10] = [
+    "book_keeping_quality",
     "cash_book_integrity",
     "creditor_ageing_43bh",
     "ledger_scrutiny",
