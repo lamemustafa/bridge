@@ -93,10 +93,7 @@ impl Server {
                 OutstandingsLoadResult::Partial { reason, .. } => {
                     result_evidence.state = "partial";
                     result_evidence.reason_code = Some(reason.reason_code.clone());
-                    (
-                        json!({"state":"partial", "partial_reason": reason.reason_code}),
-                        false,
-                    )
+                    (partial_payload(&reason, self.settings.redaction), false)
                 }
             };
             Ok(ToolOutcome {
@@ -109,6 +106,19 @@ impl Server {
         .await;
         result.map_err(|failure| failure.with_prior_evidence(result_evidence))
     }
+}
+
+/// A withheld result: its reason, and the ledger a currency refusal names
+/// (bridge#551), as a party name so that redaction applies to it.
+pub(super) fn partial_payload(
+    reason: &crate::tally::OutstandingsPartialReason,
+    redaction: Redaction,
+) -> Value {
+    let mut partial = json!({"state":"partial", "partial_reason": reason.reason_code});
+    if let Some(ledger) = &reason.foreign_currency_ledger_name {
+        partial["ledger"] = redact_value(party_name_value(ledger.clone()), redaction);
+    }
+    partial
 }
 
 pub(super) fn direction_matches(kind: ExposureDirection, requested: &str) -> bool {

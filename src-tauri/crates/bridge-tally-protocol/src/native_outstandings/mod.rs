@@ -25,7 +25,8 @@ mod request;
 mod wire;
 
 pub use compute::{
-    age_in_days, compute_native_outstandings, NativeGroupSnapshot, NativeMasterSnapshot,
+    age_in_days, compute_native_outstandings, compute_native_outstandings_with_exclusions,
+    NativeGroupSnapshot, NativeMasterSnapshot,
 };
 pub use date::{parse_native_bill_date, parse_native_due_date};
 pub use ledger_currency::{
@@ -47,5 +48,6 @@ pub use request::{
 pub use wire::{
     parse_company_currency, parse_native_bill_rows, parse_native_group_snapshot,
     parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
-    parse_native_ledger_snapshot_for_company, NativeGroupSnapshotEntry,
+    parse_native_ledger_snapshot_classified, parse_native_ledger_snapshot_for_company,
+    ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
 };

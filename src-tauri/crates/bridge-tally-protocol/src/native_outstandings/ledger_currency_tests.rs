@@ -255,3 +255,237 @@ fn the_snapshot_reads_an_empty_currency_as_none_and_refuses_a_duplicate() {
         );
     }
 }
+
+/// The FOREX capture as captured, its three composite balances intact: the
+/// classified parse excludes the three `$` ledgers before parsing any balance,
+/// so the read no longer refuses, and the seven rupee ledgers keep their
+/// parsed balances.
+#[test]
+fn the_classified_snapshot_excludes_foreign_ledgers_before_parsing_their_balances() {
+    let snapshot = crate::native_outstandings::parse_native_ledger_snapshot_classified(
+        &forex_book(),
+        &forex_base(),
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot
+            .foreign
+            .iter()
+            .map(|ledger| ledger.ledger.as_str())
+            .collect::<Vec<_>>(),
+        ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"]
+    );
+    assert_eq!(
+        snapshot
+            .base
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        FOREX_ROWS
+            .iter()
+            .filter(|(_, currency)| *currency != "$")
+            .map(|(ledger, _)| *ledger)
+            .collect::<Vec<_>>()
+    );
+    let inr_debtor = snapshot
+        .base
+        .iter()
+        .find(|entry| entry.name == "BRIDGE INR DEBTOR A")
+        .unwrap();
+    assert_eq!(
+        inr_debtor.closing_balance,
+        Some(bridge_tally_primitives::ExactDecimal::parse("-3000.00").unwrap())
+    );
+    assert_eq!(snapshot.unobserved, 0);
+}
+
+/// A composite balance on a ledger classified as the base is still refused:
+/// only a foreign ledger's balance is excused from the parse.
+#[test]
+fn a_composite_balance_on_a_base_ledger_still_refuses() {
+    let book = forex_book();
+    // Relabel the one `$` ledger with a composite opening as a rupee ledger.
+    let start = book.find("<LEDGER NAME=\"BRIDGE FX DEBTOR A\"").unwrap();
+    let tag = "<CURRENCYNAME TYPE=\"String\">$</CURRENCYNAME>";
+    let at = start + book[start..].find(tag).unwrap();
+    let mut relabelled = book.clone();
+    relabelled.replace_range(
+        at..at + tag.len(),
+        "<CURRENCYNAME TYPE=\"String\">I\u{20b9}</CURRENCYNAME>",
+    );
+    assert_eq!(
+        crate::native_outstandings::parse_native_ledger_snapshot_classified(
+            &relabelled,
+            &forex_base()
+        ),
+        Err(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+            ledger_name: "BRIDGE FX DEBTOR A".to_string()
+        })
+    );
+}
+
+#[test]
+fn the_classified_snapshot_refuses_what_the_classification_refuses() {
+    assert_eq!(
+        crate::native_outstandings::parse_native_ledger_snapshot_classified(
+            &forex_book(),
+            &BaseCurrencyName::among_several_for_tests("\u{20b9}"),
+        ),
+        Err(NativeOutstandingsError::LedgerCurrency(
+            LedgerCurrencyRefusal::BaseUnmatched { ledger: None }
+        ))
+    );
+    let single = crate::native_outstandings::parse_native_ledger_snapshot_classified(
+        &single_currency_book(),
+        &rs_base(),
+    )
+    .unwrap();
+    assert_eq!(
+        (single.base.len(), single.foreign.len(), single.unobserved),
+        (13, 0, 0)
+    );
+}
+
+// ---- Outstandings over the captured FOREX bills and snapshot (forex PR 2a) ----
+
+use crate::native_outstandings::{
+    compute_native_outstandings, compute_native_outstandings_with_exclusions,
+    parse_native_bill_rows, parse_native_ledger_snapshot_classified, AgeingAnchor,
+    NativeGroupSnapshot, NativeMasterSnapshot,
+};
+use bridge_tally_primitives::{ExactDecimal, TallyDate};
+
+fn bills() -> Vec<crate::native_outstandings::NativeBillRow> {
+    parse_native_bill_rows(
+        &decode(include_bytes!(
+            "../../tests/fixtures/bills_receivable_forex_live.utf16le.xml"
+        )),
+        // The book's own `BOOKSFROM`; FX-OPEN-1 is dated the day before it
+        // (TALLY_PROTOCOL_REFERENCE §12a.10).
+        &TallyDate::parse("20250401").unwrap(),
+        &TallyDate::parse("20250930").unwrap(),
+    )
+    .unwrap()
+}
+
+fn amount(value: &str) -> ExactDecimal {
+    ExactDecimal::parse(value).unwrap()
+}
+
+/// The book's rupee master is `I₹`, one of its two masters. Built through the
+/// test-only constructor until bridge#601 identifies a base among several.
+fn forex_snapshot() -> crate::native_outstandings::ClassifiedLedgerSnapshot {
+    parse_native_ledger_snapshot_classified(
+        &decode(include_bytes!(
+            "../../tests/fixtures/ledgers_currency_forex_live.utf16le.xml"
+        )),
+        &BaseCurrencyName::among_several_for_tests("I\u{20b9}"),
+    )
+    .unwrap()
+}
+
+#[test]
+fn the_four_dollar_bills_are_left_out_of_every_figure() {
+    let bills = bills();
+    assert_eq!(bills.len(), 18);
+    let snapshot = forex_snapshot();
+    let result = compute_native_outstandings_with_exclusions(
+        "BRIDGE CORPUS FOREX",
+        &bills,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &snapshot.base,
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        &snapshot.foreign,
+        AgeingAnchor::DueDate,
+        &TallyDate::parse("20250930").unwrap(),
+        0,
+    )
+    .unwrap();
+    // The 14 rupee bills only: INR-OPEN-1 1,000 + INR-INV-1 2,000 + the
+    // twelve FX-INV-01..12 on the rupee "FX Party" ledgers, 1,250 to 4,000 in
+    // steps of 250 (31,500). The four dollar bills (350,100 read as rupees)
+    // are not in it.
+    assert_eq!(result.report.receivable_total, amount("34500"));
+    let parties = result
+        .report
+        .top_parties
+        .iter()
+        .map(|party| party.party.as_str())
+        .collect::<Vec<_>>();
+    for dollar in ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"] {
+        assert!(!parties.contains(&dollar), "{dollar} in {parties:?}");
+        assert!(
+            result
+                .residuals
+                .iter()
+                .all(|residual| residual.party != dollar),
+            "{dollar} has a residual"
+        );
+    }
+    assert_eq!(
+        result
+            .foreign_currency_ledgers_excluded
+            .iter()
+            .map(|ledger| ledger.ledger.as_str())
+            .collect::<Vec<_>>(),
+        ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"]
+    );
+}
+
+/// Control: without the exclusions, the same captured bills put the dollar
+/// amounts into the rupee total. That is the leak this series closes.
+#[test]
+fn without_exclusions_the_dollar_bills_would_be_counted_as_rupees() {
+    let bills = bills();
+    let snapshot = forex_snapshot();
+    let result = compute_native_outstandings(
+        "BRIDGE CORPUS FOREX",
+        &bills,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &snapshot.base,
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &TallyDate::parse("20250930").unwrap(),
+        0,
+    )
+    .unwrap();
+    assert_eq!(result.report.receivable_total, amount("384600"));
+    assert!(result.foreign_currency_ledgers_excluded.is_empty());
+}
+
+/// With exclusions, a bill whose party is in neither the base ledgers nor the
+/// excluded ones refuses: it could be a foreign ledger that cannot be told
+/// apart.
+#[test]
+fn with_exclusions_a_bill_of_an_unknown_party_refuses() {
+    let mut bills = bills();
+    let stray = bills
+        .iter()
+        .position(|bill| bill.party == "FX Party 01")
+        .unwrap();
+    bills[stray].party = "Not A Ledger".to_string();
+    let snapshot = forex_snapshot();
+    assert_eq!(
+        compute_native_outstandings_with_exclusions(
+            "BRIDGE CORPUS FOREX",
+            &bills,
+            &[],
+            NativeMasterSnapshot {
+                ledgers: &snapshot.base,
+                groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+            },
+            &snapshot.foreign,
+            AgeingAnchor::DueDate,
+            &TallyDate::parse("20250930").unwrap(),
+            0,
+        )
+        .err(),
+        Some(NativeOutstandingsError::InvalidResponse(
+            "bill_party_ledger_unresolved"
+        ))
+    );
+}
