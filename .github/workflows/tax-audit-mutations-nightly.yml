@@ -6,8 +6,10 @@ name: Tax-audit mutations (nightly)
 # WHOLE list against the FULL suite on master, so a mutation whose killing tests
 # were weakened by a change elsewhere in the crate is caught within a day. Any
 # mutation not killed, not run, or with a stale committed record fails the run
-# and opens (or updates) one tracking issue labelled `mutation-nightly`; a crate
-# pull request fails ci.yml's mutation check while that issue is open.
+# and opens (or updates) one tracking issue labelled `mutation-nightly`, whose body
+# ends with a line naming the failing ids. While that issue is open, ci.yml's
+# mutation check requires a crate pull request to re-prove those ids on its merged
+# tree: the fix can merge, and nothing else in the crate can.
 on:
   schedule:
     - cron: "23 21 * * *" # daily, off the hour
@@ -95,6 +97,11 @@ jobs:
           else
             echo "failed=true" >> "$GITHUB_OUTPUT"
           fi
+          # A merge that crashed wrote no report. Without a failing-ids line the issue
+          # holds every crate pull request until someone closes it by hand.
+          if [ ! -f report.md ]; then
+            echo "The merge step crashed before writing a report; see the run log." > report.md
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -113,10 +120,13 @@ jobs:
           set -euo pipefail
           gh label create mutation-nightly --color B60205 \
             --description "The nightly bridge-tax-audit mutation run failed" --force
-          open="$(gh issue list --label mutation-nightly --state open --limit 100 --json number --jq '.[0].number // empty')"
-          { cat report.md; echo; echo "Run: $RUN_URL"; } > body.md
+          # The oldest open issue, if several were opened by hand.
+          open="$(gh issue list --label mutation-nightly --state open --limit 100 --json number --jq 'map(.number) | min // empty')"
+          { echo "Run: $RUN_URL"; echo; cat report.md; } > body.md
           if [ "$FAILED" = "true" ]; then
             if [ -n "$open" ]; then
+              # The body carries the latest failing-ids line, which ci.yml reads.
+              gh issue edit "$open" --body-file body.md
               gh issue comment "$open" --body-file body.md
             else
               gh issue create --label mutation-nightly \

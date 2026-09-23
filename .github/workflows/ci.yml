@@ -703,29 +703,26 @@ jobs:
           fetch-depth: 0
       - name: Test the mutation runner
         run: python3 -m unittest discover -s src-tauri/crates/bridge-tax-audit/parity -p 'test_mutations.py'
-      # Every mutation applies exactly once, and every mutation this change selects
-      # has a killed record made on exactly this merged crate tree.
+      # The nightly run writes the ids it found failing into its open tracking issue.
+      - name: Read any open nightly mutation issue
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh issue list --repo "$GITHUB_REPOSITORY" --label mutation-nightly --state open --limit 100 \
+            --json number,body --jq '.[] | "#\(.number)\n\(.body)\n"' > "$RUNNER_TEMP/nightly-issues.txt"
+      # Every mutation applies exactly once, no record outlives its mutation, and every
+      # mutation this change selects has a killed record made on exactly this merged
+      # crate tree. While a nightly issue is open, a crate change must also re-prove
+      # every mutation it lists as failing, so the fix merges and nothing else does.
       - name: Check the change's mutations are proven on this tree
         if: ${{ github.event_name == 'pull_request' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 src-tauri/crates/bridge-tax-audit/parity/mutations.py --verify --changed-since "$BASE_SHA"
-      - name: Refuse a crate change while the nightly mutation run is failing
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          if [ -z "$(git diff --name-only "$BASE_SHA" HEAD -- src-tauri/crates/bridge-tax-audit)" ]; then
-            echo "No bridge-tax-audit change."
-            exit 0
-          fi
-          open="$(gh issue list --label mutation-nightly --state open --limit 100 --json number --jq '[.[].number] | join(" ")')"
-          if [ -n "$open" ]; then
-            echo "The nightly tax-audit mutation run is failing (issue $open); fix it before changing the crate." >&2
-            exit 1
-          fi
+        run: >-
+          python3 src-tauri/crates/bridge-tax-audit/parity/mutations.py --verify
+          --changed-since "$BASE_SHA" --nightly-issues "$RUNNER_TEMP/nightly-issues.txt"
 
   required-checks:
     name: Required checks
