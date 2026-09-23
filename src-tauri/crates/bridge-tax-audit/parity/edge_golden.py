@@ -42,7 +42,9 @@ to drop, e.g. ["ledger_scrutiny"]; the Rust side must map each one, see `tests/e
 `previous_year_turnover_paise` as for `tds_payees`, `loans` ({loan ledger: {lender, lender_type,
 interest_ledger?}}, default {}), `shared_interest_ledgers` (default []) and `net_reversals` (a boolean,
 default false: true sets the module's NET_REVERSALS switch, reaching the dormant reversal rule in `run` and
-in the module invariant alike).
+in the module invariant alike); and for `partners_40b_194t`: `entity_type` as for `tds_payees`, `partners`
+({key: {capital_ledgers, interest_ledger?, remuneration_ledger?}}, default {}) and `deed` (a table such as
+{interest_rate_bp}, absent meaning none).
 """
 from __future__ import annotations
 
@@ -60,8 +62,8 @@ def main() -> int:
     sys.path.insert(0, str(Path(engine).resolve()))
     from tae.adapters.traces_documents import AisRow, TisRow
     from tae.audit_tests import (book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
-                                 ledger_scrutiny, loans_interest, stale_balances_41_1, statutory_dues_43b,
-                                 tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts)
+                                 ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1,
+                                 statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts)
     from tae.model import Form26ASRow
     from tae.config import load_rules
     from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
@@ -161,6 +163,8 @@ def main() -> int:
             mse_interest_ledgers=frozenset(ca.get("mse_interest_ledgers", [])))),
         "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
         "loans_interest": loans_interest_run,
+        "partners_40b_194t": lambda: (partners_40b_194t, partners_40b_194t.run(
+            eng, rules, {k: dict(v) for k, v in spec.get("partners", {}).items()}, spec.get("deed"))),
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
         "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
             eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
