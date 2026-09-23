@@ -305,6 +305,36 @@ fn the_post_path_accepts_only_a_post_approval() {
     assert!(!post_path_problems(&broken).is_empty());
 }
 
+/// Each subprocess mode runs its own dialog: swapping them would show the
+/// post dialog for a review, or answer a review with a post approval (#239).
+fn dialog_mode_problems(lib: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for arm in [
+        "Some(\"--confirm-journal\") => agent::run_confirmation as fn() -> bool,",
+        "Some(\"--confirm-review\") => agent::run_review_confirmation,",
+    ] {
+        if lib.matches(arm).count() != 1 {
+            problems.push(format!("expected exactly one `{arm}`"));
+        }
+    }
+    problems
+}
+
+#[test]
+fn each_dialog_mode_runs_its_own_dialog() {
+    let lib = read("src-tauri/src/lib.rs");
+    assert_eq!(dialog_mode_problems(&lib), Vec::<String>::new());
+    let swapped = lib
+        .replace("agent::run_confirmation as fn() -> bool,", "SWAP,")
+        .replace(
+            "agent::run_review_confirmation,",
+            "agent::run_confirmation as fn() -> bool,",
+        )
+        .replace("SWAP,", "agent::run_review_confirmation,");
+    assert_ne!(swapped, lib);
+    assert!(!dialog_mode_problems(&swapped).is_empty());
+}
+
 #[test]
 fn only_test_files_name_the_seam() {
     let source = repo().join("src-tauri").join("src");

@@ -10,13 +10,13 @@
 //!
 //! The record binds the exact doubt shown (the sha256 of its bytes) and the
 //! voucher as read (GUID, MASTERID, ALTERID and a fingerprint of every field
-//! the verification read returns). The fingerprint catches an edit to any of
+//! the verification read returns, including its REMOTEID). The fingerprint catches an edit to any of
 //! those fields whether or not it moved the ALTERID; an edit only to a field
 //! that read does not return (a reference, an allocation, GST detail, the
 //! party ledger) is caught only if it moves the ALTERID, which is not yet
 //! measured for an edit made in Tally's own screens.
 use super::*;
-use crate::tally::approved_import::ReviewAcknowledged;
+use crate::tally::approved_import::{ReviewAcknowledged, REVIEW_BUTTON};
 
 /// Names the fields [`voucher_fingerprint`] covers, and in which order. A new
 /// field is a new version, so a record never matches a fingerprint computed
@@ -65,15 +65,19 @@ fn read_masters_records(imports: &Path, batch_id: &str) -> MastersRecord {
         .as_ref()
         .is_some_and(|(_, check)| check["state"] == MASTERS_CHECK_PENDING);
     match doubt {
-        Some((raw, doubt)) if doubt["state"] == "posted_under_changed_masters" => {
-            if pending {
-                MastersRecord::Pending
-            } else {
-                MastersRecord::Doubt { raw }
-            }
+        // An observed doubt outranks the check record, as it does for the
+        // verdict: a write that failed between the two can leave the check
+        // pending beside it, and nothing would ever finish that check.
+        Some((raw, doubt))
+            if doubt["state"] == "posted_under_changed_masters"
+                && doubt["ledgers"]
+                    .as_array()
+                    .is_some_and(|ledgers| !ledgers.is_empty()) =>
+        {
+            MastersRecord::Doubt { raw }
         }
-        // A doubt file holds only that verdict; anything else is not one this
-        // build can bind to.
+        // A doubt file holds only that verdict, naming its ledgers; anything
+        // else is not one this build can bind to.
         Some(_) => MastersRecord::Unreadable,
         None if pending => MastersRecord::Pending,
         None => MastersRecord::NoDoubt,
@@ -172,7 +176,7 @@ fn admit_review(
     // rely on that staying true.
     let row = marked_row(line, rows)
         .filter(|_| verification_status(result, 1) == "posted_verified")
-        .filter(|row| row.cancelled == Some(false) && row.optional == Some(false))
+        .filter(|row| voucher_is_accounting_effective(row) == Ok(true))
         .ok_or_else(|| "ack_readback_not_matched".to_string())?;
     let (Some(voucher_guid), Some(voucher_master_id), Some(alter_id)) =
         (row.guid.clone(), row.master_id.clone(), row.alter_id)
@@ -211,14 +215,23 @@ fn render_review_text(
     row: &ReadVoucher,
 ) -> Result<String, String> {
     let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
+    // One per line: a changed ledger's name is as long as the book made it.
     let ledgers = doubt["ledgers"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .map(quoted)
+        .map(|ledger| format!("  {}", quoted(ledger)))
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("\n");
+    // Bridge's own batch marker is shown by the Batch line, not the narration.
+    let narration = row.narration.as_deref().map(|narration| {
+        narration
+            .find(NARRATION_MARKER_PREFIX)
+            .map_or(narration, |marker| &narration[..marker])
+            .trim_end()
+            .to_string()
+    });
     let entries = row
         .entries
         .iter()
@@ -270,13 +283,13 @@ fn render_review_text(
         return Err("ack_review_format_text".into());
     }
     let preview = format!(
-        "Record that you reviewed ONE {} in {}\nBridge posted it, but these ledgers no longer resolve to the master you approved: {ledgers}\n\nAs it is in Tally now:\nDate: {}  Voucher number: {}\nNarration: {}\n{entries}\nALTERID: {}\nBatch: {}\n\nChoosing \"I reviewed it\" records: \"I reviewed this voucher in Tally. It is correct as it stands.\"\nBridge changes nothing in Tally, and the batch still reads reconciliation_required.",
+        "Record that you reviewed ONE {} in {}\nBridge posted it, but these ledgers no longer resolve\nto the master you approved:\n{ledgers}\n\nAs it is in Tally now:\nDate: {}  Voucher number: {}  ALTERID: {}\nNarration:\n  {}\n{entries}\nBatch: {}\n\nChoosing \"{REVIEW_BUTTON}\" records: \"I reviewed this voucher in Tally.\nIt is correct as it stands.\" Bridge changes nothing in Tally,\nand the batch still reads reconciliation_required.",
         row.voucher_type.as_deref().unwrap_or("voucher"),
         quoted(company_name),
         shown(&row.date),
         shown(&row.voucher_number),
-        shown(&row.narration),
         row.alter_id.map(|id| id.to_string()).unwrap_or_else(|| "(none)".into()),
+        shown(&narration),
         batch_id,
     );
     Ok(preview)
@@ -311,7 +324,15 @@ fn write_record_once(
     let linked = fs::hard_link(&staged, path);
     let _ = fs::remove_file(&staged);
     match linked {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            // Make the new name durable; a record lost to a power failure
+            // would read as absent, never as someone else's.
+            #[cfg(unix)]
+            if let Some(directory) = path.parent() {
+                let _ = fs::File::open(directory).and_then(|directory| directory.sync_all());
+            }
+            Ok(())
+        }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             Err("ack_already_recorded".into())
         }
@@ -327,10 +348,19 @@ pub(super) fn operator_review(
     line: &ImportLedgerLine,
     rows: &[ReadVoucher],
 ) -> Option<Value> {
-    let MastersRecord::Doubt { raw } = read_masters_records(imports, &line.batch_id) else {
-        return None;
+    let masters = read_masters_records(imports, &line.batch_id);
+    let record = read_masters_record_raw(&masters_ack_path(imports, &line.batch_id));
+    let raw = match (masters, &record) {
+        (MastersRecord::Doubt { raw }, _) => raw,
+        (_, Ok(None)) => return None,
+        // A record whose doubt can no longer be read answers nothing it can
+        // be checked against, and says so rather than disappearing.
+        (MastersRecord::Unreadable, _) => return Some(json!({"state":"unreadable"})),
+        (_, _) => {
+            return Some(json!({"state":"stale","covers_doubt":false,"voucher_unchanged":false}))
+        }
     };
-    let record = match read_masters_record_raw(&masters_ack_path(imports, &line.batch_id)) {
+    let record = match record {
         Ok(None) => return Some(json!({"state":"absent"})),
         Ok(Some((_, value))) => serde_json::from_value::<AckRecord>(value).ok(),
         Err(()) => None,
@@ -414,12 +444,8 @@ impl Server {
         let evidence = combine_evidence(evidence.clone(), second.evidence.clone());
         let fail =
             |code: &str| ToolFailure::from(code.to_string()).with_prior_evidence(evidence.clone());
-        let again = admit_review(
-            &imports,
-            &line,
-            &second.payload,
-            &rows_after.unwrap_or_default(),
-        );
+        let rows_after = rows_after.unwrap_or_default();
+        let again = admit_review(&imports, &line, &second.payload, &rows_after);
         if again.as_ref() != Ok(&shown) {
             return Err(fail("ack_changed_while_reviewing"));
         }
@@ -453,10 +479,8 @@ impl Server {
                 "result": {
                     "batch_id": line.batch_id,
                     "dispatch": {"state": second.payload["result"]["dispatch"]["state"]},
-                    "operator_review": {
-                        "state": "current", "reviewed_at": record.reviewed_at,
-                        "covers_doubt": true, "voucher_unchanged": true,
-                    },
+                    // Read back as verify_import reports it, not asserted.
+                    "operator_review": operator_review(&imports, &line, &rows_after),
                 },
             }),
             evidence,

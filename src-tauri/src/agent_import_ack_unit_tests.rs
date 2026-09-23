@@ -31,9 +31,10 @@ fn the_review_shows_the_doubt_and_the_voucher_as_read() {
     ] {
         assert!(preview.contains(shown), "{shown}: {preview}");
     }
+    assert!(preview.starts_with("Record that you reviewed ONE Journal"));
     assert!(
-        !preview.contains("Post"),
-        "never reads as a post: {preview}"
+        preview.contains(&format!("Choosing \"{REVIEW_BUTTON}\"")),
+        "names the button the platform shows: {preview}"
     );
 }
 
@@ -48,22 +49,31 @@ fn each_review_cap_refuses_on_its_own() {
         }
         voucher
     };
+    let long_doubt = json!({"state":"posted_under_changed_masters","ledgers":["D".repeat(90)]});
     let cases = [
-        ("line_width", row(2, &"n".repeat(120))),
-        ("lines", row(20, "Paid")),
-        ("characters", wide_ledgers(12)),
+        ("line_width", row(2, &"n".repeat(120)), doubt()),
+        ("lines", row(20, "Paid"), doubt()),
+        (
+            "characters",
+            {
+                let mut voucher = wide_ledgers(10);
+                voucher.narration = Some("n".repeat(90));
+                voucher
+            },
+            long_doubt,
+        ),
     ];
-    for (cap, voucher) in cases {
-        let preview = review_preview(BATCH, "Books", &doubt(), &voucher);
+    for (cap, voucher, doubt) in cases {
+        let preview = review_preview(BATCH, "Books", &doubt, &voucher);
         assert_eq!(preview, Err("ack_review_too_large".to_string()), "{cap}");
-        let rendered = render_review_text(BATCH, "Books", &doubt(), &voucher).unwrap();
+        let rendered = render_review_text(BATCH, "Books", &doubt, &voucher).unwrap();
         assert_eq!(caps_exceeded(&rendered), [cap], "{cap}: only its own cap");
     }
 }
 
 #[test]
 fn a_review_too_long_to_show_is_refused_not_truncated() {
-    assert!(review_preview(BATCH, "Books", &doubt(), &row(12, "Paid")).is_ok());
+    assert!(review_preview(BATCH, "Books", &doubt(), &row(10, "Paid")).is_ok());
     assert_eq!(
         review_preview(BATCH, "Books", &doubt(), &row(40, "Paid")),
         Err("ack_review_too_large".to_string())
@@ -119,4 +129,71 @@ fn each_fingerprinted_field_changed_alone_changes_the_fingerprint() {
     *alter.pointer_mut("/alter_id").unwrap() = json!(11);
     let alter: ReadVoucher = serde_json::from_value(alter).unwrap();
     assert_eq!(voucher_fingerprint(&alter), original);
+}
+
+/// A posted line, as `post_import` saves one: its marker is what
+/// `admit_review` finds the voucher by.
+fn posted_line() -> ImportLedgerLine {
+    serde_json::from_value(json!({
+        "batch_id":BATCH, "identity_scheme":"batch_v1",
+        "company_guid":"61c6de69-1748-461c-ad3f-162cb949df9f",
+        "txn_ids":["T1"],"date_from":"20260907","date_to":"20260907",
+        "sha256":"", "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":7},
+        "vouchers":[{"bridge_txn_id":"T1","date":"20260907","voucher_type":"Journal",
+            "narration":null,"reference":null,"voucher_number":null,
+            "entries":[{"ledger":"Cash","amount":"1.00","side":"Dr"},{"ledger":"Sales","amount":"1.00","side":"Cr"}]}]
+    }))
+    .unwrap()
+}
+
+/// The guards `admit_review` keeps although `posted_verified` implies them
+/// today: each refuses on its own if that ever stops being true.
+#[test]
+fn each_readback_guard_refuses_on_its_own_even_under_posted_verified() {
+    let imports = tempfile::tempdir().unwrap();
+    let line = posted_line();
+    let doubt = br#"{"state":"posted_under_changed_masters","ledgers":["Cash"]}"#;
+    fs::write(masters_doubt_path(imports.path(), BATCH), doubt).unwrap();
+    fs::write(masters_check_path(imports.path(), BATCH), doubt).unwrap();
+    let payload = json!({"result":{
+        "dispatch":{"response_state":"response_clean"},
+        "counts":{"posted_verified":1},"duplicates":[]
+    }});
+    let tag = line.attribution_tag(&line.vouchers[0]);
+    let marked = || row_json(2, &format!("Paid [BRIDGE:{tag}]"));
+    let admit = |row: Value| {
+        let row: ReadVoucher = serde_json::from_value(row).unwrap();
+        admit_review(imports.path(), &line, &payload, &[row]).map(|_| ())
+    };
+    assert_eq!(admit(marked()), Ok(()), "the control is admitted");
+    for (pointer, value) in [
+        ("/cancelled", json!(true)),
+        ("/optional", json!(true)),
+        ("/cancelled", Value::Null),
+        ("/guid", Value::Null),
+        ("/master_id", Value::Null),
+        ("/alter_id", Value::Null),
+    ] {
+        let mut row = marked();
+        *row.pointer_mut(pointer).unwrap() = value.clone();
+        assert_eq!(
+            admit(row),
+            Err("ack_readback_not_matched".to_string()),
+            "{pointer} = {value}"
+        );
+    }
+}
+
+/// Realistic lengths fit: a changed ledger with a long name, and a bank
+/// narration carrying Bridge's marker, which the review does not repeat.
+#[test]
+fn a_long_ledger_name_and_a_marked_narration_fit_the_review() {
+    let ledger = "Bridge Nested Debtor WR4 Long Registered Name Private Limited";
+    let doubt = json!({"state":"posted_under_changed_masters","ledgers":[ledger, "Cash"]});
+    let narration = "NEFT CR XXXX0001234 ACME TRADERS PVT LTD INV 2026-27/0045 AUG [BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]";
+    let preview = review_preview(BATCH, "Books", &doubt, &row(2, narration)).unwrap();
+    assert!(preview.contains(&format!("  \"{ledger}\"")), "{preview}");
+    assert!(preview.contains("INV 2026-27/0045 AUG\""), "{preview}");
+    assert!(!preview.contains("[BRIDGE:"), "{preview}");
 }

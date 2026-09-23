@@ -213,15 +213,29 @@ async fn a_pending_check_is_refused_not_acknowledged() {
         "ack_check_pending",
     )
     .await;
-    // Beside a doubt too: a check marked pending again is not settled.
-    refused(
-        reconcile_readback(),
+}
+
+/// A doubt outranks a check left pending beside it (a write that failed
+/// between the two): nothing would ever finish that check, so refusing would
+/// refuse the batch forever.
+#[tokio::test]
+async fn a_doubt_beside_a_check_left_pending_is_reviewable() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = seeded(
+        &simulator,
+        directory.path(),
         clean(),
-        Some(pending),
+        Some(br#"{"state":"check_pending"}"#),
         Some(DOUBT.as_bytes()),
-        "ack_check_pending",
-    )
-    .await;
+    );
+    let response = acknowledge(&server, args, ScriptedApproval::approving()).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["operator_review"]["state"], "current",
+        "{response}"
+    );
 }
 
 #[tokio::test]
@@ -248,6 +262,16 @@ async fn an_unreadable_masters_record_is_refused() {
         clean(),
         Some(DOUBT.as_bytes()),
         Some(br#"{"state":"unchanged"}"#),
+        "ack_masters_record_unreadable",
+    )
+    .await;
+    // A doubt that names no ledger shows nothing to review.
+    let nameless = br#"{"state":"posted_under_changed_masters","ledgers":[]}"#;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(nameless),
+        Some(nameless),
         "ack_masters_record_unreadable",
     )
     .await;
@@ -377,13 +401,23 @@ async fn a_recorded_review_goes_stale_when_anything_it_bound_changes() {
     };
     let other_fields: Change =
         |server| edit_record(server, "voucher_fingerprint_fields", json!("v0:guid"));
-    let cases: [(&str, Vec<ScenarioPlan>, Change); 6] = [
+    let other_guid: Change = |server| {
+        edit_record(
+            server,
+            "voucher_guid",
+            json!("61c6de69-1748-461c-ad3f-162cb949df9f-00000006"),
+        )
+    };
+    let other_master_id: Change = |server| edit_record(server, "voucher_master_id", json!("6"));
+    let cases: [(&str, Vec<ScenarioPlan>, Change); 8] = [
         ("alter_id", readback_at_alter_id(11), untouched),
         ("fingerprint", readback_with_edited_narration(), untouched),
         ("doubt", reconcile_readback(), new_doubt),
         ("identity", reconcile_readback(), other_batch),
         ("company", reconcile_readback(), other_company),
         ("fingerprint_fields", reconcile_readback(), other_fields),
+        ("voucher_guid", reconcile_readback(), other_guid),
+        ("voucher_master_id", reconcile_readback(), other_master_id),
     ];
     for (name, later, change) in cases {
         let mut plans = reconcile_readback();
@@ -460,10 +494,18 @@ async fn a_record_this_build_cannot_read_is_reported_unreadable() {
     let newer: Change = |server| edit_record(server, "version", json!(2));
     let unknown_field: Change = |server| edit_record(server, "approved", json!(true));
     let garbage: Change = |server| fs::write(ack_path(server), b"not json").unwrap();
+    let doubt_unreadable: Change = |server| {
+        let path = server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{BATCH}.masters_doubt.json"));
+        fs::write(path, b"not json").unwrap();
+    };
     for (name, change) in [
         ("version", newer),
         ("field", unknown_field),
         ("garbage", garbage),
+        ("doubt_unreadable", doubt_unreadable),
     ] {
         let mut plans = reconcile_readback();
         plans.extend(reconcile_readback());
@@ -471,7 +513,11 @@ async fn a_record_this_build_cannot_read_is_reported_unreadable() {
         let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let (server, args) = doubted(&simulator, directory.path());
-        acknowledge(&server, args.clone(), ScriptedApproval::approving()).await;
+        let recorded = acknowledge(&server, args.clone(), ScriptedApproval::approving()).await;
+        assert_eq!(
+            recorded["structuredContent"]["result"]["operator_review"]["state"], "current",
+            "{name}: {recorded}"
+        );
         change(&server);
         let verified = server.call_tool("verify_import", args).await;
         let result = &verified["structuredContent"]["result"];
