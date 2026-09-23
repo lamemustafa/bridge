@@ -303,7 +303,11 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // `native_outstandings/ledger_currency.rs` (bridge#551) classifies each
 // ledger's own currency against the base, which decides whether an
 // outstandings read reports any figure.
-pub const MAX_SURFACE_FILES: usize = 277;
+// `src-tauri/src/agent_import_ack.rs` (bridge#239) decides whether a person's
+// review of a doubted post is recorded, and what verify_import reports about
+// it beside the unchanged verdict; a defect there could record a review of a
+// voucher state nobody saw.
+pub const MAX_SURFACE_FILES: usize = 278;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

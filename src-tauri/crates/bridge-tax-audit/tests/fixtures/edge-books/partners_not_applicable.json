@@ -1,0 +1,161 @@
+{
+ "comment": "partners_40b_194t: a company (the rules give it no s.40(b) rate and no s.194T): one figure, applicable = no, whatever the partners table holds.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Capital Account": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "A Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_not_applicable-000"
+  },
+  {
+   "name": "B Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_not_applicable-001"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-partners_not_applicable-002"
+  },
+  {
+   "name": "C Capital",
+   "chain": [
+    "Capital Account"
+   ],
+   "guid": "edge-partners_not_applicable-003"
+  },
+  {
+   "name": "Interest to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_not_applicable-004"
+  },
+  {
+   "name": "Partner Tds Adjustment",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_not_applicable-005"
+  },
+  {
+   "name": "Remuneration to Partners",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-partners_not_applicable-006"
+  },
+  {
+   "name": "TDS on Partners 194T",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-partners_not_applicable-007"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "A Capital",
+   "opening": -1000000,
+   "debit": 0,
+   "credit": 100000,
+   "closing": -1100000
+  },
+  {
+   "ledger": "B Capital",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Bank",
+   "opening": 1000000,
+   "debit": 0,
+   "credit": 0,
+   "closing": 1000000
+  },
+  {
+   "ledger": "C Capital",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Interest to Partners",
+   "opening": 0,
+   "debit": 100000,
+   "credit": 0,
+   "closing": 100000
+  },
+  {
+   "ledger": "Partner Tds Adjustment",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Remuneration to Partners",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "TDS on Partners 194T",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "pn-01",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest to Partners",
+     100000
+    ],
+    [
+     "A Capital",
+     -100000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "partners_40b_194t"
+ ],
+ "entity_type": "company",
+ "partners": {
+  "partner_a": {
+   "capital_ledgers": [
+    "A Capital"
+   ],
+   "interest_ledger": "Interest to Partners"
+  }
+ },
+ "deed": {
+  "interest_rate_bp": 1200
+ }
+}

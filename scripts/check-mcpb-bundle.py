@@ -20,10 +20,11 @@ DEFAULT_TOOLS = {
     "ledger_masters", "ledger_movement", "trial_balance", "vouchers", "voucher_presence", "read_evidence", "egress_log", "verify_import",
 }
 # The bundle always enables file preparation and bank-statement parsing; they
-# write nothing to Tally. Posting is the one tool behind the user's switch, and
-# it is off by default while bridge#574 and bridge#579 are open.
+# write nothing to Tally. Posting, and recording a person's review of a doubted
+# post (bridge#239), are the tools behind the user's switch, and it is off by
+# default while bridge#574 and bridge#579 are open.
 IMPORT_TOOLS = {"build_import_xml", "parse_bank_statement"}
-POSTING_TOOLS = {"post_import"}
+POSTING_TOOLS = {"post_import", "acknowledge_post_review"}
 
 
 def expected_tools(environment):
@@ -283,9 +284,9 @@ def smoke(archive, repository):
         names = [tool["name"] for tool in replies[1]["result"]["tools"]]
         expected = expected_tools(environment)
         require(len(names) == len(expected) and set(names) == expected, "default_tools_mismatch")
-        require("post_import" not in names and IMPORT_TOOLS <= set(names),
+        require(not POSTING_TOOLS & set(names) and IMPORT_TOOLS <= set(names),
                 "default_bundle_must_prepare_but_not_post")
-        # The user's opt-in adds posting and nothing else; verify_import stays
+        # The user's opt-in adds the posting tools and nothing else; verify_import stays
         # available either way for safe recovery of saved batches.
         enabled_environment = dict(environment, BRIDGE_AGENT_ENABLE_WRITES="true")
         catalogue_payload = b"".join(json.dumps(request).encode() + b"\n" for request in requests[:-1])

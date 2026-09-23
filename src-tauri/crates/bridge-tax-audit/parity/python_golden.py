@@ -42,7 +42,8 @@ writes that JSON. With neither, no comparison source is supplied. `creditor_agei
 `[roles].trade_creditors_source` (and `creditor_groups` for a `groups` source) and the optional
 `[creditor_ageing_43bh]` table, and passes no next-year payment data, as the reference's pack runs
 it. `statutory_dues_43b` reads the optional `[statutory_dues]` table (`nature_by_ledger`,
-`salary_expense_ledgers`). With --read DIR, the [snapshot] table is replaced in memory by that read with
+`salary_expense_ledgers`). `partners_40b_194t` reads the optional `[partners]` table, with its `deed`
+popped out, as the reference's `partners_config` returns it. With --read DIR, the [snapshot] table is replaced in memory by that read with
 allow_unbracketed_read = true -- the same switch the engine's own read-format parity gate applies
 -- so a legacy client config can be run against its wrapped read without editing it.
 
@@ -209,6 +210,24 @@ def _tds_payees(c):
                                       s194j_category_by_ledger)
 
 
+def _loans_interest(c):
+    from tae.audit_tests import loans_interest
+    from tae.config import loan_ledgers_config
+    # As tae/pack.py calls it: the loan table, [tds].previous_year_turnover_paise (tds_config's
+    # optional key) and the declared-shared interest ledgers.
+    return loans_interest, loans_interest.run(
+        c.eng, c.rules, loan_ledgers_config(c.cfg), c.cfg.get("tds", {}).get("previous_year_turnover_paise"),
+        c.cash, c.bank, frozenset(c.cfg.get("loans", {}).get("shared_interest_ledgers", [])))
+
+
+def _partners_40b_194t(c):
+    from tae.audit_tests import partners_40b_194t
+    from tae.config import partners_config
+    # As tae/pack.py calls it: the [partners] table, with the deed popped out of it.
+    partners, deed = partners_config(c.cfg)
+    return partners_40b_194t, partners_40b_194t.run(c.eng, c.rules, partners, deed)
+
+
 def _traces_documents(c):
     """The Form 26AS/AIS/TIS rows both 26AS tests take as caller data: from --traces-documents
     (the JSON --emit-traces-documents writes, or an invented fixture), from the reference's own
@@ -279,6 +298,8 @@ RUNNERS = {
     "depreciation": _depreciation,
     "financial_statements": _financial_statements,
     "ledger_scrutiny": _ledger_scrutiny,
+    "loans_interest": _loans_interest,
+    "partners_40b_194t": _partners_40b_194t,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
     "tds_payees": _tds_payees,

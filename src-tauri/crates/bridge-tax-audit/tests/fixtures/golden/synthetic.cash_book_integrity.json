@@ -195,8 +195,8 @@
       "id": "cash_book_integrity.own_account_booked_as_deposit_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "a0833916ce92dc4c",
-      "definition_text": "Number of those entries.",
+      "definition_sha256_16": "2ac376699902d729",
+      "definition_text": "Number of Contra entries crediting cash whose bank narration names the assessee's own account (money received from another account, booked as cash deposited).",
       "evidence": []
     },
     {
@@ -211,8 +211,8 @@
       "id": "cash_book_integrity.own_account_booked_as_withdrawal_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "a0833916ce92dc4c",
-      "definition_text": "Number of those entries.",
+      "definition_sha256_16": "1232ea90464c9ace",
+      "definition_text": "Number of Contra entries debiting cash whose bank narration names the assessee's own account (money sent to another account, booked as cash in hand).",
       "evidence": []
     },
     {
@@ -227,8 +227,8 @@
       "id": "cash_book_integrity.own_account_terms_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "ef391386299e43cd",
-      "definition_text": "Own-account narration terms configured (roles.own_account_narration_terms). Zero means part 3 looked at nothing.",
+      "definition_sha256_16": "de9c0511e8c49f75",
+      "definition_text": "Own-account narration terms set for this client. Zero means the own-account check looked at nothing.",
       "evidence": []
     }
   ],

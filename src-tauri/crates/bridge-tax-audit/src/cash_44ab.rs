@@ -90,14 +90,14 @@ pub fn run(
         "cash_share_receipts",
         rec_bp.clone(),
         Unit::BasisPoints,
-        "cash_receipts / (cash_receipts + bank_receipts)",
+        "Cash receipts as a share of cash and bank receipts together.",
         Vec::new(),
     );
     let share_payments_id = r.fig(
         "cash_share_payments",
         pay_bp.clone(),
         Unit::BasisPoints,
-        "cash_payments / (cash_payments + bank_payments)",
+        "Cash payments as a share of cash and bank payments together.",
         Vec::new(),
     );
     let lim = rules.cash_share_limit_bp;

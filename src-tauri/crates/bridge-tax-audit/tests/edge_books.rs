@@ -26,8 +26,8 @@ use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
     book_keeping_quality, cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny,
-    stale_balances_41_1, statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
-    twentysixas_receipts, Tds26asConfig, TdsConfig,
+    loans_interest, partners_40b_194t, stale_balances_41_1, statutory_dues_43b, tds_payees,
+    tds_tcs_26as, trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -199,6 +199,7 @@ fn rules(s: &Value) -> Rules {
             "s43b" => rules.s43b = None,
             "s36_1_va" => rules.s36_1_va_due_day = None,
             "s194j" => rules.s194j_aggregate_paise = None,
+            "s194t" => rules.s194t = None,
             other => panic!("rules_without {other} is not wired here"),
         }
     }
@@ -277,6 +278,54 @@ fn tds_config(s: &Value) -> TdsConfig {
             })
             .unwrap_or_default(),
     }
+}
+
+/// A spec's JSON value as the TOML value a client config would carry (integers, text, booleans,
+/// lists and tables; anything else is refused, so the two sides cannot read different configs).
+fn toml_of(v: &Value) -> toml::Value {
+    match v {
+        Value::String(t) => toml::Value::String(t.clone()),
+        Value::Bool(b) => toml::Value::Boolean(*b),
+        Value::Number(n) => toml::Value::Integer(n.as_i64().expect("an integer")),
+        Value::Array(a) => toml::Value::Array(a.iter().map(toml_of).collect()),
+        Value::Object(m) => {
+            toml::Value::Table(m.iter().map(|(k, x)| (k.clone(), toml_of(x))).collect())
+        }
+        Value::Null => panic!("null is not a TOML value"),
+    }
+}
+
+/// The `partners` and `deed` `parity/edge_golden.py` passes `partners_40b_194t`, as a bound
+/// `[partners]` table.
+fn partners(s: &Value) -> PartnersConfig {
+    PartnersConfig {
+        partners: s["partners"]
+            .as_object()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), toml_of(v))).collect())
+            .unwrap_or_default(),
+        deed: (!s["deed"].is_null()).then(|| toml_of(&s["deed"])),
+    }
+}
+
+/// The `loans` table `parity/edge_golden.py` passes `loans_interest`, typed as the crate types a
+/// bound `[loans.loan_ledgers]`.
+fn loans(s: &Value) -> BTreeMap<String, loans_interest::LoanConfig> {
+    s["loans"]
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .map(|(k, v)| {
+                    let text = |key: &str| v[key].as_str().unwrap().to_string();
+                    let cfg = loans_interest::LoanConfig {
+                        lender: text("lender"),
+                        lender_type: text("lender_type"),
+                        interest_ledger: v["interest_ledger"].as_str().map(str::to_string),
+                    };
+                    (k.clone(), cfg)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The `[tds_tcs_26as]` values `parity/edge_golden.py` passes both 26AS tests.
@@ -410,6 +459,61 @@ fn check(name: &str) {
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
             }
+            "loans_interest" => {
+                let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                let shared: BTreeSet<String> =
+                    strs(&s["shared_interest_ledgers"]).into_iter().collect();
+                let loans = loans(&s);
+                let turnover = s["previous_year_turnover_paise"].as_i64();
+                // Without a net_reversals key the book runs the rule in force, through run() and
+                // check_invariants(), so the default switch is what that golden pins.
+                match typed(&s, "net_reversals", false, "true or false", Value::as_bool) {
+                    None => {
+                        let r = loans_interest::run(
+                            &book,
+                            &rules,
+                            entity_type,
+                            &loans,
+                            turnover,
+                            &cash,
+                            &bank,
+                            &shared,
+                        )
+                        .unwrap();
+                        let c = loans_interest::check_invariants(&book, &r).unwrap();
+                        (r, c)
+                    }
+                    Some(net_reversals) => {
+                        let r = loans_interest::run_with(
+                            &book,
+                            &rules,
+                            entity_type,
+                            &loans,
+                            turnover,
+                            &cash,
+                            &bank,
+                            &shared,
+                            net_reversals,
+                        )
+                        .unwrap();
+                        let c = loans_interest::check_invariants_with(&book, &r, net_reversals)
+                            .unwrap();
+                        (r, c)
+                    }
+                }
+            }
+            "partners_40b_194t" => {
+                let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                let r =
+                    partners_40b_194t::run(&book, &rules, &period(&s), entity_type, &partners(&s))
+                        .unwrap();
+                // The reference module has no check_invariants: an empty evaluated list.
+                let rust = canonical_test_result(&book, &r, None).unwrap();
+                let golden = common::golden_named(&format!("edge.{name}.{test}"));
+                let diffs = compare(&golden, &rust, None).unwrap();
+                assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
+                continue;
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -443,11 +547,13 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 10] = [
+const EDGE_TESTS: [&str; 12] = [
     "book_keeping_quality",
     "cash_book_integrity",
     "creditor_ageing_43bh",
     "ledger_scrutiny",
+    "loans_interest",
+    "partners_40b_194t",
     "stale_balances_41_1",
     "statutory_dues_43b",
     "tds_payees",

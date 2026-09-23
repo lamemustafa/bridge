@@ -74,10 +74,10 @@ run at `46324912`.
 | --- | ---: | --- | --- |
 | `tds26as_matching.json` | 12,805 | `e591f29a1135c245b9ab913747813f53890921254d72cb37de4723e9ad8f1906` | `edge-books/tds26as_matching.json` |
 | `tds26as_receipts.json` | 6,239 | `acbb1ea4523e7de92d70df397d2431f806c2c2bf0eabf7b5281bb488f5ec3ea6` | `edge-books/tds26as_receipts.json` |
-| `edge.tds26as_matching.tds_tcs_26as.json` | 27,266 | `9839ab0674d2b43d22c25cd50a594de5c984c6e92edfa3a93df3ac8c8f410387` | `golden/edge.tds26as_matching.tds_tcs_26as.json` |
+| `edge.tds26as_matching.tds_tcs_26as.json` | 27,268 | `2d9d3ee943b5e18e1065393b86380069f1d2c456e21fbe0c66c9ae3f452f605f` | `golden/edge.tds26as_matching.tds_tcs_26as.json` |
 | `edge.tds26as_matching.twentysixas_receipts.json` | 19,680 | `45f9a1b64fd14b6aad5e72282c3cf327a81f345c0a9d117557a00f2a2bdbcec7` | `golden/edge.tds26as_matching.twentysixas_receipts.json` |
-| `edge.tds26as_receipts.tds_tcs_26as.json` | 16,609 | `211a0c7f271b32676bf8fb181cc890b641762a39e5a051b1d976a50bfb176768` | `golden/edge.tds26as_receipts.tds_tcs_26as.json` |
+| `edge.tds26as_receipts.tds_tcs_26as.json` | 16,611 | `3ecf58d1f83b146810395be3789b53df4f3793eb8129cc8270d3173773cf1189` | `golden/edge.tds26as_receipts.tds_tcs_26as.json` |
 | `edge.tds26as_receipts.twentysixas_receipts.json` | 13,079 | `dffac4a780f6ad167b2d16fbf348e8b10fbabb868f474bc0b35a7354ad2cd121` | `golden/edge.tds26as_receipts.twentysixas_receipts.json` |
-| `synthetic.tds_tcs_26as.json` | 16,381 | `9b6c6a16f72db56da424b5d9e7febe9fc6a23dec1b6110a2f7d70df5b4dcbdd8` | `golden/synthetic.tds_tcs_26as.json` |
+| `synthetic.tds_tcs_26as.json` | 16,383 | `efbde4a74affb6c6721faf312cfb0669c3b352ebfe4e94ea6734342364fc38d5` | `golden/synthetic.tds_tcs_26as.json` |
 | `synthetic.twentysixas_receipts.json` | 12,131 | `3cde4a7b95ffe42d9d13f5797d7dd9ceb578550cb6581132ff57a9d33722a194` | `golden/synthetic.twentysixas_receipts.json` |
 | `synthetic-traces-documents.json` | 2,137 | `890274e2c545a3bbc64711d2bce14593003b138599250ae1330c4a2a1859da08` | `synthetic-traces-documents.json` |

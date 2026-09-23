@@ -10,16 +10,16 @@
       "id": "stale_balances_41_1.creditor_active_closing_total_paise",
       "value": -1205,
       "unit": "paise",
-      "definition_sha256_16": "017713faf00f1ae2",
-      "definition_text": "Sum of TB closing balances across the active creditor ledgers above.",
+      "definition_sha256_16": "aadb7fde9f4afe15",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Creditors' ledgers whose closing balance, taken without its sign, is over ₹1.",
       "evidence": []
     },
     {
       "id": "stale_balances_41_1.creditor_active_count",
       "value": 2,
       "unit": "count",
-      "definition_sha256_16": "98460587cfd7a665",
-      "definition_text": "Of those, ledgers with abs(TB closing) over 100 paise.",
+      "definition_sha256_16": "a93c17e5d2f8fc25",
+      "definition_text": "Ledgers under Tally's 'Sundry Creditors' group whose Trial Balance closing balance, taken without its sign, is over ₹1.",
       "evidence": [
         {
           "kind": "ledger",
@@ -45,16 +45,16 @@
       "id": "stale_balances_41_1.creditor_stale_closing_total_paise",
       "value": -900,
       "unit": "paise",
-      "definition_sha256_16": "b99e1bfec8c215d0",
-      "definition_text": "Sum of TB closing balances across the stale creditor ledgers above.",
+      "definition_sha256_16": "2a465efa6b9c29e1",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Creditors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose period debit and credit movement are both nil.",
       "evidence": []
     },
     {
       "id": "stale_balances_41_1.creditor_stale_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "2dbbd44f45200dc8",
-      "definition_text": "Of the active creditor ledgers, those with TB period debit and credit movement both nil for the year (opening == closing; no voucher touched them).",
+      "definition_sha256_16": "30b7b937577c7d43",
+      "definition_text": "'Sundry Creditors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose Trial Balance period debit and credit movement are both nil for the year (opening equal to closing; no voucher touched them).",
       "evidence": [
         {
           "kind": "ledger",
@@ -81,16 +81,16 @@
       "id": "stale_balances_41_1.debtor_active_closing_total_paise",
       "value": 1301,
       "unit": "paise",
-      "definition_sha256_16": "3a34e1504c083c0e",
-      "definition_text": "Sum of TB closing balances across the active debtor ledgers above.",
+      "definition_sha256_16": "65b81ff3b70be78c",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Debtors' ledgers whose closing balance, taken without its sign, is over ₹1.",
       "evidence": []
     },
     {
       "id": "stale_balances_41_1.debtor_active_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "98460587cfd7a665",
-      "definition_text": "Of those, ledgers with abs(TB closing) over 100 paise.",
+      "definition_sha256_16": "e9bb608a87992c96",
+      "definition_text": "Ledgers under Tally's 'Sundry Debtors' group whose Trial Balance closing balance, taken without its sign, is over ₹1.",
       "evidence": [
         {
           "kind": "ledger",
@@ -121,16 +121,16 @@
       "id": "stale_balances_41_1.debtor_stale_closing_total_paise",
       "value": 1301,
       "unit": "paise",
-      "definition_sha256_16": "ccb0e6733dafdab8",
-      "definition_text": "Sum of TB closing balances across the stale debtor ledgers above.",
+      "definition_sha256_16": "7ae836f0a96a5984",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Debtors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose period debit and credit movement are both nil.",
       "evidence": []
     },
     {
       "id": "stale_balances_41_1.debtor_stale_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "365780347db400c0",
-      "definition_text": "Of the active debtor ledgers, those with TB period debit and credit movement both nil for the year (opening == closing; no voucher touched them).",
+      "definition_sha256_16": "a7a0cd3939df005d",
+      "definition_text": "'Sundry Debtors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose Trial Balance period debit and credit movement are both nil for the year (opening equal to closing; no voucher touched them).",
       "evidence": [
         {
           "kind": "ledger",
