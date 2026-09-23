@@ -102,6 +102,11 @@ def mutation(i: str, file: str) -> dict:
     return {"id": i, "by": "author", "what": i, "file": file, "from": f"from-{i}", "to": f"to-{i}"}
 
 
+def issue(body: str, number: int = 612) -> str:
+    """One open issue as ci.yml's step writes it into the --nightly-issues file."""
+    return f"<!-- {mu.ISSUE_MARK} {number} -->\n{body}\n"
+
+
 def record(m: dict, killers: list[str], verdict: str = mu.KILLED, tree: str = "t") -> dict:
     return {"verdict": verdict, "killers": killers, "mutation": mu.mutation_hash(m), "mode": "full",
             "crate_tree": tree, "commit": "c", "time": "now"}
@@ -262,6 +267,7 @@ class Verify(unittest.TestCase):
         for verdict in (mu.COMPILE_ERROR, mu.FAILED_NO_TEST, mu.BUILD_TIMEOUT):
             self.assertFalse(mu.passes(m, record(m, [], verdict=verdict), accepted), verdict)
         self.assertEqual(mu.select([m], {"A": survived}, [], Path("."), accepted), {}, "not re-selected by itself")
+        self.assertFalse(mu.passes(m, survived, {"A": {"reason": "no hash"}}), "an entry must name a hash")
         self.assertEqual(mu.survivor_problems([m, other], accepted), [])
         self.assertEqual(mu.survivor_problems([edited], accepted), ["A: accepted as a survivor for another definition"])
         self.assertEqual(mu.survivor_problems([other], accepted), ["A: accepted as a survivor but no longer in the list"])
@@ -275,8 +281,11 @@ class Verify(unittest.TestCase):
         text, failed = mu.report([edited, other], {"A": record(edited, [], verdict=mu.SURVIVED), "B": committed["B"]},
                                  {"A": record(edited, []), "B": committed["B"]}, accepted=accepted)
         self.assertTrue(failed)
-        self.assertEqual(mu.failing_ids(text), ["A"])
+        self.assertEqual(mu.failing_ids(issue(text)), ["A"])
         self.assertIn("Stale accepted-survivor entries (1)", text)
+        killed = {"A": record(m, ["tests/x.rs::t"]), "B": committed["B"]}
+        text, failed = mu.report([m, other], killed, killed, accepted={"GONE": {"mutation": "x"}})
+        self.assertTrue(failed, "a stale entry alone fails the nightly")
 
     def test_apply_check_wants_exactly_one_match(self):
         with tempfile.TemporaryDirectory() as t:
@@ -422,7 +431,7 @@ class Report(unittest.TestCase):
     def test_all_killed_with_fresh_committed_records_passes(self):
         text, failed = mu.report(self.muts, self.killed, self.committed)
         self.assertFalse(failed, text)
-        self.assertEqual(mu.failing_ids(text), None, "a passing report names no failing ids")
+        self.assertEqual(mu.failing_ids(issue(text)), None, "a passing report names no failing ids")
 
     def test_each_failure_kind_fails_the_run_and_names_its_ids(self):
         merged = {"A": record(self.muts[0], [], verdict=mu.SURVIVED), "C": self.killed["C"]}  # B not run
@@ -430,27 +439,27 @@ class Report(unittest.TestCase):
         self.assertTrue(failed)
         self.assertIn("Not killed (1)", text)
         self.assertIn("Not run (1)", text)
-        self.assertEqual(mu.failing_ids(text), ["A", "B"])
+        self.assertEqual(mu.failing_ids(issue(text)), ["A", "B"])
         stale = dict(self.committed, A=record(dict(self.muts[0], to="edited"), ["tests/x.rs::t"]))
         stale["gone"] = record(mutation("gone", "src/z.rs"), [])
         del stale["B"]
         text, failed = mu.report(self.muts, self.killed, stale)
         self.assertTrue(failed)
         self.assertIn("Stale committed records (3)", text)
-        self.assertEqual(mu.failing_ids(text), ["A", "B"])
+        self.assertEqual(mu.failing_ids(issue(text)), ["A", "B"])
         # An unreadable shard leaves what it held unknown: every id must be re-proved. (An earlier
         # version pinned an EMPTY line here, which let every crate change through.)
         text, failed = mu.report(self.muts, self.killed, self.committed, ["shard-3.json: JSONDecodeError"])
         self.assertTrue(failed)
         self.assertIn("Shard results not read (1)", text)
-        self.assertEqual(mu.failing_ids(text), ["A", "B", "C"])
+        self.assertEqual(mu.failing_ids(issue(text)), ["A", "B", "C"])
         self.assertIn(mu.FAILING_MARK, text.splitlines()[2], "the line comes first, before any capped section")
         many = [mutation(f"M{i:03}", "src/a.rs") for i in range(mu.REPORT_ROWS + 50)]
         text, failed = mu.report(many, {}, {})
         self.assertIn("- `M099`", text)
         self.assertNotIn("- `M100`", text)
         self.assertIn("... and 50 more", text)
-        self.assertEqual(len(mu.failing_ids(text)), mu.REPORT_ROWS + 50, "the line is never capped")
+        self.assertEqual(len(mu.failing_ids(issue(text))), mu.REPORT_ROWS + 50, "the line is never capped")
 
     def test_warnings_do_not_fail_the_run(self):
         merged = dict(self.killed, A=record(self.muts[0], ["tests/x.rs::t"]),
@@ -581,6 +590,14 @@ class GitRepo(unittest.TestCase):
             self.assertEqual(rc, 1, body)
             self.assertIn("no failing-ids line", out)
         self.assertEqual(mu.failing_ids(""), [], "no open issue holds nothing")
+
+    def test_failing_ids_reads_the_header_ci_yml_writes(self):
+        ci = (Path(__file__).resolve().parents[4] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn(f'"<!-- {mu.ISSUE_MARK} \\(.number) -->', ci, "ci.yml writes the header failing_ids reads")
+        line = f"<!-- {mu.FAILING_MARK} A1 -->"
+        self.assertEqual(mu.failing_ids(issue(line, 612) + issue(line.replace("A1", "B2"), 1613)), ["A1", "B2"])
+        self.assertIsNone(mu.failing_ids(issue(line, 612) + issue("rewritten", 1613)), "multi-digit numbers")
+        self.assertIsNone(mu.failing_ids(f"{line}\nno header at all\n"), "a drifted header refuses")
 
     def test_verify_fails_on_an_unproven_selection_a_stale_mutation_or_a_retired_record(self):
         self.prove("B1", "R1")
@@ -745,7 +762,7 @@ class GitRepo(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         report = (self.root.parent / "r.md").read_text()
         self.assertIn("Shard results not read (2)", report)
-        self.assertEqual(mu.failing_ids(report), ["B1", "R1"])
+        self.assertEqual(mu.failing_ids(issue(report)), ["B1", "R1"])
         self.assertFalse(mu.RESULTS.exists())
         # Every shard killed everything, but the committed file lacks those records: still a failure.
         good = self.root.parent / "shard-2.json"
