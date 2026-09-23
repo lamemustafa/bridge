@@ -66,6 +66,7 @@ use bridge_tally_primitives::TallyDate;
 pub use error::{AuditError, Result};
 use read::{CompanyPin, Read, Window};
 use rules::Rules;
+use support::PyIntError;
 
 /// The engagement keys this slice reads, from a reference-engine client config: `[client]`
 /// label and assessment year, `[period]`, `[snapshot]` naming a tally-read-v1 directory, and
@@ -211,11 +212,21 @@ pub struct StatutoryDuesConfig {
 
 /// Python's `int(value)` for a TOML value, as the reference's `creditor_ageing_config` applies it:
 /// an integer as itself, a boolean as 0 or 1, a finite float truncated toward zero, and a string
-/// of ASCII digits (optional sign, surrounding Python whitespace, single underscores between
-/// digits). Anything else is refused, as `int()` raises. One documented narrowing: `int()` also
-/// accepts non-ASCII decimal digits in a string, which this refuses.
+/// as `int()` reads one (`support::py_int_str`). Anything else is refused, as `int()` raises. A
+/// value `int()` accepts but i64 cannot hold is refused with its own message: the reference would
+/// carry the big integer on, and Bridge cannot.
 pub(crate) fn py_int(v: &toml::Value, what: &str) -> Result<i64> {
-    let bad = || AuditError::Config(format!("{what}: int() cannot take {v}"));
+    py_int_value(v).map_err(|e| {
+        AuditError::Config(match e {
+            PyIntError::Invalid => format!("{what}: int() cannot take {v}"),
+            PyIntError::OutOfRange => {
+                format!("{what}: int() gives {v}, outside the range Bridge holds (64-bit)")
+            }
+        })
+    })
+}
+
+fn py_int_value(v: &toml::Value) -> std::result::Result<i64, PyIntError> {
     match v {
         toml::Value::Integer(n) => Ok(*n),
         toml::Value::Boolean(b) => Ok(i64::from(*b)),
@@ -226,27 +237,11 @@ pub(crate) fn py_int(v: &toml::Value, what: &str) -> Result<i64> {
                 #[allow(clippy::cast_possible_truncation)]
                 Ok(t as i64)
             } else {
-                Err(bad())
+                Err(PyIntError::OutOfRange)
             }
         }
-        toml::Value::String(s) => {
-            let t = crate::support::py_strip(s);
-            let (neg, digits) = match t.as_bytes().first() {
-                Some(b'-') => (true, &t[1..]),
-                Some(b'+') => (false, &t[1..]),
-                _ => (false, t),
-            };
-            let ok = !digits.is_empty()
-                && digits
-                    .split('_')
-                    .all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));
-            if !ok {
-                return Err(bad());
-            }
-            let n: i64 = digits.replace('_', "").parse().map_err(|_| bad())?;
-            Ok(if neg { -n } else { n })
-        }
-        _ => Err(bad()),
+        toml::Value::String(s) => crate::support::py_int_str(s),
+        _ => Err(PyIntError::Invalid),
     }
 }
 
@@ -1288,7 +1283,7 @@ pub fn applicability_44ab_canonical(
 
 #[cfg(test)]
 mod py_int_tests {
-    use super::py_int;
+    use super::{py_int, py_int_value, PyIntError};
     use toml::Value;
 
     /// Each expectation is Python 3.13's own `int()` on the same value.
@@ -1316,5 +1311,93 @@ mod py_int_tests {
         assert!(py_int(&Value::Float(f64::NAN), "t").is_err());
         assert!(py_int(&Value::Float(f64::INFINITY), "t").is_err());
         assert!(py_int(&Value::Array(Vec::new()), "t").is_err());
+    }
+
+    /// A string as Python 3.13.13's own `int()` reads it (measured; `sys.get_int_max_str_digits()`
+    /// is 4300): its whitespace is the six ASCII C-whitespace characters plus non-ASCII whitespace,
+    /// not `str.isspace()`; any Unicode decimal digit counts as that digit; the 4,300-digit limit
+    /// counts leading zeros and not underscores; and the full i64 range, MIN included, is held.
+    #[test]
+    fn a_string_reads_as_pythons_int_reads_it() {
+        let d4300 = format!("{}1", "0".repeat(4299));
+        let d4300_underscored = format!("{}_1", vec!["0"; 4299].join("_"));
+        let ok: [(&str, i64); 15] = [
+            ("-9223372036854775808", i64::MIN),
+            ("9223372036854775807", i64::MAX),
+            ("\u{663}\u{664}", 34),
+            ("\u{ff11}\u{ff12}", 12),
+            ("-\u{663}", -3),
+            ("1_\u{663}", 13),
+            ("\u{967}\u{968}\u{969}", 123),
+            // Mathematical digits: five 0..9 blocks in one decimal range.
+            ("\u{1d7d9}\u{1d7e3}\u{1d7ff}", 119),
+            ("\t\n7\r\u{b}\u{c}", 7),
+            ("\u{2028}8\u{2029}", 8),
+            ("\u{85}5\u{3000}", 5),
+            (" 1_000 ", 1000),
+            ("\u{a0}5\u{2003}", 5),
+            (&d4300, 1),
+            (&d4300_underscored, 1),
+        ];
+        for (s, want) in ok {
+            assert_eq!(py_int(&Value::from(s), "t").unwrap(), want, "{s:?}");
+        }
+        let d4301 = format!("{}1", "0".repeat(4300));
+        let d4301_big = "1".repeat(4301);
+        let invalid: [&str; 11] = [
+            "\u{1c}5\u{1f}",
+            "- 1",
+            "1 0",
+            "0x10",
+            "\u{b2}",
+            "\u{2212}5",
+            "\u{661}.\u{665}",
+            "\u{200b}9",
+            "5\u{0}",
+            &d4301,
+            &d4301_big,
+        ];
+        for s in invalid {
+            assert!(py_int(&Value::from(s), "t").is_err(), "{s:?}");
+        }
+    }
+
+    /// Python raises on an invalid literal, on one over the digit limit and on an infinite float;
+    /// it returns an integer (which i64 cannot hold) past either end of the range. The two are
+    /// different outcomes and stay distinguishable.
+    #[test]
+    fn past_the_i64_range_is_not_the_same_as_not_an_int() {
+        let big_4300 = format!("1{}", "0".repeat(4299));
+        for s in ["9223372036854775808", "-9223372036854775809", &big_4300] {
+            assert_eq!(
+                py_int_value(&Value::from(s)),
+                Err(PyIntError::OutOfRange),
+                "{s:?}"
+            );
+        }
+        assert_eq!(
+            py_int_value(&Value::Float(1e19)),
+            Err(PyIntError::OutOfRange)
+        );
+        assert_eq!(
+            py_int_value(&Value::Float(-9.3e18)),
+            Err(PyIntError::OutOfRange)
+        );
+        assert_eq!(
+            py_int_value(&Value::Float(-9_223_372_036_854_775_808.0)),
+            Ok(i64::MIN)
+        );
+        let d4301_big = "1".repeat(4301);
+        for s in ["1__0", "\u{1c}5", &d4301_big] {
+            assert_eq!(
+                py_int_value(&Value::from(s)),
+                Err(PyIntError::Invalid),
+                "{s:?}"
+            );
+        }
+        assert_eq!(
+            py_int_value(&Value::Float(f64::INFINITY)),
+            Err(PyIntError::Invalid)
+        );
     }
 }
