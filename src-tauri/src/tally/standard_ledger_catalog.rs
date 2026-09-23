@@ -19,6 +19,14 @@ use super::{
     TallyConfig, VerifiedCompanyIdentity,
 };
 
+/// Most ledgers the desktop source-draft catalogue will hold. It is the bound
+/// the shared parser used to impose on every caller, kept here when that one
+/// was raised for large books (bridge#634). The source-draft screen renders
+/// every name as an option in each entry's ledger picker, and nobody has
+/// measured that past a thousand, so a larger book is refused as before
+/// rather than rendered untried.
+const MAX_DESKTOP_CATALOG_LEDGERS: usize = 1_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StandardLedgerCatalogReadError {
     Transport,
@@ -111,6 +119,9 @@ pub(crate) async fn read_standard_ledger_catalog(
         identity.company_guid(),
     )
     .map_err(StandardLedgerCatalogReadError::from)?;
+    if catalog.names().count() > MAX_DESKTOP_CATALOG_LEDGERS {
+        return Err(StandardLedgerCatalogReadError::BoundsViolation);
+    }
     Ok(StandardLedgerCatalogRead {
         catalog,
         request_sha256: sha256(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
@@ -198,4 +209,4 @@ fn sha256(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 #[path = "standard_ledger_catalog_tests.rs"]
-mod tests;
+pub(crate) mod tests;

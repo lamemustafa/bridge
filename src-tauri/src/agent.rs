@@ -432,6 +432,11 @@ fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
         if cause.is::<crate::tally::connection::NativeReportPairDrift>() {
             return Some(crate::tally::connection::NativeReportPairDrift::SAFE_CODE);
         }
+        if let Some(catalogue) =
+            cause.downcast_ref::<bridge_tally_protocol::StandardLedgerCatalogError>()
+        {
+            return Some(catalogue.safe_code());
+        }
         cause
             .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
             .map(crate::tally::connection::PairedReadValidationError::safe_code)

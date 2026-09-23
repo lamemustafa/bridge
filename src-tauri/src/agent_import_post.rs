@@ -725,8 +725,14 @@ fn post_failure_outcome(
         .unwrap_or(accumulated);
     evidence.state = "partial";
     evidence.reason_code = Some(failure.code.clone());
+    let mut payload = reconciliation_failure_payload(batch_id, attempted, response, &failure.code);
+    // The typed, data-free reason, as the generic refusal carries it; a post
+    // refused in the queue lost it here (bridge#634).
+    if let Some(cause) = failure.cause {
+        payload["result"]["error"]["cause"] = json!(cause);
+    }
     ToolOutcome {
-        payload: reconciliation_failure_payload(batch_id, attempted, response, &failure.code),
+        payload,
         evidence,
         company_guid: Some(guid.to_string()),
         truncated: false,
@@ -915,7 +921,7 @@ fn recheck_import_admission(
     })?;
     if !ledger_binding
         .matches(catalogue, company_name, company_guid)
-        .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?
+        .map_err(|error| anyhow::Error::new(error).context("ledger_export_invalid"))?
     {
         return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
     }
@@ -929,7 +935,7 @@ fn recheck_import_admission(
         (true, Some(groups)) => {
             let parents =
                 parse_standard_ledger_catalog_response(catalogue, company_name, company_guid)
-                    .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?;
+                    .map_err(|error| anyhow::Error::new(error).context("ledger_export_invalid"))?;
             let groups = parse_native_group_snapshot(groups, company_guid)
                 .map_err(|_| anyhow::Error::msg("group_export_invalid"))?;
             let payload = ImportPayload {

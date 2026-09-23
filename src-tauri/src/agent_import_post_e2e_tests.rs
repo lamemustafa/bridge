@@ -1646,6 +1646,52 @@ async fn a_new_ledger_under_an_approved_name_during_approval_is_refused_by_ident
     assert_eq!(observed.len(), expected, "{response}");
 }
 
+/// bridge#634: the queue's catalogue re-read at post time holds a repeated
+/// ledger. The admission recheck refuses before the POST, and the refusal
+/// carries the catalogue's typed cause instead of only the export code it
+/// used to collapse to. The name is never in the response.
+#[tokio::test]
+async fn a_post_time_catalogue_refusal_names_its_cause_and_no_ledger() {
+    let repeated = crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
+        &catalogue(),
+        [
+            ("Twice Named".to_string(), "c0000001".to_string()),
+            ("Twice Named".to_string(), "c0000002".to_string()),
+        ],
+    );
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    let catalogue_at = probe().len() + 2;
+    after[catalogue_at + 1] = xml(repeated.clone());
+    after[catalogue_at + 3] = xml(repeated);
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["cause"], "ledger_catalogue_duplicate_identity",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(
+        observed.len(),
+        expected,
+        "the POST is never sent: {response}"
+    );
+    assert!(!response.to_string().contains("Twice"), "{response}");
+}
+
 /// The binding-time snapshot lost in transport, or answered with T2's live
 /// refusal: the masters cannot be compared, so the post is refused as
 /// `post_masters_unconfirmed`, never as an unknown outcome. A lost read stops

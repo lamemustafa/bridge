@@ -1104,9 +1104,13 @@ impl Server {
         let (xml, evidence) = self.post_read(identity, read).await?;
         let catalogue =
             parse_standard_ledger_catalog_response(&xml, company_name, identity.company_guid())
-                .map_err(|_| {
-                    ToolFailure::from("ledger_export_invalid".to_string())
-                        .with_prior_evidence(evidence.clone())
+                .map_err(|error| {
+                    // `code` keeps naming what failed; the cause says why, which
+                    // every catalogue refusal used to leave out (bridge#634).
+                    let mut failure = ToolFailure::from("ledger_export_invalid".to_string())
+                        .with_prior_evidence(evidence.clone());
+                    failure.cause = Some(error.safe_code());
+                    failure
                 })?;
         Ok((
             catalogue.names().map(str::to_string).collect(),
