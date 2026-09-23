@@ -34,7 +34,7 @@ pub use ledger_currency::{
     LedgerCurrencyRefusal,
 };
 pub use model::{
-    AgeingAnchor, CompanyCurrency, CurrencyMaster, InrArm, LedgerSnapshotEntry, NativeBillRow,
+    AgeingAnchor, CompanyCurrency, CurrencyMaster, LedgerSnapshotEntry, NativeBillRow,
     NativeOutstandingsError, NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
 };
 pub use request::{

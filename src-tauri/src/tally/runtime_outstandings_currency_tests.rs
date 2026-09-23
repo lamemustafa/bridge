@@ -751,14 +751,14 @@ async fn a_completed_read_holds_its_statement_source_apart_from_the_working_pape
     }
 }
 
-/// bridge#551: the INR rule's symbol arm admits a single master whose
-/// `ORIGINALNAME` is `₹` although its mailing name is neither `INR` nor
-/// `Indian Rupees`, on every path that admits through `admit_inr`. The same
-/// master without that `ORIGINALNAME` stays refused as not INR. No book read
-/// has this shape (TALLY_PROTOCOL_REFERENCE §9.10a.2), so it is injected into
-/// the captured single-master read.
+/// bridge#551: a rupee symbol alone does not admit. The captured
+/// single-master read (`I₹`, mailing name `INR`) is admitted through
+/// `admit_inr`; with its mailing name changed to `Rupees` it is refused as
+/// not INR, whether or not an `ORIGINALNAME` `₹` is injected alongside
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2: whether `ORIGINALNAME` survives a
+/// base-currency rename is unmeasured).
 #[tokio::test]
-async fn a_single_rupee_master_is_admitted_by_its_symbol() {
+async fn a_single_rupee_master_is_not_admitted_by_its_symbol_alone() {
     let captured = currency_source();
     let rupees = captured.replace(
         "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
@@ -770,7 +770,8 @@ async fn a_single_rupee_master_is_admitted_by_its_symbol() {
         "<DECIMALPLACES",
         "<ORIGINALNAME TYPE=\"String\">\u{20b9}</ORIGINALNAME>\r\n     <DECIMALPLACES",
     );
-    for (currency, admitted) in [(symbol, true), (rupees, false)] {
+    assert_ne!(symbol, rupees);
+    for (currency, admitted) in [(captured, true), (symbol, false), (rupees, false)] {
         let simulator = SequenceSimulator::spawn(currency_plans(currency)).unwrap();
         let read = TallyRuntime::default()
             .detect_base_currency_with_extent(
@@ -784,9 +785,12 @@ async fn a_single_rupee_master_is_admitted_by_its_symbol() {
             .unwrap();
         simulator.cancel();
         match read.admit_inr() {
-            Ok(_) => assert!(admitted, "a master INR by neither arm was admitted"),
+            Ok(_) => assert!(
+                admitted,
+                "a master without an Indian mailing name was admitted"
+            ),
             Err(code) => {
-                assert!(!admitted, "the symbol arm was refused: {code}");
+                assert!(!admitted, "the captured INR master was refused: {code}");
                 assert_eq!(code, "company_base_currency_not_inr");
             }
         }

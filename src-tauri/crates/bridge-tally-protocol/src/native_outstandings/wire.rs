@@ -1280,7 +1280,9 @@ fn parse_currency_row(
             .map_err(|_| NativeOutstandingsError::InvalidResponse("currency_xml_malformed"))?
         {
             Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"ORIGINALNAME") => {
-                let text = read_element_text(reader, child.name())?;
+                // Untrimmed: the base is matched to the company's
+                // CURRENCYNAME character for character (§9.10a.2).
+                let text = read_element_identifier_text(reader, child.name())?;
                 if original_name.replace(text).is_some() {
                     return Err(NativeOutstandingsError::InvalidResponse(
                         "currency_duplicate_original_name",

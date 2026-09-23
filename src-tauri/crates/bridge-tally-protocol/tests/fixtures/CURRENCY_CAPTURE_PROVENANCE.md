@@ -69,5 +69,5 @@ put a rupee symbol in front of a dollar balance.
 | `currency_originalname_shape_live` | `I₹` / `₹` / `INR`; `UUSD` / `USD` / `US Dollar` |
 
 Each is a two-master book whose base is the rupee master (TALLY_PROTOCOL_REFERENCE §9.10a.2).
-Neither shows a master that the symbol arm alone admits (`₹` with a mailing name other than `INR`
-or `Indian Rupees`); that case remains covered only by a constructed variant.
+`ORIGINALNAME` identifies the base; INR is still decided by the mailing name alone. A rupee master
+with another mailing name, refused as not INR, is covered only by a constructed variant.

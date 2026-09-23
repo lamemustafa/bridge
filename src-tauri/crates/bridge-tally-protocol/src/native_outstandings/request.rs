@@ -347,9 +347,9 @@ fn xml_escape(value: &str) -> String {
 /// assert it is a step the product can answer for itself.
 /// - Measured 2026-08-07 on three lab companies: one `CURRENCY` row each,
 ///   `NAME` `"Rs."`, `MAILINGNAME` `"Indian Rupees"` or `"INR"`.
-/// - `ORIGINALNAME` is fetched for the INR rule's symbol arm and to match a
-///   company with several masters to its `CURRENCYNAME` (bridge#551,
-///   TALLY_PROTOCOL_REFERENCE §9.10a.2).
+/// - `ORIGINALNAME` is fetched to match a company with several masters to
+///   its `CURRENCYNAME`, which identifies the base master; it never decides
+///   INR (bridge#551, TALLY_PROTOCOL_REFERENCE §9.10a.2).
 pub fn render_company_currency_request(company: &str) -> String {
     format!(
         r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeCompanyCurrencies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeCompanyCurrencies" ISMODIFY="No"><TYPE>Currency</TYPE><FETCH>NAME, MAILINGNAME, DECIMALPLACES, ORIGINALNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,

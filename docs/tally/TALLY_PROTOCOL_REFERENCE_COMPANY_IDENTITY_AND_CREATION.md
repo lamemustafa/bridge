@@ -387,22 +387,26 @@ companies.
 **Bridge's rule.**
 - The base is the only master, or, among several, the unique master whose `ORIGINALNAME` equals
   the company's `CURRENCYNAME` character for character. With no match, several, or an empty
-  value, it is not identified.
-- An identified base is INR if either arm holds:
-  - its `ORIGINALNAME` is exactly `₹` (U+20B9), or, only when `ORIGINALNAME` is absent, its `NAME`
-    is exactly `₹`;
-  - its `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
-- `Rs.` alone never admits: other currencies share it. A prefixed `I₹` is not `₹`.
+  value, it is not identified. `ORIGINALNAME` picks which master is the base; it never decides INR.
+- An identified base is INR only if its `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
+- A rupee symbol does not admit, as `NAME` or as `ORIGINALNAME`. Whether `ORIGINALNAME` `₹`
+  survives a Company Alteration that renames the base currency is unmeasured; if it does, a
+  renamed non-INR base would still carry it (inferred). `Rs.` alone never admits: other currencies
+  share it.
 
 A book with several masters is still refused on every path until that path compares each
 ledger's own currency with the base (§8.2d).
 
 **Not established:**
 - that `ORIGINALNAME` rather than `NAME` is the match on a book whose base master was never renamed
-  (the two fields are then the same);
+  (inferred, not measured: the two fields are then the same);
 - that row order, `RESERVEDNAME` or `MASTERID` mean anything. They are never used;
-- any release other than 7.1, or a base symbol changed by a later Company Alteration;
-- a master that only the symbol arm admits (`₹` with another mailing name). No book read has one.
+- whether `ORIGINALNAME` survives a base-currency rename by Company Alteration;
+- the production request on a single-master book. Three client-derived lab copies, one master
+  each, answered a wider `FETCH` that includes `ORIGINALNAME` with `STATUS` 1 on the same host
+  (not committed);
+- any release other than 7.1, including whether one that does not know the field answers in-band
+  or blocks on a modal.
 
 These are exports. §9.10b's trap is `ORIGINALNAME` sent as a `COMPANY` child in an **import**.
 

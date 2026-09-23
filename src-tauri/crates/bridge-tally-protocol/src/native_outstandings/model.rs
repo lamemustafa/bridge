@@ -158,19 +158,21 @@ pub enum NativeOverdueCrosscheck {
 pub struct CompanyCurrency {
     pub symbol: String,
     pub mailing_name: String,
-    /// How many currency masters the company defines. INR is inferred only
-    /// when there is exactly one: with several defined, which is the BASE
-    /// currency is not determinable from this read, and guessing would put a
-    /// wrong currency symbol in front of a real balance.
+    /// How many currency masters the company defines. INR is admitted only
+    /// for an identified base: the only master, or, among several, the one the
+    /// company's `CURRENCYNAME` names ([`CompanyCurrency::from_masters`]). The
+    /// currency read alone cannot pick one of several, and guessing would put
+    /// a wrong currency symbol in front of a real balance.
     pub currency_count: usize,
     /// The base currency's display precision reported by Tally. Consumers
     /// must carry this to their rendering boundary rather than silently
     /// assuming paise precision.
     pub decimal_places: u8,
     pub is_inr: bool,
-    /// Every master's NAME, in read order (`symbol` is the first). Kept out
-    /// of serialization so every output that carries this struct is unchanged;
-    /// it exists so a refusal can name the masters it saw.
+    /// Every master's NAME, in read order (`symbol` is the identified base's,
+    /// else the first). Kept out of serialization so every output that carries
+    /// this struct is unchanged; it exists so a refusal can name the masters it
+    /// saw.
     #[serde(skip)]
     pub names: Vec<String>,
 }
@@ -180,49 +182,27 @@ pub struct CompanyCurrency {
 pub struct CurrencyMaster {
     /// `NAME`: the symbol a ledger's `CURRENCYNAME` carries (`I₹`, `Rs.`, `$`).
     pub name: String,
-    /// `ORIGINALNAME`, when the read returns it: on the books measured, the
-    /// value the company's own `CURRENCYNAME` carries when this master is its
-    /// base (`₹` for a master named `I₹`). `Some("")` when the element is
-    /// present but empty, which is not the same as absent.
+    /// `ORIGINALNAME`, when the read returns it, exactly as received (not
+    /// trimmed): on the books measured, the value the company's own
+    /// `CURRENCYNAME` carries when this master is its base (`₹` for a master
+    /// named `I₹`). It identifies the base and never decides INR. `Some("")`
+    /// when the element is present but empty, which is not the same as absent.
     pub original_name: Option<String>,
     pub mailing_name: String,
     pub decimal_places: u8,
 }
 
-/// Which arm of the INR rule admitted a base master.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InrArm {
-    Symbol,
-    MailingName,
-    Both,
-}
-
 impl CurrencyMaster {
-    /// The INR rule for an identified base master (bridge#551). It is INR if
-    /// either arm holds:
-    /// - the symbol arm: its `ORIGINALNAME` is exactly `₹` (U+20B9), or, only
-    ///   when `ORIGINALNAME` is absent, its `NAME` is exactly `₹`. A present
-    ///   but empty `ORIGINALNAME` takes no `NAME` fallback;
-    /// - the mailing-name arm: its `MAILINGNAME` is `Indian Rupees` or `INR`,
-    ///   ignoring case.
+    /// The INR rule for an identified base master (bridge#551): its
+    /// `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
     ///
-    /// `Rs.` alone never admits: the Pakistani, Nepali and Sri Lankan rupees
-    /// share it. A prefixed `I₹` is not `₹`; it admits only through its
-    /// `ORIGINALNAME` or its mailing name.
-    pub fn inr_arm(&self) -> Option<InrArm> {
-        const RUPEE: &str = "\u{20b9}";
-        let symbol = match &self.original_name {
-            Some(original_name) => original_name == RUPEE,
-            None => self.name == RUPEE,
-        };
-        let mailing_name = self.mailing_name.eq_ignore_ascii_case("Indian Rupees")
-            || self.mailing_name.eq_ignore_ascii_case("INR");
-        match (symbol, mailing_name) {
-            (true, true) => Some(InrArm::Both),
-            (true, false) => Some(InrArm::Symbol),
-            (false, true) => Some(InrArm::MailingName),
-            (false, false) => None,
-        }
+    /// The symbol is not an arm. `Rs.` is shared by the Pakistani, Nepali and
+    /// Sri Lankan rupees, and whether `ORIGINALNAME` `₹` survives a Company
+    /// Alteration that renames the base currency is unmeasured
+    /// (TALLY_PROTOCOL_REFERENCE §9.10a.2).
+    pub fn is_inr(&self) -> bool {
+        self.mailing_name.eq_ignore_ascii_case("Indian Rupees")
+            || self.mailing_name.eq_ignore_ascii_case("INR")
     }
 }
 
@@ -232,7 +212,7 @@ impl CompanyCurrency {
     /// `ORIGINALNAME` equals the company's own `CURRENCYNAME`
     /// (`company_currency_name`; TALLY_PROTOCOL_REFERENCE §9.10a.2). An empty
     /// name never matches. `is_inr` holds only for an identified base that
-    /// passes [`CurrencyMaster::inr_arm`].
+    /// passes [`CurrencyMaster::is_inr`].
     ///
     /// `symbol`, `mailing_name` and `decimal_places` describe the identified
     /// base; with none identified they describe the first master read, as
@@ -258,7 +238,7 @@ impl CompanyCurrency {
             mailing_name: shown.mailing_name,
             currency_count: masters.len(),
             decimal_places: shown.decimal_places,
-            is_inr: base.and_then(CurrencyMaster::inr_arm).is_some(),
+            is_inr: base.is_some_and(CurrencyMaster::is_inr),
             names: masters.iter().map(|master| master.name.clone()).collect(),
         }
     }
