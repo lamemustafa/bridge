@@ -145,16 +145,20 @@ fn the_narration_is_shown_whole_except_this_batchs_trailing_marker() {
     };
     assert_eq!(shown(&format!("Paid {MARKER}")), "\"Paid\"");
     assert_eq!(shown(MARKER), "\"\"");
+    let other = "[BRIDGE:00000000-0000-4000-8000-000000000000]";
+    // Another batch's marker stays visible before this batch's trailing one.
+    assert_eq!(
+        shown(&format!("Paid {other} {MARKER}")),
+        format!("\"Paid {other}\"")
+    );
     // A second marker stays visible: only the exact trailing one is left out.
     assert_eq!(
         shown(&format!("Paid {MARKER} {MARKER}")),
         format!("\"Paid {MARKER}\"")
     );
-    let other = "[BRIDGE:00000000-0000-4000-8000-000000000000]";
     for narration in [
         format!("Paid {MARKER} added later"),
         format!("Paid {other}"),
-        format!("Paid {other} {MARKER}").replace(&format!(" {MARKER}"), ""),
         format!("Paid{MARKER}"),
     ] {
         assert_eq!(shown(&narration), format!("{narration:?}"), "{narration}");
