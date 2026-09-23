@@ -914,3 +914,43 @@ fn a_second_amendment_is_decided_by_the_first_amendments_verification() {
         Some(json!("voucher_never_verified"))
     );
 }
+
+/// A reference-only amendment, imported and verified: the book matches both
+/// builds' compared fields, and only the amendment's record equals the book's
+/// ALTERID. The equal record admits it, whichever build comes first (#239).
+#[test]
+fn the_build_whose_record_equals_the_book_admits_even_when_not_first() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let reference_only = build(AMENDMENT, Some(ORIGINAL), "12.50", "20260901");
+    let lineage = lineage_of(&journal(&[&original, &reference_only]), ORIGINAL).unwrap();
+    let proposal = build(UNRELATED, None, "18.00", "20260901").vouchers;
+    let mut row = book_row(&original);
+    row.alter_id = Some(41);
+    let admitted = lineage
+        .compare_and_swap(
+            &proposal,
+            &book(vec![row]),
+            &baselines(&[(ORIGINAL, 40), (AMENDMENT, 41)]),
+        )
+        .unwrap()
+        .expect("the amendment's own record equals the book");
+    assert_eq!(admitted[0]["book_matches_batch_id"], AMENDMENT);
+}
+
+#[test]
+fn a_failed_baseline_write_leaves_the_previous_file_whole() {
+    let directory = tempfile::tempdir().unwrap();
+    let proof = |txn_id: &str, alter_id: u64| json!({"vouchers":[{"bridge_txn_id":txn_id,"status":"posted_verified","alter_id":alter_id}]});
+    record_verified_baseline(directory.path(), ORIGINAL, &proof("txn-001", 40)).unwrap();
+    let path = directory.path().join(format!("{ORIGINAL}.baseline.json"));
+    let before = std::fs::read(&path).unwrap();
+    // The staged file cannot be written: the write fails before the rename.
+    std::fs::create_dir(
+        directory
+            .path()
+            .join(format!("{ORIGINAL}.baseline.json.next")),
+    )
+    .unwrap();
+    assert!(record_verified_baseline(directory.path(), ORIGINAL, &proof("txn-002", 52)).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}

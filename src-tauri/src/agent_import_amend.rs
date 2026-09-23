@@ -196,9 +196,11 @@ impl Lineage {
             // The fields above are all the read carries. Anything else a person
             // changed (a reference, an allocation) shows only as the voucher's
             // ALTERID moving past one Bridge recorded when it first verified a
-            // build (#239). ALTERID is one company-wide sequence, so a current
-            // value equal to any matching build's baseline means the voucher
-            // has not been altered since that reading. A build never imported
+            // build (#239). A voucher's ALTERID advances on every alteration
+            // (TALLY_PROTOCOL_REFERENCE §9.3, measured over the gateway; an edit
+            // in Tally's own screens is not yet measured), so a current value
+            // equal to any matching build's baseline means the voucher has not
+            // been altered since that reading. A build never imported
             // has no baseline and is passed over. No equal baseline refuses:
             // as altered when some matching build has one, as never verified
             // when none does.

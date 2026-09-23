@@ -295,7 +295,8 @@ or an owner decision to amend the requirement instead:
       Since #239's baseline change, the build also admits a voucher only when its `ALTERID` equals
       one Bridge recorded the first time it verified a build the book still matches; otherwise it
       refuses (`voucher_altered_since_verified`, or `voucher_never_verified` when no such build has
-      a record). `ALTERID` is one company-wide increasing sequence, so equality with any recorded
+      a record). A voucher's `ALTERID` advances on every alteration (§9.3, measured over the
+      gateway; an edit in Tally's own screens is not yet measured), so equality with any recorded
       value means nothing has altered the voucher since that reading. The value is kept in a write-once
       `<batch>.baseline.json` beside the proof, not in the journal, so an older binary still reads the
       journal after a rollback. That catches an edit to any field made after the first verification,
@@ -305,7 +306,10 @@ or an owner decision to amend the requirement instead:
       by hand, since a batch Bridge posted cannot be amended, so the build asks for a verify right
       after each import. Batches verified before this change have no record; their first
       verification after it becomes the baseline, so an edit made before that is not caught for
-      them. Any alteration refuses, including one that is not a content edit (for example a bank
+      them. The refusal says so plainly: "Verifying now records this voucher exactly as it stands
+      in Tally, including any changes made since Bridge built it. Check the voucher in Tally first;
+      if someone has edited it, correct it there instead of amending." Any alteration refuses,
+      including one that is not a content edit (for example a bank
       reconciliation date set in Tally), which is the right answer when the amendment would
       replace the voucher's entries.
     - **The build-to-import window.** The comparison runs when the amendment is built. The import
