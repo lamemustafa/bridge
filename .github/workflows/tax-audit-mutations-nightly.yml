@@ -7,7 +7,7 @@ name: Tax-audit mutations (nightly)
 # were weakened by a change elsewhere in the crate is caught within a day. Any
 # mutation not killed, not run, or with a stale committed record fails the run
 # and opens (or updates) one tracking issue labelled `mutation-nightly`, whose body
-# ends with a line naming the failing ids. While that issue is open, ci.yml's
+# carries a line naming the failing ids. While that issue is open, ci.yml's
 # mutation check requires a crate pull request to re-prove those ids on its merged
 # tree: the fix can merge, and nothing else in the crate can.
 on:
@@ -78,8 +78,9 @@ jobs:
           path: shards
           merge-multiple: true
       # A shard that crashed before writing its file is not a clean shard: its
-      # mutations are simply absent from the merge, and the report lists them as
-      # "not run", which fails the run.
+      # mutations are absent from the merge, and the report lists them as "not run",
+      # which fails the run. With no shard file at all, the merge reads one missing
+      # file, so every id goes on the issue's failing-ids line.
       - name: Merge the shards and judge the whole list
         id: judge
         run: |
@@ -87,9 +88,7 @@ jobs:
           shopt -s nullglob
           files=(shards/shard-*.json)
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "no shard wrote a results file" > report.md
-            echo "failed=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            files=(shards/no-shard-wrote-a-results-file.json)
           fi
           if python3 src-tauri/crates/bridge-tax-audit/parity/mutations.py \
             --merge "${files[@]}" --results mutation-results.json --report report.md; then
@@ -111,7 +110,10 @@ jobs:
             report.md
           if-no-files-found: warn
           retention-days: 30
+      # Only master's run speaks for master: a run dispatched on another branch
+      # must not close, or rewrite the failing ids of, master's issue.
       - name: Open, update or close the tracking issue
+        if: ${{ github.ref == 'refs/heads/master' }}
         env:
           GH_TOKEN: ${{ github.token }}
           FAILED: ${{ steps.judge.outputs.failed }}
@@ -138,3 +140,8 @@ jobs:
             gh issue comment "$open" --body "The nightly run passed: every mutation killed on master. $RUN_URL"
             gh issue close "$open"
           fi
+      - name: Fail a failing run on another branch
+        if: ${{ github.ref != 'refs/heads/master' && steps.judge.outputs.failed == 'true' }}
+        run: |
+          cat report.md
+          exit 1
