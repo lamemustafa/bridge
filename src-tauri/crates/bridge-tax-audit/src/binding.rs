@@ -763,14 +763,65 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
             .collect();
     }
 
-    let partner_interest_ledgers = engagement
-        .partner_interest_ledgers
+    // `[partners.*]`'s three name locations, in the reference's LEDGER_PATHS order: every entry's
+    // `capital_ledgers`, then every `interest_ledger`, then every `remuneration_ledger`. `*` visits
+    // every entry that is a table, `deed` included (it names no ledger). Entries are visited in key
+    // order where the reference visits them in the file's; only which refusal is reported first can
+    // differ.
+    let mut partner_entries: BTreeMap<String, toml::Value> =
+        table_at(&engagement.raw_cfg, &["partners"])?
+            .map(|t| t.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+    for (key, is_list) in [
+        ("capital_ledgers", true),
+        ("interest_ledger", false),
+        ("remuneration_ledger", false),
+    ] {
+        for (partner, entry) in &mut partner_entries {
+            let Some(t) = entry.as_table_mut() else {
+                continue;
+            };
+            let Some(v) = t.get(key) else { continue };
+            let location = format!("partners.{partner}.{key}");
+            let malformed = |what: &str| {
+                AuditError::refused(
+                    BIND_ID_MALFORMED,
+                    format!("{location}: expected {what}, got {v}"),
+                )
+            };
+            let bound = if is_list {
+                let names: Vec<String> = v
+                    .as_array()
+                    .and_then(|a| a.iter().map(|x| x.as_str().map(str::to_string)).collect())
+                    .ok_or_else(|| malformed("a list of names"))?;
+                toml::Value::Array(
+                    lbinder
+                        .bind_list(&names, &location)?
+                        .into_iter()
+                        .map(toml::Value::from)
+                        .collect(),
+                )
+            } else {
+                let name = v.as_str().ok_or_else(|| malformed("a name"))?.to_string();
+                toml::Value::from(lbinder.bind_one(&name, &location)?)
+            };
+            t.insert(key.to_string(), bound);
+        }
+    }
+    // financial_statements' view: each partner's (not the deed's) interest ledger, when truthy, as
+    // the reference's `partner_interest_ledgers` reads it.
+    let partner_interest_ledgers: BTreeMap<String, String> = partner_entries
         .iter()
-        .map(|(key, label)| {
-            let bound = lbinder.bind_one(label, &format!("partners.{key}.interest_ledger"))?;
-            Ok((key.clone(), bound))
+        .filter(|(k, _)| k.as_str() != "deed")
+        .filter_map(|(k, v)| {
+            let name = v.get("interest_ledger")?.as_str()?;
+            (!name.is_empty()).then(|| (k.clone(), name.to_string()))
         })
-        .collect::<Result<BTreeMap<String, String>>>()?;
+        .collect();
+    let partners = crate::PartnersConfig {
+        deed: partner_entries.remove("deed"),
+        partners: partner_entries,
+    };
 
     // The two tables `statutory_dues_43b` and `creditor_ageing_43bh` read, in the reference's
     // LEDGER_PATHS order. Only the name locations' shapes are checked here; every value is kept as
@@ -879,6 +930,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         loans,
         depreciation,
         partner_interest_ledgers,
+        partners,
         creditor_groups,
         trade_creditors_source,
         creditor_ageing,
@@ -1934,6 +1986,81 @@ deductor_aliases = 5\n"
         let err = engagement_err("\n[partners.a]\ninterest_ledger = 5\n");
         assert!(matches!(err, AuditError::Config(_)));
         assert!(format!("{err}").contains("[partners].a.interest_ledger"));
+    }
+
+    // The reference binds all three [partners.*] ledger locations (LEDGER_PATHS), not only the
+    // interest ledger financial_statements reads: partners_40b_194t reads the other two.
+    #[test]
+    fn an_unknown_partner_capital_ledger_refuses_naming_its_location() {
+        let e = engagement("\n[partners.a]\ncapital_ledgers = [\"A Capital\"]\n");
+        let b = book_with_interest_ledger("A capital", "", None); // case differs
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("partners.a.capital_ledgers"));
+    }
+
+    #[test]
+    fn an_unknown_partner_remuneration_ledger_refuses_naming_its_location() {
+        let e = engagement("\n[partners.a]\nremuneration_ledger = \"Remuneration\"\n");
+        let b = book_with_interest_ledger("Partners' Remuneration", "", None);
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("partners.a.remuneration_ledger"));
+    }
+
+    #[test]
+    fn partner_capital_and_remuneration_ledgers_follow_a_rename_by_identity() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Remuneration\" = {G_ROUNDOFF:?}\n\
+             \n[partners.a]\ncapital_ledgers = [\"Remuneration\"]\nremuneration_ledger = \"Remuneration\"\n\
+             \n[partners.deed]\ninterest_rate_bp = 1200\n"
+        ));
+        let b = book_with_interest_ledger("Partners' Remuneration", G_ROUNDOFF, None);
+        let (bound, _) = e.bind(&b).unwrap();
+        let a = bound.partners.partners["a"].as_table().unwrap();
+        assert_eq!(
+            a["capital_ledgers"],
+            toml::Value::Array(vec!["Partners' Remuneration".into()])
+        );
+        assert_eq!(
+            a["remuneration_ledger"].as_str(),
+            Some("Partners' Remuneration")
+        );
+        assert!(!bound.partners.partners.contains_key("deed"));
+        assert_eq!(
+            bound
+                .partners
+                .deed
+                .as_ref()
+                .and_then(|d| d.get("interest_rate_bp")),
+            Some(&toml::Value::Integer(1200))
+        );
+    }
+
+    #[test]
+    fn an_identity_used_only_by_a_partner_capital_ledger_is_not_unused() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"A Capital\" = {G_ROUNDOFF:?}\n\
+             \n[partners.a]\ncapital_ledgers = [\"A Capital\"]\n"
+        ));
+        let b = book_with_interest_ledger("A Capital", G_ROUNDOFF, None);
+        assert!(e.bind(&b).is_ok());
+    }
+
+    #[test]
+    fn a_malformed_partner_ledger_location_refuses() {
+        for cfg in [
+            "\n[partners.a]\ncapital_ledgers = \"A Capital\"\n",
+            "\n[partners.a]\ncapital_ledgers = [5]\n",
+            "\n[partners.a]\nremuneration_ledger = 5\n",
+        ] {
+            let b = book_with_interest_ledger("A Capital", "", None);
+            assert_eq!(
+                engagement(cfg).bind(&b).unwrap_err().code(),
+                Some(BIND_ID_MALFORMED),
+                "{cfg}"
+            );
+        }
     }
 
     // ---- the end-to-end proof: a rename bound by identity reproduces the un-renamed figures ----
