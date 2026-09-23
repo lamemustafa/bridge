@@ -295,8 +295,23 @@ const INVENTORY_LISTS: [&str; 4] = [
 /// - the text between ` @ ` and ` = ` is not empty and holds no newline.
 ///
 /// The surrounding `\s*` matter only for unstripped text, which is stripped here first.
-fn is_foreign_amount(_text: &str) -> bool {
-    false // the matcher follows in the next commit
+fn is_foreign_amount(text: &str) -> bool {
+    let s: Vec<char> = xml::py_strip(text).chars().collect();
+    let spaces: Vec<usize> = (0..s.len()).filter(|&i| xml::is_py_space(s[i])).collect();
+    let [first, second, .., second_last, last] = spaces[..] else {
+        return false;
+    };
+    let is_at = |at: usize, lit: &str| s[at..].iter().copied().take(3).eq(lit.chars());
+    // Where ` = ` starts, if its closing space is the second-to-last whitespace char.
+    let Some(equals) = second_last.checked_sub(2) else {
+        return false;
+    };
+    is_end(&s[..second], first)
+        && is_at(second, " @ ")
+        && is_at(equals, " = ")
+        && equals > second + 3
+        && !s[second + 3..equals].contains(&'\n')
+        && is_end(&s[second_last + 1..], last - second_last - 1)
 }
 
 /// FX-1: the part carries foreign-currency amounts. It is refused before any amount in it is
@@ -318,6 +333,28 @@ fn refuse_foreign<'a>(part: &str, names: impl IntoIterator<Item = &'a str>) -> R
             names.into_iter().collect::<Vec<_>>().join(", ")
         ),
     ))
+}
+
+/// `-?\S+ -?[\d,]*\.?\d+` over text with no whitespace except the char at `space`: a non-empty
+/// run before a plain space, then a number.
+fn is_end(s: &[char], space: usize) -> bool {
+    if space == 0 || s[space] != ' ' {
+        return false;
+    }
+    let number = &s[space + 1..];
+    let number = number.strip_prefix(&['-']).unwrap_or(number);
+    let digit = |c: &char| crate::support::py_is_decimal(*c);
+    let digit_or_comma = |c: &char| *c == ',' || digit(c);
+    match number.iter().position(|c| *c == '.') {
+        // `[\d,]*\.\d+`: after the one dot, digits only.
+        Some(dot) => {
+            number[..dot].iter().all(digit_or_comma)
+                && dot + 1 < number.len()
+                && number[dot + 1..].iter().all(digit)
+        }
+        // `[\d,]*\d+`: digits and commas, ending in a digit.
+        None => number.iter().all(digit_or_comma) && number.last().is_some_and(digit),
+    }
 }
 
 /// Where the pattern `-?[\d,]*\.?\d+` matches at char index `at`, the end of the match Python's
