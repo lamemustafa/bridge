@@ -98,6 +98,30 @@ fn book_row(line: &ImportLedgerLine) -> ReadVoucher {
     }
 }
 
+/// Every build of `lineage` as Bridge first verified it: each voucher at the
+/// ALTERID `book_row` gives it, so the book matches its baseline (#239).
+fn verified_as_booked(lineage: &amend::Lineage) -> amend::VerifiedBaselines {
+    amend::VerifiedBaselines(
+        lineage
+            .builds
+            .iter()
+            .map(|build| {
+                (
+                    build.batch.batch_id.clone(),
+                    amend::VerifiedBaseline {
+                        vouchers: build
+                            .batch
+                            .vouchers
+                            .iter()
+                            .map(|voucher| (voucher.bridge_txn_id.clone(), 40))
+                            .collect(),
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
 fn book(rows: Vec<ReadVoucher>) -> ImportReadSource {
     ImportReadSource::admit(rows).unwrap()
 }
@@ -275,7 +299,7 @@ fn a_voucher_still_as_any_build_wrote_it_is_admitted() {
         (book_row(&first), AMENDMENT),
     ] {
         let admitted = lineage
-            .compare_and_swap(&proposal, &book(vec![row]))
+            .compare_and_swap(&proposal, &book(vec![row]), &verified_as_booked(&lineage))
             .unwrap()
             .expect("book holds a version Bridge built");
         assert_eq!(admitted[0]["book_matches_batch_id"], expected);
@@ -289,7 +313,7 @@ fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
     let proposal = build(AMENDMENT, None, "18.00", "20260901").vouchers;
     let reason = |rows: Vec<ReadVoucher>| {
         lineage
-            .compare_and_swap(&proposal, &book(rows))
+            .compare_and_swap(&proposal, &book(rows), &verified_as_booked(&lineage))
             .unwrap()
             .expect_err("refused")[0]["reason"]
             .clone()
@@ -315,7 +339,11 @@ fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
     let mut effective_redated = book_row(&original);
     effective_redated.effective_date = Some("20260905".into());
     let refused = lineage
-        .compare_and_swap(&proposal, &book(vec![effective_redated]))
+        .compare_and_swap(
+            &proposal,
+            &book(vec![effective_redated]),
+            &verified_as_booked(&lineage),
+        )
         .unwrap()
         .expect_err("refused");
     assert_eq!(refused[0]["reason"], "book_voucher_diverged");
@@ -328,12 +356,20 @@ fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
     let mut effective_kept = book_row(&original);
     effective_kept.effective_date = effective_kept.date.clone();
     let admitted = lineage
-        .compare_and_swap(&proposal, &book(vec![effective_kept]))
+        .compare_and_swap(
+            &proposal,
+            &book(vec![effective_kept]),
+            &verified_as_booked(&lineage),
+        )
         .unwrap()
         .unwrap();
     assert!(admitted[0].get("not_observed").is_none());
     let admitted = lineage
-        .compare_and_swap(&proposal, &book(vec![book_row(&original)]))
+        .compare_and_swap(
+            &proposal,
+            &book(vec![book_row(&original)]),
+            &verified_as_booked(&lineage),
+        )
         .unwrap()
         .unwrap();
     assert_eq!(admitted[0]["not_observed"], json!(["effective_date"]));
@@ -349,7 +385,11 @@ fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
 
     // Control: the unedited row is admitted by the same lineage and proposal.
     assert!(lineage
-        .compare_and_swap(&proposal, &book(vec![book_row(&original)]))
+        .compare_and_swap(
+            &proposal,
+            &book(vec![book_row(&original)]),
+            &verified_as_booked(&lineage)
+        )
         .unwrap()
         .is_ok());
 }
@@ -373,7 +413,11 @@ fn one_diverged_voucher_refuses_the_whole_amendment() {
     other.entries[1].amount = "-99.00".into();
     rows.push(other);
     let refused = lineage
-        .compare_and_swap(&original.vouchers, &book(rows))
+        .compare_and_swap(
+            &original.vouchers,
+            &book(rows),
+            &verified_as_booked(&lineage),
+        )
         .unwrap()
         .expect_err("one divergence refuses the batch");
     assert_eq!(refused.len(), 1);
@@ -528,6 +572,17 @@ fn seed_original(server: &Server) {
     server.append_import_ledger(&line).unwrap();
 }
 
+/// Record the original batch's first verification, as verify_import does,
+/// with `txn-001` at `alter_id` (#239).
+fn seed_baseline(server: &Server, alter_id: u64) {
+    record_verified_baseline(
+        &server.imports_dir().unwrap(),
+        ORIGINAL,
+        &json!({"vouchers":[{"bridge_txn_id":"txn-001","status":"posted_verified","alter_id":alter_id}]}),
+    )
+    .unwrap();
+}
+
 fn amendment_payload(original: &str, amount: &str) -> Value {
     let mut input = captured_catalogue_payload();
     input.vouchers.truncate(1);
@@ -547,6 +602,8 @@ async fn an_amendment_built_against_an_unchanged_book_reuses_the_original_remote
         SequenceSimulator::spawn(build_plans_reading(Some(book_holding(&tag, "12.50")))).unwrap();
     let server = simulated_server(directory.path(), simulator.address().port());
     seed_original(&server);
+    // The simulated book serves the voucher at ALTERID 12, as first verified.
+    seed_baseline(&server, 12);
     let built = server
         .build_import_xml(&amendment_payload(&original, "15.00"))
         .await
@@ -649,4 +706,141 @@ fn the_amendment_admission_module_stays_pinned() {
         .unwrap()
         .iter()
         .any(|entry| entry["path"] == "src-tauri/src/agent_import_amend.rs"));
+}
+
+// bridge#239: an amendment also refuses a voucher Tally altered since Bridge
+// first verified it, which catches edits to fields the read does not carry.
+
+#[test]
+fn a_voucher_altered_since_its_first_verification_refuses_the_amendment() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let lineage = lineage_of(&journal(&[&original]), ORIGINAL).unwrap();
+    let proposal = build(AMENDMENT, None, "18.00", "20260901").vouchers;
+    let verified = verified_as_booked(&lineage);
+    let refusal = |alter_id: Option<u64>, baselines: &amend::VerifiedBaselines| {
+        let mut row = book_row(&original);
+        row.alter_id = alter_id;
+        lineage
+            .compare_and_swap(&proposal, &book(vec![row]), baselines)
+            .unwrap()
+            .err()
+            .map(|refused| refused[0]["reason"].clone())
+    };
+    // The book's ALTERID equals the one first verified: admitted.
+    assert_eq!(refusal(Some(40), &verified), None);
+    // Altered since, by a reference or allocation edit the fields cannot
+    // show; a lower mark is a change too.
+    for moved in [Some(41), Some(39), None] {
+        assert_eq!(
+            refusal(moved, &verified),
+            Some(json!("voucher_altered_since_verified")),
+            "{moved:?}"
+        );
+    }
+    // No verified baseline for the build the book matches.
+    assert_eq!(
+        refusal(Some(40), &amend::VerifiedBaselines::default()),
+        Some(json!("voucher_never_verified"))
+    );
+}
+
+#[test]
+fn a_verified_baseline_records_each_voucher_once_and_never_changes_it() {
+    let proof = |alter_id: u64, txn_id: &str, status: &str| json!({"vouchers":[{"bridge_txn_id":txn_id,"status":status,"alter_id":alter_id}]});
+    let mut baseline = amend::VerifiedBaseline::default();
+    // Only posted_verified is recorded.
+    assert!(!amend::record_first_verified(
+        &mut baseline,
+        &proof(38, "txn-001", "posted_divergent")
+    ));
+    assert!(amend::record_first_verified(
+        &mut baseline,
+        &proof(40, "txn-001", "posted_verified")
+    ));
+    // A later verification, after an edit, cannot move it.
+    assert!(!amend::record_first_verified(
+        &mut baseline,
+        &proof(41, "txn-001", "posted_verified")
+    ));
+    assert!(amend::record_first_verified(
+        &mut baseline,
+        &proof(52, "txn-002", "posted_verified")
+    ));
+    assert_eq!(
+        baseline.vouchers,
+        [("txn-001".to_string(), 40), ("txn-002".to_string(), 52)]
+            .into_iter()
+            .collect()
+    );
+}
+
+/// An amendment of a voucher whose fields still match but whose ALTERID moved
+/// since Bridge first verified it (a reference or allocation edit), or of a
+/// build Bridge never verified, writes nothing (#239).
+#[tokio::test]
+async fn an_amendment_of_a_voucher_altered_or_never_verified_writes_nothing() {
+    for (baseline, reason) in [
+        (Some(11), "voucher_altered_since_verified"),
+        (None, "voucher_never_verified"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let original = ORIGINAL.to_string();
+        let tag = import_identity(&original, "txn-001").to_string();
+        let simulator = SequenceSimulator::spawn(
+            build_plans_reading(Some(book_holding(&tag, "12.50")))[..30].to_vec(),
+        )
+        .unwrap();
+        let server = simulated_server(directory.path(), simulator.address().port());
+        seed_original(&server);
+        if let Some(alter_id) = baseline {
+            seed_baseline(&server, alter_id);
+        }
+        let imports = server.imports_dir().unwrap();
+        let files_before = std::fs::read_dir(&imports).unwrap().count();
+        let refused = server
+            .build_import_xml(&amendment_payload(&original, "15.00"))
+            .await
+            .unwrap();
+        let result = &refused.payload["result"];
+        assert_eq!(
+            result["reason"], "amended_vouchers_not_as_built",
+            "{result}"
+        );
+        assert_eq!(result["refused_vouchers"][0]["reason"], reason, "{result}");
+        assert!(result["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("correct the voucher in Tally directly, or build a fresh batch for it"));
+        assert_eq!(std::fs::read_dir(&imports).unwrap().count(), files_before);
+        assert_eq!(simulator.finish().unwrap().len(), 30);
+    }
+}
+
+#[test]
+fn a_verified_baseline_file_is_written_once_per_voucher() {
+    let directory = tempfile::tempdir().unwrap();
+    let proof = |alter_id: u64| json!({"vouchers":[{"bridge_txn_id":"txn-001","status":"posted_verified","alter_id":alter_id}]});
+    record_verified_baseline(directory.path(), ORIGINAL, &proof(40)).unwrap();
+    let first = std::fs::read(directory.path().join(format!("{ORIGINAL}.baseline.json"))).unwrap();
+    // A later verification after an edit reports the voucher posted at a
+    // higher ALTERID; the file keeps the first.
+    record_verified_baseline(directory.path(), ORIGINAL, &proof(41)).unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join(format!("{ORIGINAL}.baseline.json"))).unwrap(),
+        first
+    );
+    assert_eq!(
+        read_verified_baseline(directory.path(), ORIGINAL)
+            .unwrap()
+            .vouchers["txn-001"],
+        40
+    );
+    // An unreadable file is never rewritten.
+    std::fs::write(
+        directory.path().join(format!("{ORIGINAL}.baseline.json")),
+        b"{",
+    )
+    .unwrap();
+    assert!(record_verified_baseline(directory.path(), ORIGINAL, &proof(42)).is_err());
+    assert_eq!(read_verified_baseline(directory.path(), ORIGINAL), None);
 }

@@ -292,8 +292,16 @@ or an owner decision to amend the requirement instead:
       gateway), and an amendment's entries carry no allocations, so allocations made in Tally,
       including those Bridge's own build advice asks for after a Payment or Receipt import, are
       expected to be lost. That loss, and what happens to a reference, are not measured directly.
-      Fetching and comparing those fields, or comparing each voucher's `ALTERID` with the one Bridge
-      last recorded for it, would close this gap.
+      Since #239's baseline change, the build also refuses a voucher whose `ALTERID` differs from
+      the one Bridge recorded the first time it verified that build (`voucher_altered_since_verified`),
+      and a build Bridge never verified (`voucher_never_verified`). The value is kept in a write-once
+      `<batch>.baseline.json` beside the proof, not in the journal, so an older binary still reads the
+      journal after a rollback. That catches an edit to any field made after the first verification,
+      if a Tally edit advances the voucher's `ALTERID`: measured for gateway alterations (§9.3), not
+      yet for an edit made in Tally's own screens. An edit made between the import and the first
+      verification becomes part of the baseline and is not caught; every amendable batch was imported
+      by hand, since a batch Bridge posted cannot be amended, so the build asks for a verify right
+      after each import.
     - **The build-to-import window.** The comparison runs when the amendment is built. The import
       is done by hand through Tally's Import menu, and Bridge refuses to post an amendment
       (`import_post_amendment_requires_file_import`), so nothing re-checks the vouchers just before

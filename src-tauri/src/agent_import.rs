@@ -666,7 +666,11 @@ impl Server {
             }
             verification_window_identities(&preflight, &date_from, &date_to)?;
             let amendment = match &lineage {
-                Some(lineage) => match lineage.compare_and_swap(&payload.vouchers, &preflight)? {
+                Some(lineage) => match lineage.compare_and_swap(
+                    &payload.vouchers,
+                    &preflight,
+                    &verified_baselines(&self.imports_dir()?, lineage),
+                )? {
                     Ok(vouchers) => Some(json!({
                         "amends_batch_id": payload.amends_batch_id,
                         "identity_batch_id": lineage.identity_batch_id,
@@ -1003,7 +1007,14 @@ impl Server {
             markdown.as_bytes(),
             || self.append_import_record_while_admitted(&ledger::StatusRecord::from(update)),
             |_| Ok(()),
-        )
+        )?;
+        // The first verified ALTERID of each voucher, for a later amendment to
+        // compare against (#239). Kept beside the proof, not in the journal, so
+        // an older binary still reads the journal after a rollback. A failed
+        // write leaves no baseline, and an amendment then refuses: the safe
+        // direction, so it does not fail this verification.
+        let _ = record_verified_baseline(&imports, &update.batch_id, proof);
+        Ok(())
     }
 
     pub(super) async fn read_ledger_catalogue(
@@ -1296,13 +1307,13 @@ impl Server {
     }
 }
 
-const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build, and only these fields: the date, a bank voucher's effective date when Tally returned one, the voucher type, the voucher number when the batch set one, each entry's ledger, amount and side, and the narration. It did not compare a voucher's reference, its bill-wise or cost-centre allocations, or which ledger Tally records as its party, because the verification read does not fetch them. An in-place alteration replaces a voucher's entries rather than merging them (measured over the gateway), and this file's entries carry no allocations, so allocations made in Tally, including those Bridge advises adding after an import, are expected to be lost; that loss, and what happens to a reference, were not measured directly. An edit made in Tally between this build and the import is overwritten without warning. Import promptly, and build the amendment again if anyone may have changed these vouchers. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
+const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build, and only these fields: the date, a bank voucher's effective date when Tally returned one, the voucher type, the voucher number when the batch set one, each entry's ledger, amount and side, and the narration. It did not compare a voucher's reference, its bill-wise or cost-centre allocations, or which ledger Tally records as its party, because the verification read does not fetch them; instead it refused any voucher whose ALTERID has moved since Bridge first verified it, which catches an edit to those fields made after that verification, provided a Tally edit advances the voucher's ALTERID (measured over the gateway; not yet for an edit made in Tally's own screens). An edit made before that first verification is not caught, so verify right after every import. An in-place alteration replaces a voucher's entries rather than merging them (measured over the gateway), and this file's entries carry no allocations, so allocations made in Tally, including those Bridge advises adding after an import, are expected to be lost; that loss, and what happens to a reference, were not measured directly. An edit made in Tally between this build and the import is overwritten without warning. Import promptly, and build the amendment again if anyone may have changed these vouchers. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
 
 const AMENDMENT_NOT_POSTABLE: &str = "No import XML was sent to Tally. Bridge does not post amendments (post_import refuses them), so import the written file by hand, promptly, then use verify_import; do not call post_import for this batch.";
 
 const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
 
-const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured.";
+const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured. voucher_altered_since_verified means Tally has altered the voucher since Bridge first verified it (its ALTERID moved), which can be an edit to a field Bridge does not compare, such as a reference or an allocation; voucher_never_verified means Bridge has no record of verifying that build, so nothing shows the voucher unchanged. For either, correct the voucher in Tally directly, or build a fresh batch for it.";
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
 /// admission. Older manual imports retain their original verification path.
@@ -1488,7 +1499,7 @@ fn build_import_guidance(
             .chain(multi_entry_warning)
             .collect::<Vec<_>>())
     };
-    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import";
+    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import right away: its first verification records each voucher's state for any later amendment";
     if writes_enabled && native_post_eligible {
         (
             warnings(
@@ -2420,6 +2431,54 @@ pub(super) fn local_evidence(label: &str) -> Evidence {
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
+fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.baseline.json"))
+}
+
+/// A build's verified baseline, or `None` when it has none or it cannot be
+/// read. Either way an amendment of that build refuses.
+fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    let mut file =
+        super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
+            .ok()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Record each voucher's first verified ALTERID; a voucher already recorded
+/// keeps its value. Called under the import admission lock.
+fn record_verified_baseline(imports: &Path, batch_id: &str, proof: &Value) -> Result<(), String> {
+    let path = verified_baseline_path(imports, batch_id);
+    let mut baseline = if path.exists() {
+        // An unreadable baseline is never rewritten: nothing proves which
+        // values were first, so amendments of this build stay refused.
+        read_verified_baseline(imports, batch_id)
+            .ok_or_else(|| "verified_baseline_unreadable".to_string())?
+    } else {
+        amend::VerifiedBaseline::default()
+    };
+    if amend::record_first_verified(&mut baseline, proof) {
+        let bytes = serde_json::to_vec_pretty(&baseline)
+            .map_err(|_| "verified_baseline_serialization_failed".to_string())?;
+        write_private(&path, &bytes)?;
+    }
+    Ok(())
+}
+
+fn verified_baselines(imports: &Path, lineage: &amend::Lineage) -> amend::VerifiedBaselines {
+    amend::VerifiedBaselines(
+        lineage
+            .builds
+            .iter()
+            .filter_map(|build| {
+                read_verified_baseline(imports, &build.batch.batch_id)
+                    .map(|baseline| (build.batch.batch_id.clone(), baseline))
+            })
+            .collect(),
+    )
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = super::local_file::open_local_file(path, true)
         .map_err(|_| "import_file_write_failed".to_string())?;

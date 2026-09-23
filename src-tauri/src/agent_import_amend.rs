@@ -142,6 +142,7 @@ impl Lineage {
         &self,
         vouchers: &[ImportVoucher],
         observed: &ImportReadSource,
+        baselines: &VerifiedBaselines,
     ) -> Result<Result<Vec<Value>, Vec<Value>>, String> {
         let mut admitted = Vec::new();
         let mut refused = Vec::new();
@@ -186,6 +187,29 @@ impl Lineage {
                 }
                 last_diffs = diffs;
             }
+            // The fields above are all the read carries. Anything else a person
+            // changed (a reference, an allocation) shows only as the voucher's
+            // ALTERID moving past the one Bridge recorded the first time it
+            // verified that build (#239). Any difference refuses, and so does
+            // a build Bridge never verified: nothing proves it unchanged.
+            let matched = match matched {
+                Some(batch_id) => match (baselines.alter_id(batch_id, txn_id), row.alter_id) {
+                    (Some(verified), Some(current)) if verified == current => Some(batch_id),
+                    (Some(verified), current) => {
+                        refused.push(json!({"bridge_txn_id":txn_id,
+                            "reason":"voucher_altered_since_verified","book_matches_batch_id":batch_id,
+                            "verified_alter_id":verified,"alter_id":current,"guid":row.guid}));
+                        continue;
+                    }
+                    (None, _) => {
+                        refused.push(json!({"bridge_txn_id":txn_id,
+                            "reason":"voucher_never_verified","book_matches_batch_id":batch_id,
+                            "alter_id":row.alter_id,"guid":row.guid}));
+                        continue;
+                    }
+                },
+                None => None,
+            };
             match matched {
                 Some(batch_id) => {
                     let mut entry = json!({"bridge_txn_id":txn_id,
@@ -237,4 +261,45 @@ fn canonical_read_voucher(voucher: &ReadVoucher) -> Result<ReadVoucher, String> 
         entry.amount = canonical_verification_amount(&entry.amount)?;
     }
     Ok(voucher)
+}
+
+/// The ALTERID each voucher carried the first time Bridge verified it posted,
+/// per build (#239). Written once per voucher and never changed afterwards, so
+/// a later verify, which still reports a voucher posted after a person edits a
+/// field it does not compare, cannot move it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct VerifiedBaseline {
+    pub(super) vouchers: BTreeMap<String, u64>,
+}
+
+/// The baselines of every build in a lineage, by batch id.
+#[derive(Debug, Default)]
+pub(super) struct VerifiedBaselines(pub(super) BTreeMap<String, VerifiedBaseline>);
+
+impl VerifiedBaselines {
+    fn alter_id(&self, batch_id: &str, txn_id: &str) -> Option<u64> {
+        self.0.get(batch_id)?.vouchers.get(txn_id).copied()
+    }
+}
+
+/// Add to `existing` each voucher `proof` reports posted_verified with an
+/// ALTERID, leaving every voucher already recorded exactly as it was.
+pub(super) fn record_first_verified(existing: &mut VerifiedBaseline, proof: &Value) -> bool {
+    let mut added = false;
+    for voucher in proof["vouchers"].as_array().into_iter().flatten() {
+        if voucher["status"] != "posted_verified" {
+            continue;
+        }
+        let (Some(txn_id), Some(alter_id)) = (
+            voucher["bridge_txn_id"].as_str(),
+            voucher["alter_id"].as_u64(),
+        ) else {
+            continue;
+        };
+        if !existing.vouchers.contains_key(txn_id) {
+            existing.vouchers.insert(txn_id.to_string(), alter_id);
+            added = true;
+        }
+    }
+    added
 }
