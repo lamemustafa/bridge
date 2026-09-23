@@ -153,6 +153,10 @@ fn build(s: &Value) -> Book {
                     .collect(),
                 narration: text("narration", ""),
                 party_field: text("party", ""),
+                reference: typed(v, "reference", false, "text", |r| {
+                    r.as_str().map(str::to_string)
+                })
+                .unwrap_or_default(),
                 masterid: typed(v, "masterid", false, "text", |m| {
                     m.as_str().map(str::to_string)
                 }),
@@ -618,6 +622,27 @@ fn mistyped_voucher_keys_are_refused() {
         })
         .is_err();
         assert!(refused, "masterid {masterid} was not refused");
+    }
+}
+
+/// A voucher's `reference` reaches the built book as text, absent meaning empty; any other type
+/// refuses the whole spec, as `parity/edge_golden.py` refuses it.
+#[test]
+fn a_voucher_reference_is_built_as_text_or_refused() {
+    let with = |reference: Option<Value>| {
+        let mut s = spec("bkq_quiet");
+        if let Some(r) = reference {
+            s["vouchers"][0]["reference"] = r;
+        }
+        s
+    };
+    assert_eq!(build(&with(None)).vouchers[0].reference, "");
+    let s = with(Some(serde_json::json!("INV/7")));
+    assert_eq!(build(&s).vouchers[0].reference, "INV/7");
+    for bad in [serde_json::json!(42), Value::Null] {
+        let s = with(Some(bad.clone()));
+        let refused = std::panic::catch_unwind(|| build(&s)).is_err();
+        assert!(refused, "reference {bad} was not refused");
     }
 }
 

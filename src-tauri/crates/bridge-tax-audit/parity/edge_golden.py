@@ -21,9 +21,10 @@ tables (15.1.0) are the ones the crate's case mapping reproduces (`src/support.r
 
 Spec keys: `period` ([start, end], ISO; default the AY 2026-27 previous year), `groups` ({name:
 parent or null}), `ledgers` ([{name, chain, guid}]), `tb` ([{ledger, opening, debit, credit,
-closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, status?, narration?, masterid?,
-inventory?, lines: [[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""` to test a
-voucher with no number; `masterid` is text, absent meaning none; `inventory` is [{item, qty?, rate?,
+closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, reference?, status?, narration?,
+masterid?, inventory?, lines: [[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""`
+to test a voucher with no number; `reference` is text, absent meaning ""; `masterid` is text, absent
+meaning none; `inventory` is [{item, qty?, rate?,
 amount?, direction?, qty_field_present?}], `qty` a number read as a float, `rate`/`amount` integer
 paise (debit positive), `direction` 1 or -1, each absent or null meaning None, `qty_field_present` a
 boolean defaulting to true when absent; any other type is refused, here and in
@@ -98,7 +99,8 @@ def main() -> int:
 
     vouchers = [Voucher(guid=v["guid"], masterid=typed(v, "masterid", lambda x: isinstance(x, str), "text", nullable=False), alterid=None, date=date.fromisoformat(v["date"]),
                         vtype=v.get("vtype", v["base_type"]), base_type=v["base_type"],
-                        number=v.get("number", v["guid"]), reference="", party_field=v.get("party", ""), party_gstin="",
+                        number=v.get("number", v["guid"]), reference=typed(v, "reference", lambda x: isinstance(x, str), "text", absent="", nullable=False),
+                        party_field=v.get("party", ""), party_gstin="",
                         narration=v.get("narration", ""), status=status[v.get("status", "regular")],
                         status_source="edge-book",
                         lines=tuple(LedgerLine(ledger=l, amount_paise=a) for l, a in v["lines"]),

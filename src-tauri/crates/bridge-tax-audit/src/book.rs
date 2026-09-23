@@ -136,6 +136,9 @@ pub struct Voucher {
     pub vtype: String,
     pub base_type: String,
     pub number: String,
+    /// REFERENCE (the supplier's or customer's own document number), Python-stripped as the
+    /// reference's adapter reads it; empty when absent.
+    pub reference: String,
     pub status: VoucherStatus,
     pub lines: Vec<LedgerLine>,
     /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
@@ -165,6 +168,7 @@ impl Default for Voucher {
             vtype: String::new(),
             base_type: String::new(),
             number: String::new(),
+            reference: String::new(),
             status: VoucherStatus::Unknown,
             lines: Vec::new(),
             narration: String::new(),
@@ -835,6 +839,7 @@ fn load_vouchers(
             vtype: vtype.to_string(),
             base_type: base_type.clone(),
             number: v.child_text("VOUCHERNUMBER").to_string(),
+            reference: String::new(), // read in the next commit
             status,
             lines,
             narration: v.child_text("NARRATION").to_string(),
@@ -1459,6 +1464,31 @@ mod tests {
             .map(|l| (l.ledger.as_str(), l.amount_paise))
             .collect();
         assert_eq!(lines, [("Cash", 100)]);
+    }
+
+    #[test]
+    fn a_voucher_reference_is_read_as_the_reference_reads_it() {
+        // The reference's own answers on this text: stripped, the first element only, and
+        // empty whether the element is empty or absent.
+        let text = format!(
+            "<ENVELOPE>{}{}{}</ENVELOPE>",
+            fx_voucher(
+                "padded",
+                &[],
+                "<REFERENCE> INV/7\t</REFERENCE><REFERENCE>second</REFERENCE>"
+            ),
+            fx_voucher("empty", &[], "<REFERENCE></REFERENCE>"),
+            fx_voucher("absent", &[], "")
+        );
+        let Ok(part) = fx_vouchers(&text) else {
+            panic!("refused")
+        };
+        let refs: Vec<(&str, &str)> = part
+            .vouchers
+            .iter()
+            .map(|v| (v.guid.as_str(), v.reference.as_str()))
+            .collect();
+        assert_eq!(refs, [("padded", "INV/7"), ("empty", ""), ("absent", "")]);
     }
 
     #[test]
