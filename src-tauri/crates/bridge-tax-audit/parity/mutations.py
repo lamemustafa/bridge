@@ -296,7 +296,7 @@ class Worker:
         env = dict(os.environ, CARGO_TARGET_DIR=str(self.target))
         proc = subprocess.Popen(["cargo", "test", "--locked", "--no-fail-fast", "-p", PACKAGE, *args],
                                 cwd=self.crate, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, start_new_session=True)
+                                text=True, errors="replace", start_new_session=True)
         try:
             out, _ = proc.communicate(timeout=timeout)
             return proc.returncode, out
