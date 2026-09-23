@@ -184,3 +184,63 @@ test("confirming one currency Tally does not name INR reads outstandings under t
   expect(fetches[0][1]).toMatchObject({ request: { currency_assertion: "INR" } });
   root.unmount();
 });
+
+// bridge#551: party statements come only from the source Bridge holds for the
+// completed read. Without its handle the screen offers no statement control;
+// with one, the batch controls appear.
+function completeResult(partyStatementSourceId?: string) {
+  return {
+    state: "complete",
+    report: {
+      company_name: "Synthetic Accounts",
+      as_of_yyyymmdd: "20260908",
+      receivable_total: "100.00",
+      payable_total: "0",
+      has_unaged_receivable: false,
+      ageing: { days_0_30: "100.00", days_31_60: "0", days_61_90: "0", days_90_plus: "0" },
+      open_receivable_bill_count: 1,
+      ageing_bill_counts: { days_0_30: 1, days_31_60: 0, days_61_90: 0, days_90_plus: 0 },
+      top_parties: [],
+      source_voucher_count: 0,
+      source_bytes: 1,
+    },
+    read_strategy: "native_bills",
+    currency_assertion: "INR",
+    ageing_anchor: "due_date",
+    synced_at_unix_ms: 1,
+    unallocated_total: "0",
+    statement_open_bills: [{
+      party: "Synthetic Party",
+      reference: "SYNTHETIC-1",
+      bill_date: "20260901",
+      due_date: "20260901",
+      amount: "100.00",
+      age_days: 7,
+      kind: "receivable",
+    }],
+    ...(partyStatementSourceId ? { party_statement_source_id: partyStatementSourceId } : {}),
+  };
+}
+
+test("statement controls appear only with the source Bridge holds", async () => {
+  for (const [sourceId, offered] of [["synthetic-statements", true], [undefined, false]] as const) {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "detect_tally_base_currency") {
+        return Promise.resolve({ is_inr: true, mailing_name: "Indian Rupee", currency_count: 1 });
+      }
+      if (command === "fetch_tally_outstandings") return Promise.resolve(completeResult(sourceId));
+      return Promise.resolve(null);
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<OutstandingsScreen {...defaultProps()} />));
+    await flush();
+    const labels = [...host.querySelectorAll("button")].map((button) => button.textContent ?? "");
+    expect(labels.some((label) => label.includes("All Excel statements")), String(sourceId)).toBe(offered);
+    expect(labels.some((label) => label.includes("All PDF statements")), String(sourceId)).toBe(offered);
+    root.unmount();
+    host.remove();
+    mocks.invoke.mockReset();
+  }
+});

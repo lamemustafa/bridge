@@ -95,6 +95,7 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
         .manage(source_draft::SourceDraftLifecycleGuard::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
+        .manage(reports::outstandings_working_paper_store::PartyStatementSourceStore::default())
         .manage(reports::trial_balance_store::TrialBalanceExportStore::default())
         .manage(sync::coordinator::SnapshotCoordinator::default())
         .setup(|app| {

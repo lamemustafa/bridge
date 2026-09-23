@@ -127,7 +127,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "0fcdf503fbb509be6f9a09aff0e2591bd4eba0b7650b062f70c2026d3267c9ee"
+      "sha256": "2c2ba86275a2e5cd8540c4e07e80c2f731e309f25fd6dc74d2d3f0ce85858f54"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -571,7 +571,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "d26c75fd51848beeb6e74631cd34f9ae48da196797de29eb9249415aa12b6f37"
+      "sha256": "95f9a95a055697f243917df2b595eb04e45e6ea5496df17e266250ec73f05132"
     },
     {
       "path": "src-tauri/src/commands_trial_balance.rs",
@@ -711,7 +711,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "d530defa73be65d249a05051a329bbaff4b8c5335267b66d92789fadf66e466a"
+      "sha256": "e841c27dc4f80c3463f90dd51dfb5310b364a426e446252842cb2579af6f83b4"
     },
     {
       "path": "src-tauri/src/local_files/file.rs",
@@ -739,11 +739,11 @@
     },
     {
       "path": "src-tauri/src/reports/outstandings_working_paper_store.rs",
-      "sha256": "1d20c00809202219ab93c1cbf870d4de84dc8503c73eb2f0172efe7bdfa31500"
+      "sha256": "a9a7af2afd77876c6a6fe9435f5566e79dbf615a398b42f2b8a6f04b333d1285"
     },
     {
       "path": "src-tauri/src/reports/outstandings_working_paper_store_tests.rs",
-      "sha256": "483208368bb59c68d3e52404c49e47b6a495f193a66ca7271688ab02ab825111"
+      "sha256": "1d75767b51067fa749a76cbb409c0c89827f4056bff8afbf971c78a1371c4af2"
     },
     {
       "path": "src-tauri/src/reports/outstandings_working_paper_tests.rs",
@@ -975,7 +975,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "0504627538f82d4fef1ee1cc08491b7ceb7ff24a54e7afdf5463f4731e796bdc"
+      "sha256": "992e1c1bd0f63a521d94e1125119d123b88f1874179f8a37052d4db2ae2e02da"
     },
     {
       "path": "src/SourceDraftScreen.tsx",
@@ -1011,7 +1011,7 @@
     },
     {
       "path": "src/outstandings-as-of.ts",
-      "sha256": "edbc7f66362c991a37249d20bb45d3e26752739c506856b1467d57be21792edb"
+      "sha256": "0adbdcb1713b8d6035612b7b004425fbb31ee8c4dd110442fda91141c78bf2fc"
     },
     {
       "path": "src/outstandings-bills.ts",
@@ -1019,7 +1019,7 @@
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "270e582a3decc7a5b13ad53355939803ee94232e62a40a3caf64dc911d073941"
+      "sha256": "55c3f51cb1b11dcbbf3f6957294d5cc80f56425d90ea41eff14f2497b160d184"
     },
     {
       "path": "src/outstandings-csv.ts",
@@ -1110,5 +1110,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "ea6cefd4a2f073935f2deb3f7a3b688c1032815ca7ce7979dba5da223926b120"
+  "manifest_sha256": "ba3a76f597e8827ece1a7cb7cc01bf488149b66c28d46311cc4d564a11b22104"
 }
