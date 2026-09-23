@@ -711,7 +711,8 @@ jobs:
         run: |
           set -euo pipefail
           gh issue list --repo "$GITHUB_REPOSITORY" --label mutation-nightly --state open --limit 100 \
-            --json number,body --jq '.[] | "#\(.number)\n\(.body)\n"' > "$RUNNER_TEMP/nightly-issues.txt"
+            --json number,body --jq '.[] | "<!-- mutation-nightly-issue \(.number) -->\n\(.body)\n"' \
+            > "$RUNNER_TEMP/nightly-issues.txt"
       # Every mutation applies exactly once, no record outlives its mutation, and every
       # mutation this change selects has a killed record made on exactly this merged
       # crate tree. While a nightly issue is open, a crate change must also re-prove

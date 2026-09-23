@@ -60,7 +60,14 @@ the verdict, the killing tests qualified by their target (`tests/edge_books.rs::
 `src/lib.rs::book::tests::name`), the mode, the commit and time, a hash of the mutation's own
 definition, and `crate_tree`, a hash of this crate's committed tree without the results file.
 
-The file is self-attested: CI never builds, so it trusts that a record was made by this runner.
+`parity/accepted-survivors.json` lists the mutations no test is expected to kill, each with the
+hash of its definition, why, and where that is documented. A `survived` verdict counts as passing
+only for a listed id whose current definition has that hash; an edited mutation, or one not
+listed, must be killed. An entry that accepts nothing (its id retired or its definition changed)
+fails `--verify` and the nightly until it is updated or removed, and a listed mutation that is now
+killed is reported, so its entry can go.
+
+The results file is self-attested: CI never builds, so it trusts that a record was made by this runner.
 Only the nightly run re-proves the records independently.
 
 ## The guarantee
@@ -79,9 +86,9 @@ At merge, `--verify --changed-since <base>` (in CI, no build) requires:
     list is selected, because tests read such files at run time in ways no file name reveals; or
   - a nightly tracking issue is open and lists it as failing (`--nightly-issues`), and the
     change touches the crate: so the fix for a nightly failure can merge, and nothing else can
-    until the failing mutations are proven killed again (or retired). The ids of every open
-    issue's line are required together. When no open issue carries the line, an open issue
-    refuses every crate change until a maintainer closes it.
+    until the failing mutations are proven killed again (or retired). Every open issue must
+    carry that line, and the ids of all of them are required together; if any open issue lacks
+    it, every crate change is refused until a maintainer closes that issue.
 
 CI hashes the pull request's MERGE commit, so when master has changed any crate file since the
 branch was proven, update the branch from master and re-run the selection before pushing.
@@ -124,6 +131,7 @@ PACKAGE = "bridge-tax-audit"
 LIST = ROOT / "parity" / "mutations.json"
 RESULTS = ROOT / "parity" / "mutation-results.json"
 RESULTS_REL = f"{CRATE}/parity/mutation-results.json"
+SURVIVORS = ROOT / "parity" / "accepted-survivors.json"
 WORKERS = WORKSPACE / "target" / "mutants"
 COPIED = ("src-tauri", "rust-toolchain.toml")  # repo-relative: what a worker copy holds
 DEFAULT_TIMEOUT = 45 * 60
@@ -145,6 +153,8 @@ CRASHED = "<crashed>"  # the test name recorded when a test binary dies without 
 INERT = ("parity/mutations.py", "parity/mutation-results.json", "parity/test_mutations.py")
 # The machine-readable line a failed report ends with, which the nightly puts in its issue.
 FAILING_MARK = "mutation-nightly-failing:"
+# The header ci.yml writes before each open issue's body in the --nightly-issues file.
+ISSUE_MARK = "mutation-nightly-issue"
 REPORT_ROWS = 100  # rows per report section; GitHub caps an issue body at 65,536 characters
 
 
@@ -162,6 +172,29 @@ def mutation_hash(m: dict) -> str:
 def proven(rec: dict | None) -> bool:
     """Whether a record proves its mutation killed (a test-run timeout included)."""
     return rec is not None and rec.get("verdict") in PASSING
+
+
+def accepted_survivor(m: dict, accepted: dict | None) -> bool:
+    """Whether `m` is listed in the accepted-survivors file for exactly this definition. An entry
+    for an edited mutation (another hash) accepts nothing."""
+    entry = (accepted or {}).get(m["id"])
+    return entry is not None and entry.get("mutation") == mutation_hash(m)
+
+
+def passes(m: dict, rec: dict | None, accepted: dict | None = None) -> bool:
+    """Whether a record is a verdict the guarantee accepts: killed, or a survivor listed for this
+    exact definition in the accepted-survivors file."""
+    return proven(rec) or (rec is not None and rec.get("verdict") == SURVIVED and accepted_survivor(m, accepted))
+
+
+def survivor_problems(mutations: list[dict], accepted: dict) -> list[str]:
+    """Entries of the accepted-survivors file that accept nothing: an id not in the list, or a
+    hash that is not the mutation's current definition. Each must be updated or removed."""
+    by_id = {m["id"]: m for m in mutations}
+    out = [f"{i}: accepted as a survivor but no longer in the list" for i in sorted(accepted) if i not in by_id]
+    out += [f"{i}: accepted as a survivor for another definition" for i in sorted(accepted)
+            if i in by_id and not accepted_survivor(by_id[i], accepted)]
+    return out
 
 
 _RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+) \(")
@@ -273,7 +306,8 @@ def is_source(path: str) -> bool:
     return path.endswith(".rs") and path.startswith(("src/", "tests/")) and not path.startswith("tests/fixtures/")
 
 
-def select(mutations: list[dict], results: dict, changed: list[str], crate: Path = ROOT) -> dict[str, list[str]]:
+def select(mutations: list[dict], results: dict, changed: list[str], crate: Path = ROOT,
+           accepted: dict | None = None) -> dict[str, list[str]]:
     """{id: [reasons]} for every mutation the change selects; see the module docstring. `changed`
     is crate-relative paths."""
     changed = [c for c in changed if c not in INERT]
@@ -291,7 +325,7 @@ def select(mutations: list[dict], results: dict, changed: list[str], crate: Path
             reasons.append(f"non-source input changed: {', '.join(other[:3])}{more}")
         if m["file"] in changed_set:
             reasons.append(f"target {m['file']} changed")
-        if not proven(rec):
+        if not passes(m, rec, accepted):
             reasons.append("no killed record")
         elif rec.get("mutation") != mutation_hash(m):
             reasons.append("definition changed")
@@ -311,27 +345,38 @@ def select(mutations: list[dict], results: dict, changed: list[str], crate: Path
     return picked
 
 
-def fresh(m: dict, rec: dict | None, tree: str) -> bool:
-    """Whether `rec` proves `m` killed on exactly the crate tree `tree`, for this definition."""
-    return proven(rec) and rec.get("crate_tree") == tree and rec.get("mutation") == mutation_hash(m)
+def fresh(m: dict, rec: dict | None, tree: str, accepted: dict | None = None) -> bool:
+    """Whether `rec` proves `m` killed (or an accepted survivor) on exactly the crate tree `tree`,
+    for this definition."""
+    return passes(m, rec, accepted) and rec.get("crate_tree") == tree and rec.get("mutation") == mutation_hash(m)
 
 
-def verify(chosen: list[dict], results: dict, tree: str, order: list[str]) -> list[str]:
+def verify(chosen: list[dict], results: dict, tree: str, order: list[str], accepted: dict | None = None) -> list[str]:
     """What stops a merge: each chosen mutation without a fresh record, and each record for a
     mutation no longer in the list."""
-    problems = [f"{m['id']}: not proven on crate tree {tree}" for m in chosen if not fresh(m, results.get(m["id"]), tree)]
+    problems = [f"{m['id']}: not proven on crate tree {tree}" for m in chosen if not fresh(m, results.get(m["id"]), tree, accepted)]
     problems += [f"{i}: a record for a mutation no longer in the list (delete it)"
                  for i in sorted(set(results) - set(order))]
     return problems
 
 
 def failing_ids(text: str) -> list[str] | None:
-    """The mutation ids open nightly issues list as failing, from the line `report` writes. None
-    when there is issue text but no such line: that issue cannot be satisfied mechanically."""
-    marks = re.findall(r"<!--\s*" + re.escape(FAILING_MARK) + r"([^>]*?)-->", text)
-    if not marks:
-        return None if text.strip() else []
-    return sorted({i for mark in marks for i in mark.split()})
+    """The mutation ids the open nightly issues list as failing, from the line `report` writes.
+    `text` holds each issue's body after a `<!-- mutation-nightly-issue N -->` header (text with
+    no header is one issue). None when ANY issue lacks the line: that issue cannot be satisfied
+    mechanically, and another issue's line must not hide it. [] when there is no issue."""
+    blocks = re.split(r"<!--\s*" + re.escape(ISSUE_MARK) + r"\s+\d+\s*-->", text)
+    if len(blocks) > 1:
+        blocks = blocks[1:]  # anything before the first header belongs to no issue
+    elif not text.strip():
+        return []
+    ids: set[str] = set()
+    for block in blocks:
+        marks = re.findall(r"<!--\s*" + re.escape(FAILING_MARK) + r"([^>]*?)-->", block)
+        if not marks:
+            return None
+        ids |= {i for mark in marks for i in mark.split()}
+    return sorted(ids)
 
 
 def shard(mutations: list[dict], k: int, n: int) -> list[dict]:
@@ -348,7 +393,8 @@ def shard(mutations: list[dict], k: int, n: int) -> list[dict]:
     return [m for m in mutations if owner[m["file"]] == k - 1]
 
 
-def report(mutations: list[dict], merged: dict, committed: dict, unreadable: list[str] = ()) -> tuple[str, bool]:
+def report(mutations: list[dict], merged: dict, committed: dict, unreadable: list[str] = (),
+           accepted: dict | None = None) -> tuple[str, bool]:
     """(Markdown, failed?) for a whole-list run. It fails when any mutation was not run or not
     killed, when a shard's results could not be read, or when the committed results file is stale
     (a record for a mutation not in the list, or none, or one made for a different definition).
@@ -358,7 +404,10 @@ def report(mutations: list[dict], merged: dict, committed: dict, unreadable: lis
     order = [m["id"] for m in mutations]
     by_id = {m["id"]: m for m in mutations}
     missing = [i for i in order if i not in merged]
-    bad = [(i, merged[i]["verdict"]) for i in order if i in merged and not proven(merged[i])]
+    bad = [(i, merged[i]["verdict"]) for i in order if i in merged and not passes(by_id[i], merged[i], accepted)]
+    survivors = [i for i in order if i in merged and not proven(merged[i]) and passes(by_id[i], merged[i], accepted)]
+    now_killed = [i for i in order if proven(merged.get(i)) and accepted_survivor(by_id[i], accepted)]
+    stale_survivors = survivor_problems(mutations, accepted or {})
     stale_ids = [i for i in order if i not in committed or committed[i].get("mutation") != mutation_hash(by_id[i])]
     stale = [f"{i}: no committed record" if i not in committed else f"{i}: committed record is for another definition"
              for i in stale_ids]
@@ -366,7 +415,7 @@ def report(mutations: list[dict], merged: dict, committed: dict, unreadable: lis
     timeouts = [i for i in order if merged.get(i, {}).get("verdict") == TIMEOUT]
     thin = [(i, merged[i]["killers"]) for i in order
             if i in merged and merged[i]["verdict"] == KILLED and len(merged[i]["killers"]) < 2]
-    failed = bool(missing or bad or stale or unreadable)
+    failed = bool(missing or bad or stale or unreadable or stale_survivors)
     out = [f"# Tax-audit mutations: {'FAILED' if failed else 'all killed'}", ""]
     if failed:
         ids = order if unreadable else sorted(set(missing) | {i for i, _ in bad} | set(stale_ids), key=order.index)
@@ -376,6 +425,9 @@ def report(mutations: list[dict], merged: dict, committed: dict, unreadable: lis
                         ("Not killed", [f"`{i}` ({by_id[i]['file']}): {v}" for i, v in bad]),
                         ("Not run", [f"`{i}`" for i in missing]),
                         ("Stale committed records", stale),
+                        ("Stale accepted-survivor entries", stale_survivors),
+                        ("Accepted survivors", [f"`{i}`: {accepted[i].get('reason', '')}" for i in survivors]),
+                        ("Accepted as survivors but now killed: remove the entry (warning)", [f"`{i}`" for i in now_killed]),
                         ("Killed by a hang, not a failing test (warning)", [f"`{i}`" for i in timeouts]),
                         ("Killed by fewer than 2 tests (warning)", [f"`{i}`: {', '.join(k) or 'none'}" for i, k in thin])):
         if rows:
@@ -697,6 +749,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Always on: every mutation in the list applies exactly once.
     stale = apply_check(mutations, ROOT)
+    accepted = load_results(SURVIVORS)
     for line in stale:
         print(f"STALE {line}")
 
@@ -712,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
                 merged.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError) as e:
                 unreadable.append(f"{path}: {type(e).__name__}")
-        text, failed = report(mutations, merged, load_results(RESULTS), unreadable)
+        text, failed = report(mutations, merged, load_results(RESULTS), unreadable, accepted)
         write_atomic(args.results, render_results(merged, order))
         if args.report:
             write_atomic(args.report, text + "\n")
@@ -727,7 +780,7 @@ def main(argv: list[str] | None = None) -> int:
     changed: list[str] = []
     if args.changed_since:
         changed = changed_since(args.changed_since, REPO, CRATE)
-        reasons = select(mutations, results, changed, ROOT)
+        reasons = select(mutations, results, changed, ROOT, accepted)
     if args.nightly_issues and changed:
         required = failing_ids(args.nightly_issues.read_text(encoding="utf-8"))
         if required is None:
@@ -747,12 +800,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.list or args.verify:
         for m in chosen:
             why = "; ".join(reasons.get(m["id"], ["listed"]))
-            ok = fresh(m, results.get(m["id"]), tree)
+            ok = fresh(m, results.get(m["id"]), tree, accepted)
             print(f"{m['id']}: {why}" + ("" if ok else "  [NOT PROVEN ON THIS TREE]"))
-        problems = verify(chosen, results, tree, order)
-        unproven = sum(1 for m in chosen if not fresh(m, results.get(m["id"]), tree))
+        problems = verify(chosen, results, tree, order, accepted) + survivor_problems(mutations, accepted)
+        unproven = sum(1 for m in chosen if not fresh(m, results.get(m["id"]), tree, accepted))
         for p in problems:
-            if "no longer in the list" in p:
+            if "not proven on crate tree" not in p:
                 print(p)
         print(f"\n{len(chosen)} selected, {len(chosen) - unproven} proven on crate tree {tree}")
         if args.verify:
@@ -824,7 +877,7 @@ def main(argv: list[str] | None = None) -> int:
     pool.shutdown(wait=True)
 
     ran = [done[m["id"]] for m in chosen]
-    bad = [(m, done[m["id"]]) for m in chosen if not proven(done[m["id"]])]
+    bad = [(m, done[m["id"]]) for m in chosen if not passes(m, done[m["id"]], accepted)]
     thin = [(m, done[m["id"]]) for m in chosen
             if done[m["id"]]["verdict"] == KILLED and len(done[m["id"]]["killers"]) < 2]
     print(f"\n{len(ran) - len(bad)} of {len(ran)} killed")
