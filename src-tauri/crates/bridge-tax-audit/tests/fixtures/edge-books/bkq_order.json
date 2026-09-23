@@ -1,0 +1,457 @@
+{
+ "comment": "book_keeping_quality entry order: the MASTERID clock over the population in creation order; lag of exactly 30 days is not over, 31 is; a sale with a negative MASTERID ('-7') starts the clock before a purchase numbered '-2'; a sale dated earlier than the clock leaves it; a lag of -31 days is not over 30; equal MASTERIDs keep population order (a Payment before a Sale at the same number lags the older clock); a GUID seen twice keeps its last creation-order lag; vouchers after the last-created sale, by base type; MASTERID text as Python int() reads it (' 12 ', '+3', '1_0', '007', '-2' parse; 'x', '1__0', '_1', '' and an absent one do not); base-type slugs from a non-ASCII and a symbols-only name; an optional voucher is outside the population.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Local Debtors": "Sundry Debtors",
+  "Stock-in-Hand": "Current Assets",
+  "Finished Goods": "Stock-in-Hand",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-0"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-1"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-bkq-2"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-bkq-3"
+  },
+  {
+   "name": "Supplier",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-4"
+  },
+  {
+   "name": "Customer",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-5"
+  },
+  {
+   "name": "Expenses",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bkq-6"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "o-sneg",
+   "date": "2025-04-05",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     3
+    ],
+    [
+     "Sales",
+     -3
+    ]
+   ],
+   "masterid": "-7"
+  },
+  {
+   "guid": "o-p1",
+   "date": "2025-04-02",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1000
+    ],
+    [
+     "Supplier",
+     -1000
+    ]
+   ],
+   "masterid": "-2"
+  },
+  {
+   "guid": "o-s1",
+   "date": "2025-05-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     5000
+    ],
+    [
+     "Sales",
+     -5000
+    ]
+   ],
+   "masterid": "+3"
+  },
+  {
+   "guid": "o-pay31",
+   "date": "2025-04-09",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     700
+    ],
+    [
+     "Cash",
+     -700
+    ]
+   ],
+   "masterid": " 5 "
+  },
+  {
+   "guid": "o-rec30",
+   "date": "2025-04-10",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     900
+    ],
+    [
+     "Customer",
+     -900
+    ]
+   ],
+   "masterid": "6"
+  },
+  {
+   "guid": "dup",
+   "date": "2025-03-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     10
+    ],
+    [
+     "Cash",
+     -10
+    ]
+   ],
+   "masterid": "7"
+  },
+  {
+   "guid": "o-tie-pay",
+   "date": "2025-05-20",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     20
+    ],
+    [
+     "Cash",
+     -20
+    ]
+   ],
+   "masterid": "8"
+  },
+  {
+   "guid": "o-tie-sale",
+   "date": "2025-07-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     30
+    ],
+    [
+     "Sales",
+     -30
+    ]
+   ],
+   "masterid": "008"
+  },
+  {
+   "guid": "o-s2",
+   "date": "2025-05-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     40
+    ],
+    [
+     "Sales",
+     -40
+    ]
+   ],
+   "masterid": "1_0"
+  },
+  {
+   "guid": "o-j-neg",
+   "date": "2025-08-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Expenses",
+     50
+    ],
+    [
+     "Cash",
+     -50
+    ]
+   ],
+   "masterid": " 12 "
+  },
+  {
+   "guid": "o-cn",
+   "date": "2025-05-20",
+   "base_type": "Débit Note",
+   "lines": [
+    [
+     "Supplier",
+     60
+    ],
+    [
+     "Purchases",
+     -60
+    ]
+   ],
+   "masterid": "13"
+  },
+  {
+   "guid": "o-sym",
+   "date": "2025-05-21",
+   "base_type": "***",
+   "lines": [
+    [
+     "Expenses",
+     70
+    ],
+    [
+     "Cash",
+     -70
+    ]
+   ],
+   "masterid": "14"
+  },
+  {
+   "guid": "o-s3",
+   "date": "2025-06-30",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     80
+    ],
+    [
+     "Sales",
+     -80
+    ]
+   ],
+   "masterid": "15"
+  },
+  {
+   "guid": "dup",
+   "date": "2025-06-15",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     11
+    ],
+    [
+     "Cash",
+     -11
+    ]
+   ],
+   "masterid": "16"
+  },
+  {
+   "guid": "o-j-after",
+   "date": "2025-06-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Expenses",
+     90
+    ],
+    [
+     "Cash",
+     -90
+    ]
+   ],
+   "masterid": "20"
+  },
+  {
+   "guid": "o-p-after",
+   "date": "2025-06-29",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     100
+    ],
+    [
+     "Supplier",
+     -100
+    ],
+    [
+     "Cash",
+     5
+    ],
+    [
+     "Expenses",
+     -5
+    ]
+   ],
+   "masterid": "21"
+  },
+  {
+   "guid": "o-bad-x",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ],
+   "masterid": "x"
+  },
+  {
+   "guid": "o-bad-dbl",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ],
+   "masterid": "1__0"
+  },
+  {
+   "guid": "o-bad-lead",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ],
+   "masterid": "_1"
+  },
+  {
+   "guid": "o-bad-empty",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ],
+   "masterid": ""
+  },
+  {
+   "guid": "o-bad-none",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Supplier",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ]
+  },
+  {
+   "guid": "o-opt",
+   "date": "2025-12-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     1
+    ],
+    [
+     "Sales",
+     -1
+    ]
+   ],
+   "masterid": "99",
+   "status": "optional"
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "book_keeping_quality": {
+  "payment_channel_debtors": [],
+  "tax_ledgers": {},
+  "gst_payment_ledgers": [],
+  "reissue_narration_terms": [],
+  "writeoff_discount_ledgers": []
+ },
+ "tests": [
+  "book_keeping_quality"
+ ]
+}

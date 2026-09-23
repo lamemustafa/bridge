@@ -55,6 +55,67 @@ pub fn compute_native_outstandings(
     as_of: &TallyDate,
     source_bytes: usize,
 ) -> Result<NativeOutstandingsResult, NativeOutstandingsError> {
+    compute_native_outstandings_with_exclusions(
+        company_name,
+        receivable_rows,
+        payable_rows,
+        masters,
+        &[],
+        anchor,
+        as_of,
+        source_bytes,
+    )
+}
+
+/// [`compute_native_outstandings`] over the base-currency ledgers of a
+/// classified snapshot (bridge#551): every bill of a ledger in `foreign` is
+/// dropped before any figure is computed, so no total, ageing bucket, party or
+/// residual includes it, and the exclusions are carried on the result. Tally
+/// returns a foreign ledger's bills as plain amounts that are not rupees
+/// (TALLY_PROTOCOL_REFERENCE §8.2d). With exclusions, a bill whose party is
+/// not one of `masters.ledgers` refuses (`bill_party_ledger_unresolved`): it
+/// could be a foreign ledger that cannot be identified. With none, bills are
+/// read exactly as before.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_native_outstandings_with_exclusions(
+    company_name: &str,
+    receivable_rows: &[NativeBillRow],
+    payable_rows: &[NativeBillRow],
+    masters: NativeMasterSnapshot<'_>,
+    foreign: &[super::ForeignCurrencyLedger],
+    anchor: AgeingAnchor,
+    as_of: &TallyDate,
+    source_bytes: usize,
+) -> Result<NativeOutstandingsResult, NativeOutstandingsError> {
+    let excluded = foreign
+        .iter()
+        .map(|ledger| ledger.ledger.as_str())
+        .collect::<BTreeSet<_>>();
+    let base_bills =
+        |rows: &[NativeBillRow]| -> Result<Vec<NativeBillRow>, NativeOutstandingsError> {
+            if excluded.is_empty() {
+                return Ok(rows.to_vec());
+            }
+            let ledgers = masters
+                .ledgers
+                .iter()
+                .map(|ledger| ledger.name.as_str())
+                .collect::<BTreeSet<_>>();
+            rows.iter()
+                .filter(|row| !excluded.contains(row.party.as_str()))
+                .map(|row| {
+                    if ledgers.contains(row.party.as_str()) {
+                        Ok(row.clone())
+                    } else {
+                        Err(NativeOutstandingsError::InvalidResponse(
+                            "bill_party_ledger_unresolved",
+                        ))
+                    }
+                })
+                .collect()
+        };
+    let receivable_rows = &base_bills(receivable_rows)?[..];
+    let payable_rows = &base_bills(payable_rows)?[..];
     let mut receivable_total = ExactDecimal::zero();
     let mut payable_total = ExactDecimal::zero();
     let mut ageing = AgeingBuckets {
@@ -201,6 +262,7 @@ pub fn compute_native_outstandings(
         residuals,
         residual_total,
         overdue_crosscheck,
+        foreign_currency_ledgers_excluded: foreign.to_vec(),
     })
 }
 

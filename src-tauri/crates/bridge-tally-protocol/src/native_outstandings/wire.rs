@@ -410,10 +410,59 @@ fn is_currency_qualified_numeric(value: &str) -> bool {
 pub fn parse_native_ledger_snapshot(
     xml: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
-    Ok(parse_native_ledger_snapshot_rows(xml)?
+    parse_native_ledger_snapshot_rows(xml)?
         .into_iter()
-        .map(|row| row.entry)
-        .collect())
+        .map(ParsedLedgerSnapshotRow::into_entry)
+        .collect()
+}
+
+/// A ledger snapshot split by each ledger's own currency (bridge#551;
+/// TALLY_PROTOCOL_REFERENCE §8.2d).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedLedgerSnapshot {
+    /// Ledgers kept in the base currency, balances parsed.
+    pub base: Vec<LedgerSnapshotEntry>,
+    /// Ledgers kept in another currency, in read order. Their balances are not
+    /// parsed: a foreign balance is a composite display string, and a zero one
+    /// is a plain `0.00` that would pass for the base.
+    pub foreign: Vec<super::ForeignCurrencyLedger>,
+    /// Base ledgers whose `CURRENCYNAME` was absent or empty, on a book with one
+    /// Currency master (see [`super::LedgerCurrencies::unobserved`]).
+    pub unobserved: usize,
+}
+
+/// Parses a native ledger snapshot and classifies every ledger by its own
+/// `CURRENCYNAME` against `base` before parsing any balance, so that a
+/// foreign ledger is excluded rather than refusing the read. Refuses as
+/// [`NativeOutstandingsError::LedgerCurrency`] when the classification does.
+/// Ledger names are unique within a Tally company, so a foreign ledger is
+/// identified by its name.
+pub fn parse_native_ledger_snapshot_classified(
+    xml: &str,
+    base: &super::BaseCurrencyName,
+) -> Result<ClassifiedLedgerSnapshot, NativeOutstandingsError> {
+    let rows = parse_native_ledger_snapshot_rows(xml)?;
+    let classified = super::classify_ledger_currencies(
+        base,
+        rows.iter()
+            .map(|row| (row.name.as_str(), row.currency_name.as_deref())),
+    )
+    .map_err(NativeOutstandingsError::LedgerCurrency)?;
+    let foreign_names = classified
+        .foreign
+        .iter()
+        .map(|ledger| ledger.ledger.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let base_rows = rows
+        .into_iter()
+        .filter(|row| !foreign_names.contains(row.name.as_str()))
+        .map(ParsedLedgerSnapshotRow::into_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ClassifiedLedgerSnapshot {
+        base: base_rows,
+        foreign: classified.foreign,
+        unobserved: classified.unobserved,
+    })
 }
 
 /// Parses a native ledger snapshot only when Tally's collection-level compute
@@ -440,7 +489,10 @@ pub fn parse_native_ledger_snapshot_for_company(
             "ledger_response_company_guid_missing",
         ));
     }
-    Ok(entries.into_iter().map(|row| row.entry).collect())
+    entries
+        .into_iter()
+        .map(ParsedLedgerSnapshotRow::into_entry)
+        .collect()
 }
 
 fn parse_native_ledger_snapshot_rows(
@@ -841,7 +893,10 @@ fn parse_ledger_row(
                                 "ledger_duplicate_closing_balance",
                             ));
                         }
-                        closing_balance = Some(parse_ledger_closing_balance(text.trim(), &name)?);
+                        // Parsed once the row's currency is known: a foreign
+                        // ledger's composite balance is excluded, not refused,
+                        // by the classified parse.
+                        closing_balance = Some(text.trim().to_string());
                     }
                     b"OPENINGBALANCE" => {
                         let text = read_element_text(reader, child.name())?;
@@ -850,7 +905,7 @@ fn parse_ledger_row(
                                 "ledger_duplicate_opening_balance",
                             ));
                         }
-                        opening_balance = Some(parse_ledger_amount(text.trim())?);
+                        opening_balance = Some(text.trim().to_string());
                     }
                     b"ISBILLWISEON" => {
                         let text = read_element_text(reader, child.name())?;
@@ -916,27 +971,49 @@ fn parse_ledger_row(
         }
     }
     Ok(ParsedLedgerSnapshotRow {
-        entry: LedgerSnapshotEntry {
-            name,
-            parent: parent.flatten(),
-            closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-                "ledger_closing_balance_missing",
-            ))?,
-            opening_balance: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-                "ledger_opening_balance_missing",
-            ))?,
-            bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
-                "ledger_bill_wise_flag_missing",
-            ))?,
-            currency_name: currency_name.flatten(),
-        },
+        name,
+        parent: parent.flatten(),
+        closing_text: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+            "ledger_closing_balance_missing",
+        ))?,
+        opening_text: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+            "ledger_opening_balance_missing",
+        ))?,
+        bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
+            "ledger_bill_wise_flag_missing",
+        ))?,
+        currency_name: currency_name.flatten(),
         response_company_guid,
     })
 }
 
+/// One ledger row with its balances still as Tally's text, so that a foreign
+/// ledger can be classified before its composite balance is parsed.
 struct ParsedLedgerSnapshotRow {
-    entry: LedgerSnapshotEntry,
+    name: String,
+    parent: Option<String>,
+    closing_text: String,
+    opening_text: String,
+    bill_wise_on: bool,
+    currency_name: Option<String>,
     response_company_guid: Option<String>,
+}
+
+impl ParsedLedgerSnapshotRow {
+    /// The row with its balances parsed. A composite closing balance refuses as
+    /// [`NativeOutstandingsError::ForeignCurrencyLedgerBalance`], as before.
+    fn into_entry(self) -> Result<LedgerSnapshotEntry, NativeOutstandingsError> {
+        let closing_balance = parse_ledger_closing_balance(&self.closing_text, &self.name)?;
+        let opening_balance = parse_ledger_amount(&self.opening_text)?;
+        Ok(LedgerSnapshotEntry {
+            name: self.name,
+            parent: self.parent,
+            closing_balance,
+            opening_balance,
+            bill_wise_on: self.bill_wise_on,
+            currency_name: self.currency_name,
+        })
+    }
 }
 
 fn skip_subtree(reader: &mut Reader<&[u8]>) -> Result<(), NativeOutstandingsError> {

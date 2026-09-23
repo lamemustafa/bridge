@@ -3,6 +3,7 @@ use crate::commands::VerifiedCompanyIdentity;
 use crate::tally::TallyProduct;
 use anyhow::Context;
 use bridge_tally_core::CapabilityProfile;
+use bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot;
 use std::collections::BTreeMap;
 use tally_protocol_simulator::Fixture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -228,6 +229,11 @@ fn single_company_forex_ledger_capture_returns_a_typed_partial() {
     .text;
     let admitted = admit_native_ledger_snapshot(
         parse_native_ledger_snapshot(&ledger_body)
+            .map(|base| ClassifiedLedgerSnapshot {
+                base,
+                foreign: Vec::new(),
+                unobserved: 0,
+            })
             .map_err(anyhow::Error::from)
             .context("stable native ledger snapshot"),
     )
@@ -311,15 +317,15 @@ async fn single_company_read_returns_the_forex_capture_partial() {
         assert_eq!(source_post_index, 12);
     });
 
-    let result = TallyRuntime::default()
-        .fetch_outstandings(
+    let (result, _) = TallyRuntime::default()
+        .fetch_agent_outstandings_with_evidence(
             TallyConfig {
                 host: address.ip().to_string(),
                 port: address.port(),
             },
             &identity,
             TallyDate::parse("20260401").expect("captured book as-of"),
-            OutstandingsCurrencyAssertion::Inr,
+            inr_witness_for_tests(extent, &identity),
             OutstandingsAgeingAnchor::DueDate,
         )
         .await
@@ -1115,9 +1121,10 @@ fn outstandings_date_boundaries_follow_detected_mode_and_fallback_to_i12() {
 /// data was read". The reason code is gone with it.
 ///
 /// The loopback guard is unchanged and still fails closed; it is simply now
-/// the first guard the native path reaches. That is the property worth
-/// pinning, so this asserts it directly rather than inferring it from an
-/// ordering that no longer exists.
+/// the first guard the read reaches, before its currency read (the desktop
+/// read, which the uncalibrated voucher-scan build falls back to). That is the
+/// property worth pinning, so this asserts it directly rather than inferring
+/// it from an ordering that no longer exists.
 #[tokio::test]
 async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non_loopback_endpoint()
 {
@@ -1128,14 +1135,29 @@ async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non
         "a default runtime must have no calibrated width -- that is what routes to the native path"
     );
 
+    let config = TallyConfig {
+        host: "not-a-loopback-endpoint".to_string(),
+        port: 9000,
+    };
+    let identity = verified_identity("Synthetic Company", "synthetic-guid");
+    let as_of = TallyDate::parse("20260731").unwrap();
+    #[cfg(feature = "voucher-scan")]
     let error = runtime
         .fetch_outstandings(
-            TallyConfig {
-                host: "not-a-loopback-endpoint".to_string(),
-                port: 9000,
-            },
-            &verified_identity("Synthetic Company", "synthetic-guid"),
-            TallyDate::parse("20260731").unwrap(),
+            config,
+            &identity,
+            as_of,
+            OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await
+        .expect_err("a non-loopback endpoint must never be contacted");
+    #[cfg(not(feature = "voucher-scan"))]
+    let error = runtime
+        .fetch_operator_outstandings(
+            config,
+            &identity,
+            as_of,
             OutstandingsCurrencyAssertion::Inr,
             OutstandingsAgeingAnchor::DueDate,
         )
@@ -1143,7 +1165,7 @@ async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non
         .expect_err("a non-loopback endpoint must never be contacted");
     assert!(
         error.to_string().contains("non_loopback_forbidden"),
-        "loopback-only admission must still fail closed on the native path, got: {error}"
+        "loopback-only admission must fail closed before any Tally read, got: {error}"
     );
 }
 

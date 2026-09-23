@@ -44,6 +44,19 @@ export function outstandingsPartialReason(
       ? `Tally reported a foreign-currency closing balance for ledger ${foreignCurrencyLedgerName}`
       : "Tally reported a foreign-currency closing balance";
   }
+  if (value === "ledger_currency_base_unmatched") {
+    return foreignCurrencyLedgerName
+      ? `Tally keeps ledger ${foreignCurrencyLedgerName} in a currency other than this company's base currency`
+      : "Bridge could not match this company's ledgers to its base currency";
+  }
+  if (value === "ledger_currency_unobserved") {
+    return "Tally did not report the currency of every ledger in this multi-currency company";
+  }
+  if (value === "foreign_currency_ledger_present") {
+    return foreignCurrencyLedgerName
+      ? `Tally keeps ledger ${foreignCurrencyLedgerName} in a foreign currency`
+      : "Tally keeps a ledger in a foreign currency";
+  }
   if (value === "tally_segment_latency_trending_restart_recommended") {
     return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
   }
@@ -132,6 +145,18 @@ export function outstandingsPartialState(
     return {
       title: "Outstandings are not available for this company",
       message: "Bridge completed a coverage check, but bill-wise opening balances fall outside the current read scope. It did not calculate totals. Repeating the same scan won't resolve this.",
+      retryable: false,
+      tallyReadAttempted: true,
+    };
+  }
+  if (
+    reasonCode === "ledger_currency_base_unmatched"
+    || reasonCode === "ledger_currency_unobserved"
+    || reasonCode === "foreign_currency_ledger_present"
+  ) {
+    return {
+      title: "Outstandings are not available for this company",
+      message: `${outstandingsPartialReason(reasonCode, requestedAsOf, tallyAsOf, foreignCurrencyLedgerName)}. Bridge withheld the totals rather than count amounts in another currency as rupees.`,
       retryable: false,
       tallyReadAttempted: true,
     };

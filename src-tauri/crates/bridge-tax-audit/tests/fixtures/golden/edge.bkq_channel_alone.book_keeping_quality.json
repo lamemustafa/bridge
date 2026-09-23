@@ -1,0 +1,325 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "book_keeping_quality",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ba2601e59ad709f4",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded).",
+  "figures": [
+    {
+      "id": "book_keeping_quality.contra_direction_mismatch_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "bb720fd237265f61",
+      "definition_text": "Contra vouchers whose narration claims a direction that their own Cash line's sign contradicts.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_mismatch_total_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "36ad34272911a171",
+      "definition_text": "Sum of the Cash line amounts, each taken without its sign, across the Contra vouchers whose narration claims a direction that their own Cash line's sign contradicts.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.debtor_writeoff_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "0ab2d91ab0decbbd",
+      "definition_text": "Journal vouchers debiting a configured discount/write-off ledger and crediting a Sundry Debtors ledger.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.debtor_writeoff_total_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3492a3ed8a1f1c7e",
+      "definition_text": "Sum of the debtor-ledger credit line(s) across the journal vouchers debiting a configured discount/write-off ledger and crediting a Sundry Debtors ledger.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "e22112308bcb97ee",
+      "definition_text": "Population vouchers (any base type) created after the sales voucher with the latest in Tally's creation order.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_value_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "cfd76eef82dcab67",
+      "definition_text": "Sum of the debit-side (gross) amount of every population voucher (any base type) created after the sales voucher with the latest in Tally's creation order.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_unparseable_masterid_count",
+      "value": 5,
+      "unit": "count",
+      "definition_sha256_16": "818d17dafd85b348",
+      "definition_text": "Population vouchers with no usable creation-order number; excluded from every entry-order figure.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_configured_payment_ledger_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "fe87d166a0d6c51a",
+      "definition_text": "GST payment ledgers set for this client; a books test with none configured does not apply and reports only the tax ledgers' own balances, if any.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_head_closing_paise_CGST",
+      "value": -900,
+      "unit": "paise",
+      "definition_sha256_16": "c8d3c741a4f6e754",
+      "definition_text": "Sum of TB closing balances across every ledger configured under GST head 'CGST' (Dr+/Cr-).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_configured_debtor_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "6ca90eba2037e636",
+      "definition_text": "Debtor ledgers configured as a consolidated payment-channel debtor; a books test with none configured does not apply and reports zero throughout this section.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_invoice_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "189b82b30fa26097",
+      "definition_text": "Sales vouchers with a debit line on a configured payment-channel debtor ledger.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "ai-1",
+          "label": "Sales ai-1 on 2025-04-10"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.pc_invoice_value_total_paise",
+      "value": 500,
+      "unit": "paise",
+      "definition_sha256_16": "1179ce27849f8351",
+      "definition_text": "Sum of the payment-channel debtor line(s) across the sales vouchers with a debit line on a configured payment-channel debtor ledger.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_invoices_per_month_max",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "a39aac6252cd463f",
+      "definition_text": "Most payment-channel invoices in any calendar month touched by the population.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_invoices_per_month_min",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "fb4004320bab83a1",
+      "definition_text": "Fewest payment-channel invoices in any calendar month touched by the population.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_margin_below_cost_share_bp",
+      "value": 0,
+      "unit": "bp",
+      "definition_sha256_16": "bad38b5990b5a9be",
+      "definition_text": "Share of the sales-voucher inventory lines on payment-channel debtor invoices where the sale value is less than the item's year-average purchase rate x quantity.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_margin_bp",
+      "value": 0,
+      "unit": "bp",
+      "definition_sha256_16": "5a9ad0526bb6d236",
+      "definition_text": "Overall (sales - cost) / sales across payment-channel debtor lines, cost from the item's year-average purchase rate.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_margin_lines_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "4423d3119dc12a9f",
+      "definition_text": "Sales-voucher inventory lines on payment-channel debtor invoices priced against the item's own year-average purchase rate.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_matched_next_day_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "b4c7641b938129a8",
+      "definition_text": "Payment-channel invoices paired with a receipt of the same amount on the same ledger (dated 0-3 days later, greedy match, oldest invoice first) whose receipt is dated exactly one day later.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_matched_within_3_days_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "042963a14a7dea7e",
+      "definition_text": "Payment-channel invoices (sales vouchers with a debit line on a configured payment-channel debtor ledger) paired with a receipt of the same amount on the same ledger, dated 0-3 days later (greedy match, oldest invoice first).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_unmatched_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "c7e7cb1a8de2ef4d",
+      "definition_text": "Payment-channel invoices with no receipt of the same amount on the same ledger within 0-3 days.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.reissue_narration_match_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1e37612e8fd0242e",
+      "definition_text": "Population vouchers whose narration matches a configured re-issue/amendment/transfer term.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.reissue_narration_match_value_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "63cb38ba9b191467",
+      "definition_text": "Sum of the debit-side (gross) amount of every population voucher whose narration matches a configured re-issue/amendment/transfer term.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_total_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "cd9ce783b89ad0f6",
+      "definition_text": "Ledgers under Tally's 'Stock-in-Hand' group.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_untouched_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "fc6b6ffdc71ab767",
+      "definition_text": "Ledgers under Tally's 'Stock-in-Hand' group with zero population vouchers touching them all year.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "book_keeping_quality/payment_channel/margin",
+      "clauses": [
+        "3CD-40"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "below_cost_share_bp",
+          "figure_id": "book_keeping_quality.pc_margin_below_cost_share_bp"
+        },
+        {
+          "name": "lines",
+          "figure_id": "book_keeping_quality.pc_margin_lines_count"
+        },
+        {
+          "name": "margin_bp",
+          "figure_id": "book_keeping_quality.pc_margin_bp"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "ai-1",
+          "label": "Sales ai-1 on 2025-04-10"
+        }
+      ],
+      "title_sha256_16": "3d9283345d1214c3",
+      "title_text": "Payment-channel debtor sale lines priced against the item's year-average purchase rate show a share below cost, compared with named-customer lines",
+      "limits_sha256_16": "ed23288149ca38bd",
+      "limits_text": [
+        "The purchase rate is a single year average per item, not FIFO or a specific lot; an item bought at varying rates during the year will show some lines 'below cost' against the average even when priced above the lot actually consumed.",
+        "Rule 46 permits a single consolidated daily B2C invoice only where each underlying supply is below ₹200; the books do not show the underlying supply-level breakdown behind a consolidated invoice.",
+        "No 'named customer' Sales lines were priced against a purchase rate on this book; no comparison margin is available."
+      ],
+      "ask_client_sha256_16": "928c6384c58a2acb",
+      "ask_client_text": [
+        "Confirm whether each supply represented on these invoices is individually below the ₹200 Rule 46 threshold for a consolidated daily B2C invoice.",
+        "Confirm the pricing basis for sales through this ledger against the item's cost."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/payment_channel/receipt_match",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "invoice_count",
+          "figure_id": "book_keeping_quality.pc_invoice_count"
+        },
+        {
+          "name": "matched_within_3_days_count",
+          "figure_id": "book_keeping_quality.pc_matched_within_3_days_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "ai-1",
+          "label": "Sales ai-1 on 2025-04-10"
+        }
+      ],
+      "title_sha256_16": "e5a6fb7c99c5c8a0",
+      "title_text": "0 of 1 configured payment-channel debtor invoices were matched to a receipt of the same amount on the same ledger, 0-3 days later",
+      "limits_sha256_16": "ae3d4e6735505e0e",
+      "limits_text": [
+        "A same-amount, near-date match is not proof that the receipt discharges that specific invoice; only a bill-wise link recorded in Tally, or the bank's own narration, would confirm it."
+      ],
+      "ask_client_sha256_16": "3203d4fef7dd05f6",
+      "ask_client_text": [
+        "Confirm whether these are genuinely separate daily invoices to this ledger, or a single invoice built to match each day's bank credit."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Output CGST",
+      "detail": "vouchers 0 vs TB movement -900 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Sales",
+      "detail": "vouchers -510 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "UPI Collections",
+      "detail": "vouchers 500 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to -900 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "book_keeping_quality.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

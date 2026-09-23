@@ -55,9 +55,9 @@ def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
     from tae.adapters.traces_documents import AisRow, TisRow
-    from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-                                 statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
-                                 twentysixas_receipts)
+    from tae.audit_tests import (book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
+                                 ledger_scrutiny, stale_balances_41_1, statutory_dues_43b, tds_payees,
+                                 tds_tcs_26as, trial_balance, twentysixas_receipts)
     from tae.model import Form26ASRow
     from tae.config import load_rules
     from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
@@ -129,7 +129,16 @@ def main() -> int:
 
     # One runner per test an edge book may name: the module and its result, run as the reference's
     # pack runs it.
+    # book_keeping_quality's inputs, as tae/pack.py passes them: tax_ledgers flattened to
+    # {ledger: head} in document order, as tae.config.tax_ledgers_by_head flattens it.
+    bkq = spec.get("book_keeping_quality", {})
+    bkq_tax = {ledger: head for head, ledgers in bkq.get("tax_ledgers", {}).items() for ledger in ledgers}
+
     runners = {
+        "book_keeping_quality": lambda: (book_keeping_quality, book_keeping_quality.run(
+            eng, rules, cash, set(bkq.get("payment_channel_debtors", [])), bkq_tax,
+            set(bkq.get("gst_payment_ledgers", [])), list(bkq.get("reissue_narration_terms", [])),
+            set(bkq.get("writeoff_discount_ledgers", [])))),
         "cash_book_integrity": lambda: (cash_book_integrity,
                                         cash_book_integrity.run(eng, rules, cash, bank, terms)),
         "creditor_ageing_43bh": lambda: (creditor_ageing_43bh, creditor_ageing_43bh.run(
