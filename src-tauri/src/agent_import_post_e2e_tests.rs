@@ -1816,3 +1816,34 @@ async fn the_preview_says_the_ledgers_were_checked_by_identity() {
     assert_eq!(previews.len(), 1);
     assert!(previews[0].contains("Ledgers checked by identity against the build"));
 }
+
+/// A batch dispatched before Bridge recorded ledger identities still
+/// reconciles: `post_import` on it goes to the readback, never to the
+/// "build it again" refusal, since a dispatched batch must not be rebuilt.
+#[tokio::test]
+async fn a_dispatched_batch_without_identities_still_reconciles() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (mut line, args) = saved_batch(&server);
+    line.ledger_identities = None;
+    server.append_import_ledger(&line).unwrap();
+    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    {
+        let _lock = server.lock_import_admission().unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_for(
+                &line, &native,
+            ))
+            .unwrap();
+    }
+    let response = server.call_tool("post_import", args).await;
+    let observed = sent(simulator).len();
+    let result = &response["structuredContent"]["result"];
+    assert_ne!(
+        result["error"]["code"], "import_batch_predates_ledger_binding",
+        "{response}"
+    );
+    assert_ne!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(observed > 0, "the readback reads Tally: {response}");
+}
