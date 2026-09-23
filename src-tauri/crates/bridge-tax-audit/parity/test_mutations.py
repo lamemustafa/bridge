@@ -14,6 +14,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -77,12 +79,13 @@ test fine ... ok
 
 def crate_layout(root: Path) -> Path:
     for rel, text in {
-        "src/lib.rs": "pub mod book;\n",
-        "src/book.rs": "// book\n",
+        "src/lib.rs": "pub mod book;\n#[cfg(test)]\nmod tests { #[test] fn root_level() {} }\n",
+        "src/book.rs": "// book\n#[test] fn a() {}\n#[test] fn b() {}\n",
         "src/support.rs": "#[test] fn tables() { let _ = include_str!(\"text_tables.rs\"); }\n",
         "src/text_tables.rs": "// generated\n",
         "src/read.rs": "#[cfg(test)]\nmod tests;\n",
-        "src/read/tests.rs": "// read's tests\n",
+        "src/read/tests.rs": "#[test] fn a() {}\n",
+        "tests/deep.rs": "#[test] fn recurse() {}\n",
         "src/rules.rs": "include_str!(\"../rules/x.toml\")\n",
         "tests/edge_books.rs": "mod common;\n#[test] fn every_edge_book_matches_the_reference() {}\n",
         "tests/registry.rs": "#[test] fn registry_ok() {}\n",
@@ -115,8 +118,11 @@ class ParseOutput(unittest.TestCase):
         ]), "a binary that named its failures is not also recorded as crashed")
         self.assertFalse(compile_error, "cargo's 'error: test failed' is not a compile error")
 
-    def test_a_binary_that_dies_without_naming_a_failure_is_killed_by_its_target(self):
+    def test_a_binary_that_crashes_without_naming_a_failure_is_killed_by_its_target(self):
         self.assertEqual(mu.parse_test_output(CRASH), (["tests/deep.rs::<crashed>"], False))
+        for signal in ("signal: 9, SIGKILL: kill", "signal: 15, SIGTERM: termination signal", "exit status: 101"):
+            killed = CRASH.replace("signal: 6, SIGABRT: process abort signal", signal)
+            self.assertEqual(mu.parse_test_output(killed), ([], False), f"killed from outside: {signal}")
 
     def test_a_long_list_is_not_cut(self):
         out = "     Running tests/x.rs (/t)\n" + "".join(f"test t{i:03} ... FAILED\n" for i in range(300))
@@ -142,6 +148,14 @@ class KillerFile(unittest.TestCase):
                 "tests/deep.rs::<crashed>": "tests/deep.rs",
                 "src/lib.rs::<crashed>": None,  # any test in the library binary
                 "weird::x": None,
+                # the file must still define the test: a rename, a #[path] remap or a macro is unknown
+                "src/lib.rs::book::tests::gone": None,
+                "src/lib.rs::tests::gone": None,
+                "tests/renamed.rs::every_edge_book_matches_the_reference": None,
+                "tests/registry.rs::gone": None,
+                "tests/renamed.rs::<crashed>": None,
+                # cargo prints a doc test's path relative to the workspace
+                f"doc::{crate.relative_to(crate.parent.parent).as_posix()}/src/book.rs - book::V (line 3)": "src/book.rs",
             }
             for killer, want in cases.items():
                 self.assertEqual(mu.killer_file(killer, crate), want, killer)
@@ -263,7 +277,9 @@ class FakeWorker:
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
-        return answer
+        if len(answer) == 3:  # (exit code, output, seconds the run takes)
+            time.sleep(answer[2])
+        return answer[:2]
 
 
 BUILT = (0, "    Finished `test` profile\n")
@@ -335,14 +351,22 @@ class RunOne(unittest.TestCase):
             w, rec = self.run_one([])
             self.assertEqual((rec["verdict"], rec["note"], w.calls), (mu.DID_NOT_APPLY, f"{n} matches", []))
 
-    def test_the_baseline_refuses_an_unmutated_suite_that_fails(self):
+    def test_the_baseline_refuses_an_unmutated_suite_that_fails_or_leaves_no_margin(self):
+        name = self.crate.name
         ok = [FakeWorker(self.crate, [BUILT, PASSED]), FakeWorker(self.crate, [BUILT])]
         self.assertEqual(mu.baseline(ok, 5, 5), [])
         self.assertEqual(ok[1].calls, [["--no-run"]], "other workers only build")
-        failing = [FakeWorker(self.crate, [BUILT, FAILED]), FakeWorker(self.crate, [BROKEN])]
-        self.assertEqual(mu.baseline(failing, 5, 5), [
-            f"{self.crate.name}: killed: tests/x.rs::t, tests/x.rs::u", f"{self.crate.name}: compile_error"])
-        self.assertEqual(mu.baseline([FakeWorker(self.crate, [BUILT, HUNG])], 5, 5), [f"{self.crate.name}: timeout"])
+        broken = [FakeWorker(self.crate, [BUILT, PASSED]), FakeWorker(self.crate, [BROKEN])]
+        self.assertEqual(mu.baseline(broken, 5, 5), [f"{name}: compile_error"])
+        self.assertEqual(broken[0].calls, [["--no-run"]], "no suite runs until every copy builds")
+        self.assertEqual(mu.baseline([FakeWorker(self.crate, [BUILT, FAILED])], 5, 5),
+                         [f"{name}: fails unmutated: tests/x.rs::t, tests/x.rs::u"])
+        self.assertEqual(mu.baseline([FakeWorker(self.crate, [BUILT, (101, "")])], 5, 5), [f"{name}: fails unmutated: exit 101"])
+        self.assertEqual(mu.baseline([FakeWorker(self.crate, [BUILT, HUNG])], 5, 5),
+                         [f"{name}: the unmutated suite exceeded --timeout 5s"])
+        slow = [FakeWorker(self.crate, [BUILT, (*PASSED, 0.3)])]
+        self.assertEqual(mu.baseline(slow, 0.5, 5), ["--timeout 0.5s is under 3x the unmutated suite's 0s"])
+        self.assertEqual(mu.baseline([FakeWorker(self.crate, [BUILT, (*PASSED, 0.1)])], 5, 5), [])
 
 
 class Shard(unittest.TestCase):
@@ -384,10 +408,19 @@ class Report(unittest.TestCase):
         self.assertTrue(failed)
         self.assertIn("Stale committed records (3)", text)
         self.assertEqual(mu.failing_ids(text), ["A", "B"])
+        # An unreadable shard leaves what it held unknown: every id must be re-proved. (An earlier
+        # version pinned an EMPTY line here, which let every crate change through.)
         text, failed = mu.report(self.muts, self.killed, self.committed, ["shard-3.json: JSONDecodeError"])
         self.assertTrue(failed)
         self.assertIn("Shard results not read (1)", text)
-        self.assertEqual(mu.failing_ids(text), [], "a failed report always carries the line")
+        self.assertEqual(mu.failing_ids(text), ["A", "B", "C"])
+        self.assertIn(mu.FAILING_MARK, text.splitlines()[2], "the line comes first, before any capped section")
+        many = [mutation(f"M{i:03}", "src/a.rs") for i in range(mu.REPORT_ROWS + 50)]
+        text, failed = mu.report(many, {}, {})
+        self.assertIn("- `M099`", text)
+        self.assertNotIn("- `M100`", text)
+        self.assertIn("... and 50 more", text)
+        self.assertEqual(len(mu.failing_ids(text)), mu.REPORT_ROWS + 50, "the line is never capped")
 
     def test_warnings_do_not_fail_the_run(self):
         merged = dict(self.killed, A=record(self.muts[0], ["tests/x.rs::t"]),
@@ -466,6 +499,10 @@ class GitRepo(unittest.TestCase):
         self.commit("master edit")
         sh(self.repo, "checkout", "-q", "pr")
         self.assertEqual(mu.changed_since("master", self.repo, self.CRATE), ["src/book.rs"])
+        sh(self.repo, "mv", "tests/../" + self.CRATE + "/tests/registry.rs", self.CRATE + "/tests/reg.rs")
+        self.commit("rename a killer's file")
+        self.assertEqual(mu.changed_since("master", self.repo, self.CRATE),
+                         ["src/book.rs", "tests/reg.rs", "tests/registry.rs"], "a rename lists its old name too")
 
     def test_the_nightly_issue_loop_closes(self):
         self.prove("B1", "R1")
@@ -484,12 +521,15 @@ class GitRepo(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("B1: failing on the nightly run  [NOT PROVEN ON THIS TREE]", out)
         self.assertNotIn("R1:", out)
-        # ... and the fix that re-proves it on its own tree passes ...
+        # ... while a change outside the crate is not held by it, B1 still unproven ...
+        (self.repo / "README.md").write_text("outside the crate\n")
+        self.commit("outside the crate")
+        rc, out = self.main("--verify", "--changed-since", "HEAD~1", "--nightly-issues", str(issue))
+        self.assertEqual((rc, "B1:" in out), (0, False), out)
+        # ... and the fix that re-proves it on its own tree passes; an issue without the line refuses.
         self.prove("B1")
         rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
         self.assertEqual(rc, 0, out)
-        # ... a change outside the crate is not held by the issue, and an issue without the line refuses.
-        self.assertEqual(self.main("--verify", "--changed-since", "HEAD", "--nightly-issues", str(issue))[0], 0)
         issue.write_text("#7\nsomeone rewrote the body\n")
         rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
         self.assertEqual(rc, 1, out)
@@ -554,6 +594,68 @@ class GitRepo(unittest.TestCase):
         self.assertEqual((w.dir / self.CRATE / "src/book.rs").read_bytes(), b"// book\r\n")
         self.assertFalse((w.tree / "stale.rs").exists())
         self.assertEqual(kept.stat().st_mtime, 1, "an unchanged file is not re-written")
+        (self.root / "src/link.rs").symlink_to("book.rs")
+        self.commit("a tracked symlink")
+        with self.assertRaises(SystemExit):
+            mu.committed_files("HEAD", self.repo)
+
+    def test_a_run_through_main_proves_on_the_committed_tree_and_refuses_a_failing_baseline(self):
+        outside = Path(self.t.name)  # beside the repository, not in it
+        work, results = outside / "mutants", outside / "r.json"
+        head = sh(self.repo, "rev-parse", "HEAD").strip()
+        tree = mu.crate_tree("HEAD", self.repo, self.CRATE)
+        with fake_cargo(outside, FAKE_CARGO):
+            rc, out = self.main("B1", "R1", "--workdir", str(work), "--results", str(results))
+            self.assertEqual(rc, 1, out)  # R1 survives: the fake suite ignores it
+            recs = json.loads(results.read_text())
+            self.assertEqual({k: (v["verdict"], v["killers"], v["mode"], v["crate_tree"], v["commit"])
+                              for k, v in recs.items()},
+                             {"B1": (mu.KILLED, ["tests/registry.rs::registry_ok"], "full", tree, head),
+                              "R1": (mu.SURVIVED, [], "full", tree, head)})
+            rc, out = self.main("B1", "--workdir", str(work), "--results", str(results))
+            self.assertEqual((rc, json.loads(results.read_text())["B1"]["mode"]), (0, "killers-first"), out)
+            os.environ["FAKE_FAIL"] = "1"
+            rc, out = self.main("B1", "--workdir", str(work), "--results", str(outside / "r2.json"))
+            self.assertEqual(rc, 2, out)
+            self.assertIn("the unmutated copy does not pass", out)
+            self.assertFalse((outside / "r2.json").exists())
+            del os.environ["FAKE_FAIL"]
+            self.muts.append(dict(mutation("X1", "src/book.rs"), **{"from": "not in the file"}))
+            self.write("parity/mutations.json", json.dumps(self.muts))
+            self.commit("a stale mutation")
+            rc, out = self.main("B1", "--workdir", str(work), "--results", str(results))
+            self.assertEqual(rc, 1, "B1 is killed, but a stale mutation in the list fails the run")
+            self.assertIn("STALE X1", out)
+        self.assertEqual(sh(self.repo, "status", "--porcelain"), "", "the working tree is never touched")
+
+    def test_sigterm_stops_a_run_ends_its_cargo_and_restores_the_copy(self):
+        outside = Path(self.t.name)
+        runner = self.root / "parity/mutations.py"  # the runner committed into the throwaway repo
+        runner.write_bytes((Path(__file__).resolve().parent / "mutations.py").read_bytes())
+        self.commit("the runner")
+        pidfile, work, results = outside / "pid", outside / "mutants", outside / "r.json"
+        with fake_cargo(outside, HANG_ON_B1, PIDFILE=str(pidfile)):
+            proc = subprocess.Popen([sys.executable, "-B", str(runner), "B1", "--workdir", str(work),
+                                     "--results", str(results)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+            try:
+                for _ in range(200):
+                    if pidfile.exists() and pidfile.read_text().strip():
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(pidfile.exists(), "the mutated suite started")
+                start = time.monotonic()
+                proc.send_signal(15)  # this test's own child, by its PID
+                out, _ = proc.communicate(timeout=20)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+        self.assertEqual(proc.returncode, 130, out)
+        self.assertLess(time.monotonic() - start, 15, "the stop did not wait for the hung suite")
+        self.assertTrue(gone(int(pidfile.read_text())), "the hung suite's child is gone")
+        self.assertNotIn(b"koob", (work / "w0" / self.CRATE / "src/book.rs").read_bytes(), "the copy is restored")
+        self.assertFalse(results.exists(), "no verdict for the stopped mutation")
 
     def test_merge_reports_an_unreadable_shard_and_never_writes_the_committed_file(self):
         shard = self.root.parent / "shard-1.json"
@@ -576,6 +678,85 @@ class GitRepo(unittest.TestCase):
         self.assertIn("B1: no committed record", out)
         self.prove("B1", "R1")
         self.assertEqual(self.main("--merge", str(good), "--results", str(self.root.parent / "all.json"))[0], 0)
+
+
+FAKE_CARGO = """#!/bin/sh
+# A stand-in for cargo: builds instantly; the suite fails when the copy holds B1's mutation.
+case " $* " in *" --no-run "*) echo "    Finished"; exit 0;; esac
+echo "     Running tests/registry.rs (/x)"
+if [ -n "$FAKE_FAIL" ] || grep -q koob src/book.rs; then echo "test registry_ok ... FAILED"; exit 101; fi
+echo "test registry_ok ... ok"
+"""
+HANG_ON_B1 = """#!/bin/sh
+# A stand-in for cargo: builds and passes instantly, but hangs (a child in its group) on B1's mutation.
+case " $* " in *" --no-run "*) echo "    Finished"; exit 0;; esac
+if grep -q koob src/book.rs; then sleep 30 & echo $! > "$PIDFILE"; wait; fi
+echo "     Running tests/registry.rs (/x)"
+echo "test registry_ok ... ok"
+"""
+SLOW_CARGO = """#!/bin/sh
+# A stand-in for cargo that runs a long child in its own process group and records its pid.
+sleep 30 &
+echo $! > "$PIDFILE"
+wait
+"""
+
+
+@contextlib.contextmanager
+def fake_cargo(tmp: Path, script: str, **env: str):
+    """PATH (and `env`) set so `cargo` runs `script`, restored afterwards."""
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "cargo").write_text(script)
+    (bin_dir / "cargo").chmod(0o755)
+    saved = dict(os.environ)
+    os.environ.update(env, PATH=f"{bin_dir}{os.pathsep}{saved['PATH']}")
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def gone(pid: int) -> bool:
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+class StopPath(unittest.TestCase):
+    def test_a_stop_or_a_timeout_ends_the_cargo_group_and_a_stop_gives_no_verdict(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            pidfile = tmp / "pid"
+            w = mu.Worker(0, tmp / "mutants")
+            w.crate.mkdir(parents=True)
+            with fake_cargo(tmp, SLOW_CARGO, PIDFILE=str(pidfile)):
+                try:
+                    mu._STOP.set()
+                    with self.assertRaises(mu.Stopped):
+                        w.run([], 5)
+                    self.assertFalse(pidfile.exists(), "a stopped run starts nothing")
+                    mu._STOP.clear()
+                    stopper = threading.Timer(1.0, lambda: (mu._STOP.set(), mu._kill_active()))
+                    start = time.monotonic()
+                    stopper.start()
+                    with self.assertRaises(mu.Stopped):
+                        w.run([], 60)
+                    self.assertLess(time.monotonic() - start, 10, "the stop ended the run")
+                    self.assertTrue(gone(int(pidfile.read_text())), "the child in cargo's group is gone")
+                    mu._STOP.clear()
+                    pidfile.unlink()
+                    rc, _ = w.run([], 1)
+                    self.assertIsNone(rc, "a timeout")
+                    self.assertTrue(gone(int(pidfile.read_text())))
+                    self.assertEqual(mu._ACTIVE, set())
+                finally:
+                    mu._STOP.clear()
 
 
 class ResultsFile(unittest.TestCase):

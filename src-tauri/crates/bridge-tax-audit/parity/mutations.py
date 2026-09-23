@@ -22,7 +22,8 @@ Mutations are never applied to the working tree. Each worker is a copy of the CO
 HEAD's tracked `src-tauri` files (plus the root `rust-toolchain.toml`) under
 `src-tauri/target/mutants/w<N>/`, with its own `CARGO_TARGET_DIR`; a mutation is applied to the
 copy's bytes and undone there. Only files whose bytes differ are re-written, so a worker's build
-cache stays warm between runs. The run refuses to start while tracked `src-tauri` files or
+cache stays warm between runs. A run (not `--list` or `--verify`, which read only
+committed trees and the list) refuses to start while tracked `src-tauri` files or
 `rust-toolchain.toml` have uncommitted changes, so what it proves is what HEAD holds, and while
 another run holds the same worker directory. It writes only the results file, the worker
 directory and, with `--report`, the report.
@@ -32,11 +33,15 @@ If a test already fails there, or the copy does not build, the run refuses: a te
 without the mutation would otherwise "kill" every mutation.
 
 Each cargo run is two steps: `cargo test --no-run` (bounded by `--build-timeout`), then the tests
-(bounded by `--timeout`), so a slow build is never mistaken for a hang. A test run that exceeds
-`--timeout` is a hang the suite would not let through, and counts as killed everywhere: in the
-run, in `--verify` and in the nightly report. A build that exceeds `--build-timeout` does not.
-A test binary that exits unsuccessfully without naming a failed test (an abort, a stack
-overflow) counts as killed by that target, recorded as `<target>::<crashed>`.
+(bounded by `--timeout`), so the build's time never counts against the test timeout. The run
+refuses unless `--timeout` is at least 3 times the unmutated suite's measured test time. A mutated
+test run that still exceeds it is taken as a hang the suite would not let through, and counts as
+killed everywhere: in the run, in `--verify` and in the nightly report. That is a bound, not a
+proof: a machine slowed more than threefold mid-run could turn a survivor into a "timeout", and
+the report lists every timeout as a warning. A build that exceeds `--build-timeout` does not
+count. A test binary that dies of a crash signal (SIGABRT, as a stack overflow aborts, SIGSEGV,
+SIGBUS, SIGILL, SIGFPE) without naming a failed test counts as killed by that target, recorded as
+`<target>::<crashed>`; one killed from outside (SIGKILL, SIGTERM) proves nothing.
 
 Killers first: when the results file records the tests that killed a mutation last time, those
 tests run first (`--exact`, only their targets). If one fails or hangs, the mutation is killed
@@ -74,7 +79,8 @@ At merge, `--verify --changed-since <base>` (in CI, no build) requires:
     list is selected, because tests read such files at run time in ways no file name reveals; or
   - a nightly tracking issue is open and lists it as failing (`--nightly-issues`), and the
     change touches the crate: so the fix for a nightly failure can merge, and nothing else can
-    until the failing mutations are proven killed again.
+    until the failing mutations are proven killed again (or retired). An open issue with no
+    failing-ids line refuses every crate change until a maintainer closes it.
 
 CI hashes the pull request's MERGE commit, so when master has changed any crate file since the
 branch was proven, update the branch from master and re-run the selection before pushing.
@@ -105,6 +111,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
@@ -120,6 +127,7 @@ WORKERS = WORKSPACE / "target" / "mutants"
 COPIED = ("src-tauri", "rust-toolchain.toml")  # repo-relative: what a worker copy holds
 DEFAULT_TIMEOUT = 45 * 60
 DEFAULT_BUILD_TIMEOUT = 60 * 60
+MARGIN = 3  # --timeout must be at least this many times the unmutated suite's test time
 
 KILLED = "killed"
 SURVIVED = "survived"
@@ -135,6 +143,7 @@ CRASHED = "<crashed>"  # the test name recorded when a test binary dies without 
 INERT = ("parity/mutations.py", "parity/mutation-results.json", "parity/test_mutations.py")
 # The machine-readable line a failed report ends with, which the nightly puts in its issue.
 FAILING_MARK = "mutation-nightly-failing:"
+REPORT_ROWS = 100  # rows per report section; GitHub caps an issue body at 65,536 characters
 
 
 class Stopped(Exception):
@@ -157,15 +166,17 @@ _RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+) \(")
 _DOCTESTS = re.compile(r"^\s*Doc-tests (\S+)")
 _FAILED = re.compile(r"^test (.+?) \.\.\. FAILED$")
 _COMPILE = re.compile(r"^error\[E\d+\]|^error: could not compile ")
-_DIED = re.compile(r"^\s*process didn't exit successfully: ")
+# A test binary that died of its own fault; SIGKILL/SIGTERM (an OOM killer, an operator) are not.
+_CRASHED = re.compile(r"^\s*process didn't exit successfully: .*\(signal: \d+, (SIGABRT|SIGSEGV|SIGBUS|SIGILL|SIGFPE)\b")
 
 
 def parse_test_output(out: str) -> tuple[list[str], bool]:
     """(failed tests, each qualified by the target cargo reported it under, compile error?), read
     from `cargo test` output with stderr merged into stdout, so each `Running` line precedes its
     binary's results and cargo's report of how that binary exited. A doc test is qualified as
-    `doc`. A binary that exits unsuccessfully without naming a failed test (it aborted, or
-    overflowed its stack) is recorded as `<target>::<crashed>`."""
+    `doc`. A binary that died of a crash signal (SIGABRT, as a stack overflow aborts, SIGSEGV,
+    SIGBUS, SIGILL, SIGFPE) without naming a failed test is recorded as `<target>::<crashed>`;
+    one killed from outside (SIGKILL, SIGTERM) names nothing and proves nothing."""
     failed: list[str] = []
     target = "?"
     named = False  # whether the current target has named a failed test
@@ -178,7 +189,7 @@ def parse_test_output(out: str) -> tuple[list[str], bool]:
         elif m := _FAILED.match(line):
             failed.append(f"{target}::{m.group(1)}")
             named = True
-        elif _DIED.match(line) and not named:
+        elif _CRASHED.match(line) and not named:
             failed.append(f"{target}::{CRASHED}")
             named = True
         elif _COMPILE.match(line):
@@ -191,24 +202,39 @@ def killer_file(killer: str, crate: Path = ROOT) -> str | None:
     `tests/x.rs::name` lives in tests/x.rs; `src/lib.rs::a::b::name` in the file of the longest
     module path that exists (src/a/b.rs, src/a/b/mod.rs, then src/a.rs ...), so an inline
     `mod tests` maps to its parent's file and a `tests.rs` file to itself; `doc::src/x.rs - item
-    (line N)` in src/x.rs. A crashed library binary names no test, so its file is unknown."""
+    (line N)` in src/x.rs (cargo may print it workspace-relative). The file must still exist and
+    define `fn <name>`: a renamed file, a `#[path]` remap or a macro-made test is unknown, and an
+    unknown killer file selects its mutation on every change. A crashed library binary names no
+    test, so its file is unknown too."""
     target, _, name = killer.partition("::")
     if target == "doc":
         path = name.split(" - ", 1)[0].strip()
-        return path if path.endswith(".rs") else None
+        prefix = crate.relative_to(crate.parent.parent).as_posix() + "/"
+        path = path[len(prefix):] if path.startswith(prefix) else path
+        return path if path.endswith(".rs") and (crate / path).is_file() else None
+    if name == CRASHED:
+        return target if target.startswith("tests/") and (crate / target).is_file() else None
+    fn = name.split("::")[-1]
     if target.startswith("tests/"):
-        return target
+        return target if _defines(crate, target, fn) else None
     if target == "src/lib.rs":
-        if name == CRASHED:
-            return None
         parts = name.split("::")[:-1]  # the module path; the last part is the test fn
         while parts:  # `book::tests` is src/book/tests.rs if that file exists, else src/book.rs
             for candidate in (f"src/{'/'.join(parts)}.rs", f"src/{'/'.join(parts)}/mod.rs"):
                 if (crate / candidate).is_file():
-                    return candidate
+                    return candidate if _defines(crate, candidate, fn) else None
             parts = parts[:-1]
-        return "src/lib.rs"
+        return "src/lib.rs" if _defines(crate, "src/lib.rs", fn) else None
     return None
+
+
+def _defines(crate: Path, path: str, fn: str) -> bool:
+    """Whether the crate file `path` defines a function named `fn`."""
+    try:
+        text = (crate / path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return re.search(rf"\bfn\s+{re.escape(fn)}\s*[(<]", text) is not None
 
 
 _INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
@@ -324,7 +350,9 @@ def report(mutations: list[dict], merged: dict, committed: dict, unreadable: lis
     """(Markdown, failed?) for a whole-list run. It fails when any mutation was not run or not
     killed, when a shard's results could not be read, or when the committed results file is stale
     (a record for a mutation not in the list, or none, or one made for a different definition).
-    A failed report ends with a line naming every failing id in the list, for the nightly issue."""
+    A failed report's first lines name every failing id, for the nightly issue; when a shard could
+    not be read, every id in the list, since what it held is unknown. Each section lists at most
+    REPORT_ROWS rows, so the report fits an issue body."""
     order = [m["id"] for m in mutations]
     by_id = {m["id"]: m for m in mutations}
     missing = [i for i in order if i not in merged]
@@ -337,8 +365,11 @@ def report(mutations: list[dict], merged: dict, committed: dict, unreadable: lis
     thin = [(i, merged[i]["killers"]) for i in order
             if i in merged and merged[i]["verdict"] == KILLED and len(merged[i]["killers"]) < 2]
     failed = bool(missing or bad or stale or unreadable)
-    out = [f"# Tax-audit mutations: {'FAILED' if failed else 'all killed'}", "",
-           f"{len(order)} in the list; {len(merged)} run; {sum(1 for i in order if proven(merged.get(i)))} killed.", ""]
+    out = [f"# Tax-audit mutations: {'FAILED' if failed else 'all killed'}", ""]
+    if failed:
+        ids = order if unreadable else sorted(set(missing) | {i for i, _ in bad} | set(stale_ids), key=order.index)
+        out += [f"<!-- {FAILING_MARK} {' '.join(ids)} -->", ""]
+    out += [f"{len(order)} in the list; {len(merged)} run; {sum(1 for i in order if proven(merged.get(i)))} killed.", ""]
     for title, rows in (("Shard results not read", [f"`{u}`" for u in unreadable]),
                         ("Not killed", [f"`{i}` ({by_id[i]['file']}): {v}" for i, v in bad]),
                         ("Not run", [f"`{i}`" for i in missing]),
@@ -346,10 +377,8 @@ def report(mutations: list[dict], merged: dict, committed: dict, unreadable: lis
                         ("Killed by a hang, not a failing test (warning)", [f"`{i}`" for i in timeouts]),
                         ("Killed by fewer than 2 tests (warning)", [f"`{i}`: {', '.join(k) or 'none'}" for i, k in thin])):
         if rows:
-            out += [f"## {title} ({len(rows)})", ""] + [f"- {r}" for r in rows] + [""]
-    if failed:
-        ids = sorted(set(missing) | {i for i, _ in bad} | set(stale_ids), key=order.index)
-        out += [f"<!-- {FAILING_MARK} {' '.join(ids)} -->", ""]
+            more = [f"... and {len(rows) - REPORT_ROWS} more"] if len(rows) > REPORT_ROWS else []
+            out += [f"## {title} ({len(rows)})", ""] + [f"- {r}" for r in rows[:REPORT_ROWS]] + more + [""]
     return "\n".join(out), failed
 
 
@@ -400,7 +429,8 @@ def crate_tree(ref: str = "HEAD", repo: Path = REPO, crate: str = CRATE) -> str:
 def changed_since(base: str, repo: Path = REPO, crate: str = CRATE) -> list[str]:
     """Crate-relative paths changed between the merge base of `base` and HEAD's committed tree."""
     mb = git("merge-base", base, "HEAD", repo=repo).strip()
-    names = git("diff", "--name-only", mb, "HEAD", "--", crate, repo=repo).splitlines()
+    # --no-renames: a renamed file is listed under its old name too, which a killer may name.
+    names = git("diff", "--name-only", "--no-renames", mb, "HEAD", "--", crate, repo=repo).splitlines()
     return [n[len(crate) + 1:] for n in names if n.startswith(crate + "/")]
 
 
@@ -437,16 +467,30 @@ _ACTIVE_LOCK = threading.Lock()
 
 
 def _stop(_signum, _frame):
-    """SIGINT/SIGTERM: stop every cargo run in flight (each in its own process group), then unwind."""
+    """SIGINT/SIGTERM: mark the run stopped and unwind the main thread. It takes no lock: the main
+    thread may hold one when the signal arrives. The unwinding kills the cargo runs in flight."""
     _STOP.set()
+    raise KeyboardInterrupt
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """End the process group `proc` started (its own session), and nothing else."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+    except ProcessLookupError:
+        pass
+
+
+def _kill_active() -> None:
     with _ACTIVE_LOCK:
         procs = list(_ACTIVE)
     for p in procs:
-        try:
-            os.killpg(p.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    raise KeyboardInterrupt
+        _kill_group(p)
 
 
 class Worker:
@@ -472,33 +516,38 @@ class Worker:
                     p.unlink()
 
     def run(self, args: list[str], timeout: int) -> tuple[int | None, str]:
-        """(exit code, or None on a timeout; merged output) of one `cargo test` in this copy."""
+        """(exit code, or None on a timeout; merged output) of one `cargo test` in this copy. A stop,
+        or any error, ends the process group this call started before it propagates."""
         if _STOP.is_set():
             raise Stopped
         env = dict(os.environ, CARGO_TARGET_DIR=str(self.target), CARGO_TERM_COLOR="never")
-        proc = subprocess.Popen(["cargo", "test", "--locked", "--no-fail-fast", "-p", PACKAGE, *args],
-                                cwd=self.crate, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", start_new_session=True)
-        with _ACTIVE_LOCK:
-            _ACTIVE.add(proc)
+        proc = None
         try:
+            proc = subprocess.Popen(["cargo", "test", "--locked", "--no-fail-fast", "-p", PACKAGE, *args],
+                                    cwd=self.crate, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace", start_new_session=True)
+            with _ACTIVE_LOCK:
+                _ACTIVE.add(proc)
+            if _STOP.is_set():  # a stop that came between the check above and registering
+                raise Stopped
             try:
                 out, _ = proc.communicate(timeout=timeout)
                 rc: int | None = proc.returncode
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGTERM)  # the group this Popen started, and nothing else
-                try:
-                    out, _ = proc.communicate(timeout=30)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    out, _ = proc.communicate()
+                _kill_group(proc)
+                out, _ = proc.communicate()
                 rc = None
+            if _STOP.is_set():  # the run ended because the stop killed it: no verdict
+                raise Stopped
+            return rc, out
+        except BaseException:
+            if proc is not None:
+                _kill_group(proc)
+            raise
         finally:
-            with _ACTIVE_LOCK:
-                _ACTIVE.discard(proc)
-        if _STOP.is_set():
-            raise Stopped
-        return rc, out
+            if proc is not None:
+                with _ACTIVE_LOCK:
+                    _ACTIVE.discard(proc)
 
 
 def phase(worker: Worker, targets: list[str], names: list[str], timeout: int, build_timeout: int) -> tuple[str, list[str]]:
@@ -565,16 +614,29 @@ def run_one(worker: Worker, m: dict, record: dict | None, full: bool, timeout: i
 
 
 def baseline(workers: list[Worker], timeout: int, build_timeout: int) -> list[str]:
-    """Problems with the unmutated copies: a build that fails or hangs, or a test that does not
-    pass. Every worker builds; the full suite runs once, on the first."""
+    """Problems with the unmutated copies: a build that fails or hangs, a test that does not pass,
+    or a `timeout` under MARGIN times the unmutated suite's measured test time (a slow run would
+    then be counted as a hang). Every worker builds; the full suite runs once, on the first."""
     problems = []
-    verdict, failed = phase(workers[0], [], [], timeout, build_timeout)
-    if verdict != SURVIVED:
-        problems.append(f"{workers[0].dir.name}: {verdict}" + (f": {', '.join(failed)}" if failed else ""))
-    for w in workers[1:]:
+    for w in workers:
         rc, out = w.run(["--no-run"], build_timeout)
         if rc is None or rc != 0 or parse_test_output(out)[1]:
             problems.append(f"{w.dir.name}: {BUILD_TIMEOUT if rc is None else COMPILE_ERROR}")
+    if problems:
+        return problems
+    w = workers[0]
+    start = time.monotonic()
+    rc, out = w.run([], timeout)
+    took = time.monotonic() - start
+    failed, compile_error = parse_test_output(out)
+    if rc is None:
+        problems.append(f"{w.dir.name}: the unmutated suite exceeded --timeout {timeout}s")
+    elif compile_error:
+        problems.append(f"{w.dir.name}: {COMPILE_ERROR}")
+    elif failed or rc != 0:
+        problems.append(f"{w.dir.name}: fails unmutated: {', '.join(failed) or f'exit {rc}'}")
+    elif timeout < MARGIN * took:
+        problems.append(f"--timeout {timeout}s is under {MARGIN}x the unmutated suite's {took:.0f}s")
     return problems
 
 
@@ -653,7 +715,8 @@ def main(argv: list[str] | None = None) -> int:
 
     results_path = args.results or RESULTS
     results = load_results(results_path)
-    tree = crate_tree("HEAD", REPO, CRATE)
+    head = git("rev-parse", "HEAD").strip()  # read once: every record names this commit's tree
+    tree = crate_tree(head, REPO, CRATE)
     reasons: dict[str, list[str]] = {}
     changed: list[str] = []
     if args.changed_since:
@@ -662,8 +725,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.nightly_issues and changed:
         required = failing_ids(args.nightly_issues.read_text(encoding="utf-8"))
         if required is None:
-            print("refusing: an open mutation-nightly issue has no failing-ids line; fix the nightly, and close "
-                  "the issue by hand once it passes", file=sys.stderr)
+            print("refusing: an open mutation-nightly issue has no failing-ids line, so no change can show it "
+                  "re-proves what failed; a maintainer closes that issue by hand to let the fix through",
+                  file=sys.stderr)
             return 1
         for i in required:
             if i in order:
@@ -703,8 +767,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"refusing: another run holds {args.workdir}", file=sys.stderr)
         return 2
 
-    files = committed_files("HEAD", REPO)
-    head = git("rev-parse", "HEAD").strip()
+    files = committed_files(head, REPO)
     jobs = max(1, min(args.jobs, len(chosen) or 1))
     workers = [Worker(i, args.workdir) for i in range(jobs)]
     signal.signal(signal.SIGINT, _stop)
@@ -748,6 +811,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         list(pool.map(task, chosen))
     except KeyboardInterrupt:
+        _kill_active()
         pool.shutdown(wait=True, cancel_futures=True)
         print(f"\nstopped after {len(done)} of {len(chosen)}; the results file keeps those", file=sys.stderr)
         return 130
