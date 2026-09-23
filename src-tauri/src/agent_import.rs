@@ -777,6 +777,11 @@ impl Server {
             let next_step = match &amendment {
                 Some(_) => {
                     if let Some(list) = warnings.as_array_mut() {
+                        // Native posting refuses every amendment, so the
+                        // generic first message would give the wrong reason.
+                        if let Some(first) = list.first_mut() {
+                            *first = json!(AMENDMENT_NOT_POSTABLE);
+                        }
                         list.insert(0, json!(AMENDMENT_WARNING));
                     }
                     AMENDMENT_NEXT_STEP
@@ -1291,11 +1296,13 @@ impl Server {
     }
 }
 
-const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build. An edit made in Tally between now and the import is overwritten without warning, so import promptly, and build the amendment again if anyone may have changed these vouchers. A Journal's reference is not compared, so an edit to it in Tally is overwritten. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
+const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build, and only these fields: the date, a bank voucher's effective date when Tally returned one, the voucher type, the voucher number when the batch set one, each entry's ledger, amount and side, and the narration. It did not compare a voucher's reference, its bill-wise or cost-centre allocations, or which ledger Tally records as its party, because the verification read does not fetch them. An in-place alteration replaces a voucher's entries rather than merging them (measured over the gateway), and this file's entries carry no allocations, so allocations made in Tally, including those Bridge advises adding after an import, are expected to be lost; that loss, and what happens to a reference, were not measured directly. An edit made in Tally between this build and the import is overwritten without warning. Import promptly, and build the amendment again if anyone may have changed these vouchers. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
 
-const AMENDMENT_NEXT_STEP: &str = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+const AMENDMENT_NOT_POSTABLE: &str = "No import XML was sent to Tally. Bridge does not post amendments (post_import refuses them), so import the written file by hand, promptly, then use verify_import; do not call post_import for this batch.";
 
-const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book exactly as a build of this batch wrote it. not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured.";
+const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+
+const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured.";
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
 /// admission. Older manual imports retain their original verification path.
