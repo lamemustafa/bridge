@@ -300,8 +300,7 @@ or an owner decision to amend the requirement instead:
       value means nothing has altered the voucher since that reading. The value is kept in a write-once
       `<batch>.baseline.json` beside the proof, not in the journal, so an older binary still reads the
       journal after a rollback. That catches an edit to any field made after the first verification,
-      if a Tally edit advances the voucher's `ALTERID`: measured for gateway alterations (§9.3), not
-      yet for an edit made in Tally's own screens. An edit made between the import and the first
+      on the premise above. An edit made between the import and the first
       verification becomes part of the baseline and is not caught; every amendable batch was imported
       by hand, since a batch Bridge posted cannot be amended, so the build asks for a verify right
       after each import. Batches verified before this change have no record; their first
