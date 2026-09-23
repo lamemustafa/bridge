@@ -2435,3 +2435,6 @@ fn a_pending_mark_never_erases_a_doubt() {
     server.record_masters_check_pending("batch-a").unwrap();
     assert_eq!(read_masters_check(&imports, "batch-a"), Some(doubt));
 }
+
+#[path = "agent_import_ack_tests.rs"]
+mod ack_tests;

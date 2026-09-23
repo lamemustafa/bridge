@@ -3,8 +3,8 @@
   "test_id": "depreciation",
   "test_version": "1",
   "rules_version": "2026-09-17.1",
-  "population_note_sha256_16": "7550c0dd3b642e0f",
-  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Put to use assumed = purchase/voucher date unless put_to_use_by_voucher overrides.",
+  "population_note_sha256_16": "ea2dedea55ef63b5",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Put to use assumed to be the purchase/voucher date unless the client's setup gives a put-to-use date for that voucher.",
   "figures": [
     {
       "id": "depreciation.act_dep_total",
@@ -18,16 +18,16 @@
       "id": "depreciation.act_dep_total_applying_s43_1_proviso",
       "value": 9525000,
       "unit": "paise",
-      "definition_sha256_16": "04e4e068ef846f39",
-      "definition_text": "Total Income-tax Act depreciation applying the s.43(1) second proviso to every addition the books show as paid in cash: the Act figure on the books as recorded. Equal to act_dep_total when none is flagged.",
+      "definition_sha256_16": "f8a25aa15d72ad0d",
+      "definition_text": "Total Income-tax Act depreciation applying the s.43(1) second proviso to every addition the books show as paid in cash: the Act figure on the books as recorded. Equal to the total across every mapped block including cash-paid additions when none is flagged.",
       "evidence": []
     },
     {
       "id": "depreciation.additions_ge180_computers_40",
       "value": 35000000,
       "unit": "paise",
-      "definition_sha256_16": "cf482873abcd5119",
-      "definition_text": "Additions to block 'computers_40' put to use >= 180 days before period end (full rate).",
+      "definition_sha256_16": "b26032467a64ffd7",
+      "definition_text": "Additions to block 'computers_40' put to use at least 180 days before period end (full rate).",
       "evidence": [
         {
           "kind": "ledger",
@@ -45,8 +45,8 @@
       "id": "depreciation.additions_ge180_furniture_10",
       "value": 10000000,
       "unit": "paise",
-      "definition_sha256_16": "ae1d6d7a2866b201",
-      "definition_text": "Additions to block 'furniture_10' put to use >= 180 days before period end (full rate).",
+      "definition_sha256_16": "bb3145412d3250c8",
+      "definition_text": "Additions to block 'furniture_10' put to use at least 180 days before period end (full rate).",
       "evidence": [
         {
           "kind": "ledger",
@@ -64,8 +64,8 @@
       "id": "depreciation.additions_ge180_plant_machinery_15",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "16b74b094ebb7048",
-      "definition_text": "Additions to block 'plant_machinery_15' put to use >= 180 days before period end (full rate).",
+      "definition_sha256_16": "bbeece1db894a2d6",
+      "definition_text": "Additions to block 'plant_machinery_15' put to use at least 180 days before period end (full rate).",
       "evidence": [
         {
           "kind": "ledger",
@@ -83,8 +83,8 @@
       "id": "depreciation.additions_lt180_computers_40",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "4912e790142dc00a",
-      "definition_text": "Additions to block 'computers_40' put to use < 180 days before period end (half rate, s.32(1) second proviso).",
+      "definition_sha256_16": "55713d10dec3b2ca",
+      "definition_text": "Additions to block 'computers_40' put to use fewer than 180 days before period end (half rate, s.32(1) second proviso).",
       "evidence": [
         {
           "kind": "ledger",
@@ -102,8 +102,8 @@
       "id": "depreciation.additions_lt180_furniture_10",
       "value": 6000000,
       "unit": "paise",
-      "definition_sha256_16": "5a44edc14b2bc86f",
-      "definition_text": "Additions to block 'furniture_10' put to use < 180 days before period end (half rate, s.32(1) second proviso).",
+      "definition_sha256_16": "989168d03e5df29a",
+      "definition_text": "Additions to block 'furniture_10' put to use fewer than 180 days before period end (half rate, s.32(1) second proviso).",
       "evidence": [
         {
           "kind": "ledger",
@@ -121,8 +121,8 @@
       "id": "depreciation.additions_lt180_plant_machinery_15",
       "value": 8000000,
       "unit": "paise",
-      "definition_sha256_16": "d80137a349bb9b62",
-      "definition_text": "Additions to block 'plant_machinery_15' put to use < 180 days before period end (half rate, s.32(1) second proviso).",
+      "definition_sha256_16": "9969860c10ca6f5e",
+      "definition_text": "Additions to block 'plant_machinery_15' put to use fewer than 180 days before period end (half rate, s.32(1) second proviso).",
       "evidence": [
         {
           "kind": "ledger",
@@ -140,8 +140,8 @@
       "id": "depreciation.book_dep_computers_40",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "157c8bef49dcb2ea",
-      "definition_text": "Book depreciation credited to block 'computers_40''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by book_dep_tie_diff_paise below).",
+      "definition_sha256_16": "087e4822a4dc97a7",
+      "definition_text": "Book depreciation credited to block 'computers_40''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by this test's depreciation tie check).",
       "evidence": [
         {
           "kind": "ledger",
@@ -159,8 +159,8 @@
       "id": "depreciation.book_dep_furniture_10",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "20533aa3c006bcec",
-      "definition_text": "Book depreciation credited to block 'furniture_10''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by book_dep_tie_diff_paise below).",
+      "definition_sha256_16": "37d91e8d3fcaea97",
+      "definition_text": "Book depreciation credited to block 'furniture_10''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by this test's depreciation tie check).",
       "evidence": [
         {
           "kind": "ledger",
@@ -178,8 +178,8 @@
       "id": "depreciation.book_dep_plant_machinery_15",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "954b61b70d8c5136",
-      "definition_text": "Book depreciation credited to block 'plant_machinery_15''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by book_dep_tie_diff_paise below).",
+      "definition_sha256_16": "54cdd00bde56a89a",
+      "definition_text": "Book depreciation credited to block 'plant_machinery_15''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by this test's depreciation tie check).",
       "evidence": [
         {
           "kind": "ledger",
@@ -197,16 +197,16 @@
       "id": "depreciation.book_dep_tie_diff_paise",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "03b864a5768d2043",
-      "definition_text": "Tie check: sum of book depreciation credited to asset ledgers in depreciation-journal vouchers, minus the Trial Balance movement of dep_expense_ledgers. Non-zero means the depreciation journals do not fully explain the expense ledger's TB movement.",
+      "definition_sha256_16": "edeb8113f8826df7",
+      "definition_text": "Tie check: sum of book depreciation credited to asset ledgers in depreciation-journal vouchers, minus the Trial Balance movement of the depreciation expense ledgers set for this client. Non-zero means the depreciation journals do not fully explain the expense ledger's TB movement.",
       "evidence": []
     },
     {
       "id": "depreciation.book_dep_total",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "7da30463155e665c",
-      "definition_text": "Book depreciation for the year: Trial Balance movement of dep_expense_ledgers (never summed from vouchers).",
+      "definition_sha256_16": "5c7b906f45755001",
+      "definition_text": "Book depreciation for the year: Trial Balance movement of the depreciation expense ledgers set for this client (never summed from vouchers).",
       "evidence": [
         {
           "kind": "ledger",
@@ -227,8 +227,8 @@
       "id": "depreciation.book_vs_act_difference_total",
       "value": -11362500,
       "unit": "paise",
-      "definition_sha256_16": "57e542191e7be054",
-      "definition_text": "book_dep_total minus act_dep_total.",
+      "definition_sha256_16": "9038b4956d48330e",
+      "definition_text": "Book depreciation for the year less the total Income-tax Act depreciation across every mapped block (cash-paid additions included).",
       "evidence": []
     },
     {
@@ -251,8 +251,8 @@
       "id": "depreciation.cash_flagged_addition_29bb74708d7d_d12d0157",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "ac7b83fd7fd1408e",
-      "definition_text": "Addition to a Fixed Assets ledger (tag d12d0157) on 2025-06-19 where the payment side shows cash of 4500000 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
+      "definition_sha256_16": "7911729a997b06d2",
+      "definition_text": "Addition to a Fixed Assets ledger (tag d12d0157) on 2025-06-19 where the payment side shows cash of ₹45,000 (cash ledger credited in the same voucher), over the rules' s.43(1) cash limit for an addition.",
       "evidence": [
         {
           "kind": "voucher",
@@ -265,8 +265,8 @@
       "id": "depreciation.cash_flagged_addition_93c837cdc45a_43102175",
       "value": 15000000,
       "unit": "paise",
-      "definition_sha256_16": "f751285e6d52b6db",
-      "definition_text": "Addition to a Fixed Assets ledger (tag 43102175) on 2025-04-01 where the payment side shows cash of 1000001 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
+      "definition_sha256_16": "4559afec8c6d2eb7",
+      "definition_text": "Addition to a Fixed Assets ledger (tag 43102175) on 2025-04-01 where the payment side shows cash of ₹10,000.01 (cash ledger credited in the same voucher), over the rules' s.43(1) cash limit for an addition.",
       "evidence": [
         {
           "kind": "voucher",
@@ -407,8 +407,8 @@
       "id": "depreciation.dep_total_act_computers_40",
       "value": 14000000,
       "unit": "paise",
-      "definition_sha256_16": "dbda51864f57e88b",
-      "definition_text": "Income-tax Act depreciation for block 'computers_40': full rate on (opening + >= threshold additions - deletions, floor 0), half rate on < threshold additions net of any deletion spill (s.43(6)).",
+      "definition_sha256_16": "c0deb10878727008",
+      "definition_text": "Income-tax Act depreciation for block 'computers_40': full rate on (opening plus additions put to use at least 180 days before period end, less deletions, floor 0), half rate on additions put to use fewer than 180 days before period end, net of any deletion spill (s.43(6)).",
       "evidence": [
         {
           "kind": "ledger",
@@ -426,8 +426,8 @@
       "id": "depreciation.dep_total_act_furniture_10",
       "value": 1300000,
       "unit": "paise",
-      "definition_sha256_16": "c16e665fca410298",
-      "definition_text": "Income-tax Act depreciation for block 'furniture_10': full rate on (opening + >= threshold additions - deletions, floor 0), half rate on < threshold additions net of any deletion spill (s.43(6)).",
+      "definition_sha256_16": "2963b946695ac4dd",
+      "definition_text": "Income-tax Act depreciation for block 'furniture_10': full rate on (opening plus additions put to use at least 180 days before period end, less deletions, floor 0), half rate on additions put to use fewer than 180 days before period end, net of any deletion spill (s.43(6)).",
       "evidence": [
         {
           "kind": "ledger",
@@ -445,8 +445,8 @@
       "id": "depreciation.dep_total_act_plant_machinery_15",
       "value": 562500,
       "unit": "paise",
-      "definition_sha256_16": "c6b0b71045f5ee08",
-      "definition_text": "Income-tax Act depreciation for block 'plant_machinery_15': full rate on (opening + >= threshold additions - deletions, floor 0), half rate on < threshold additions net of any deletion spill (s.43(6)).",
+      "definition_sha256_16": "af840d7d00bfbe9d",
+      "definition_text": "Income-tax Act depreciation for block 'plant_machinery_15': full rate on (opening plus additions put to use at least 180 days before period end, less deletions, floor 0), half rate on additions put to use fewer than 180 days before period end, net of any deletion spill (s.43(6)).",
       "evidence": [
         {
           "kind": "ledger",
@@ -709,10 +709,10 @@
       "evidence": [],
       "title_sha256_16": "ca338f76e6b74239",
       "title_text": "Book vs Income-tax Act depreciation",
-      "limits_sha256_16": "f31eb17ebd747cc9",
+      "limits_sha256_16": "d94d21031f1d16db",
       "limits_text": [
-        "Put-to-use date is assumed = purchase/voucher date for every addition not overridden in put_to_use_by_voucher; no separate commissioning/technical-person certificate is visible in Tally.",
-        "Opening WDV per block is a supplied constant (opening_wdv_paise), not re-derived from an AY 2025-26 tax computation the books do not carry; confirm it against the filed return/Form 3CD Clause 18(f) for the prior year."
+        "Put-to-use date is assumed to be the purchase/voucher date for every addition the client's setup gives no put-to-use date for; no separate commissioning/technical-person certificate is visible in Tally.",
+        "Opening WDV per block is a constant supplied in the client's setup, not re-derived from an AY 2025-26 tax computation the books do not carry; confirm it against the filed return/Form 3CD Clause 18(f) for the prior year."
       ],
       "ask_client_sha256_16": "e3b0c44298fc1c14",
       "ask_client_text": []

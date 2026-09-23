@@ -45,6 +45,8 @@ pub mod findings;
 pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
+pub mod loans_interest;
+pub mod partners_40b_194t;
 pub mod read;
 pub mod registry;
 pub mod rules;
@@ -66,6 +68,7 @@ use bridge_tally_primitives::TallyDate;
 pub use error::{AuditError, Result};
 use read::{CompanyPin, Read, Window};
 use rules::Rules;
+use support::PyIntError;
 
 /// The engagement keys this slice reads, from a reference-engine client config: `[client]`
 /// label and assessment year, `[period]`, `[snapshot]` naming a tally-read-v1 directory, and
@@ -122,6 +125,11 @@ pub struct Engagement {
     /// [`Engagement::bind`] for every test, as the reference's binding does, and the source is
     /// then replaced by `{ kind = "ledgers", ledgers = [...] }`. `None` when absent.
     pub trade_creditors_source: Option<toml::Value>,
+    /// `loans_interest`-only: `[loans]`, filled by [`Engagement::bind`] ([`LoansConfig`]); empty on
+    /// an engagement that has not been bound.
+    pub loans: LoansConfig,
+    /// `[partners]`, bound by [`Engagement::bind`]; empty before binding. See [`PartnersConfig`].
+    pub partners: PartnersConfig,
     /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table. Filled by
     /// [`Engagement::bind`]; see [`CreditorAgeingConfig`] for what is typed when.
     pub creditor_ageing: CreditorAgeingConfig,
@@ -155,6 +163,41 @@ pub struct Engagement {
     raw_cfg: toml::Table,
     /// The directory `[snapshot].path` and a legacy trade-creditor source are relative to.
     base_dir: PathBuf,
+}
+
+/// `[loans]` from the client config, bound. Empty when the config has no `[loans]` table: the
+/// reference's `loan_ledgers_config` then gives `{}`, which `loans_interest` takes as nothing to
+/// report.
+///
+/// **Typed lazily**, as [`CreditorAgeingConfig`] is: [`Engagement::bind`] binds the three name
+/// locations and refuses a malformed one (`BIND-ID-MALFORMED`); every other value is kept as
+/// written and typed only when `loans_interest` runs.
+#[derive(Debug, Clone, Default)]
+pub struct LoansConfig {
+    /// `[loans]` is present but is not a table: `loans_interest` refuses when it runs, as the
+    /// reference's `cfg.get("loans", {}).get(...)` fails there.
+    pub not_a_table: bool,
+    /// `[loans.loan_ledgers]`, keyed by each loan ledger's bound name: its entry as written, with
+    /// `interest_ledger` (when present) replaced by the bound name.
+    pub loan_ledgers: BTreeMap<String, toml::Value>,
+    /// `[loans].shared_interest_ledgers`, bound; empty when absent.
+    pub shared_interest_ledgers: Vec<String>,
+}
+
+/// `[partners]` from the client config, as the reference's `partners_config` returns it: every
+/// partner's entry, and the `deed` popped out of them.
+///
+/// **Typed lazily**, as [`LoansConfig`] is: [`Engagement::bind`] binds the three name locations
+/// (`capital_ledgers`, `interest_ledger`, `remuneration_ledger`) and refuses a malformed one
+/// (`BIND-ID-MALFORMED`); everything else is kept as written and typed when `partners_40b_194t`
+/// runs.
+#[derive(Debug, Clone, Default)]
+pub struct PartnersConfig {
+    /// `[partners.<key>]` for every key but `deed`, each entry as written with its ledger
+    /// locations bound. Empty when the config has no `[partners]` table (e.g. a proprietorship).
+    pub partners: BTreeMap<String, toml::Value>,
+    /// `[partners].deed` as written; `None` when absent.
+    pub deed: Option<toml::Value>,
 }
 
 /// `[creditor_ageing_43bh]` from the client config, every key optional: the reference's
@@ -192,11 +235,21 @@ pub struct StatutoryDuesConfig {
 
 /// Python's `int(value)` for a TOML value, as the reference's `creditor_ageing_config` applies it:
 /// an integer as itself, a boolean as 0 or 1, a finite float truncated toward zero, and a string
-/// of ASCII digits (optional sign, surrounding Python whitespace, single underscores between
-/// digits). Anything else is refused, as `int()` raises. One documented narrowing: `int()` also
-/// accepts non-ASCII decimal digits in a string, which this refuses.
+/// as `int()` reads one (`support::py_int_str`). Anything else is refused, as `int()` raises. A
+/// value `int()` accepts but i64 cannot hold is refused with its own message: the reference would
+/// carry the big integer on, and Bridge cannot.
 pub(crate) fn py_int(v: &toml::Value, what: &str) -> Result<i64> {
-    let bad = || AuditError::Config(format!("{what}: int() cannot take {v}"));
+    py_int_value(v).map_err(|e| {
+        AuditError::Config(match e {
+            PyIntError::Invalid => format!("{what}: int() cannot take {v}"),
+            PyIntError::OutOfRange => {
+                format!("{what}: int() gives {v}, outside the range Bridge holds (64-bit)")
+            }
+        })
+    })
+}
+
+fn py_int_value(v: &toml::Value) -> std::result::Result<i64, PyIntError> {
     match v {
         toml::Value::Integer(n) => Ok(*n),
         toml::Value::Boolean(b) => Ok(i64::from(*b)),
@@ -207,27 +260,11 @@ pub(crate) fn py_int(v: &toml::Value, what: &str) -> Result<i64> {
                 #[allow(clippy::cast_possible_truncation)]
                 Ok(t as i64)
             } else {
-                Err(bad())
+                Err(PyIntError::OutOfRange)
             }
         }
-        toml::Value::String(s) => {
-            let t = crate::support::py_strip(s);
-            let (neg, digits) = match t.as_bytes().first() {
-                Some(b'-') => (true, &t[1..]),
-                Some(b'+') => (false, &t[1..]),
-                _ => (false, t),
-            };
-            let ok = !digits.is_empty()
-                && digits
-                    .split('_')
-                    .all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));
-            if !ok {
-                return Err(bad());
-            }
-            let n: i64 = digits.replace('_', "").parse().map_err(|_| bad())?;
-            Ok(if neg { -n } else { n })
-        }
-        _ => Err(bad()),
+        toml::Value::String(s) => crate::support::py_int_str(s),
+        _ => Err(PyIntError::Invalid),
     }
 }
 
@@ -788,6 +825,8 @@ not YYYY-MM-DD"
                 .transpose()?,
             creditor_groups: None,
             trade_creditors_source: roles.get("trade_creditors_source").cloned(),
+            loans: LoansConfig::default(),
+            partners: PartnersConfig::default(),
             creditor_ageing: CreditorAgeingConfig::default(),
             statutory_dues: StatutoryDuesConfig::default(),
             base_dir: base_dir.to_path_buf(),
@@ -984,6 +1023,48 @@ pub fn depreciation_on(
         &dep.put_to_use_by_voucher,
     )?;
     let module_check = depreciation::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `loans_interest` on a book and return its canonical parity dump, with the module's own
+/// LOAN-1/2/3 invariants. The previous-year turnover is `[tds].previous_year_turnover_paise`, as
+/// the reference's pack reads it; absent without a `[tds]` table.
+pub fn loans_interest_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("loans_interest needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    if bound.loans.not_a_table {
+        return Err(AuditError::Config("[loans] is not a table".to_string()));
+    }
+    let loans = loans_interest::loan_config(&bound.loans.loan_ledgers)?;
+    let cash = book.ledgers_under_any(&bound.cash_groups);
+    let bank = book.ledgers_under_any(&bound.bank_groups);
+    let shared: BTreeSet<String> = bound
+        .loans
+        .shared_interest_ledgers
+        .iter()
+        .cloned()
+        .collect();
+    let turnover = bound
+        .tds
+        .as_ref()
+        .and_then(|t| t.previous_year_turnover_paise);
+    let result = loans_interest::run(
+        book,
+        rules,
+        &entity_type,
+        &loans,
+        turnover,
+        &cash,
+        &bank,
+        &shared,
+    )?;
+    let module_check = loans_interest::check_invariants(book, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 
@@ -1337,6 +1418,27 @@ pub fn tds_payees_on(
     canonical::canonical_test_result(book, &result, None)
 }
 
+/// Run `partners_40b_194t` on an already-built book: its canonical parity dump (the reference
+/// module has no module invariants).
+pub fn partners_40b_194t_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("partners_40b_194t needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    let result = partners_40b_194t::run(
+        book,
+        rules,
+        &engagement.period,
+        &entity_type,
+        &bound.partners,
+    )?;
+    canonical::canonical_test_result(book, &result, None)
+}
+
 /// Read, verify, build the book, run `tds_payees` and return its canonical parity dump.
 pub fn tds_payees_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     tds_payees_on(engagement, &load_book(engagement)?, rules)
@@ -1353,7 +1455,7 @@ pub fn applicability_44ab_canonical(
 
 #[cfg(test)]
 mod py_int_tests {
-    use super::py_int;
+    use super::{py_int, py_int_value, PyIntError};
     use toml::Value;
 
     /// Each expectation is Python 3.13's own `int()` on the same value.
@@ -1381,5 +1483,93 @@ mod py_int_tests {
         assert!(py_int(&Value::Float(f64::NAN), "t").is_err());
         assert!(py_int(&Value::Float(f64::INFINITY), "t").is_err());
         assert!(py_int(&Value::Array(Vec::new()), "t").is_err());
+    }
+
+    /// A string as Python 3.13.13's own `int()` reads it (measured; `sys.get_int_max_str_digits()`
+    /// is 4300): its whitespace is the six ASCII C-whitespace characters plus non-ASCII whitespace,
+    /// not `str.isspace()`; any Unicode decimal digit counts as that digit; the 4,300-digit limit
+    /// counts leading zeros and not underscores; and the full i64 range, MIN included, is held.
+    #[test]
+    fn a_string_reads_as_pythons_int_reads_it() {
+        let d4300 = format!("{}1", "0".repeat(4299));
+        let d4300_underscored = format!("{}_1", vec!["0"; 4299].join("_"));
+        let ok: [(&str, i64); 15] = [
+            ("-9223372036854775808", i64::MIN),
+            ("9223372036854775807", i64::MAX),
+            ("\u{663}\u{664}", 34),
+            ("\u{ff11}\u{ff12}", 12),
+            ("-\u{663}", -3),
+            ("1_\u{663}", 13),
+            ("\u{967}\u{968}\u{969}", 123),
+            // Mathematical digits: five 0..9 blocks in one decimal range.
+            ("\u{1d7d9}\u{1d7e3}\u{1d7ff}", 119),
+            ("\t\n7\r\u{b}\u{c}", 7),
+            ("\u{2028}8\u{2029}", 8),
+            ("\u{85}5\u{3000}", 5),
+            (" 1_000 ", 1000),
+            ("\u{a0}5\u{2003}", 5),
+            (&d4300, 1),
+            (&d4300_underscored, 1),
+        ];
+        for (s, want) in ok {
+            assert_eq!(py_int(&Value::from(s), "t").unwrap(), want, "{s:?}");
+        }
+        let d4301 = format!("{}1", "0".repeat(4300));
+        let d4301_big = "1".repeat(4301);
+        let invalid: [&str; 11] = [
+            "\u{1c}5\u{1f}",
+            "- 1",
+            "1 0",
+            "0x10",
+            "\u{b2}",
+            "\u{2212}5",
+            "\u{661}.\u{665}",
+            "\u{200b}9",
+            "5\u{0}",
+            &d4301,
+            &d4301_big,
+        ];
+        for s in invalid {
+            assert!(py_int(&Value::from(s), "t").is_err(), "{s:?}");
+        }
+    }
+
+    /// Python raises on an invalid literal, on one over the digit limit and on an infinite float;
+    /// it returns an integer (which i64 cannot hold) past either end of the range. The two are
+    /// different outcomes and stay distinguishable.
+    #[test]
+    fn past_the_i64_range_is_not_the_same_as_not_an_int() {
+        let big_4300 = format!("1{}", "0".repeat(4299));
+        for s in ["9223372036854775808", "-9223372036854775809", &big_4300] {
+            assert_eq!(
+                py_int_value(&Value::from(s)),
+                Err(PyIntError::OutOfRange),
+                "{s:?}"
+            );
+        }
+        assert_eq!(
+            py_int_value(&Value::Float(1e19)),
+            Err(PyIntError::OutOfRange)
+        );
+        assert_eq!(
+            py_int_value(&Value::Float(-9.3e18)),
+            Err(PyIntError::OutOfRange)
+        );
+        assert_eq!(
+            py_int_value(&Value::Float(-9_223_372_036_854_775_808.0)),
+            Ok(i64::MIN)
+        );
+        let d4301_big = "1".repeat(4301);
+        for s in ["1__0", "\u{1c}5", &d4301_big] {
+            assert_eq!(
+                py_int_value(&Value::from(s)),
+                Err(PyIntError::Invalid),
+                "{s:?}"
+            );
+        }
+        assert_eq!(
+            py_int_value(&Value::Float(f64::INFINITY)),
+            Err(PyIntError::Invalid)
+        );
     }
 }

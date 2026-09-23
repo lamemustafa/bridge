@@ -40,40 +40,40 @@
       "id": "cash_book_integrity.journal_cash_count_0a846562",
       "value": 6,
       "unit": "count",
-      "definition_sha256_16": "cd9c5d8804199adf",
-      "definition_text": "Journal entries in that total (ledger tag 0a846562).",
+      "definition_sha256_16": "a79f273aef07b5c8",
+      "definition_text": "Journal entries paying cash to expense ledger (tag 0a846562).",
       "evidence": []
     },
     {
       "id": "cash_book_integrity.journal_cash_count_a3489ad8",
       "value": 2,
       "unit": "count",
-      "definition_sha256_16": "3aed4a753b7c5903",
-      "definition_text": "Journal entries in that total (ledger tag a3489ad8).",
+      "definition_sha256_16": "b7d5b6ed2b40c414",
+      "definition_text": "Journal entries paying cash to expense ledger (tag a3489ad8).",
       "evidence": []
     },
     {
       "id": "cash_book_integrity.journal_cash_repeated_narration_count_0a846562",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "e73925b2dd9a5f2b",
-      "definition_text": "Number of entries in that repeated-narration total (ledger tag 0a846562).",
+      "definition_sha256_16": "8dba4f36a3431649",
+      "definition_text": "Journal entries paying cash to expense ledger (tag 0a846562) whose narration text is identical to another such entry's.",
       "evidence": []
     },
     {
       "id": "cash_book_integrity.journal_cash_repeated_narration_count_a3489ad8",
       "value": 2,
       "unit": "count",
-      "definition_sha256_16": "ccfc735bdabb706a",
-      "definition_text": "Number of entries in that repeated-narration total (ledger tag a3489ad8).",
+      "definition_sha256_16": "00ba3fc316ce72f6",
+      "definition_text": "Journal entries paying cash to expense ledger (tag a3489ad8) whose narration text is identical to another such entry's.",
       "evidence": []
     },
     {
       "id": "cash_book_integrity.journal_cash_repeated_narration_total_0a846562",
       "value": 180,
       "unit": "paise",
-      "definition_sha256_16": "4e9c73b0ecb2b88f",
-      "definition_text": "Of those, entries whose narration text is identical to another such entry's (ledger tag 0a846562).",
+      "definition_sha256_16": "8fb3cb4ae73bf309",
+      "definition_text": "Cash paid through Journal entries to expense ledger (tag 0a846562) whose narration text is identical to another such entry's.",
       "evidence": [
         {
           "kind": "voucher",
@@ -96,8 +96,8 @@
       "id": "cash_book_integrity.journal_cash_repeated_narration_total_a3489ad8",
       "value": 23,
       "unit": "paise",
-      "definition_sha256_16": "9eb04deacbedf0fb",
-      "definition_text": "Of those, entries whose narration text is identical to another such entry's (ledger tag a3489ad8).",
+      "definition_sha256_16": "0a2d8ac4d666e0b3",
+      "definition_text": "Cash paid through Journal entries to expense ledger (tag a3489ad8) whose narration text is identical to another such entry's.",
       "evidence": [
         {
           "kind": "voucher",
@@ -171,24 +171,24 @@
       "id": "cash_book_integrity.journal_cash_unnarrated_count_0a846562",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "ec23955398d1e7c5",
-      "definition_text": "Number of unnarrated entries (ledger tag 0a846562).",
+      "definition_sha256_16": "4c9dac31d9058220",
+      "definition_text": "Journal entries paying cash to expense ledger (tag 0a846562) that carry no narration at all.",
       "evidence": []
     },
     {
       "id": "cash_book_integrity.journal_cash_unnarrated_count_a3489ad8",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "c413d2564c0ec6c8",
-      "definition_text": "Number of unnarrated entries (ledger tag a3489ad8).",
+      "definition_sha256_16": "b9ba38d46c24bc3f",
+      "definition_text": "Journal entries paying cash to expense ledger (tag a3489ad8) that carry no narration at all.",
       "evidence": []
     },
     {
       "id": "cash_book_integrity.journal_cash_unnarrated_total_0a846562",
       "value": 5,
       "unit": "paise",
-      "definition_sha256_16": "e0673ef6675106d9",
-      "definition_text": "Of those, entries with no narration at all (ledger tag 0a846562).",
+      "definition_sha256_16": "48186054f0cdefcc",
+      "definition_text": "Cash paid through Journal entries to expense ledger (tag 0a846562) that carry no narration at all.",
       "evidence": [
         {
           "kind": "voucher",
@@ -201,8 +201,8 @@
       "id": "cash_book_integrity.journal_cash_unnarrated_total_a3489ad8",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "3ac6b092b75bca1c",
-      "definition_text": "Of those, entries with no narration at all (ledger tag a3489ad8).",
+      "definition_sha256_16": "6488d814fc10d206",
+      "definition_text": "Cash paid through Journal entries to expense ledger (tag a3489ad8) that carry no narration at all.",
       "evidence": []
     },
     {
@@ -302,8 +302,8 @@
       "id": "cash_book_integrity.own_account_booked_as_deposit_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "a0833916ce92dc4c",
-      "definition_text": "Number of those entries.",
+      "definition_sha256_16": "2ac376699902d729",
+      "definition_text": "Number of Contra entries crediting cash whose bank narration names the assessee's own account (money received from another account, booked as cash deposited).",
       "evidence": []
     },
     {
@@ -318,8 +318,8 @@
       "id": "cash_book_integrity.own_account_booked_as_withdrawal_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "a0833916ce92dc4c",
-      "definition_text": "Number of those entries.",
+      "definition_sha256_16": "1232ea90464c9ace",
+      "definition_text": "Number of Contra entries debiting cash whose bank narration names the assessee's own account (money sent to another account, booked as cash in hand).",
       "evidence": []
     },
     {
@@ -334,8 +334,8 @@
       "id": "cash_book_integrity.own_account_terms_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "ef391386299e43cd",
-      "definition_text": "Own-account narration terms configured (roles.own_account_narration_terms). Zero means part 3 looked at nothing.",
+      "definition_sha256_16": "de9c0511e8c49f75",
+      "definition_text": "Own-account narration terms set for this client. Zero means the own-account check looked at nothing.",
       "evidence": []
     }
   ],

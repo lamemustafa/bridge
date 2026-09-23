@@ -34,8 +34,8 @@
       "id": "tds_tcs_26as.ais_refund_paise",
       "value": 12345,
       "unit": "paise",
-      "definition_sha256_16": "a7a2fc2d4f88e63b",
-      "definition_text": "AIS Part B4 (refund), 'refund_amount' column, summed. No books-side figure is attempted (limit).",
+      "definition_sha256_16": "12904bf2b7595e59",
+      "definition_text": "AIS Part B4 (refund), the refund amount column, summed. No books-side figure is attempted (limit).",
       "evidence": []
     },
     {

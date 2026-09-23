@@ -69,7 +69,8 @@ const FIXED_ASSETS_GROUP: &str = "Fixed Assets";
 const CASH_GROUP: &str = "Cash-in-Hand";
 
 const POPULATION: &str = "Books population (optional, cancelled and post-dated vouchers \
-excluded). Put to use assumed = purchase/voucher date unless put_to_use_by_voucher overrides.";
+excluded). Put to use assumed to be the purchase/voucher date unless the client's setup gives a \
+put-to-use date for that voucher.";
 
 fn overflow() -> AuditError {
     AuditError::Config("depreciation: a total overflowed i64 paise".to_string())
@@ -82,7 +83,7 @@ fn hash12_sha256(text: &str) -> String {
     crate::canonical::hex(&Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
-use crate::support::voucher_label;
+use crate::support::{rupees, voucher_label};
 
 /// Heuristic-only, used solely to confirm on data (never to compute a figure) that GST/TCS lines
 /// sit on a different ledger than the asset line they accompany: the reference engine's own regex,
@@ -568,7 +569,7 @@ voucher that credits each asset ledger for its year's book depreciation).",
             Value::Int(data.unmapped.len() as i64),
             Unit::Count,
             "Fixed Assets ledgers with a non-zero Trial Balance closing balance, TB movement, or \
-FY voucher activity that are not in block_by_ledger.",
+FY voucher activity that the client's setup does not map to a depreciation block.",
             ev.clone(),
         );
         r.findings.push(Finding {
@@ -583,7 +584,7 @@ depreciation block"
             limits: vec![
                 "Block-wise depreciation cannot be safely totalled while any Fixed Assets ledger \
 with movement is unmapped; no book-vs-Act total is produced until every such ledger is \
-classified into a block (see block_by_ledger)."
+classified into a block in the client's setup."
                     .to_string(),
             ],
             ask_client: vec![
@@ -624,8 +625,8 @@ classified into a block (see block_by_ledger)."
             Value::Int(b.additions_ge180_paise),
             Unit::Paise,
             &format!(
-                "Additions to block '{block_key}' put to use >= {} days before period end (full \
-rate).",
+                "Additions to block '{block_key}' put to use at least {} days before period end \
+(full rate).",
                 rules.depreciation_half_rate_days_threshold
             ),
             ev.clone(),
@@ -635,8 +636,8 @@ rate).",
             Value::Int(b.additions_lt180_paise),
             Unit::Paise,
             &format!(
-                "Additions to block '{block_key}' put to use < {} days before period end (half \
-rate, s.32(1) second proviso).",
+                "Additions to block '{block_key}' put to use fewer than {} days before period end \
+(half rate, s.32(1) second proviso).",
                 rules.depreciation_half_rate_days_threshold
             ),
             ev.clone(),
@@ -656,9 +657,11 @@ depreciation journal)."
             Value::Int(b.dep_total_paise),
             Unit::Paise,
             &format!(
-                "Income-tax Act depreciation for block '{block_key}': full rate on (opening + >= \
-threshold additions - deletions, floor 0), half rate on < threshold additions net of any \
-deletion spill (s.43(6))."
+                "Income-tax Act depreciation for block '{block_key}': full rate on (opening plus \
+additions put to use at least {days} days before period end, less deletions, floor 0), half rate on \
+additions put to use fewer than {days} days before period end, net of any deletion spill \
+(s.43(6)).",
+                days = rules.depreciation_half_rate_days_threshold
             ),
             ev.clone(),
         );
@@ -676,7 +679,7 @@ deletion spill (s.43(6))."
             &format!(
                 "Book depreciation credited to block '{block_key}''s asset ledgers in \
 depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by \
-book_dep_tie_diff_paise below)."
+this test's depreciation tie check)."
             ),
             ev.clone(),
         );
@@ -739,9 +742,9 @@ unless the payment mode is shown not to be cash."
                 Unit::Paise,
                 &format!(
                     "Addition to a Fixed Assets ledger (tag {h}) on {} where the payment side \
-shows cash of {} paise ({}), over rules_dep.cash_addition_limit_paise.",
+shows cash of {} ({}), over the rules' s.43(1) cash limit for an addition.",
                     iso(&v.date),
-                    row.cash_paise,
+                    rupees(i128::from(row.cash_paise)),
                     row.cash_reason
                 ),
                 vec![EvidenceRef::with_label(
@@ -788,8 +791,8 @@ addition (the Act figure only if the payment is shown not to have been in cash).
         "book_dep_total",
         Value::Int(book_dep_from_tb),
         Unit::Paise,
-        "Book depreciation for the year: Trial Balance movement of dep_expense_ledgers (never \
-summed from vouchers).",
+        "Book depreciation for the year: Trial Balance movement of the depreciation expense ledgers \
+set for this client (never summed from vouchers).",
         dep_expense_ledgers
             .iter()
             .map(|n| EvidenceRef::new("ledger", n))
@@ -808,8 +811,8 @@ books show as paid in cash; the Act figure only if that payment mode is shown no
         Value::Int(act_dep_total_excl_cash),
         Unit::Paise,
         "Total Income-tax Act depreciation applying the s.43(1) second proviso to every addition \
-the books show as paid in cash: the Act figure on the books as recorded. Equal to act_dep_total \
-when none is flagged.",
+the books show as paid in cash: the Act figure on the books as recorded. Equal to the total across \
+every mapped block including cash-paid additions when none is flagged.",
         Vec::new(),
     );
     let diff_total = book_dep_from_tb
@@ -819,7 +822,8 @@ when none is flagged.",
         "book_vs_act_difference_total",
         Value::Int(diff_total),
         Unit::Paise,
-        "book_dep_total minus act_dep_total.",
+        "Book depreciation for the year less the total Income-tax Act depreciation across every \
+mapped block (cash-paid additions included).",
         Vec::new(),
     );
     let tie_diff = book_dep_from_vouchers
@@ -830,7 +834,8 @@ when none is flagged.",
         Value::Int(tie_diff),
         Unit::Paise,
         "Tie check: sum of book depreciation credited to asset ledgers in depreciation-journal \
-vouchers, minus the Trial Balance movement of dep_expense_ledgers. Non-zero means the \
+vouchers, minus the Trial Balance movement of the depreciation expense ledgers set for this client. \
+Non-zero means the \
 depreciation journals do not fully explain the expense ledger's TB movement.",
         Vec::new(),
     );
@@ -906,11 +911,11 @@ deletions in the year."
             Confidence::JudgementRequired
         },
         limits: vec![
-            "Put-to-use date is assumed = purchase/voucher date for every addition not \
-overridden in put_to_use_by_voucher; no separate commissioning/technical-person certificate is \
+            "Put-to-use date is assumed to be the purchase/voucher date for every addition the \
+client's setup gives no put-to-use date for; no separate commissioning/technical-person certificate is \
 visible in Tally."
                 .to_string(),
-            "Opening WDV per block is a supplied constant (opening_wdv_paise), not re-derived \
+            "Opening WDV per block is a constant supplied in the client's setup, not re-derived \
 from an AY 2025-26 tax computation the books do not carry; confirm it against the filed \
 return/Form 3CD Clause 18(f) for the prior year."
                 .to_string(),
@@ -1105,6 +1110,14 @@ mod tests {
             s194i_per_month_per_payee_paise: None,
             deductor_individual_huf_prev_year_turnover_paise: None,
             s194j_aggregate_paise: None,
+            s194a: None,
+            s269ss_269t_exempt_lender_types: None,
+            s269ss_269t_reporting_exempt_lender_types: None,
+            s194t: None,
+            s201_1a: None,
+            s206c_7: None,
+            tds_rates: None,
+            entity: None,
         }
     }
 
