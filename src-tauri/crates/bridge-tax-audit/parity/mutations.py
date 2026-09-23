@@ -79,8 +79,9 @@ At merge, `--verify --changed-since <base>` (in CI, no build) requires:
     list is selected, because tests read such files at run time in ways no file name reveals; or
   - a nightly tracking issue is open and lists it as failing (`--nightly-issues`), and the
     change touches the crate: so the fix for a nightly failure can merge, and nothing else can
-    until the failing mutations are proven killed again (or retired). An open issue with no
-    failing-ids line refuses every crate change until a maintainer closes it.
+    until the failing mutations are proven killed again (or retired). The ids of every open
+    issue's line are required together. When no open issue carries the line, an open issue
+    refuses every crate change until a maintainer closes it.
 
 CI hashes the pull request's MERGE commit, so when master has changed any crate file since the
 branch was proven, update the branch from master and re-run the selection before pushing.
@@ -127,6 +128,7 @@ WORKERS = WORKSPACE / "target" / "mutants"
 COPIED = ("src-tauri", "rust-toolchain.toml")  # repo-relative: what a worker copy holds
 DEFAULT_TIMEOUT = 45 * 60
 DEFAULT_BUILD_TIMEOUT = 60 * 60
+KILL_GRACE = 30  # seconds a cargo group gets after SIGTERM before SIGKILL
 MARGIN = 3  # --timeout must be at least this many times the unmutated suite's test time
 
 KILLED = "killed"
@@ -430,7 +432,11 @@ def changed_since(base: str, repo: Path = REPO, crate: str = CRATE) -> list[str]
     """Crate-relative paths changed between the merge base of `base` and HEAD's committed tree."""
     mb = git("merge-base", base, "HEAD", repo=repo).strip()
     # --no-renames: a renamed file is listed under its old name too, which a killer may name.
-    names = git("diff", "--name-only", "--no-renames", mb, "HEAD", "--", crate, repo=repo).splitlines()
+    # -z: git would otherwise quote a path with non-ASCII bytes, and the quoted form would not
+    # match the crate prefix below, so the change would silently select nothing.
+    out = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames", mb, "HEAD", "--", crate],
+                         cwd=repo, capture_output=True, check=True).stdout
+    names = [n.decode("utf-8") for n in out.split(b"\0") if n]
     return [n[len(crate) + 1:] for n in names if n.startswith(crate + "/")]
 
 
@@ -478,7 +484,7 @@ def _kill_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
         try:
-            proc.wait(timeout=30)
+            proc.wait(timeout=KILL_GRACE)
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
