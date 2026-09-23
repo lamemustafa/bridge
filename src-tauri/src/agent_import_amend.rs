@@ -136,8 +136,8 @@ impl Lineage {
     }
 
     /// The compare-and-swap. Returns per-voucher evidence when every amended
-    /// voucher is in the book exactly as some build of this lineage wrote it,
-    /// and per-voucher refusals otherwise.
+    /// voucher is in the book as some build of this lineage wrote it, in the
+    /// fields the module doc lists, and per-voucher refusals otherwise.
     pub(super) fn compare_and_swap(
         &self,
         vouchers: &[ImportVoucher],
