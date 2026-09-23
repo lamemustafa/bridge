@@ -955,7 +955,7 @@ fn recheck_import_admission(
 /// amounts are plain base-currency figures, and a foreign-currency ledger's
 /// balance can read as a plain amount too, so only the ledger's own currency
 /// tells them apart (TALLY_PROTOCOL_REFERENCE §8.2d). Among several masters
-/// only the outstandings read identifies the base (§9.10a.2); the write path
+/// only the MCP outstandings read identifies the base (§9.10a.2); the write path
 /// does not compare a leg's currency with it yet, so a post goes only into a
 /// book with exactly one. That every ledger of such a book is in the base is
 /// an inference (a ledger's currency is one of the book's masters), not a

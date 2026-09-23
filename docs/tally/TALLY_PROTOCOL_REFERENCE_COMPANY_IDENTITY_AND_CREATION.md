@@ -339,7 +339,7 @@ exports them.
 The Currency master collection does return them. The request rendered by
 `render_company_currency_request` is exactly `TYPE=Collection` with `<TYPE>Currency</TYPE>` and
 fetches `NAME`, `MAILINGNAME`, and `DECIMALPLACES`. Three captures committed on this PR establish
-that response shape. (Only the outstandings read, on a book with several masters, also sends
+that response shape. (Only the MCP outstandings read, on a book with several masters, also sends
 `render_company_currency_request_with_originalname`, which fetches `ORIGINALNAME`; see §9.10a.2.)
 On the same licensed TallyPrime Silver 7.1 machine on 2026-08-23, current books
 reported `I₹` (U+0049 followed by U+20B9) with `MAILINGNAME` `INR`; older books reported `Rs.`
@@ -396,9 +396,9 @@ labelled as edited (`COMPANY_CURRENCY_CAPTURE_PROVENANCE.md`).
 That the rupee master is FOREX's base does not rest on this read alone: FOREX is an INR-based book
 with a `$` master (§8.2d). SHAPE LAB's base is known only through this read.
 
-**Bridge's rule.** Only the outstandings read applies it (bridge#551). It sends the plain currency
-request first; on a book with several masters it then re-reads them with `ORIGINALNAME` and reads
-the company's `CURRENCYNAME`. A book with one master sends only the plain request. Every other
+**Bridge's rule.** Only the MCP outstandings read applies it (bridge#551). It sends the plain
+currency request first; on a book with several masters it then re-reads them with `ORIGINALNAME` and
+reads the company's `CURRENCYNAME`. A book with one master sends only the plain request. Every other
 monetary read keeps the plain request and the single-master rule (§9.10a.1).
 - The base is the only master, or, among several, the unique master whose `ORIGINALNAME` equals
   the company's `CURRENCYNAME` character for character. With no match, several, or an empty
@@ -409,7 +409,7 @@ monetary read keeps the plain request and the single-master rule (§9.10a.1).
   renamed non-INR base would still carry it (inferred). `Rs.` alone never admits: other currencies
   share it.
 
-On the outstandings read, a book with several masters and an INR base is read with its
+On the MCP outstandings read, a book with several masters and an INR base is read with its
 foreign-currency ledgers left out of every figure and listed (§8.2d). Every other path still
 refuses a book with several masters, until it compares each ledger's own currency with the base.
 

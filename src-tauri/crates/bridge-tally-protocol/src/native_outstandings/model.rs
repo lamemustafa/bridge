@@ -188,7 +188,7 @@ pub(crate) struct CurrencyMaster {
     /// `CURRENCYNAME` carries when this master is its base (`₹` for a master
     /// named `I₹`). It identifies the base and never decides INR. `Some("")`
     /// when the element is present but empty, which is not the same as absent.
-    /// Only the outstandings read fetches it, and only on a book with several
+    /// Only the MCP outstandings read fetches it, and only on a book with several
     /// masters (bridge#551).
     pub original_name: Option<String>,
     pub mailing_name: String,

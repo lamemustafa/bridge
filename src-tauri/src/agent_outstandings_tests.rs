@@ -208,12 +208,7 @@ async fn mcp_outstandings_report_base_currency_ledgers_only_on_forex() {
         );
     }
     let base = &result["base_currency_ledgers"];
-    let receivable = base["totals"]["receivable"].as_str().unwrap();
-    assert_eq!(
-        receivable.trim_start_matches('-').parse::<f64>().unwrap(),
-        34500.0,
-        "{receivable}"
-    );
+    assert_eq!(base["totals"]["receivable"], "34500");
     assert_eq!(base["open_bills"].as_array().unwrap().len(), 14);
     let excluded = &result["foreign_currency_ledgers_excluded"];
     assert_eq!(excluded["count"], 3);

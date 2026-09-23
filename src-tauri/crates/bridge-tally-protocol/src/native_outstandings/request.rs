@@ -348,7 +348,7 @@ fn xml_escape(value: &str) -> String {
 /// - Measured 2026-08-07 on three lab companies: one `CURRENCY` row each,
 ///   `NAME` `"Rs."`, `MAILINGNAME` `"Indian Rupees"` or `"INR"`.
 /// - Every monetary read sends this request, so it does not fetch
-///   `ORIGINALNAME`; only the outstandings read that identifies a base among
+///   `ORIGINALNAME`; only the MCP outstandings read that identifies a base among
 ///   several masters sends [`render_company_currency_request_with_originalname`]
 ///   (bridge#551, TALLY_PROTOCOL_REFERENCE §9.10a.2).
 pub fn render_company_currency_request(company: &str) -> String {
@@ -357,7 +357,7 @@ pub fn render_company_currency_request(company: &str) -> String {
 
 /// [`render_company_currency_request`] with `ORIGINALNAME` appended to its
 /// `FETCH`: the field a company's own `CURRENCYNAME` names its base master by
-/// (TALLY_PROTOCOL_REFERENCE §9.10a.2). Sent only by the outstandings read
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2). Sent only by the MCP outstandings read
 /// that identifies a base among several masters, and only after the plain
 /// read found several (bridge#551). Measured on licensed TallyPrime 7.1 only;
 /// how another release answers the field is unmeasured.
