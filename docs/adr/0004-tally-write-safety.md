@@ -439,8 +439,8 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
    which every later `verify_import` or reconcile reads as a doubt. The first of those that finds
    the vouchers finishes the check, against the ledger identities recorded at build (#616), and
    records its verdict. An observed doubt is also written to a file of its own that nothing
-   removes or replaces, and readers check it first, so no later verdict, pending mark or race
-   can clear it; the readback compares by name and cannot either. It stays even after a person
+   removes and only another doubt replaces, and readers check it first, so no later verdict,
+   pending mark or race can clear it; the readback compares by name and cannot either. It stays even after a person
    corrects the voucher in Tally, and while a doubt or a pending check stands, the batch is no
    baseline for an amendment. Bridge has no way to clear it. Follow-up: an explicit operator
    acknowledgement through the native approval dialog ("I reviewed this voucher in Tally"),
@@ -450,10 +450,16 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
    - a pending check finished by a later readback, perhaps days later, lengthens the window in
      which a ledger swapped away and back goes unseen;
    - the records are renamed into place but their directory is not synced, so a power loss can
-     lose a pending mark whose dispatch record survived, and the batch then reads as one
-     dispatched before these records existed;
+     lose a pending mark or a doubt file whose dispatch record survived, and the batch then reads
+     as its remaining record says, or as one dispatched before these records existed;
    - an observed doubt whose own file cannot be written is kept only by the check record, where
-     a concurrent readback's later verdict can replace it; if neither can be written, it is lost.
+     a later verdict or a losing second post's pending mark can replace it; if neither can be
+     written, it is lost;
+   - a readback that finishes a pending check in the moment before the post's own doubt lands
+     can report the voucher verified once; later reads, and any amendment, see the doubt;
+   - a losing second post's pending mark can replace a clean verdict, and the next readback
+     then checks the catalogue as it is by then, so a legitimate later change to a ledger can
+     leave a lasting doubt: failing closed, but with no clear in Bridge.
 4. **Amendments.** The window between the build and the manual import, and between that import
    and its first verification (follow-up 14). Only amendments posted through Bridge's own queue
    would close the first.
