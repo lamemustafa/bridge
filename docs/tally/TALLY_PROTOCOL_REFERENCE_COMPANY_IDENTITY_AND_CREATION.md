@@ -377,14 +377,17 @@ production request does not send it yet; it joins with its first consumer, bridg
 - SHAPE LAB: `I₹` / `₹` / `INR` and `UUSD` / `USD` / `US Dollar`.
 
 Removing the two `ORIGINALNAME` elements from each response leaves it byte-identical to the same
-session's response without the field (that control response is not committed). Committed as `currency_originalname_forex_live` and
-`currency_originalname_shape_live` (`CURRENCY_CAPTURE_PROVENANCE.md`).
+session's response without the field (that control response is not committed). Committed as
+`currency_originalname_forex_live` and `currency_originalname_shape_live`
+(`CURRENCY_CAPTURE_PROVENANCE.md`).
 
-**Company collection.** Fetching `NAME, GUID, CURRENCYNAME` lists every loaded company, not only the
-one named in `SVCURRENTCOMPANY`. Both books report `CURRENCYNAME` `₹`. That is the rupee master's
-`ORIGINALNAME`, and no master's `NAME`. An earlier session (2026-09-22) also read a USD-based
-control book, whose `CURRENCYNAME` was `$`. Not committed: the response lists other loaded
-companies.
+**Company collection.** A `TYPE=Collection` export of `Company` fetching `NAME, GUID, CURRENCYNAME`
+(2026-09-23) lists every loaded company, not only the one named in `SVCURRENTCOMPANY`. Both books
+report `CURRENCYNAME` `₹`. That is the rupee master's `ORIGINALNAME`, and no master's `NAME`. The
+same response lists a USD-based control book in the lab with `CURRENCYNAME` `$`, and
+`Bridge Billwise Lab` with `Rs.`. An earlier Company collection read (2026-09-22) with a wider
+`FETCH` gave the same values for FOREX, SHAPE LAB and Billwise; §8.2d records the FOREX and
+Billwise values. Neither read is committed: both list other loaded companies.
 
 That the rupee master is FOREX's base does not rest on this read alone: FOREX is an INR-based book
 with a `$` master (§8.2d). SHAPE LAB's base is known only through this read.

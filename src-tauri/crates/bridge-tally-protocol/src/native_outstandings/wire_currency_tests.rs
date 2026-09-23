@@ -341,6 +341,7 @@ fn the_base_is_the_only_master_or_the_one_the_company_names() {
         identify_base_master(std::slice::from_ref(&dollar), None),
         Some(&dollar)
     );
+    assert_eq!(identify_base_master(&[], Some(rupee)), None, "no masters");
     assert_eq!(identify_base_master(&both, Some(rupee)), Some(&inr));
     assert_eq!(identify_base_master(&both, Some("$")), Some(&dollar));
     for name in [None, Some(""), Some(" "), Some("I\u{20b9}"), Some("€")] {

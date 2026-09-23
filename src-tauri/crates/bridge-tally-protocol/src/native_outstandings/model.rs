@@ -158,12 +158,13 @@ pub enum NativeOverdueCrosscheck {
 pub struct CompanyCurrency {
     pub symbol: String,
     pub mailing_name: String,
-    /// How many currency masters the company defines. `is_inr` can hold only
-    /// when there is exactly one: with several defined, this read cannot tell
-    /// which is the BASE currency, and guessing would put a wrong currency
-    /// symbol in front of a real balance. Identifying the base among several
-    /// needs the company's own `CURRENCYNAME` (TALLY_PROTOCOL_REFERENCE
-    /// §9.10a.2), and its result is never carried by this type.
+    /// How many currency masters the company defines. The parser sets
+    /// `is_inr` only when there is exactly one: with several defined, this
+    /// read cannot tell which is the BASE currency, and guessing would put a
+    /// wrong currency symbol in front of a real balance. Identifying the base
+    /// among several needs the company's own `CURRENCYNAME`
+    /// (TALLY_PROTOCOL_REFERENCE §9.10a.2), and its result is never carried by
+    /// this type.
     pub currency_count: usize,
     /// The base currency's display precision reported by Tally. Consumers
     /// must carry this to their rendering boundary rather than silently
