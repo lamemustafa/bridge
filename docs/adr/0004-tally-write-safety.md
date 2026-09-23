@@ -393,3 +393,46 @@ post deleted by its recorded REMOTEID (#579, live-qualification comment of
 Receipt or Contra has not yet been observed live. The code paths are covered by
 simulator tests through the `post_import` tool call (#583 seam), including a
 ledger and, separately, a group re-parented after approval.
+
+## Amendment — 2026-09-23: concurrent writers (#239)
+
+**What Tally gives.** Tally offers no conditional import: nothing binds a POST to a company GUID,
+a master version or an `ALTERID`, and an import succeeds by name whatever changed since Bridge
+looked. There is no mutation-time witness either. So Bridge can only check before the POST and
+read after it; it cannot make the two atomic. One policy applies to every edition, with no Gold
+gate (owner, 21 September): what matters is a second writer, not the licence tier.
+
+**What is checked before the POST.** Each refuses before the dispatch intent, so nothing is sent.
+
+| Check | Where | Evidence |
+|---|---|---|
+| The target company's name and GUID, on the last Tally request before the POST | #574, follow-up 9 | Simulator; the multi-company snapshot shape is measured, not captured |
+| Exactly one Currency master | #613, follow-up 13 | Live on a two-master synthetic book, 2026-09-23 |
+| The target's master AlterID (`ALTMSTID`) unchanged from just before the queue's catalogue re-read to that last request | #615, follow-up 8 | Simulator; a gateway rename moves `ALTMSTID` (§11c.5) |
+| Each ledger's (name, GUID) unchanged from the build to the approval and on to the queue | #616, follow-up 8 | Simulator |
+| An amendment's vouchers unchanged since Bridge first verified them, by fields and by `ALTERID` | #620, follow-up 14 | Simulator; a gateway alteration advances `ALTERID` (§9.3) |
+
+**The windows that remain.** Each is named where an operator or an agent reads it.
+1. **Between the last request and the POST.** Only local work runs there: the recheck and the
+   durable intent. A change made in Tally during it is posted into.
+2. **Changes that do not move `ALTMSTID`.** A regroup, and any edit made in Tally's own screens
+   rather than through the gateway, are not yet measured. Until they are, such a change inside
+   the queue is caught only if it moves the mark.
+3. **After the POST.** The readback compares ledgers by name. A posted voucher's ledger lines carry
+   no ledger GUID over XML (measured 2026-09-23 on one Bridge-posted Journal), so the planned check
+   after the POST resolves the readback's names through a fresh catalogue read. A ledger renamed
+   after the POST, with a new ledger created under its old name before that read, cannot be told
+   apart from the one posted into.
+4. **Amendments.** The window between the build and the manual import, and between that import
+   and its first verification (follow-up 14). Only amendments posted through Bridge's own queue
+   would close the first.
+5. **Not #239.** A person entering the same transaction by hand is a duplicate, not a concurrent
+   change. It belongs to the bank-voucher duplicate check.
+
+The approval still asks the operator to pause other edits and imports while Bridge posts. With
+these checks, that is advice that narrows the remaining windows, not the only guard.
+
+**Evidence since the 2026-09-22 amendment.** Native posts of a Payment, a Receipt, a Contra and a
+three-entry Receipt were observed live on licensed 7.1 Silver on 2026-09-22 (#600), on a
+synthetic company: each read back `posted_verified` and was then deleted by its recorded
+REMOTEID. That amendment's "not yet observed live" is superseded.
