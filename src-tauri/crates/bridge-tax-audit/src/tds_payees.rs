@@ -240,7 +240,11 @@ fn summarise<'a>(row: &'a Row<'a>) -> Result<Summary<'a>> {
 /// The reference's `deductor_status`: "deductor" | "not_deductor" | "unknown". An individual/HUF
 /// is never assumed either way without a supplied previous-year turnover. The entity types match
 /// exactly, as the reference compares them.
-fn deductor_status(entity_type: &str, threshold: i64, turnover: Option<i64>) -> &'static str {
+pub(crate) fn deductor_status(
+    entity_type: &str,
+    threshold: i64,
+    turnover: Option<i64>,
+) -> &'static str {
     if entity_type == "individual" || entity_type == "huf" {
         return match turnover {
             None => "unknown",
@@ -253,7 +257,7 @@ fn deductor_status(entity_type: &str, threshold: i64, turnover: Option<i64>) -> 
 
 /// Python's `format(x, "g")`: six significant digits, trailing zeros dropped, scientific notation
 /// below 1e-4 or from 1e6. The reference formats the deductor turnover limit in crore this way.
-fn py_format_g(x: f64) -> String {
+pub(crate) fn py_format_g(x: f64) -> String {
     if x == 0.0 {
         return if x.is_sign_negative() { "-0" } else { "0" }.to_string();
     }
@@ -310,9 +314,8 @@ netted."
         Value::Text(status.to_string()),
         Unit::Text,
         "Whether the assessee must deduct TDS under s.194A/194C/194-I/194J for the year: firm/LLP/\
-company always (rules.deductor.firm); individual/HUF only if previous-year business turnover \
-exceeded rules.deductor.individual_huf_prev_year_turnover_paise -- never assumed from the \
-current year's books alone.",
+company always; individual/HUF only if previous-year business turnover exceeded the rules' \
+turnover limit for an individual or HUF -- never assumed from the current year's books alone.",
         Vec::new(),
     );
     if status == "unknown" {
@@ -407,7 +410,7 @@ figure only; existence or absence of such a ledger is not itself a conclusion ab
                 "Sum of the {nature}-mapped expense line(s) themselves (the charge -- e.g. freight \
 -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales \
 Accounts line{cat_note}: inside a goods invoice, not a separate contract with the payee; excluded \
-from the per-payee tests below."
+from the per-payee tests."
             ),
             Vec::new(),
         );
@@ -426,8 +429,8 @@ from the per-payee tests below."
             count(TEST_ID, payee_entities.len())?,
             Unit::Count,
             &format!(
-                "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one \
-entity, 'within supplier goods invoices' excluded) credited on a voucher with a {nature}-mapped \
+                "Distinct payee entities (ledgers the client's setup names as one payee counted \
+once; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a {nature}-mapped \
 expense ledger line{cat_note}."
             ),
             Vec::new(),
@@ -437,8 +440,8 @@ expense ledger line{cat_note}."
             Value::Int(credited_total),
             Unit::Paise,
             &format!(
-                "Sum credited to all {nature}{cat_note} payee entities above (excludes the \
-goods-invoice bucket). Never summed with any other category's total before a threshold test."
+                "Sum credited to every payee entity credited on a voucher with a {nature}-mapped \
+expense ledger line{cat_note} (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test."
             ),
             Vec::new(),
         );
@@ -467,7 +470,8 @@ goods-invoice bucket). Never summed with any other category's total before a thr
             count(TEST_ID, over.len())?,
             Unit::Count,
             &format!(
-                "Payee entities above whose {nature}{cat_note} test trips (single sum/aggregate for \
+                "Payee entities credited on a voucher with a {nature}-mapped expense ledger line \
+whose {nature}{cat_note} test trips (single sum/aggregate for \
 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category \
 'unmapped', which is never threshold-tested)."
             ),
@@ -614,7 +618,7 @@ this payee."
             if nature == "194J" && !is_unmapped_194j && s194j_is_default {
                 limits.push(format!(
                     "The s.194J aggregate limit used here ({s194j_limit} paise) is a local \
-prototype default (status=\"confirm\"), pending confirmation in rules/ay2026-27.toml -- not yet a \
+prototype default (status=\"confirm\"), pending confirmation in the rules table -- not yet a \
 verified rule."
                 ));
             }

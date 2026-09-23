@@ -47,6 +47,19 @@ excluded); Contra excluded throughout.";
 /// identified real party (module docstring).
 const UNIDENTIFIED_PARTY: &str = "\u{2039}cash leg with no identified party\u{203a}";
 
+/// How an s.269ST finding on that bucket cites it: a "row" ref, never a "ledger" one -- the
+/// placeholder names no ledger in the books (EVID-1; the reference's `UNIDENTIFIED_PARTY_ROW`).
+const UNIDENTIFIED_PARTY_ROW: &str = "cash_payments_40a3:unidentified_party";
+
+/// The party an s.269ST row is about, as evidence: its ledger, or the no-party bucket as a row.
+fn party_ref(ledger_name: &str) -> EvidenceRef {
+    if ledger_name == UNIDENTIFIED_PARTY {
+        EvidenceRef::with_label("row", UNIDENTIFIED_PARTY_ROW, UNIDENTIFIED_PARTY)
+    } else {
+        EvidenceRef::new("ledger", ledger_name)
+    }
+}
+
 /// Tally's own reserved/standard group names (not client data) that put a payee ledger out of
 /// s.40A(3) "expenditure" scope, keyed by the rules-configured role name. A ledger's chain
 /// contains at most one of these in practice (they sit under different primary groups).
@@ -112,7 +125,7 @@ fn group_for_kind(kind: &str) -> Result<&'static str> {
         })
 }
 
-use crate::support::voucher_label;
+use crate::support::{rupees, voucher_label};
 
 /// One (date, ledger) row's aggregate: cash amount and the distinct vouchers that contributed.
 struct RowAgg<'a> {
@@ -413,14 +426,15 @@ pub fn run(
         Value::Int(in_scope_count as i64),
         Unit::Count,
         "Distinct (date, payee ledger) pairs with a cash payment on a population, non-Contra \
-voucher, payee classified as expenditure (not excluded by rules.s40a3.excluded_group_roles).",
+voucher, payee classified as expenditure (not in a group the rules exclude from s.40A(3)).",
         Vec::new(),
     );
     r.fig(
         "s40a3_payee_days_any_amount_total",
         Value::Int(in_scope_total),
         Unit::Paise,
-        "Sum of cash paid across all in-scope (date, payee) pairs above, any amount.",
+        "Sum of cash paid across every (date, payee ledger) pair with a cash payment on a \
+population, non-Contra voucher, payee classified as expenditure, any amount.",
         in_scope_ev,
     );
     r.fig(
@@ -429,7 +443,8 @@ voucher, payee classified as expenditure (not excluded by rules.s40a3.excluded_g
         Unit::Count,
         &format!(
             "In-scope (date, payee) pairs where the day's total exceeds the s.40A(3) limit \
-({limit_40a3} paise per person per day)."
+({} per person per day).",
+            rupees(i128::from(limit_40a3))
         ),
         Vec::new(),
     );
@@ -463,7 +478,7 @@ assets and duties and taxes; the in-scope count is a subset.",
             Unit::Paise,
             &format!(
                 "Cash paid to ledgers under Tally group '{group}' (excluded from s.40A(3) \
-scope by rules.s40a3.excluded_group_roles); {} (date, payee) pairs.",
+scope by the rules); {} (date, payee) pairs.",
                 rows.len()
             ),
             ev,
@@ -506,7 +521,7 @@ itemise separately; confirm before treating it as one payee-day breach."
         ];
         if goods_flag {
             limits.push(
-                "goods_carriage_candidate is a heuristic regex match on the ledger name only \
+                "The possible goods-carriage flag is a heuristic match on the ledger name only \
 (freight/transport/carrier/logistics keywords), not a finding of fact that the payee operates \
 a goods carriage; confirm with the client before relying on the higher \u{20b9}35,000 limit."
                     .to_string(),
@@ -559,7 +574,8 @@ voucher, party ledger not under 'Sales Accounts'.",
         "s269st_party_days_any_amount_total",
         Value::Int(party_total),
         Unit::Paise,
-        "Sum of cash received across all (date, party) pairs above, any amount.",
+        "Sum of cash received across every (date, party ledger) pair with a cash receipt on a \
+population, non-Contra voucher, party ledger not under 'Sales Accounts', any amount.",
         party_ev,
     );
     r.fig(
@@ -568,7 +584,8 @@ voucher, party ledger not under 'Sales Accounts'.",
         Unit::Count,
         &format!(
             "(date, party) pairs where the day's total is at or over the s.269ST(a) limb (i) \
-limit ({limit_269st} paise per person per day)."
+limit ({} per person per day).",
+            rupees(i128::from(limit_269st))
         ),
         Vec::new(),
     );
@@ -588,7 +605,7 @@ population voucher that day.",
             evidence_for_vouchers(&data.vouchers),
         );
         let mut evidence = evidence_for_vouchers(&data.vouchers);
-        evidence.push(EvidenceRef::new("ledger", ledger_name));
+        evidence.push(party_ref(ledger_name));
         r.findings.push(Finding {
             id: format!("{TEST_ID}/s269st/{rid}"),
             clauses: vec!["s.269ST(a)".to_string()],
@@ -605,9 +622,8 @@ single transaction) and (iii) (receipts relating to one event or occasion from a
 bill-wise/event linkage the books do not carry; a same-party pattern across several days that \
 never reaches this limit on one day is not tested here."
                     .to_string(),
-                "No Clause 31 tag here (2026-09-17 double-count fix, gap register/orchestrator \
-review): this is the same (party, date) cash-mode receipt high_value_register.py's own \
-party-day scan already tags 3CD-31(ba) for every party, so this finding is an observation \
+                "No Clause 31 tag here: this is the same (party, date) cash-mode receipt that the \
+party-day scan of 'High-value transactions' already tags 3CD-31(ba) for every party, so this finding is an observation \
 only, never counted a second time in the Clause 31 filing-aid total."
                     .to_string(),
             ],
@@ -641,7 +657,8 @@ voucher, party ledger not under 'Purchase Accounts'.",
         "s269st_payment_party_days_any_amount_total",
         Value::Int(pay_total),
         Unit::Paise,
-        "Sum of cash paid across all (date, party) pairs above, any amount.",
+        "Sum of cash paid across every (date, party ledger) pair with a cash payment on a \
+population, non-Contra voucher, party ledger not under 'Purchase Accounts', any amount.",
         pay_ev,
     );
     r.fig(
@@ -650,8 +667,9 @@ voucher, party ledger not under 'Purchase Accounts'.",
         Unit::Count,
         &format!(
             "(date, party) pairs where the day's cash payment total is at or over the \
-s.269ST(a) limb (a) threshold ({limit_269st} paise per person per day) -- reportable in clause \
-31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer)."
+s.269ST(a) limb (a) threshold ({limit_269st_text} per person per day) -- reportable in clause \
+31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
+            limit_269st_text = rupees(i128::from(limit_269st))
         ),
         Vec::new(),
     );
@@ -671,7 +689,7 @@ voucher that day.",
             evidence_for_vouchers(&data.vouchers),
         );
         let mut evidence = evidence_for_vouchers(&data.vouchers);
-        evidence.push(EvidenceRef::new("ledger", ledger_name));
+        evidence.push(party_ref(ledger_name));
         r.findings.push(Finding {
             id: format!("{TEST_ID}/s269st_payment/{rid}"),
             clauses: vec!["s.269ST(a)".to_string()],
@@ -730,7 +748,7 @@ needed)."
             Unit::Paise,
             &format!(
                 "Loan-ledger line (tag {h}) on voucher {}, cash {} in the same voucher ({} by \
-the client's [loans] configuration).",
+the client's list of loans).",
                 crate::support::guid_tail12(&v.guid),
                 c.direction,
                 coverage_tag
@@ -750,8 +768,8 @@ other exception in the Act applies."
                 vec![clause.to_string()],
                 vec![
                     common_limit,
-                    "No Clause 31 tag here: this loan ledger is in the client's [loans] \
-configuration, so the loan-ledger scan already tags the matching entry 3CD-31(a)/3CD-31(c) -- \
+                    "No Clause 31 tag here: this loan ledger is in the client's list of loans, so \
+'Loans and interest' already tags the matching entry 3CD-31(a)/3CD-31(c) -- \
 this finding is an observation only, never counted a second time in the Clause 31 filing-aid \
 total."
                         .to_string(),
@@ -768,10 +786,9 @@ total."
                 vec![clause.to_string(), clause_31.to_string()],
                 vec![
                     common_limit,
-                    "This loan ledger is NOT in the client's [loans] configuration \
-(loan_ledgers_configured), so the loan-ledger scan never sees it -- this is the only place \
-this entry is reported for Clause 31; add the ledger to that configuration to get the full \
-lender-classification/running-balance test instead."
+                    "This loan ledger is NOT in the client's list of loans, so 'Loans and interest' \
+never sees it -- this is the only place this entry is reported for Clause 31; add the ledger to \
+that list to get the full lender-classification/running-balance test instead."
                         .to_string(),
                 ],
             )
@@ -802,10 +819,10 @@ lender-classification/running-balance test instead."
         "s269ss269t_candidate_uncovered_by_loans_interest_count",
         Value::Int(uncovered_count),
         Unit::Count,
-        "Of the s.269SS/269T candidates above, how many are on a loan ledger NOT in the \
-client's [loans] configuration -- these are the only ones this module tags for Clause 31; \
-every other candidate is covered by the loan-ledger scan instead (2026-09-17 double-count \
-fix).",
+        "s.269SS/269T candidates (population, non-Contra vouchers with a cash line and a Loans \
+(Liability)-chain line at or over the limit) on a loan ledger NOT in the client's list of loans -- \
+the only ones this test tags for Clause 31; every other candidate is covered by 'Loans and \
+interest' instead.",
         Vec::new(),
     );
     r.fig(
@@ -814,7 +831,8 @@ fix).",
         Unit::Count,
         &format!(
             "Population, non-Contra vouchers with a cash line and a Loans (Liability)-chain \
-line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
+line of an amount, taken without its sign, at or over the s.269SS/269T limit ({}).",
+            rupees(i128::from(limit_ss_t))
         ),
         Vec::new(),
     );
@@ -822,7 +840,9 @@ line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
         "s269ss269t_candidate_total",
         Value::Int(loan_total),
         Unit::Paise,
-        "Sum of abs(loan-line amount) across all s.269SS/269T candidates above.",
+        "Sum of the Loans (Liability)-chain line amounts, each taken without its sign, across \
+the s.269SS/269T candidates (population, non-Contra vouchers with a cash line and such a line at \
+or over the limit).",
         Vec::new(),
     );
 
