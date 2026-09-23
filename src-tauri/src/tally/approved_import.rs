@@ -365,7 +365,8 @@ pub(crate) mod test_seam {
 
     /// Only the token echoing this call's nonce is an answer. An older build
     /// that ignores `--confirm-review` and exits 0, a process that echoes its
-    /// input, and a token for another nonce are all refused.
+    /// input, and a token for another nonce are refused; the right token is
+    /// accepted whatever the exit status, which is not an answer.
     #[cfg(unix)]
     #[tokio::test]
     async fn the_review_is_answered_only_by_the_token_for_its_nonce() {
@@ -400,6 +401,27 @@ pub(crate) mod test_seam {
             super::confirm_review_with(&echoes_token, "Review").await,
             Ok(())
         );
+    }
+
+    /// The review subprocess shows its dialog only for input of the shape the
+    /// parent sends: a nonce line, then a preview within the limit.
+    #[test]
+    fn the_review_subprocess_admits_only_the_parents_input_shape() {
+        let nonce = "9c8d8de4-c06c-447b-8309-60ba702bf663";
+        assert_eq!(
+            super::review_input(&format!("{nonce}\nReview")),
+            Some((nonce, "Review"))
+        );
+        let oversized = "x".repeat(super::MAX_PREVIEW_BYTES + 1);
+        for input in [
+            "Review".to_string(),
+            "not-a-nonce\nReview".to_string(),
+            format!("{nonce}\n"),
+            format!("{nonce}\nRe\0view"),
+            format!("{nonce}\n{oversized}"),
+        ] {
+            assert_eq!(super::review_input(&input), None, "{input:.40}");
+        }
     }
 }
 
@@ -447,6 +469,9 @@ async fn confirm_review_with(executable: &std::path::Path, preview: &str) -> Res
             .await
             .map_err(|_| "ack_review_unavailable")?;
         drop(input);
+        // The answer is one short line, so at most 128 bytes are read. A
+        // child that writes more without exiting is waited on until the
+        // timeout, then killed on drop: bounded on purpose.
         let mut output = child.stdout.take().ok_or("ack_review_unavailable")?;
         let mut answer = Vec::new();
         tokio::io::AsyncReadExt::read_to_end(
@@ -518,20 +543,26 @@ pub fn run_review_confirmation() -> bool {
     {
         return false;
     }
-    let Some((nonce, preview)) = input.split_once('\n') else {
+    let Some((nonce, preview)) = review_input(&input) else {
         return false;
     };
-    if uuid::Uuid::parse_str(nonce).is_err()
-        || preview.contains('\0')
-        || preview.is_empty()
-        || preview.len() > MAX_PREVIEW_BYTES
-        || !show_review_acknowledgement(preview)
-    {
+    if !show_review_acknowledgement(preview) {
         return false;
     }
     use std::io::Write as _;
     let mut stdout = std::io::stdout();
     stdout.write_all(review_token(nonce).as_bytes()).is_ok() && stdout.flush().is_ok()
+}
+
+/// The nonce line and the preview, when the input has the shape the parent
+/// sends; `None` shows no dialog.
+fn review_input(input: &str) -> Option<(&str, &str)> {
+    let (nonce, preview) = input.split_once('\n')?;
+    (uuid::Uuid::parse_str(nonce).is_ok()
+        && !preview.contains('\0')
+        && !preview.is_empty()
+        && preview.len() <= MAX_PREVIEW_BYTES)
+        .then_some((nonce, preview))
 }
 
 fn read_preview() -> Option<String> {

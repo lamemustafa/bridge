@@ -1019,7 +1019,13 @@ impl Server {
             // Whether a person's recorded review still covers this doubt and
             // this voucher (#239). Beside the verdict, never instead of it.
             if dispatched {
-                if let Some(review) = ack::operator_review(&self.imports_dir()?, &line, &observed.rows) {
+                // Adds no way for a verification to fail: without the imports
+                // directory there is no record to report.
+                if let Some(review) = self
+                    .imports_dir()
+                    .ok()
+                    .and_then(|imports| ack::operator_review(&imports, &line, &observed.rows))
+                {
                     proof["operator_review"] = review;
                 }
             }

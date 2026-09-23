@@ -2,6 +2,7 @@
 use super::*;
 
 const BATCH: &str = "bridge-6c79872c-aab6-4be5-a181-18182c8148be";
+const MARKER: &str = "[BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]";
 
 fn row(entries: usize, narration: &str) -> ReadVoucher {
     serde_json::from_value(row_json(entries, narration)).unwrap()
@@ -21,12 +22,19 @@ fn doubt() -> Value {
 
 #[test]
 fn the_review_shows_the_doubt_and_the_voucher_as_read() {
-    let preview = review_preview(BATCH, "Books", &doubt(), &row(2, "Paid")).unwrap();
+    let mut voucher = row_json(2, "Paid");
+    voucher["amounts"][1]["is_deemed_positive"] = json!("No");
+    voucher["amounts"][1]["amount"] = json!("1.00");
+    let voucher: ReadVoucher = serde_json::from_value(voucher).unwrap();
+    let preview = review_preview(BATCH, MARKER, "Books", &doubt(), &voucher).unwrap();
     for shown in [
-        "Record that you reviewed ONE Journal",
-        "\"Cash\"",
+        "Record that you reviewed ONE Journal in \"Books\"",
+        "  \"Cash\"",
+        "Date: \"20260907\"  Voucher number: \"2\"  ALTERID: 10",
+        "Narration:\n  \"Paid\"",
         "Dr -1.00  \"Ledger 0\"",
-        "ALTERID: 10",
+        "Cr 1.00  \"Ledger 1\"",
+        &format!("Batch: {BATCH}"),
         "reconciliation_required",
     ] {
         assert!(preview.contains(shown), "{shown}: {preview}");
@@ -64,32 +72,93 @@ fn each_review_cap_refuses_on_its_own() {
         ),
     ];
     for (cap, voucher, doubt) in cases {
-        let preview = review_preview(BATCH, "Books", &doubt, &voucher);
+        let preview = review_preview(BATCH, MARKER, "Books", &doubt, &voucher);
         assert_eq!(preview, Err("ack_review_too_large".to_string()), "{cap}");
-        let rendered = render_review_text(BATCH, "Books", &doubt, &voucher).unwrap();
+        let rendered = render_review_text(BATCH, MARKER, "Books", &doubt, &voucher).unwrap();
         assert_eq!(caps_exceeded(&rendered), [cap], "{cap}: only its own cap");
     }
 }
 
 #[test]
 fn a_review_too_long_to_show_is_refused_not_truncated() {
-    assert!(review_preview(BATCH, "Books", &doubt(), &row(10, "Paid")).is_ok());
+    assert!(review_preview(BATCH, MARKER, "Books", &doubt(), &row(10, "Paid")).is_ok());
     assert_eq!(
-        review_preview(BATCH, "Books", &doubt(), &row(40, "Paid")),
+        review_preview(BATCH, MARKER, "Books", &doubt(), &row(40, "Paid")),
         Err("ack_review_too_large".to_string())
     );
 }
 
 #[test]
 fn a_value_with_a_line_break_or_hidden_character_is_refused() {
+    // Each value from Tally or the doubt, carrying each kind of character:
+    // a CR LF, a line separator (U+2028), a zero-width space and a
+    // right-to-left override.
+    for (bad, code) in [
+        ("\r\n", "ack_review_layout_text"),
+        ("\u{2028}", "ack_review_layout_text"),
+        ("\u{200B}", "ack_review_format_text"),
+        ("\u{202E}", "ack_review_format_text"),
+    ] {
+        let text = format!("Pa{bad}id");
+        let mut ledger = row_json(2, "Paid");
+        ledger["amounts"][0]["ledger"] = json!(text);
+        let ledger: ReadVoucher = serde_json::from_value(ledger).unwrap();
+        let named = json!({"state":"posted_under_changed_masters","ledgers":[text]});
+        for (source, preview) in [
+            (
+                "narration",
+                review_preview(BATCH, MARKER, "Books", &doubt(), &row(2, &text)),
+            ),
+            (
+                "company",
+                review_preview(BATCH, MARKER, &text, &doubt(), &row(2, "Paid")),
+            ),
+            (
+                "doubt ledger",
+                review_preview(BATCH, MARKER, "Books", &named, &row(2, "Paid")),
+            ),
+            (
+                "entry ledger",
+                review_preview(BATCH, MARKER, "Books", &doubt(), &ledger),
+            ),
+        ] {
+            assert_eq!(preview, Err(code.to_string()), "{source} with {bad:?}");
+        }
+    }
+}
+
+/// Only this batch's own marker at the end of the narration is left out;
+/// text after it, a second marker and another batch's marker are all shown,
+/// because the record binds the whole narration.
+#[test]
+fn the_narration_is_shown_whole_except_this_batchs_trailing_marker() {
+    let shown = |narration: &str| {
+        let preview = review_preview(BATCH, MARKER, "Books", &doubt(), &row(2, narration)).unwrap();
+        preview
+            .split_once("Narration:\n  ")
+            .unwrap()
+            .1
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(shown(&format!("Paid {MARKER}")), "\"Paid\"");
+    assert_eq!(shown(MARKER), "\"\"");
+    // A second marker stays visible: only the exact trailing one is left out.
     assert_eq!(
-        review_preview(BATCH, "Books", &doubt(), &row(2, "Paid\r\nmore")),
-        Err("ack_review_layout_text".to_string())
+        shown(&format!("Paid {MARKER} {MARKER}")),
+        format!("\"Paid {MARKER}\"")
     );
-    assert_eq!(
-        review_preview(BATCH, "Books", &doubt(), &row(2, "Pa\u{200B}id")),
-        Err("ack_review_format_text".to_string())
-    );
+    let other = "[BRIDGE:00000000-0000-4000-8000-000000000000]";
+    for narration in [
+        format!("Paid {MARKER} added later"),
+        format!("Paid {other}"),
+        format!("Paid {other} {MARKER}").replace(&format!(" {MARKER}"), ""),
+        format!("Paid{MARKER}"),
+    ] {
+        assert_eq!(shown(&narration), format!("{narration:?}"), "{narration}");
+    }
 }
 
 /// Every field the verification read returns is in the fingerprint: each,
@@ -192,7 +261,7 @@ fn a_long_ledger_name_and_a_marked_narration_fit_the_review() {
     let ledger = "Bridge Nested Debtor WR4 Long Registered Name Private Limited";
     let doubt = json!({"state":"posted_under_changed_masters","ledgers":[ledger, "Cash"]});
     let narration = "NEFT CR XXXX0001234 ACME TRADERS PVT LTD INV 2026-27/0045 AUG [BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]";
-    let preview = review_preview(BATCH, "Books", &doubt, &row(2, narration)).unwrap();
+    let preview = review_preview(BATCH, MARKER, "Books", &doubt, &row(2, narration)).unwrap();
     assert!(preview.contains(&format!("  \"{ledger}\"")), "{preview}");
     assert!(preview.contains("INV 2026-27/0045 AUG\""), "{preview}");
     assert!(!preview.contains("[BRIDGE:"), "{preview}");

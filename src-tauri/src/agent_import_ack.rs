@@ -58,29 +58,32 @@ fn read_masters_records(imports: &Path, batch_id: &str) -> MastersRecord {
     let Ok(doubt) = read_masters_record_raw(&masters_doubt_path(imports, batch_id)) else {
         return MastersRecord::Unreadable;
     };
-    let Ok(check) = read_masters_record_raw(&masters_check_path(imports, batch_id)) else {
-        return MastersRecord::Unreadable;
-    };
-    let pending = check
-        .as_ref()
-        .is_some_and(|(_, check)| check["state"] == MASTERS_CHECK_PENDING);
     match doubt {
         // An observed doubt outranks the check record, as it does for the
-        // verdict: a write that failed between the two can leave the check
-        // pending beside it, and nothing would ever finish that check.
+        // verdict (`read_masters_check`), which then never reads or rewrites
+        // that record again: a write that failed between the two can leave it
+        // pending or unreadable beside the doubt for good.
         Some((raw, doubt))
             if doubt["state"] == "posted_under_changed_masters"
-                && doubt["ledgers"]
-                    .as_array()
-                    .is_some_and(|ledgers| !ledgers.is_empty()) =>
+                && doubt["ledgers"].as_array().is_some_and(|ledgers| {
+                    !ledgers.is_empty()
+                        && ledgers
+                            .iter()
+                            .all(|ledger| ledger.as_str().is_some_and(|name| !name.is_empty()))
+                }) =>
         {
             MastersRecord::Doubt { raw }
         }
-        // A doubt file holds only that verdict, naming its ledgers; anything
-        // else is not one this build can bind to.
+        // A doubt file holds only that verdict, naming each of its ledgers;
+        // anything else is not one this build can bind to.
         Some(_) => MastersRecord::Unreadable,
-        None if pending => MastersRecord::Pending,
-        None => MastersRecord::NoDoubt,
+        None => match read_masters_record_raw(&masters_check_path(imports, batch_id)) {
+            Err(()) => MastersRecord::Unreadable,
+            Ok(Some((_, check))) if check["state"] == MASTERS_CHECK_PENDING => {
+                MastersRecord::Pending
+            }
+            Ok(_) => MastersRecord::NoDoubt,
+        },
     }
 }
 
@@ -193,13 +196,15 @@ fn admit_review(
 }
 
 /// The review dialog's text, under the post dialog's caps and character rules.
+/// `marker` is this batch's own narration marker (`[BRIDGE:<tag>]`).
 fn review_preview(
     batch_id: &str,
+    marker: &str,
     company_name: &str,
     doubt: &Value,
     row: &ReadVoucher,
 ) -> Result<String, String> {
-    let preview = render_review_text(batch_id, company_name, doubt, row)?;
+    let preview = render_review_text(batch_id, marker, company_name, doubt, row)?;
     if caps_exceeded(&preview).is_empty() {
         Ok(preview)
     } else {
@@ -210,6 +215,7 @@ fn review_preview(
 /// The review text before the caps: every value checked, nothing truncated.
 fn render_review_text(
     batch_id: &str,
+    marker: &str,
     company_name: &str,
     doubt: &Value,
     row: &ReadVoucher,
@@ -224,13 +230,19 @@ fn render_review_text(
         .map(|ledger| format!("  {}", quoted(ledger)))
         .collect::<Vec<_>>()
         .join("\n");
-    // Bridge's own batch marker is shown by the Batch line, not the narration.
+    // Only this batch's own marker, exactly where Bridge wrote it (the
+    // end), is left to the Batch line. Anything else, including text added
+    // after it or another marker, is shown: the record binds all of it.
     let narration = row.narration.as_deref().map(|narration| {
-        narration
-            .find(NARRATION_MARKER_PREFIX)
-            .map_or(narration, |marker| &narration[..marker])
-            .trim_end()
-            .to_string()
+        if narration == marker {
+            String::new()
+        } else {
+            narration
+                .strip_suffix(marker)
+                .and_then(|text| text.strip_suffix(' '))
+                .unwrap_or(narration)
+                .to_string()
+        }
     });
     let entries = row
         .entries
@@ -427,7 +439,12 @@ impl Server {
             .as_ref()
             .map(|company| company.name.clone())
             .unwrap_or_default();
-        let preview = review_preview(&line.batch_id, &company_name, &doubt, row).map_err(fail)?;
+        let marker = format!(
+            "{NARRATION_MARKER_PREFIX}{}]",
+            line.attribution_tag(&line.vouchers[0])
+        );
+        let preview =
+            review_preview(&line.batch_id, &marker, &company_name, &doubt, row).map_err(fail)?;
         let shown_voucher = json!({
             "date": row.date, "voucher_number": row.voucher_number, "narration": row.narration,
             "entries": row.entries.iter().map(|entry| json!({

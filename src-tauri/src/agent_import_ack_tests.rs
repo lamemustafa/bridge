@@ -244,7 +244,17 @@ async fn an_unreadable_masters_record_is_refused() {
         reconcile_readback(),
         clean(),
         Some(b"not json"),
-        Some(DOUBT.as_bytes()),
+        None,
+        "ack_masters_record_unreadable",
+    )
+    .await;
+    // A doubt must name each of its ledgers, as Bridge writes it.
+    let unnamed = br#"{"state":"posted_under_changed_masters","ledgers":["Cash",7]}"#;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(unnamed),
+        Some(unnamed),
         "ack_masters_record_unreadable",
     )
     .await;
@@ -586,4 +596,93 @@ async fn a_record_written_while_the_dialog_is_open_is_kept() {
         "{response}"
     );
     assert_eq!(fs::read(&path).unwrap(), b"written elsewhere");
+}
+
+/// A doubt outranks a check record that cannot be read beside it, as it does
+/// for the verdict, which never rewrites that record once a doubt exists.
+#[tokio::test]
+async fn a_doubt_beside_an_unreadable_check_is_reviewable() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = seeded(
+        &simulator,
+        directory.path(),
+        clean(),
+        Some(b"not json"),
+        Some(DOUBT.as_bytes()),
+    );
+    let response = acknowledge(&server, args, ScriptedApproval::approving()).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["operator_review"]["state"], "current",
+        "{response}"
+    );
+}
+
+/// With a doubt and no record, the review reads absent; with a record and
+/// no doubt it can bind to, it reads stale, never nothing.
+#[tokio::test]
+async fn a_review_reads_absent_before_a_record_and_stale_without_its_doubt() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    plans.extend(reconcile_readback());
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let before = server.call_tool("verify_import", args.clone()).await;
+    assert_eq!(
+        before["structuredContent"]["result"]["operator_review"],
+        json!({"state":"absent"}),
+        "{before}"
+    );
+    acknowledge(&server, args.clone(), ScriptedApproval::approving()).await;
+    let imports = server.imports_dir().unwrap();
+    fs::remove_file(imports.join(format!("{BATCH}.masters_doubt.json"))).unwrap();
+    fs::write(
+        imports.join(format!("{BATCH}.masters_check.json")),
+        br#"{"state":"unchanged"}"#,
+    )
+    .unwrap();
+    let after = server.call_tool("verify_import", args).await;
+    assert_eq!(
+        after["structuredContent"]["result"]["operator_review"]["state"], "stale",
+        "{after}"
+    );
+}
+
+/// A batch of more than one voucher was not posted by `post_import`, which
+/// posts one; it is refused before any request.
+#[tokio::test]
+async fn a_batch_of_several_vouchers_is_refused_before_any_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let mut line = saved_captured_line(&server);
+    let mut second = line.vouchers[0].clone();
+    second.bridge_txn_id = "BRIDGE_MCP_LIVE_20260906_A2".into();
+    line.vouchers.push(second);
+    line.txn_ids.push("BRIDGE_MCP_LIVE_20260906_A2".into());
+    server.append_import_ledger(&line).unwrap();
+    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    {
+        let _lock = server.lock_import_admission().unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_for(
+                &line, &native,
+            ))
+            .unwrap();
+    }
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":GUID,"batch_id":line.batch_id}),
+        ScriptedApproval::approving(),
+    )
+    .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_batch_not_posted",
+        "{response}"
+    );
+    assert!(sent(simulator).is_empty());
 }
