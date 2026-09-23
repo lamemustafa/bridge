@@ -249,6 +249,35 @@ class Verify(unittest.TestCase):
         self.assertEqual(mu.verify([a], results, "T", ["A"]),
                          ["GONE: a record for a mutation no longer in the list (delete it)"])
 
+    def test_an_accepted_survivor_passes_only_for_its_listed_definition(self):
+        m, other = mutation("A", "src/a.rs"), mutation("B", "src/a.rs")
+        accepted = {"A": {"mutation": mu.mutation_hash(m), "reason": "equivalent", "documented": "#1"}}
+        survived = record(m, [], verdict=mu.SURVIVED, tree="T")
+        self.assertTrue(mu.passes(m, survived, accepted))
+        self.assertTrue(mu.fresh(m, survived, "T", accepted))
+        self.assertFalse(mu.fresh(m, survived, "U", accepted), "still bound to its tree")
+        self.assertFalse(mu.passes(other, record(other, [], verdict=mu.SURVIVED), accepted), "not listed")
+        edited = dict(m, to="edited")  # the entry's hash is the old definition's
+        self.assertFalse(mu.passes(edited, record(edited, [], verdict=mu.SURVIVED), accepted), "edited since listed")
+        for verdict in (mu.COMPILE_ERROR, mu.FAILED_NO_TEST, mu.BUILD_TIMEOUT):
+            self.assertFalse(mu.passes(m, record(m, [], verdict=verdict), accepted), verdict)
+        self.assertEqual(mu.select([m], {"A": survived}, [], Path("."), accepted), {}, "not re-selected by itself")
+        self.assertEqual(mu.survivor_problems([m, other], accepted), [])
+        self.assertEqual(mu.survivor_problems([edited], accepted), ["A: accepted as a survivor for another definition"])
+        self.assertEqual(mu.survivor_problems([other], accepted), ["A: accepted as a survivor but no longer in the list"])
+        committed = {"A": survived, "B": record(other, ["tests/x.rs::t"])}
+        text, failed = mu.report([m, other], committed, committed, accepted=accepted)
+        self.assertFalse(failed, text)
+        self.assertIn("## Accepted survivors (1)", text)
+        text, failed = mu.report([m, other], dict(committed, A=record(m, ["tests/x.rs::t"])), committed, accepted=accepted)
+        self.assertFalse(failed, text)
+        self.assertIn("now killed: remove the entry (warning) (1)", text)
+        text, failed = mu.report([edited, other], {"A": record(edited, [], verdict=mu.SURVIVED), "B": committed["B"]},
+                                 {"A": record(edited, []), "B": committed["B"]}, accepted=accepted)
+        self.assertTrue(failed)
+        self.assertEqual(mu.failing_ids(text), ["A"])
+        self.assertIn("Stale accepted-survivor entries (1)", text)
+
     def test_apply_check_wants_exactly_one_match(self):
         with tempfile.TemporaryDirectory() as t:
             crate = Path(t)
@@ -455,10 +484,11 @@ class GitRepo(unittest.TestCase):
         sh(self.repo, "init", "-q", "-b", "master")
         sh(self.repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "add", "-A")
         self.commit("base")
-        self.saved = {k: getattr(mu, k) for k in ("ROOT", "WORKSPACE", "REPO", "CRATE", "LIST", "RESULTS", "RESULTS_REL")}
+        self.saved = {k: getattr(mu, k) for k in ("ROOT", "WORKSPACE", "REPO", "CRATE", "LIST", "RESULTS", "RESULTS_REL", "SURVIVORS")}
         mu.ROOT, mu.WORKSPACE, mu.REPO, mu.CRATE = self.root, self.repo / "src-tauri", self.repo, self.CRATE
         mu.LIST, mu.RESULTS = self.root / "parity/mutations.json", self.root / "parity/mutation-results.json"
         mu.RESULTS_REL = f"{self.CRATE}/parity/mutation-results.json"
+        mu.SURVIVORS = self.root / "parity/accepted-survivors.json"
 
     def tearDown(self):
         for k, v in self.saved.items():
@@ -516,8 +546,9 @@ class GitRepo(unittest.TestCase):
         text, failed = mu.report(self.muts, {"B1": record(self.muts[0], [], verdict=mu.SURVIVED),
                                              "R1": mu.load_results(mu.RESULTS)["R1"]}, mu.load_results(mu.RESULTS))
         self.assertTrue(failed)
-        issue.write_text(f"#7\n{text}\nRun: https://example.invalid/run\n"
-                         f"#8\n<!-- {mu.FAILING_MARK} R1 -->\n")  # a second open issue
+        head7, head8 = f"<!-- {mu.ISSUE_MARK} 7 -->", f"<!-- {mu.ISSUE_MARK} 8 -->"  # as ci.yml writes them
+        issue.write_text(f"{head7}\n{text}\nRun: https://example.invalid/run\n"
+                         f"{head8}\n<!-- {mu.FAILING_MARK} R1 -->\n")  # a second open issue
         sh(self.repo, "branch", "base")
         # A crate change that selects nothing by itself ...
         self.write("src/support.rs", "// unrelated\n")
@@ -541,10 +572,15 @@ class GitRepo(unittest.TestCase):
         self.prove("R1")
         rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
         self.assertEqual(rc, 0, out)
-        issue.write_text("#7\nsomeone rewrote the body\n")
-        rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
-        self.assertEqual(rc, 1, out)
-        self.assertIn("no failing-ids line", out)
+        for body in (f"{head7}\nsomeone rewrote the body\n",
+                     # one issue lost its line while another kept one: the other must not hide it
+                     f"{head7}\nsomeone rewrote the body\n{head8}\n<!-- {mu.FAILING_MARK} R1 -->\n",
+                     f"{head8}\n<!-- {mu.FAILING_MARK} R1 -->\n{head7}\n"):
+            issue.write_text(body)
+            rc, out = self.main("--verify", "--changed-since", "base", "--nightly-issues", str(issue))
+            self.assertEqual(rc, 1, body)
+            self.assertIn("no failing-ids line", out)
+        self.assertEqual(mu.failing_ids(""), [], "no open issue holds nothing")
 
     def test_verify_fails_on_an_unproven_selection_a_stale_mutation_or_a_retired_record(self):
         self.prove("B1", "R1")
@@ -568,6 +604,15 @@ class GitRepo(unittest.TestCase):
         rc, out = self.main("--verify", "--changed-since", "HEAD")
         self.assertEqual(rc, 1, out)
         self.assertIn("B1: a record for a mutation no longer in the list", out)
+        # An accepted-survivor entry for a retired mutation fails the merge check too.
+        del_results = mu.load_results(mu.RESULTS)
+        del del_results["B1"]
+        mu.RESULTS.write_text(mu.render_results(del_results, ["R1"]))
+        (self.root / "parity/accepted-survivors.json").write_text(json.dumps({"B1": {"mutation": "x"}}))
+        self.commit("drop the record; list B1 as a survivor")
+        rc, out = self.main("--verify", "--changed-since", "HEAD")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("B1: accepted as a survivor but no longer in the list", out)
 
     def test_a_run_refuses_a_dirty_tree_and_a_held_workdir_before_any_build(self):
         work = self.root.parent / "mutants"
@@ -654,12 +699,19 @@ class GitRepo(unittest.TestCase):
         self.assertEqual(sh(self.repo, "status", "--porcelain"), "", "the working tree is never touched")
 
     def test_sigterm_stops_a_run_ends_its_cargo_and_restores_the_copy(self):
+        self.sigterm_run(HANG_ON_B1)
+
+    def test_sigterm_during_the_baseline_ends_its_cargo(self):
+        # The baseline runs on the main thread, where the signal unwinds cargo's own call.
+        self.sigterm_run(HANG_ALWAYS)
+
+    def sigterm_run(self, script: str) -> None:
         outside = Path(self.t.name)
         runner = self.root / "parity/mutations.py"  # the runner committed into the throwaway repo
         runner.write_bytes((Path(__file__).resolve().parent / "mutations.py").read_bytes())
         self.commit("the runner")
         pidfile, work, results = outside / "pid", outside / "mutants", outside / "r.json"
-        with fake_cargo(outside, HANG_ON_B1, PIDFILE=str(pidfile)):
+        with fake_cargo(outside, script, PIDFILE=str(pidfile)):
             proc = subprocess.Popen([sys.executable, "-B", str(runner), "B1", "--workdir", str(work),
                                      "--results", str(results)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
@@ -711,6 +763,11 @@ case " $* " in *" --no-run "*) echo "    Finished"; exit 0;; esac
 echo "     Running tests/registry.rs (/x)"
 if [ -n "$FAKE_FAIL" ] || grep -q koob src/book.rs; then echo "test registry_ok ... FAILED"; exit 101; fi
 echo "test registry_ok ... ok"
+"""
+HANG_ALWAYS = """#!/bin/sh
+# A stand-in for cargo: builds instantly, then every test run hangs (a child in its group).
+case " $* " in *" --no-run "*) echo "    Finished"; exit 0;; esac
+sleep 30 & echo $! > "$PIDFILE"; wait
 """
 HANG_ON_B1 = """#!/bin/sh
 # A stand-in for cargo: builds and passes instantly, but hangs (a child in its group) on B1's mutation.
