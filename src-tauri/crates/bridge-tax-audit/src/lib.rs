@@ -126,6 +126,8 @@ pub struct Engagement {
     /// `loans_interest`-only: `[loans]`, filled by [`Engagement::bind`] ([`LoansConfig`]); empty on
     /// an engagement that has not been bound.
     pub loans: LoansConfig,
+    /// `[partners]`, bound by [`Engagement::bind`]; empty before binding. See [`PartnersConfig`].
+    pub partners: PartnersConfig,
     /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table. Filled by
     /// [`Engagement::bind`]; see [`CreditorAgeingConfig`] for what is typed when.
     pub creditor_ageing: CreditorAgeingConfig,
@@ -175,6 +177,22 @@ pub struct LoansConfig {
     pub loan_ledgers: BTreeMap<String, toml::Value>,
     /// `[loans].shared_interest_ledgers`, bound; empty when absent.
     pub shared_interest_ledgers: Vec<String>,
+}
+
+/// `[partners]` from the client config, as the reference's `partners_config` returns it: every
+/// partner's entry, and the `deed` popped out of them.
+///
+/// **Typed lazily**, as [`LoansConfig`] is: [`Engagement::bind`] binds the three name locations
+/// (`capital_ledgers`, `interest_ledger`, `remuneration_ledger`) and refuses a malformed one
+/// (`BIND-ID-MALFORMED`); everything else is kept as written and typed when `partners_40b_194t`
+/// runs.
+#[derive(Debug, Clone, Default)]
+pub struct PartnersConfig {
+    /// `[partners.<key>]` for every key but `deed`, each entry as written with its ledger
+    /// locations bound. Empty when the config has no `[partners]` table (e.g. a proprietorship).
+    pub partners: BTreeMap<String, toml::Value>,
+    /// `[partners].deed` as written; `None` when absent.
+    pub deed: Option<toml::Value>,
 }
 
 /// `[creditor_ageing_43bh]` from the client config, every key optional: the reference's
@@ -696,6 +714,7 @@ not YYYY-MM-DD"
             creditor_groups: None,
             trade_creditors_source: roles.get("trade_creditors_source").cloned(),
             loans: LoansConfig::default(),
+            partners: PartnersConfig::default(),
             creditor_ageing: CreditorAgeingConfig::default(),
             statutory_dues: StatutoryDuesConfig::default(),
             base_dir: base_dir.to_path_buf(),
