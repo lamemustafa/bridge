@@ -154,13 +154,9 @@ fn marked_row<'a>(line: &ImportLedgerLine, rows: &'a [ReadVoucher]) -> Option<&'
 fn admit_review(
     imports: &Path,
     line: &ImportLedgerLine,
-    dispatched: bool,
     payload: &Value,
     rows: &[ReadVoucher],
 ) -> Result<ReviewSnapshot, String> {
-    if !dispatched || line.vouchers.len() != 1 {
-        return Err("ack_batch_not_posted".into());
-    }
     let doubt_raw = match read_masters_records(imports, &line.batch_id) {
         MastersRecord::Doubt { raw } => raw,
         MastersRecord::Pending => return Err("ack_check_pending".into()),
@@ -192,6 +188,21 @@ fn admit_review(
 
 /// The review dialog's text, under the post dialog's caps and character rules.
 fn review_preview(
+    batch_id: &str,
+    company_name: &str,
+    doubt: &Value,
+    row: &ReadVoucher,
+) -> Result<String, String> {
+    let preview = render_review_text(batch_id, company_name, doubt, row)?;
+    if caps_exceeded(&preview).is_empty() {
+        Ok(preview)
+    } else {
+        Err("ack_review_too_large".into())
+    }
+}
+
+/// The review text before the caps: every value checked, nothing truncated.
+fn render_review_text(
     batch_id: &str,
     company_name: &str,
     doubt: &Value,
@@ -266,13 +277,23 @@ fn review_preview(
         row.alter_id.map(|id| id.to_string()).unwrap_or_else(|| "(none)".into()),
         batch_id,
     );
-    if preview.chars().count() > 1_600
-        || preview.lines().count() > 24
-        || preview.lines().any(|line| line.chars().count() > 100)
-    {
-        return Err("ack_review_too_large".into());
-    }
     Ok(preview)
+}
+
+/// Which of the post dialog's caps `preview` exceeds: native message boxes
+/// have no scrollable review surface, so a review over any is refused.
+fn caps_exceeded(preview: &str) -> Vec<&'static str> {
+    let mut exceeded = Vec::new();
+    if preview.chars().count() > 1_600 {
+        exceeded.push("characters");
+    }
+    if preview.lines().count() > 24 {
+        exceeded.push("lines");
+    }
+    if preview.lines().any(|line| line.chars().count() > 100) {
+        exceeded.push("line_width");
+    }
+    exceeded
 }
 
 /// Place `bytes` at `path` only if nothing is there: staged, synced, then
@@ -320,10 +341,10 @@ pub(super) fn operator_review(
         && record.doubt_sha256 == sha256_hex(&raw);
     let row = marked_row(line, rows);
     let voucher_unchanged = record.voucher_fingerprint_fields == FINGERPRINT_FIELDS
+        // The fingerprint covers the GUID and MASTERID; the ALTERID is bound
+        // on its own.
         && row.is_some_and(|row| {
-            row.guid.as_deref() == Some(record.voucher_guid.as_str())
-                && row.master_id.as_deref() == Some(record.voucher_master_id.as_str())
-                && row.alter_id == Some(record.alter_id)
+            row.alter_id == Some(record.alter_id)
                 && voucher_fingerprint(row) == record.voucher_fingerprint_sha256
         });
     Some(json!({
@@ -348,8 +369,13 @@ impl Server {
         } = self
             .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
-        // Refused before any read or dialog: a record already answers it. The
-        // path is built from the journal's batch id, never the argument.
+        // Refused before any read or dialog. `post_import` posts one voucher,
+        // so a batch it dispatched holds exactly one.
+        if !dispatched || line.vouchers.len() != 1 {
+            return Err("ack_batch_not_posted".to_string().into());
+        }
+        // A record already answers it. The path is built from the journal's
+        // batch id, never the argument.
         if masters_ack_path(&imports, &line.batch_id).exists() {
             return Err("ack_already_recorded".to_string().into());
         }
@@ -359,8 +385,7 @@ impl Server {
         let evidence = first.evidence.clone();
         let fail = |code: String| ToolFailure::from(code).with_prior_evidence(evidence.clone());
         let rows = rows.unwrap_or_default();
-        let shown =
-            admit_review(&imports, &line, dispatched, &first.payload, &rows).map_err(fail)?;
+        let shown = admit_review(&imports, &line, &first.payload, &rows).map_err(fail)?;
         let row = marked_row(&line, &rows).expect("admitted on this row");
         let doubt: Value = serde_json::from_slice(&shown.doubt_raw).unwrap_or_default();
         let company_name = line
@@ -388,7 +413,6 @@ impl Server {
         let again = admit_review(
             &imports,
             &line,
-            dispatched,
             &second.payload,
             &rows_after.unwrap_or_default(),
         );

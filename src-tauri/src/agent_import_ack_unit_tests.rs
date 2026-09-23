@@ -37,6 +37,30 @@ fn the_review_shows_the_doubt_and_the_voucher_as_read() {
     );
 }
 
+/// Each cap refuses on its own: every fixture below exceeds exactly one, so
+/// a cap that stopped being checked lets its fixture through.
+#[test]
+fn each_review_cap_refuses_on_its_own() {
+    let wide_ledgers = |entries: usize| {
+        let mut voucher = row(entries, "Paid");
+        for (index, entry) in voucher.entries.iter_mut().enumerate() {
+            entry.ledger = format!("{index:02}{}", "L".repeat(83));
+        }
+        voucher
+    };
+    let cases = [
+        ("line_width", row(2, &"n".repeat(120))),
+        ("lines", row(20, "Paid")),
+        ("characters", wide_ledgers(12)),
+    ];
+    for (cap, voucher) in cases {
+        let preview = review_preview(BATCH, "Books", &doubt(), &voucher);
+        assert_eq!(preview, Err("ack_review_too_large".to_string()), "{cap}");
+        let rendered = render_review_text(BATCH, "Books", &doubt(), &voucher).unwrap();
+        assert_eq!(caps_exceeded(&rendered), [cap], "{cap}: only its own cap");
+    }
+}
+
 #[test]
 fn a_review_too_long_to_show_is_refused_not_truncated() {
     assert!(review_preview(BATCH, "Books", &doubt(), &row(12, "Paid")).is_ok());

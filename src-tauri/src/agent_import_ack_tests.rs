@@ -368,11 +368,22 @@ async fn a_recorded_review_goes_stale_when_anything_it_bound_changes() {
         record["batch_id"] = json!("bridge-00000000-0000-4000-8000-000000000001");
         fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
     };
-    let cases: [(&str, Vec<ScenarioPlan>, Change); 4] = [
+    let other_company: Change = |server| {
+        edit_record(
+            server,
+            "company_guid",
+            json!("00000000-0000-4000-8000-000000000002"),
+        )
+    };
+    let other_fields: Change =
+        |server| edit_record(server, "voucher_fingerprint_fields", json!("v0:guid"));
+    let cases: [(&str, Vec<ScenarioPlan>, Change); 6] = [
         ("alter_id", readback_at_alter_id(11), untouched),
         ("fingerprint", readback_with_edited_narration(), untouched),
         ("doubt", reconcile_readback(), new_doubt),
         ("identity", reconcile_readback(), other_batch),
+        ("company", reconcile_readback(), other_company),
+        ("fingerprint_fields", reconcile_readback(), other_fields),
     ];
     for (name, later, change) in cases {
         let mut plans = reconcile_readback();
@@ -432,4 +443,101 @@ async fn the_tool_needs_the_posting_opt_in() {
     );
     assert!(approval.reviews().is_empty());
     assert!(sent(simulator).is_empty());
+}
+
+fn edit_record(server: &Server, field: &str, value: Value) {
+    let path = ack_path(server);
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record[field] = value;
+    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+}
+
+/// A record in a format this build does not know is reported unreadable,
+/// never matched.
+#[tokio::test]
+async fn a_record_this_build_cannot_read_is_reported_unreadable() {
+    type Change = fn(&Server);
+    let newer: Change = |server| edit_record(server, "version", json!(2));
+    let unknown_field: Change = |server| edit_record(server, "approved", json!(true));
+    let garbage: Change = |server| fs::write(ack_path(server), b"not json").unwrap();
+    for (name, change) in [
+        ("version", newer),
+        ("field", unknown_field),
+        ("garbage", garbage),
+    ] {
+        let mut plans = reconcile_readback();
+        plans.extend(reconcile_readback());
+        plans.extend(reconcile_readback());
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (server, args) = doubted(&simulator, directory.path());
+        acknowledge(&server, args.clone(), ScriptedApproval::approving()).await;
+        change(&server);
+        let verified = server.call_tool("verify_import", args).await;
+        let result = &verified["structuredContent"]["result"];
+        assert_eq!(
+            result["operator_review"]["state"], "unreadable",
+            "{name}: {verified}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_batch_never_posted_is_refused_before_any_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let line = saved_captured_line(&server);
+    let approval = ScriptedApproval::approving();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":GUID,"batch_id":line.batch_id}),
+        approval.clone(),
+    )
+    .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_batch_not_posted",
+        "{response}"
+    );
+    assert!(approval.reviews().is_empty());
+    assert!(sent(simulator).is_empty());
+}
+
+/// A readback that finds the marked voucher but not as posted is not a match.
+#[tokio::test]
+async fn a_readback_that_diverges_is_refused() {
+    let diverged = readback_of(replaced_once(
+        &captured_posted_journal(),
+        "Bridge Nested Debtor WR4",
+        "Bridge Nested Debtor WR5",
+    ));
+    refused(
+        diverged,
+        clean(),
+        Some(DOUBT.as_bytes()),
+        Some(DOUBT.as_bytes()),
+        "ack_readback_not_matched",
+    )
+    .await;
+}
+
+/// A record that appears while the dialog is open is never overwritten.
+#[tokio::test]
+async fn a_record_written_while_the_dialog_is_open_is_kept() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let path = ack_path(&server);
+    let planted = path.clone();
+    let approval = ScriptedApproval::approving_after(move || {
+        fs::write(&planted, b"written elsewhere").unwrap();
+    });
+    let response = acknowledge(&server, args, approval).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_already_recorded",
+        "{response}"
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"written elsewhere");
 }
