@@ -1,0 +1,965 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "book_keeping_quality",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ba2601e59ad709f4",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded).",
+  "figures": [
+    {
+      "id": "book_keeping_quality.contra_direction_mismatch_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "bb720fd237265f61",
+      "definition_text": "Contra vouchers whose narration claims a direction that their own Cash line's sign contradicts.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_mismatch_total_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "36ad34272911a171",
+      "definition_text": "Sum of the Cash line amounts, each taken without its sign, across the Contra vouchers whose narration claims a direction that their own Cash line's sign contradicts.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.debtor_writeoff_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "0ab2d91ab0decbbd",
+      "definition_text": "Journal vouchers debiting a configured discount/write-off ledger and crediting a Sundry Debtors ledger.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.debtor_writeoff_total_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3492a3ed8a1f1c7e",
+      "definition_text": "Sum of the debtor-ledger credit line(s) across the journal vouchers debiting a configured discount/write-off ledger and crediting a Sundry Debtors ledger.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count",
+      "value": 21,
+      "unit": "count",
+      "definition_sha256_16": "e22112308bcb97ee",
+      "definition_text": "Population vouchers (any base type) created after the sales voucher with the latest in Tally's creation order.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count_journal",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "2b98ee142fb5106c",
+      "definition_text": "Of the vouchers created after the last sale, those with base type 'Journal'.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count_payment",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "ed04c3dbd2cfd282",
+      "definition_text": "Of the vouchers created after the last sale, those with base type 'Payment'.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count_purchase",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "d1018af9105d0660",
+      "definition_text": "Of the vouchers created after the last sale, those with base type 'Purchase'.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count_receipt",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "509eeb6b54a3bbca",
+      "definition_text": "Of the vouchers created after the last sale, those with base type 'Receipt'.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_value_paise",
+      "value": 239585026,
+      "unit": "paise",
+      "definition_sha256_16": "cfd76eef82dcab67",
+      "definition_text": "Sum of the debit-side (gross) amount of every population voucher (any base type) created after the sales voucher with the latest in Tally's creation order.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000021",
+          "label": "Payment P/18 on 2025-06-27"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
+          "label": "Payment P/20 on 2025-07-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
+          "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000025",
+          "label": "Receipt R/8 on 2025-07-04"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000026",
+          "label": "Receipt R/9 on 2025-07-07"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000027",
+          "label": "Payment P/21 on 2025-07-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000028",
+          "label": "Receipt R/10 on 2025-07-09"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000029",
+          "label": "Payment P/22 on 2025-07-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002a",
+          "label": "Payment P/23 on 2025-07-11"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002d",
+          "label": "Purchase PU/6 on 2025-10-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002e",
+          "label": "Purchase PU/7 on 2025-10-04"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002f",
+          "label": "Purchase PU/5 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000030",
+          "label": "Journal J/2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000031",
+          "label": "Journal J/3 on 2026-03-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000032",
+          "label": "Journal J/4 on 2025-08-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000033",
+          "label": "Journal J/5 on 2025-08-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000034",
+          "label": "Journal J/6 on 2025-08-22"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000035",
+          "label": "Journal J/7 on 2025-09-30"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_over_30_count_contra",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "ecff071d5c6249a5",
+      "definition_text": "Population vouchers of base type 'Contra' created (in Tally's creation order) after a sales voucher, whose own date is more than 30 days before the latest sale date already created at that point (that sale date less the voucher's own date).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_over_30_count_journal",
+      "value": 4,
+      "unit": "count",
+      "definition_sha256_16": "751e71a0d6131b4c",
+      "definition_text": "Population vouchers of base type 'Journal' created (in Tally's creation order) after a sales voucher, whose own date is more than 30 days before the latest sale date already created at that point (that sale date less the voucher's own date).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000030",
+          "label": "Journal J/2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000032",
+          "label": "Journal J/4 on 2025-08-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000033",
+          "label": "Journal J/5 on 2025-08-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000034",
+          "label": "Journal J/6 on 2025-08-22"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_over_30_count_payment",
+      "value": 16,
+      "unit": "count",
+      "definition_sha256_16": "cd81558e5d4d15f5",
+      "definition_text": "Population vouchers of base type 'Payment' created (in Tally's creation order) after a sales voucher, whose own date is more than 30 days before the latest sale date already created at that point (that sale date less the voucher's own date).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000013",
+          "label": "Payment P/8 on 2025-06-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000014",
+          "label": "Payment P/9 on 2025-06-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000015",
+          "label": "Payment P/10 on 2025-06-11"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000016",
+          "label": "Payment P/11 on 2025-06-12"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000017",
+          "label": "Payment P/12 on 2025-06-13"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000018",
+          "label": "Payment P/13 on 2025-06-16"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000019",
+          "label": "Payment P/14 on 2025-06-17"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001a",
+          "label": "Payment P/15 on 2025-06-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001b",
+          "label": "Payment P/16 on 2025-06-19"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001c",
+          "label": "Payment P/17 on 2025-06-20"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000021",
+          "label": "Payment P/18 on 2025-06-27"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
+          "label": "Payment P/20 on 2025-07-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000027",
+          "label": "Payment P/21 on 2025-07-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000029",
+          "label": "Payment P/22 on 2025-07-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002a",
+          "label": "Payment P/23 on 2025-07-11"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_over_30_count_purchase",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "01fac2aac3a4d4a9",
+      "definition_text": "Population vouchers of base type 'Purchase' created (in Tally's creation order) after a sales voucher, whose own date is more than 30 days before the latest sale date already created at that point (that sale date less the voucher's own date).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
+          "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_over_30_count_receipt",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "7b389db84f910b9c",
+      "definition_text": "Population vouchers of base type 'Receipt' created (in Tally's creation order) after a sales voucher, whose own date is more than 30 days before the latest sale date already created at that point (that sale date less the voucher's own date).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001d",
+          "label": "Receipt R/5 on 2025-06-23"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001e",
+          "label": "Receipt R/6 on 2025-06-24"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001f",
+          "label": "Receipt R/7 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000025",
+          "label": "Receipt R/8 on 2025-07-04"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000026",
+          "label": "Receipt R/9 on 2025-07-07"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000028",
+          "label": "Receipt R/10 on 2025-07-09"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_population_count_contra",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "621346bf29d29116",
+      "definition_text": "Population vouchers of base type 'Contra' created (in Tally's creation order) after at least one sales voucher, with a lag against the latest sale date already created.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_population_count_journal",
+      "value": 7,
+      "unit": "count",
+      "definition_sha256_16": "4fb5898214216f3b",
+      "definition_text": "Population vouchers of base type 'Journal' created (in Tally's creation order) after at least one sales voucher, with a lag against the latest sale date already created.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_population_count_payment",
+      "value": 21,
+      "unit": "count",
+      "definition_sha256_16": "dbbf19e5804ccb7a",
+      "definition_text": "Population vouchers of base type 'Payment' created (in Tally's creation order) after at least one sales voucher, with a lag against the latest sale date already created.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_population_count_purchase",
+      "value": 7,
+      "unit": "count",
+      "definition_sha256_16": "774758e24b14df62",
+      "definition_text": "Population vouchers of base type 'Purchase' created (in Tally's creation order) after at least one sales voucher, with a lag against the latest sale date already created.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_lag_population_count_receipt",
+      "value": 9,
+      "unit": "count",
+      "definition_sha256_16": "f47a397d1ccb1822",
+      "definition_text": "Population vouchers of base type 'Receipt' created (in Tally's creation order) after at least one sales voucher, with a lag against the latest sale date already created.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_configured_payment_ledger_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "fe87d166a0d6c51a",
+      "definition_text": "GST payment ledgers set for this client; a books test with none configured does not apply and reports only the tax ledgers' own balances, if any.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_configured_debtor_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "6ca90eba2037e636",
+      "definition_text": "Debtor ledgers configured as a consolidated payment-channel debtor; a books test with none configured does not apply and reports zero throughout this section.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.reissue_narration_match_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1e37612e8fd0242e",
+      "definition_text": "Population vouchers whose narration matches a configured re-issue/amendment/transfer term.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.reissue_narration_match_value_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "63cb38ba9b191467",
+      "definition_text": "Sum of the debit-side (gross) amount of every population voucher whose narration matches a configured re-issue/amendment/transfer term.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_total_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "cd9ce783b89ad0f6",
+      "definition_text": "Ledgers under Tally's 'Stock-in-Hand' group.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_47e6776c",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "5642c4283619cf4c",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag 47e6776c) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_e2a05323",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "3b7766c2c938440a",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag e2a05323) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_untouched_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "fc6b6ffdc71ab767",
+      "definition_text": "Ledgers under Tally's 'Stock-in-Hand' group with zero population vouchers touching them all year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": ""
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "book_keeping_quality/entry_order/after_last_sale",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "after_last_sale_count",
+          "figure_id": "book_keeping_quality.entry_order_after_last_sale_count"
+        },
+        {
+          "name": "after_last_sale_count_journal",
+          "figure_id": "book_keeping_quality.entry_order_after_last_sale_count_journal"
+        },
+        {
+          "name": "after_last_sale_count_payment",
+          "figure_id": "book_keeping_quality.entry_order_after_last_sale_count_payment"
+        },
+        {
+          "name": "after_last_sale_count_purchase",
+          "figure_id": "book_keeping_quality.entry_order_after_last_sale_count_purchase"
+        },
+        {
+          "name": "after_last_sale_count_receipt",
+          "figure_id": "book_keeping_quality.entry_order_after_last_sale_count_receipt"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000021",
+          "label": "Payment P/18 on 2025-06-27"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
+          "label": "Payment P/20 on 2025-07-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
+          "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000025",
+          "label": "Receipt R/8 on 2025-07-04"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000026",
+          "label": "Receipt R/9 on 2025-07-07"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000027",
+          "label": "Payment P/21 on 2025-07-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000028",
+          "label": "Receipt R/10 on 2025-07-09"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000029",
+          "label": "Payment P/22 on 2025-07-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002a",
+          "label": "Payment P/23 on 2025-07-11"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002d",
+          "label": "Purchase PU/6 on 2025-10-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002e",
+          "label": "Purchase PU/7 on 2025-10-04"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002f",
+          "label": "Purchase PU/5 on 2026-02-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000030",
+          "label": "Journal J/2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000031",
+          "label": "Journal J/3 on 2026-03-31"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000032",
+          "label": "Journal J/4 on 2025-08-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000033",
+          "label": "Journal J/5 on 2025-08-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000034",
+          "label": "Journal J/6 on 2025-08-22"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000035",
+          "label": "Journal J/7 on 2025-09-30"
+        }
+      ],
+      "title_sha256_16": "aa2d0984dbadb25c",
+      "title_text": "21 vouchers were created after the last sale voucher already entered in the company for the year",
+      "limits_sha256_16": "328f5cc13c451494",
+      "limits_text": [
+        "A closing/adjustment journal created after the last sale is ordinary; the same is not true of a purchase or other transaction voucher, which raises a cut-off question about the period it belongs to.",
+        "Tally's creation order does not reflect any later edit to a voucher's own content (see the lag findings above)."
+      ],
+      "ask_client_sha256_16": "c4006564c3b5506d",
+      "ask_client_text": [
+        "For each base type above other than closing/adjustment journals, confirm the period the underlying transaction relates to."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/entry_order/lag_over_30/journal",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "over_30_count",
+          "figure_id": "book_keeping_quality.entry_order_lag_over_30_count_journal"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000030",
+          "label": "Journal J/2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000032",
+          "label": "Journal J/4 on 2025-08-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000033",
+          "label": "Journal J/5 on 2025-08-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000034",
+          "label": "Journal J/6 on 2025-08-22"
+        }
+      ],
+      "title_sha256_16": "f9341fb0cff1ec55",
+      "title_text": "4 Journal vouchers were entered after a later-dated sale and are dated more than 30 days before it",
+      "limits_sha256_16": "7480316694f76973",
+      "limits_text": [
+        "Tally's creation sequence approximates the order vouchers were created in the company; ALTERID moves on a later content edit but the creation order does not, so this lag does not show whether the voucher was later edited.",
+        "Gaps in Tally's creation sequence are not evidence of a deleted voucher (an unexported master also consumes an ID); this test draws no conclusion from any gap in the sequence."
+      ],
+      "ask_client_sha256_16": "273cd88c9f25cc13",
+      "ask_client_text": [
+        "Confirm whether these vouchers were created late because the underlying document reached the office late, or for some other reason."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/entry_order/lag_over_30/payment",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "over_30_count",
+          "figure_id": "book_keeping_quality.entry_order_lag_over_30_count_payment"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000013",
+          "label": "Payment P/8 on 2025-06-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000014",
+          "label": "Payment P/9 on 2025-06-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000015",
+          "label": "Payment P/10 on 2025-06-11"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000016",
+          "label": "Payment P/11 on 2025-06-12"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000017",
+          "label": "Payment P/12 on 2025-06-13"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000018",
+          "label": "Payment P/13 on 2025-06-16"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000019",
+          "label": "Payment P/14 on 2025-06-17"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001a",
+          "label": "Payment P/15 on 2025-06-18"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001b",
+          "label": "Payment P/16 on 2025-06-19"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001c",
+          "label": "Payment P/17 on 2025-06-20"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000021",
+          "label": "Payment P/18 on 2025-06-27"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
+          "label": "Payment P/20 on 2025-07-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000027",
+          "label": "Payment P/21 on 2025-07-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000029",
+          "label": "Payment P/22 on 2025-07-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002a",
+          "label": "Payment P/23 on 2025-07-11"
+        }
+      ],
+      "title_sha256_16": "7141a51a3dcc6f86",
+      "title_text": "16 Payment vouchers were entered after a later-dated sale and are dated more than 30 days before it",
+      "limits_sha256_16": "7480316694f76973",
+      "limits_text": [
+        "Tally's creation sequence approximates the order vouchers were created in the company; ALTERID moves on a later content edit but the creation order does not, so this lag does not show whether the voucher was later edited.",
+        "Gaps in Tally's creation sequence are not evidence of a deleted voucher (an unexported master also consumes an ID); this test draws no conclusion from any gap in the sequence."
+      ],
+      "ask_client_sha256_16": "273cd88c9f25cc13",
+      "ask_client_text": [
+        "Confirm whether these vouchers were created late because the underlying document reached the office late, or for some other reason."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/entry_order/lag_over_30/purchase",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "over_30_count",
+          "figure_id": "book_keeping_quality.entry_order_lag_over_30_count_purchase"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
+          "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        }
+      ],
+      "title_sha256_16": "93d80bf0757b90ea",
+      "title_text": "3 Purchase vouchers were entered after a later-dated sale and are dated more than 30 days before it",
+      "limits_sha256_16": "7480316694f76973",
+      "limits_text": [
+        "Tally's creation sequence approximates the order vouchers were created in the company; ALTERID moves on a later content edit but the creation order does not, so this lag does not show whether the voucher was later edited.",
+        "Gaps in Tally's creation sequence are not evidence of a deleted voucher (an unexported master also consumes an ID); this test draws no conclusion from any gap in the sequence."
+      ],
+      "ask_client_sha256_16": "273cd88c9f25cc13",
+      "ask_client_text": [
+        "Confirm whether these vouchers were created late because the underlying document reached the office late, or for some other reason."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/entry_order/lag_over_30/receipt",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "over_30_count",
+          "figure_id": "book_keeping_quality.entry_order_lag_over_30_count_receipt"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001d",
+          "label": "Receipt R/5 on 2025-06-23"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001e",
+          "label": "Receipt R/6 on 2025-06-24"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001f",
+          "label": "Receipt R/7 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000025",
+          "label": "Receipt R/8 on 2025-07-04"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000026",
+          "label": "Receipt R/9 on 2025-07-07"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000028",
+          "label": "Receipt R/10 on 2025-07-09"
+        }
+      ],
+      "title_sha256_16": "5712e997aebb68b6",
+      "title_text": "6 Receipt vouchers were entered after a later-dated sale and are dated more than 30 days before it",
+      "limits_sha256_16": "7480316694f76973",
+      "limits_text": [
+        "Tally's creation sequence approximates the order vouchers were created in the company; ALTERID moves on a later content edit but the creation order does not, so this lag does not show whether the voucher was later edited.",
+        "Gaps in Tally's creation sequence are not evidence of a deleted voucher (an unexported master also consumes an ID); this test draws no conclusion from any gap in the sequence."
+      ],
+      "ask_client_sha256_16": "273cd88c9f25cc13",
+      "ask_client_text": [
+        "Confirm whether these vouchers were created late because the underlying document reached the office late, or for some other reason."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/stock_untouched",
+      "clauses": [
+        "3CD-35"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "untouched_count",
+          "figure_id": "book_keeping_quality.stock_ledger_untouched_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "8399cda8bca4ee06",
+      "title_text": "2 of 2 Stock-in-Hand ledgers have zero vouchers touching them for the year",
+      "limits_sha256_16": "18b3338314d9b352",
+      "limits_text": [
+        "A zero-touch stock ledger is consistent with the closing figure having been keyed in directly rather than built up from purchase, sale or stock-journal vouchers; valuing the closing figure is a separate stock test's job, not this one."
+      ],
+      "ask_client_sha256_16": "33de5a5cdc193a77",
+      "ask_client_text": [
+        "Confirm how the closing quantity and value on each of these ledgers was arrived at."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "book_keeping_quality.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

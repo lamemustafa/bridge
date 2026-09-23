@@ -79,6 +79,10 @@ impl DesktopJournalError {
                 "Bridge's desktop review posts one unnumbered Journal, and this saved batch is a different shape.",
                 "Import this file in Tally (Gateway of Tally → Import → Vouchers), then verify it. The desktop app posts Journals only. With voucher posting enabled in the extension settings (off by default), a Payment, Receipt or Contra can be posted from the assistant; otherwise, and for a batch holding more than one voucher, import the file. The file itself is unchanged and correct.",
             ),
+            "import_post_amendment_requires_file_import" => (
+                "This saved Journal amends an earlier batch, and Bridge does not post amendments.",
+                "Import this file in Tally (Gateway of Tally → Import → Vouchers) promptly, then verify it. Importing alters the earlier vouchers in place: an edit made to them in Tally since this file was built, including any allocation, is overwritten, so build the amendment again first if anyone may have changed them.",
+            ),
             "import_post_numbered_journal_unsupported" => (
                 "Bridge cannot post a Journal file that specifies a voucher number.",
                 "Import it manually, or choose an unnumbered Journal. A previously dispatched Journal remains available only for reconciliation.",
@@ -195,6 +199,16 @@ pub(crate) async fn reconcile_reviewed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_amendment_is_explained_rather_than_blamed_on_the_file() {
+        let refused = DesktopJournalError::refused("import_post_amendment_requires_file_import");
+        let fallback = DesktopJournalError::refused("some_unmapped_code");
+        assert_ne!(refused.message, fallback.message);
+        assert!(refused.message.contains("amends an earlier batch"));
+        assert!(refused.remediation.contains("promptly"));
+        assert!(refused.remediation.contains("overwritten"));
+    }
 
     #[test]
     fn a_batch_this_review_cannot_post_says_so_instead_of_blaming_the_file() {

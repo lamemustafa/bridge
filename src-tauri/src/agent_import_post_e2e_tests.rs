@@ -34,6 +34,20 @@ fn catalogue() -> String {
     ))
 }
 
+/// The captured Currency masters of a book with exactly one (`I₹`).
+fn single_currency() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ))
+}
+
+/// The captured Currency masters of a book with two (`$` and the base).
+fn two_currencies() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ))
+}
+
 fn empty_collection() -> String {
     captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
@@ -46,6 +60,29 @@ fn marks() -> String {
          <GUID>{GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID>\\
          </COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
     )
+}
+
+/// Every loaded company's change marks, shaped as the high-water collection
+/// returns them (a `NAME` attribute per row; measured 2026-09-21). The target
+/// is the captured laboratory company; the other two are invented.
+fn company_marks(target_vouchers: u64, other_vouchers: u64, target_name: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <COMPANY NAME=\"{target_name}\" RESERVEDNAME=\"\"><GUID>{GUID}</GUID><ALTVCHID>{target_vouchers}</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY>\
+         <COMPANY NAME=\"Synthetic Other Lab\" RESERVEDNAME=\"\"><GUID>22222222-2222-4222-8222-222222222222</GUID><ALTVCHID>{other_vouchers}</ALTVCHID><ALTMSTID>3</ALTMSTID></COMPANY>\
+         <COMPANY NAME=\"Synthetic Empty Lab\" RESERVEDNAME=\"\"><GUID>33333333-3333-4333-8333-333333333333</GUID><ALTMSTID>1</ALTMSTID></COMPANY>\
+         </COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+}
+
+fn marks_before() -> ScenarioPlan {
+    xml(company_marks(10, 50, "WR2 Unicode Lab"))
+}
+
+/// The same marks, read as the queue's binding reads begin (#239): the aim
+/// snapshot must show the target's master mark unchanged since.
+fn marks_at_binding() -> ScenarioPlan {
+    marks_before()
 }
 
 fn xml(body: String) -> ScenarioPlan {
@@ -84,6 +121,10 @@ fn verified_company() -> Vec<ScenarioPlan> {
 /// Every read `post_import` makes before it asks for approval, on a book where
 /// the batch's vouchers are absent.
 fn before_approval() -> Vec<ScenarioPlan> {
+    before_approval_with_currencies(single_currency())
+}
+
+fn before_approval_with_currencies(currencies: String) -> Vec<ScenarioPlan> {
     let mut plans = Vec::new();
     // verify_import_for_post: opening mode, identity, the window's mark, the
     // window, its replay, and the closing mode an absence needs.
@@ -93,35 +134,47 @@ fn before_approval() -> Vec<ScenarioPlan> {
     plans.extend(paired(empty_collection()));
     plans.extend(paired(empty_collection()));
     plans.extend(probe());
-    // The post's own identity, ledger catalogue and qualified mode.
+    // The post's own identity, ledger catalogue, Currency masters and
+    // qualified mode.
     plans.extend(verified_company());
     plans.extend(paired(catalogue()));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans
 }
 
 /// Tally's answer to one created voucher.
+/// Tally's answer to one created voucher: a captured live response
+/// (licensed-lab import, sanitized), not a hand-written shape. The earlier
+/// hand-written ENVELOPE did not parse as an import outcome at all.
 fn created_one() -> String {
-    "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA>\
-     <IMPORTRESULT><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
-     <LASTVCHID>11</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED>\
-     <IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED></IMPORTRESULT>\
-     </DATA></BODY></ENVELOPE>"
-        .to_string()
+    include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/live_education_w4_voucher_sanitized.xml"
+    )
+    .to_string()
 }
 
 /// What the dispatch sends after approval, up to and including the import:
-/// the opening mode and company admission, the ledger catalogue, the closing
-/// mode and admission, the absence read twice, then the one POST. The index of
-/// the POST is `before_approval().len() + after_approval(..).len() - 1`.
+/// the opening mode and company admission, the marks at binding, the ledger
+/// catalogue, the Currency
+/// masters, the closing mode and admission, the absence read twice, the aim
+/// snapshot, then the one POST. The index of the POST is
+/// `before_approval().len() + after_approval(..).len() - 1`.
 fn after_approval(post: ScenarioPlan) -> Vec<ScenarioPlan> {
+    after_approval_with_currencies(single_currency(), post)
+}
+
+fn after_approval_with_currencies(currencies: String, post: ScenarioPlan) -> Vec<ScenarioPlan> {
     let mut plans = probe();
     plans.push(xml(companies()));
+    plans.push(marks_at_binding());
     plans.extend(paired(catalogue()));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
     plans.extend(paired(empty_collection()));
+    plans.push(marks_before());
     plans.push(post);
     plans
 }
@@ -138,6 +191,30 @@ fn dispatch_intent(directory: &std::path::Path) -> Value {
     intents[0].clone()
 }
 
+/// The one dispatch response a run journaled, with Tally's answer parsed.
+/// A POST answered with `created_one()` must journal a parsed, clean single
+/// create; `None` here means the post ran without a parsed outcome.
+fn journaled_outcome(
+    directory: &std::path::Path,
+) -> Option<bridge_tally_protocol::TallyImportOutcome> {
+    let responses = String::from_utf8(journal(directory))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| record["record_type"] == "dispatch_response")
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 1, "{responses:?}");
+    serde_json::from_value::<ledger::DispatchResponse>(responses[0]["response"].clone())
+        .unwrap()
+        .outcome
+}
+
+fn assert_journaled_clean_create(directory: &std::path::Path) {
+    let outcome = journaled_outcome(directory).expect("the POST answer was parsed and journaled");
+    assert_eq!(outcome.counters().created, 1);
+    assert!(import_outcome_is_clean(Some(&outcome)));
+}
+
 fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
     Server::new(crate::agent::Settings {
         endpoint: TallyEndpointConfig {
@@ -151,6 +228,33 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
         import_enabled: true,
         writes_enabled: true,
     })
+}
+
+/// Record the build's ledger binding as `build_import_xml` does (#239): each
+/// named ledger with the GUID the captured catalogue gives it.
+fn bind_to_captured_catalogue(line: &mut ImportLedgerLine) {
+    let payload = ImportPayload {
+        company_guid: line.company_guid.clone(),
+        vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
+    };
+    let binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue(),
+        "WR2 Unicode Lab",
+        GUID,
+    )
+    .unwrap()
+    .bind_selected(requested_ledger_names(&payload))
+    .unwrap();
+    line.ledger_identities = Some(
+        binding
+            .pairs()
+            .map(|(name, guid)| BoundLedger {
+                name: name.to_string(),
+                guid: guid.to_string(),
+            })
+            .collect(),
+    );
 }
 
 /// A built, never-dispatched batch for the captured laboratory company, with
@@ -173,6 +277,7 @@ fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -272,6 +377,7 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     assert!(observed.len() > post_at, "{response}");
 
     let intent = dispatch_intent(directory.path());
+    assert_journaled_clean_create(directory.path());
     let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
     let recorded_id = intent["native_remote_id"].as_str().unwrap();
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
@@ -371,6 +477,7 @@ async fn the_dispatch_intent_is_journaled_before_the_post_is_received() {
     assert!(!while_held.iter().any(|kind| kind == "dispatch_response"));
     let observed = sent(simulator);
     assert!(observed.len() > post_at);
+    assert_journaled_clean_create(directory.path());
 }
 
 /// A dispatch admission that fails stops the send. While the approval is
@@ -468,6 +575,14 @@ fn catalogue_with_sales_as_bank() -> String {
 /// `before_approval`, for a bank voucher: the post's classification reads the
 /// group collection after the catalogue, before the qualified mode.
 fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> {
+    bank_before_approval_with_currencies(catalogue, groups, single_currency())
+}
+
+fn bank_before_approval_with_currencies(
+    catalogue: String,
+    groups: String,
+    currencies: String,
+) -> Vec<ScenarioPlan> {
     let mut plans = Vec::new();
     plans.extend(probe());
     plans.extend(verified_company());
@@ -478,6 +593,7 @@ fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> 
     plans.extend(verified_company());
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans
 }
@@ -485,14 +601,26 @@ fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> 
 /// `after_approval`, for a bank voucher: the queue re-reads the group
 /// collection right after the catalogue, inside the same admission brackets.
 fn bank_after_approval(catalogue: String, groups: String, post: ScenarioPlan) -> Vec<ScenarioPlan> {
+    bank_after_approval_with_currencies(catalogue, groups, single_currency(), post)
+}
+
+fn bank_after_approval_with_currencies(
+    catalogue: String,
+    groups: String,
+    currencies: String,
+    post: ScenarioPlan,
+) -> Vec<ScenarioPlan> {
     let mut plans = probe();
     plans.push(xml(companies()));
+    plans.push(marks_at_binding());
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
     plans.extend(paired(empty_collection()));
+    plans.push(marks_before());
     plans.push(post);
     plans
 }
@@ -514,6 +642,7 @@ fn saved_bank_batch(server: &Server, voucher: Value) -> (ImportLedgerLine, Value
     .unwrap();
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
     server.append_import_ledger(&line).unwrap();
     fs::write(
         server
@@ -590,6 +719,7 @@ async fn each_bank_type_posts_the_request_its_intent_recorded() {
         assert_eq!(observed.len(), post_at + 1, "{type_name}: {response}");
 
         let intent = dispatch_intent(directory.path());
+        assert_journaled_clean_create(directory.path());
         let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
         let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
         assert_eq!(
@@ -661,6 +791,7 @@ async fn a_three_entry_receipt_posts_the_request_its_intent_recorded() {
     let observed = sent(simulator);
     assert_eq!(observed.len(), post_at + 1, "{response}");
     let intent = dispatch_intent(directory.path());
+    assert_journaled_clean_create(directory.path());
     let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
     let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
@@ -768,8 +899,9 @@ async fn a_classification_changed_since_the_build_is_refused_before_approval() {
         (catalogue(), groups_with_debtor_group_under_bank()),
     ] {
         let mut plans = bank_before_approval(catalogue, groups);
-        // The qualified mode probe after the group read is never sent.
-        plans.truncate(plans.len() - probe().len());
+        // The Currency masters and the qualified mode probe after the group
+        // read are never sent.
+        plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
         let expected = plans.len();
         let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -811,4 +943,907 @@ async fn the_desktop_scope_refuses_a_bank_voucher_before_any_request() {
         refused.payload
     );
     assert!(sent(simulator).is_empty());
+}
+
+// bridge#574: the aim is confirmed on the snapshot sent last before the POST,
+// and where the voucher went is read straight after it.
+
+/// The approved Journal post, with `marks` in place of the snapshot sent last
+/// before the POST. Returns the response, the requests observed, and the
+/// number of requests up to and including that snapshot.
+async fn post_with_marks_before(marks: String) -> (Value, usize, usize, Vec<u8>, Vec<u8>) {
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    let marks_at = after.len() - 2;
+    after[marks_at] = xml(marks);
+    let through_marks = plans.len() + marks_at + 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let before = journal(directory.path());
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    (
+        response,
+        observed,
+        through_marks,
+        before,
+        journal(directory.path()),
+    )
+}
+
+#[tokio::test]
+async fn another_company_renamed_to_the_target_refuses_before_the_post() {
+    // The residual #574 case: another loaded company now carries the target's
+    // name, so a post named by SVCURRENTCOMPANY could land in it.
+    let namesake =
+        company_marks(10, 50, "WR2 Unicode Lab").replace("Synthetic Other Lab", "WR2 UNICODE LAB");
+    let (response, observed, through_marks, before, after) = post_with_marks_before(namesake).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "post_company_scope_changed",
+        "{response}"
+    );
+    assert_eq!(
+        observed, through_marks,
+        "nothing after the snapshot: {response}"
+    );
+    assert_eq!(appended_kinds(&before, &after), ["verification_status"]);
+}
+
+#[tokio::test]
+async fn the_target_renamed_since_admission_refuses_before_the_post() {
+    let renamed = company_marks(10, 50, "WR2 Unicode Lab Renamed");
+    let (response, observed, through_marks, before, after) = post_with_marks_before(renamed).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "post_company_scope_changed",
+        "{response}"
+    );
+    assert_eq!(observed, through_marks, "{response}");
+    assert_eq!(appended_kinds(&before, &after), ["verification_status"]);
+}
+
+#[tokio::test]
+async fn an_unreadable_snapshot_refuses_before_the_post() {
+    // T2's live answer to an unmatched SVCURRENTCOMPANY.
+    let refused = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA>\
+                   <LINEERROR>Could not set 'SVCurrentCompany' to 'WR2 Unicode Lab'</LINEERROR>\
+                   </DATA></BODY></ENVELOPE>"
+        .to_string();
+    let (response, observed, through_marks, before, after) = post_with_marks_before(refused).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "post_company_scope_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(observed, through_marks, "{response}");
+    assert_eq!(appended_kinds(&before, &after), ["verification_status"]);
+}
+
+/// After the POST, the snapshot says which companies' voucher marks moved,
+/// and the result carries it even when the readback that follows fails.
+async fn located_after(marks_after: String) -> Value {
+    located_after_response(created_one(), marks_after).await
+}
+
+async fn located_after_response(post_response: String, marks_after: String) -> Value {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(post_response.clone())));
+    plans.push(xml(marks_after));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    assert_eq!(
+        dispatch_intent(directory.path())["record_type"],
+        "dispatch_intent"
+    );
+    let created = parse_import_outcome(&post_response)
+        .expect("the POST answer parses")
+        .counters()
+        .created;
+    assert_eq!(
+        journaled_outcome(directory.path()).map(|outcome| outcome.counters().created),
+        Some(created),
+        "the journaled outcome is the parsed POST answer"
+    );
+    response["structuredContent"]["result"]["post_location"].clone()
+}
+
+#[tokio::test]
+async fn only_the_target_moving_is_reported_as_the_landing() {
+    let located = located_after(company_marks(11, 50, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "target_only", "{located}");
+}
+
+#[tokio::test]
+async fn another_company_moving_instead_is_named_in_the_result() {
+    let located = located_after(company_marks(10, 51, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "suspected_other_company", "{located}");
+    assert_eq!(
+        located["other_companies_moved"][0]["name"],
+        "Synthetic Other Lab"
+    );
+}
+
+#[tokio::test]
+async fn a_snapshot_lost_in_transport_refuses_as_unconfirmed_not_as_an_unknown_outcome() {
+    // The read that aims the post fails before any body arrives: nothing was
+    // sent, so the code must say so rather than "outcome unknown".
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    let marks_at = after.len() - 2;
+    after[marks_at] = marks_before().with_delivery(Delivery::ResetBeforeBody);
+    let through_marks = plans.len() + marks_at + 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let before = journal(directory.path());
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "post_company_scope_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed, through_marks, "{response}");
+    assert_eq!(
+        appended_kinds(&before, &journal(directory.path())),
+        ["verification_status"]
+    );
+}
+
+#[tokio::test]
+async fn the_response_is_journaled_before_the_location_snapshot_is_answered() {
+    // The snapshot after the POST is held for three seconds. While it is held
+    // the journal already carries the dispatch response, so a slow or lost
+    // location read cannot cost the record of the post.
+    let mut plans = before_approval();
+    let after = after_approval(xml(created_one()));
+    let post_at = plans.len() + after.len() - 1;
+    plans.extend(after);
+    plans.push(
+        xml(company_marks(11, 50, "WR2 Unicode Lab"))
+            .with_delivery(Delivery::SlowHeaders(Duration::from_secs(3))),
+    );
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let before = journal(directory.path());
+    let post = SCRIPTED_APPROVAL.scope(
+        ScriptedApproval::approving(),
+        server.call_tool("post_import", args),
+    );
+    let watch = async {
+        let started = std::time::Instant::now();
+        while simulator.received() <= post_at + 1 {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "the location snapshot never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        appended_kinds(&before, &journal(directory.path()))
+    };
+    let (response, while_held) = tokio::join!(post, watch);
+    assert!(
+        while_held.iter().any(|kind| kind == "dispatch_response"),
+        "{while_held:?} {response}"
+    );
+    let _ = sent(simulator);
+    assert_journaled_clean_create(directory.path());
+    assert_eq!(
+        response["structuredContent"]["result"]["post_location"]["state"], "target_only",
+        "{response}"
+    );
+}
+
+#[tokio::test]
+async fn another_company_moving_while_tally_created_nothing_is_not_blamed() {
+    // Tally rejected the post while a colleague's voucher moved another
+    // company's mark: that company must not be named as where this post went.
+    // The rejection is a captured live response (CREATED 0, EXCEPTIONS 1, one
+    // LINEERROR), the shape T7 measured for a post into a company lacking a
+    // ledger.
+    let rejected = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/live_education_w7_baddate_sanitized.xml"
+    )
+    .to_string();
+    assert!(parse_import_outcome(&rejected).is_ok_and(|outcome| outcome.counters().created == 0));
+    let located = located_after_response(rejected, company_marks(10, 51, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "no_creation_reported", "{located}");
+}
+
+#[tokio::test]
+async fn a_post_whose_response_cannot_be_journaled_still_reports_where_it_landed() {
+    // The POST is sent and answered, but another process holds the admission
+    // lock when the response is journaled, so that local write fails. The
+    // location of a post that was sent must survive that failure.
+    let held = xml(created_one()).with_delivery(Delivery::SlowHeaders(Duration::from_secs(2)));
+    let mut plans = before_approval();
+    let after = after_approval(held);
+    let post_at = plans.len() + after.len() - 1;
+    plans.extend(after);
+    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let other = server_at(simulator.address(), directory.path());
+    let post = SCRIPTED_APPROVAL.scope(
+        ScriptedApproval::approving(),
+        server.call_tool("post_import", args),
+    );
+    let hold_lock = async {
+        let started = std::time::Instant::now();
+        // Wait until the POST has been received, so the intent's own use of
+        // the lock is over, then hold the lock while the response is written.
+        while simulator.received() <= post_at {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "the POST never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let lock = other
+            .lock_import_admission()
+            .expect("lock is free while the POST is held");
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        drop(lock);
+    };
+    let (response, ()) = tokio::join!(post, hold_lock);
+    let _ = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_admission_busy",
+        "the journal write must have failed: {response}"
+    );
+    assert_eq!(
+        result["post_location"]["state"], "target_only",
+        "{response}"
+    );
+}
+
+/// The simulated POST answer every test above posts against must be one Tally
+/// actually sends, and must parse as exactly one clean create. When it did not
+/// parse, every test here ran the post with no parsed outcome, so none of them
+/// exercised the clean-success path.
+#[test]
+fn the_simulated_post_answer_parses_as_one_clean_create() {
+    let outcome = parse_import_outcome(&created_one()).expect("the POST answer parses");
+    assert_eq!(outcome.counters().created, 1);
+    assert!(import_outcome_is_clean(Some(&outcome)));
+}
+
+/// A Journal Bridge posted live (bridge#582's lab qualification), as its
+/// export was captured: `native-namespaced-journal`. The batch below is the
+/// one that produced it, so a readback serving this capture is the post's own
+/// voucher, attributed by its `[BRIDGE:…]` marker.
+fn captured_posted_journal() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    ))
+}
+
+fn saved_captured_batch(server: &Server) -> Value {
+    let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-6c79872c-aab6-4be5-a181-18182c8148be", "identity_scheme":"batch_v1",
+        "company_guid":GUID,
+        "endpoint_origin":origin,
+        "company":{"name":"WR2 Unicode Lab","guid":GUID,"company_number":"100004","books_from":"20260401"},
+        "txn_ids":["BRIDGE_MCP_LIVE_20260906_A1"],"date_from":"20260907","date_to":"20260907",
+        "sha256":"", "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":7},
+        "vouchers":[{"bridge_txn_id":"BRIDGE_MCP_LIVE_20260906_A1","date":"20260907",
+            "voucher_type":"Journal","narration":"Bridge MCP batch namespace qualification",
+            "reference":null,"voucher_number":null,
+            "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"12.61","side":"Dr"},
+                {"ledger":"Cash","amount":"12.61","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
+    server.append_import_ledger(&line).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    json!({"company_guid":GUID,"batch_id":line.batch_id})
+}
+
+/// The whole native post, end to end: absent before, one clean create, the
+/// location snapshot, then the readback finds the post's own voucher. This is
+/// the only simulator test that reaches `posted_verified`; the others stop at
+/// the POST, so their final result is the readback failing for want of plans.
+#[tokio::test]
+async fn a_native_post_reads_back_as_posted_verified() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    // The readback: the same verification read the pre-post check made, now
+    // serving the captured voucher.
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(probe());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let args = saved_captured_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(response["isError"], json!(false), "{response}");
+    assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(result["counts"]["posted_verified"], 1, "{response}");
+    assert_eq!(
+        result["post_location"]["state"], "target_only",
+        "{response}"
+    );
+    assert_journaled_clean_create(directory.path());
+}
+
+// bridge#551: a post goes only into a book with exactly one Currency master,
+// checked before approval and again inside the queue.
+
+/// The refusal both surfaces report for the captured two-master book: the
+/// plain reason, naming both masters, with no attempt recorded.
+fn assert_refused_as_multi_currency(result: &Value) {
+    assert_eq!(
+        result["error"]["code"], "import_multi_currency_unsupported",
+        "{result}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+    let message = result["error"]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("This company has more than one currency defined ("),
+        "{message}"
+    );
+    assert!(
+        message.contains("Bridge does not post into multi-currency books yet"),
+        "{message}"
+    );
+    let names =
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&two_currencies())
+            .unwrap()
+            .names;
+    assert_eq!(names.len(), 2);
+    for name in &names {
+        assert!(message.contains(name.as_str()), "{name} in {message}");
+    }
+}
+
+#[tokio::test]
+async fn a_book_with_two_currency_masters_is_refused_before_approval_on_both_surfaces() {
+    for desktop in [false, true] {
+        let mut plans = before_approval_with_currencies(two_currencies());
+        // The qualified mode probe after the Currency read is never sent.
+        plans.truncate(plans.len() - probe().len());
+        let expected = plans.len();
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (line, args) = saved_batch(&server);
+        let scripted = ScriptedApproval::approving();
+        let result = if desktop {
+            let outcome = SCRIPTED_APPROVAL
+                .scope(
+                    scripted.clone(),
+                    server.post_import_checked(&args, Some(&line.sha256), PostScope::JournalOnly),
+                )
+                .await
+                .expect("a refusal is reported as the post's outcome");
+            // What the desktop's webview receives.
+            super::super::desktop_journal::DesktopJournalOperation::from_outcome(outcome).result
+                ["result"]
+                .clone()
+        } else {
+            let response = SCRIPTED_APPROVAL
+                .scope(scripted.clone(), server.call_tool("post_import", args))
+                .await;
+            let result = response["structuredContent"]["result"].clone();
+            assert_eq!(
+                result["error"]["currencies_seen"].as_array().map(Vec::len),
+                Some(2),
+                "{response}"
+            );
+            result
+        };
+        let observed = sent(simulator);
+        assert_refused_as_multi_currency(&result);
+        assert!(scripted.previews().is_empty(), "approval must not be asked");
+        assert_eq!(observed.len(), expected, "{result}");
+        assert!(!String::from_utf8(journal(directory.path()))
+            .unwrap()
+            .contains("\"dispatch_intent\""));
+    }
+}
+
+/// A master added while approval waits: the queue's own Currency read refuses,
+/// after the aim snapshot and before the intent, so the POST is never sent.
+#[tokio::test]
+async fn a_currency_master_added_after_approval_is_refused_in_the_queue() {
+    let mut plans = before_approval();
+    let mut after = after_approval_with_currencies(two_currencies(), xml(created_one()));
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    assert_refused_as_multi_currency(&response["structuredContent"]["result"]);
+    assert_eq!(scripted.previews().len(), 1, "approval was asked once");
+    assert_eq!(
+        observed.len(),
+        expected,
+        "the POST is never sent: {response}"
+    );
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
+}
+
+/// A Payment is held to the same gate as a Journal: refused before approval on
+/// a two-master book, and in the queue when the master arrives after approval.
+#[tokio::test]
+async fn a_payment_into_a_book_with_two_currency_masters_is_refused_before_and_after_approval() {
+    for in_queue in [false, true] {
+        let plans = if in_queue {
+            let mut plans = bank_before_approval(catalogue(), groups());
+            let mut after = bank_after_approval_with_currencies(
+                catalogue(),
+                groups(),
+                two_currencies(),
+                xml(created_one()),
+            );
+            after.pop();
+            plans.extend(after);
+            plans
+        } else {
+            let mut plans =
+                bank_before_approval_with_currencies(catalogue(), groups(), two_currencies());
+            plans.truncate(plans.len() - probe().len());
+            plans
+        };
+        let expected = plans.len();
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_bank_batch(&server, payment());
+        let scripted = ScriptedApproval::approving();
+        let response = SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await;
+        let observed = sent(simulator);
+        assert_refused_as_multi_currency(&response["structuredContent"]["result"]);
+        assert_eq!(
+            scripted.previews().len(),
+            usize::from(in_queue),
+            "{response}"
+        );
+        assert_eq!(observed.len(), expected, "{response}");
+        assert!(!String::from_utf8(journal(directory.path()))
+            .unwrap()
+            .contains("\"dispatch_intent\""));
+    }
+}
+
+/// Currency masters the queue cannot name a base from (none, here: an explicit
+/// edit of the one-master capture) refuse with their own code, and nothing is
+/// posted.
+#[tokio::test]
+async fn currency_masters_without_a_base_are_refused_in_the_queue_with_their_own_code() {
+    let single = single_currency();
+    // The row's own close: CMPINFO's `<CURRENCY>0</CURRENCY>` comes earlier.
+    let row_start = single.find("<CURRENCY NAME=").unwrap();
+    let row_end =
+        row_start + single[row_start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    assert_eq!(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&no_master)
+            .unwrap()
+            .currency_count,
+        0,
+        "the edit must leave a readable collection with no master"
+    );
+    let mut plans = before_approval();
+    let mut after = after_approval_with_currencies(no_master, xml(created_one()));
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_base_currency_undetermined",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(
+        result["error"].get("currencies_seen").is_none(),
+        "{response}"
+    );
+    assert_eq!(
+        observed.len(),
+        expected,
+        "the POST is never sent: {response}"
+    );
+}
+
+// bridge#239: a master changed after the queue's catalogue re-read is refused
+// before the POST, from the target's ALTMSTID in the aim snapshot compared
+// with the one read as the binding reads began.
+
+/// The approved Journal, with the queue's binding-time snapshot answered by
+/// `at_binding` and its aim snapshot by `at_aim`. Returns the response, the
+/// requests observed, and the number up to and including the aim snapshot.
+async fn post_with_master_marks(at_binding: String, at_aim: String) -> (Value, usize, usize) {
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    // The binding snapshot follows the opening mode probe and company read.
+    let binding_at = probe().len() + 1;
+    after[binding_at] = xml(at_binding);
+    let aim_at = after.len() - 2;
+    after[aim_at] = xml(at_aim);
+    let through_aim = plans.len() + aim_at + 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    (response, observed, through_aim)
+}
+
+fn marks_with_target_masters(masters: u64) -> String {
+    replaced_once(
+        &company_marks(10, 50, "WR2 Unicode Lab"),
+        "<ALTMSTID>7</ALTMSTID>",
+        &format!("<ALTMSTID>{masters}</ALTMSTID>"),
+    )
+}
+
+#[tokio::test]
+async fn a_master_changed_after_the_catalogue_re_read_is_refused_before_the_post() {
+    let (response, observed, through_aim) =
+        post_with_master_marks(marks_with_target_masters(7), marks_with_target_masters(8)).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["error"]["code"], "post_masters_moved", "{response}");
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed, through_aim, "the POST is never sent: {response}");
+}
+
+/// The control: another company's masters moving is not the target's, so the
+/// post goes ahead.
+#[tokio::test]
+async fn another_companys_master_change_does_not_refuse_the_post() {
+    let at_aim = replaced_once(
+        &company_marks(10, 50, "WR2 Unicode Lab"),
+        "<ALTMSTID>3</ALTMSTID>",
+        "<ALTMSTID>4</ALTMSTID>",
+    );
+    let (response, observed, through_aim) =
+        post_with_master_marks(marks_with_target_masters(7), at_aim).await;
+    assert!(observed > through_aim, "the POST is sent: {response}");
+}
+
+/// A binding-time snapshot without the target cannot be compared, so the post
+/// is refused as unconfirmed.
+#[tokio::test]
+async fn a_binding_snapshot_without_the_target_is_refused_as_unconfirmed() {
+    let (response, observed, through_aim) = post_with_master_marks(
+        company_marks(10, 50, "Synthetic Renamed Lab"),
+        marks_with_target_masters(7),
+    )
+    .await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "post_masters_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed, through_aim, "{response}");
+}
+
+/// During the approval wait, a ledger renamed and a new one created under its
+/// old name is caught by identity: the queue's catalogue holds the approved
+/// name with a different GUID, and the post is refused before the intent.
+#[tokio::test]
+async fn a_new_ledger_under_an_approved_name_during_approval_is_refused_by_identity() {
+    let replaced = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    // The queue's catalogue: its first report and its replay.
+    let catalogue_at = probe().len() + 2;
+    after[catalogue_at + 1] = xml(replaced.clone());
+    after[catalogue_at + 3] = xml(replaced);
+    // The binding is compared once every queue read is in, after the aim
+    // snapshot; only the POST is never sent.
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_masters_changed",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed.len(), expected, "{response}");
+}
+
+/// The binding-time snapshot lost in transport, or answered with T2's live
+/// refusal: the masters cannot be compared, so the post is refused as
+/// `post_masters_unconfirmed`, never as an unknown outcome. A lost read stops
+/// the queue at once; an unreadable one is refused once the queue's reads are
+/// in, after the aim snapshot. Neither sends the POST or records an intent.
+#[tokio::test]
+async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
+    let refused = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA>\
+                   <LINEERROR>Could not set 'SVCurrentCompany' to 'WR2 Unicode Lab'</LINEERROR>\
+                   </DATA></BODY></ENVELOPE>"
+        .to_string();
+    let binding_at = probe().len() + 1;
+    for lost in [true, false] {
+        let mut plans = before_approval();
+        let mut after = after_approval(xml(created_one()));
+        after[binding_at] = if lost {
+            marks_at_binding().with_delivery(Delivery::ResetBeforeBody)
+        } else {
+            xml(refused.clone())
+        };
+        let expected = plans.len()
+            + if lost {
+                binding_at + 1
+            } else {
+                after.len() - 1
+            };
+        plans.extend(after);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_batch(&server);
+        let before = journal(directory.path());
+        let response = SCRIPTED_APPROVAL
+            .scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            )
+            .await;
+        let observed = sent(simulator).len();
+        let result = &response["structuredContent"]["result"];
+        assert_eq!(
+            result["error"]["code"], "post_masters_unconfirmed",
+            "{response}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+        assert_eq!(observed, expected, "{response}");
+        assert_eq!(
+            appended_kinds(&before, &journal(directory.path())),
+            ["verification_status"]
+        );
+    }
+}
+
+// bridge#239: the ledgers a batch names must still carry the GUIDs its build
+// bound them to; a name alone cannot tell a ledger renamed and replaced.
+
+/// A saved Journal refused before approval by its build-time binding, on the
+/// MCP tool or on the desktop's post. A changed GUID is found on the post's
+/// catalogue read, the last one sent; a record without identities is refused
+/// before any request. No intent is recorded either way.
+async fn refused_by_build_binding(
+    identities: Option<Vec<BoundLedger>>,
+    desktop: bool,
+) -> (Value, usize, usize, bool) {
+    let mut plans = before_approval();
+    let expected = if identities.is_some() {
+        // The Currency read and mode probe after the catalogue are never sent.
+        plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
+        plans.len()
+    } else {
+        plans.clear();
+        0
+    };
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (mut line, args) = saved_batch(&server);
+    line.ledger_identities = identities;
+    server.append_import_ledger(&line).unwrap();
+    let scripted = ScriptedApproval::approving();
+    let result = if desktop {
+        let outcome = SCRIPTED_APPROVAL
+            .scope(
+                scripted.clone(),
+                server.post_import_checked(&args, Some(&line.sha256), PostScope::JournalOnly),
+            )
+            .await
+            .expect("a refusal is reported as the post's outcome");
+        // What the desktop's webview receives.
+        super::super::desktop_journal::DesktopJournalOperation::from_outcome(outcome).result
+            ["result"]
+            .clone()
+    } else {
+        SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await["structuredContent"]["result"]
+            .clone()
+    };
+    let observed = sent(simulator).len();
+    let intent = String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\"");
+    assert!(scripted.previews().is_empty(), "approval must not be asked");
+    (result, observed, expected, intent)
+}
+
+#[tokio::test]
+async fn a_ledger_replaced_under_its_name_since_the_build_is_refused_before_approval() {
+    for desktop in [false, true] {
+        let identities = vec![
+            BoundLedger {
+                name: "Cash".into(),
+                guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff".into(),
+            },
+            BoundLedger {
+                name: "WR2 Sales".into(),
+                guid: "61c6de69-1748-461c-ad3f-162cb949df9f-000000d0".into(),
+            },
+        ];
+        let (result, observed, expected, intent) =
+            refused_by_build_binding(Some(identities), desktop).await;
+        assert_eq!(
+            result["error"]["code"], "import_masters_changed_since_build",
+            "{result}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+        if !desktop {
+            assert_eq!(
+                result["error"]["ledgers_changed"],
+                json!(["Cash"]),
+                "{result}"
+            );
+        }
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("(Cash)"));
+        assert_eq!(observed, expected, "{result}");
+        assert!(!intent);
+    }
+}
+
+#[tokio::test]
+async fn a_batch_built_before_ledger_binding_is_refused_before_any_request() {
+    for desktop in [false, true] {
+        let (result, observed, expected, intent) = refused_by_build_binding(None, desktop).await;
+        assert_eq!(
+            result["error"]["code"], "import_batch_predates_ledger_binding",
+            "{result}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Build the batch again"));
+        assert_eq!(observed, expected, "{result}");
+        assert!(!intent);
+    }
+}
+
+/// The approval preview says the ledgers were checked by identity.
+#[tokio::test]
+async fn the_preview_says_the_ledgers_were_checked_by_identity() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(before_approval())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let scripted = ScriptedApproval::declining();
+    let _ = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let previews = scripted.previews();
+    assert_eq!(previews.len(), 1);
+    assert!(previews[0].contains("Ledgers checked by identity against the build"));
+}
+
+/// A batch dispatched before Bridge recorded ledger identities still
+/// reconciles: `post_import` on it goes to the readback, never to the
+/// "build it again" refusal, since a dispatched batch must not be rebuilt.
+#[tokio::test]
+async fn a_dispatched_batch_without_identities_still_reconciles() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (mut line, args) = saved_batch(&server);
+    line.ledger_identities = None;
+    server.append_import_ledger(&line).unwrap();
+    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    {
+        let _lock = server.lock_import_admission().unwrap();
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_for(
+                &line, &native,
+            ))
+            .unwrap();
+    }
+    let response = server.call_tool("post_import", args).await;
+    let observed = sent(simulator).len();
+    let result = &response["structuredContent"]["result"];
+    assert_ne!(
+        result["error"]["code"], "import_batch_predates_ledger_binding",
+        "{response}"
+    );
+    assert_ne!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(observed > 0, "the readback reads Tally: {response}");
 }

@@ -3,12 +3,13 @@
 //!
 //! Provenance: `rules/ay2026-27.s44ab.toml` holds byte-for-byte verbatim blocks of the
 //! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
-//! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
+//! then `[s40a3]` in full, then the first three lines of `[s269st]`, then `[s269ss_269t]`'s first
+//! three lines and its two lender-type lists with their status lines,
 //! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables, then
 //! `[due_dates]` as three blocks (header, the three dates, `status`), then `[ledger_scrutiny]` in
 //! full, then `[s194c]`, `[s194i]` and `[deductor]` in full and `[s194j]` as three blocks
 //! (header, its three value lines, `status`), then `[s43b_h]` in full, then `[s43b]` and
-//! `[s36_1_va]` as blocks cut clear of their comments --
+//! `[s36_1_va]` as blocks cut clear of their comments, then `[s194a]` with `status` cut at its value --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -24,7 +25,7 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "82bafdc4815695b0ededaf384581c9592159130b848761b5e550731fef99e894";
+    "0374194c02b12834c21fde79d4a3256ada5af2a2c6707f7625906ef47cbeaece";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -86,6 +87,23 @@ pub struct Rules {
     /// `tds_payees`: `[s194j].aggregate_paise`. `None` without `[s194j]`, which the test does not
     /// refuse: it falls back to its own default, as the reference does.
     pub s194j_aggregate_paise: Option<i64>,
+    /// `loans_interest`: `[s194a]`, `None` when the rules carry no such table (the test then
+    /// refuses, as the reference's `rules["s194a"]` raises).
+    pub s194a: Option<S194a>,
+    /// `loans_interest`: `[s269ss_269t].exempt_lender_types`, the wider s.269SS/s.269T breach
+    /// exemption. `None` when the key is absent; the test then uses its own default, as the
+    /// reference's `.get(..., DEFAULT)` does.
+    pub s269ss_269t_exempt_lender_types: Option<Vec<String>>,
+    /// `loans_interest`: `[s269ss_269t].reporting_exempt_lender_types`, the narrower Clause 31
+    /// reporting exemption. `None` when absent, defaulted by the test as above.
+    pub s269ss_269t_reporting_exempt_lender_types: Option<Vec<String>>,
+}
+
+/// `[s194a]`: the lender types exempt from s.194A and the threshold for payers other than a bank.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S194a {
+    pub exempt_lender_types: Vec<String>,
+    pub threshold_other_than_securities_paise: i64,
 }
 
 /// `[s194c]`: the single-sum and aggregate limits of s.194C(5).
@@ -262,6 +280,25 @@ impl Rules {
             s194j_aggregate_paise: optional("s194j")
                 .map(|t| int_in(t, "s194j", "aggregate_paise"))
                 .transpose()?,
+            s194a: match optional("s194a") {
+                Some(t) => Some(S194a {
+                    exempt_lender_types: strings_in(t, "s194a", "exempt_lender_types")?,
+                    threshold_other_than_securities_paise: int_in(
+                        t,
+                        "s194a",
+                        "threshold_other_than_securities_paise",
+                    )?,
+                }),
+                None => None,
+            },
+            s269ss_269t_exempt_lender_types: s269ss_269t
+                .contains_key("exempt_lender_types")
+                .then(|| strings_in(s269ss_269t, "s269ss_269t", "exempt_lender_types"))
+                .transpose()?,
+            s269ss_269t_reporting_exempt_lender_types: s269ss_269t
+                .contains_key("reporting_exempt_lender_types")
+                .then(|| strings_in(s269ss_269t, "s269ss_269t", "reporting_exempt_lender_types"))
+                .transpose()?,
         })
     }
 
@@ -378,6 +415,43 @@ mod tests {
             Some(1_000_000_000)
         );
         assert_eq!(rules.s194j_aggregate_paise, Some(5_000_000));
+    }
+
+    #[test]
+    fn vendored_rules_carry_the_loans_interest_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(
+            rules.s194a,
+            Some(S194a {
+                exempt_lender_types: vec![
+                    "bank".to_string(),
+                    "cooperative_bank".to_string(),
+                    "insurer".to_string()
+                ],
+                threshold_other_than_securities_paise: 1_000_000,
+            })
+        );
+        assert_eq!(
+            rules.s269ss_269t_exempt_lender_types.unwrap(),
+            [
+                "bank",
+                "cooperative_bank",
+                "government",
+                "government_company",
+                "statutory_corporation",
+                "post_office_savings_bank",
+                "notified_institution"
+            ]
+        );
+        assert_eq!(
+            rules.s269ss_269t_reporting_exempt_lender_types.unwrap(),
+            [
+                "government",
+                "government_company",
+                "bank",
+                "statutory_corporation"
+            ]
+        );
     }
 
     /// The vendored excerpt is public: the source's own comment beside `return_non_audit_firm`

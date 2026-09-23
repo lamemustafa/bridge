@@ -30,6 +30,7 @@
 pub mod applicability_44ab;
 pub mod binding;
 pub mod book;
+pub mod book_keeping_quality;
 pub mod canonical;
 pub mod cash_44ab;
 pub mod cash_book_integrity;
@@ -44,6 +45,7 @@ pub mod findings;
 pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
+pub mod loans_interest;
 pub mod read;
 pub mod registry;
 pub mod rules;
@@ -121,6 +123,9 @@ pub struct Engagement {
     /// [`Engagement::bind`] for every test, as the reference's binding does, and the source is
     /// then replaced by `{ kind = "ledgers", ledgers = [...] }`. `None` when absent.
     pub trade_creditors_source: Option<toml::Value>,
+    /// `loans_interest`-only: `[loans]`, filled by [`Engagement::bind`] ([`LoansConfig`]); empty on
+    /// an engagement that has not been bound.
+    pub loans: LoansConfig,
     /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table. Filled by
     /// [`Engagement::bind`]; see [`CreditorAgeingConfig`] for what is typed when.
     pub creditor_ageing: CreditorAgeingConfig,
@@ -144,6 +149,9 @@ pub struct Engagement {
     /// reads `[tds]` unconditionally, so a missing map refuses its whole pack too). `[tds_payees]`
     /// without `[tds]` is not read.
     pub tds: Option<TdsConfig>,
+    /// `book_keeping_quality`-only: its `[roles]` name locations, bound. Filled by
+    /// [`Engagement::bind`]; see [`BookKeepingQualityConfig`] for what is typed when.
+    pub book_keeping_quality: BookKeepingQualityConfig,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -151,6 +159,25 @@ pub struct Engagement {
     raw_cfg: toml::Table,
     /// The directory `[snapshot].path` and a legacy trade-creditor source are relative to.
     base_dir: PathBuf,
+}
+
+/// `[loans]` from the client config, bound. Empty when the config has no `[loans]` table: the
+/// reference's `loan_ledgers_config` then gives `{}`, which `loans_interest` takes as nothing to
+/// report.
+///
+/// **Typed lazily**, as [`CreditorAgeingConfig`] is: [`Engagement::bind`] binds the three name
+/// locations and refuses a malformed one (`BIND-ID-MALFORMED`); every other value is kept as
+/// written and typed only when `loans_interest` runs.
+#[derive(Debug, Clone, Default)]
+pub struct LoansConfig {
+    /// `[loans]` is present but is not a table: `loans_interest` refuses when it runs, as the
+    /// reference's `cfg.get("loans", {}).get(...)` fails there.
+    pub not_a_table: bool,
+    /// `[loans.loan_ledgers]`, keyed by each loan ledger's bound name: its entry as written, with
+    /// `interest_ledger` (when present) replaced by the bound name.
+    pub loan_ledgers: BTreeMap<String, toml::Value>,
+    /// `[loans].shared_interest_ledgers`, bound; empty when absent.
+    pub shared_interest_ledgers: Vec<String>,
 }
 
 /// `[creditor_ageing_43bh]` from the client config, every key optional: the reference's
@@ -224,6 +251,112 @@ pub(crate) fn py_int(v: &toml::Value, what: &str) -> Result<i64> {
             Ok(if neg { -n } else { n })
         }
         _ => Err(bad()),
+    }
+}
+
+/// `book_keeping_quality`'s `[roles]` name locations: `payment_channel_debtors`,
+/// `gst_payment_ledgers`, `writeoff_discount_ledgers` (lists of ledger names) and `tax_ledgers`
+/// (a table of GST head -> ledger names), each `None` when the key is absent.
+///
+/// **Typed lazily**, the batch convention for a test's own inputs. [`Engagement::bind`] checks
+/// and binds what the reference's binding checks and binds for every test: a present list must be
+/// a list of names, and a `tax_ledgers` table's every value too, or binding refuses
+/// `BIND-ID-MALFORMED`. Everything else waits until `book_keeping_quality` runs
+/// ([`BookKeepingQualityConfig::inputs`]): a missing key, a `tax_ledgers` that is not a table, and
+/// `reissue_narration_terms` (not a name, never bound) refuse that test and no other. The reference
+/// reads all five keys before its pack runs any test, so there one missing key refuses the pack.
+#[derive(Debug, Clone, Default)]
+pub struct BookKeepingQualityConfig {
+    pub payment_channel_debtors: Option<Vec<String>>,
+    pub gst_payment_ledgers: Option<Vec<String>>,
+    pub writeoff_discount_ledgers: Option<Vec<String>>,
+    /// `[roles].tax_ledgers`, when present.
+    pub tax_ledgers: Option<TaxLedgers>,
+}
+
+/// `[roles].tax_ledgers` as binding found it.
+#[derive(Debug, Clone)]
+pub enum TaxLedgers {
+    /// Each GST head with its bound ledgers, in the parsed table's order.
+    Heads(Vec<(String, Vec<String>)>),
+    /// Present but not a table: `book_keeping_quality` refuses when it runs.
+    NotATable,
+}
+
+impl BookKeepingQualityConfig {
+    /// The test's typed inputs, refusing what the reference's `book_keeping_quality_config` and
+    /// `tax_ledgers_by_head` refuse. `raw_roles` is the unbound `[roles]` table, for
+    /// `reissue_narration_terms`, which `list()` reads as the reference does: a list's items
+    /// (each must be text, as `.upper()` needs), a string's characters, a table's keys.
+    ///
+    /// Meaningful on a bound engagement only ([`Engagement::bind`] fills the name locations); on
+    /// one that has not been bound every name location reads as missing.
+    ///
+    /// One divergence, a refusal: a ledger listed under two different GST heads. The reference
+    /// keeps the head that comes last in the file; the parsed TOML here does not keep the file's
+    /// order, so which head is last cannot be known.
+    pub fn inputs(&self, raw_roles: Option<&toml::Table>) -> Result<book_keeping_quality::Inputs> {
+        let missing = |key: &str| {
+            AuditError::Config(format!("client config missing required key 'roles.{key}'"))
+        };
+        let set = |v: &Option<Vec<String>>, key: &str| -> Result<BTreeSet<String>> {
+            Ok(v.as_ref()
+                .ok_or_else(|| missing(key))?
+                .iter()
+                .cloned()
+                .collect())
+        };
+        let heads = match &self.tax_ledgers {
+            None => return Err(missing("tax_ledgers")),
+            Some(TaxLedgers::NotATable) => {
+                return Err(AuditError::Config(
+                    "book_keeping_quality: [roles].tax_ledgers is not a table".to_string(),
+                ))
+            }
+            Some(TaxLedgers::Heads(heads)) => heads,
+        };
+        let mut tax_ledgers_by_head: BTreeMap<String, String> = BTreeMap::new();
+        for (head, ledgers) in heads {
+            for ledger in ledgers {
+                if let Some(other) = tax_ledgers_by_head.insert(ledger.clone(), head.clone()) {
+                    if other != *head {
+                        return Err(AuditError::Config(format!(
+                            "book_keeping_quality: ledger {ledger:?} is listed under GST heads {other:?} and {head:?}; the reference keeps the one later in the file, which is not known here"
+                        )));
+                    }
+                }
+            }
+        }
+        let payment_channel_debtors =
+            set(&self.payment_channel_debtors, "payment_channel_debtors")?;
+        let gst_payment_ledgers = set(&self.gst_payment_ledgers, "gst_payment_ledgers")?;
+        let writeoff_discount_ledgers =
+            set(&self.writeoff_discount_ledgers, "writeoff_discount_ledgers")?;
+        let terms = raw_roles
+            .and_then(|r| r.get("reissue_narration_terms"))
+            .ok_or_else(|| missing("reissue_narration_terms"))?;
+        let not_text = || {
+            AuditError::Config(
+                "book_keeping_quality: [roles].reissue_narration_terms holds a value that is not text"
+                    .to_string(),
+            )
+        };
+        let reissue_narration_terms = match terms {
+            toml::Value::Array(items) => items
+                .iter()
+                .map(|t| t.as_str().map(str::to_string).ok_or_else(not_text))
+                .collect::<Result<Vec<_>>>()?,
+            toml::Value::String(s) => s.chars().map(String::from).collect(),
+            toml::Value::Table(t) => t.keys().cloned().collect(),
+            _ => return Err(not_text()),
+        };
+        Ok(book_keeping_quality::Inputs {
+            payment_channel_debtors,
+            tax_ledgers_by_head,
+            gst_payment_ledgers,
+            reissue_narration_terms,
+            writeoff_discount_ledgers,
+        })
     }
 }
 
@@ -659,6 +792,7 @@ not YYYY-MM-DD"
             tds_tcs_26as,
             tds_tcs_26as_missing,
             tds,
+            book_keeping_quality: BookKeepingQualityConfig::default(),
             entity_type: client
                 .get("entity_type")
                 .map(|v| {
@@ -677,6 +811,7 @@ not YYYY-MM-DD"
                 .transpose()?,
             creditor_groups: None,
             trade_creditors_source: roles.get("trade_creditors_source").cloned(),
+            loans: LoansConfig::default(),
             creditor_ageing: CreditorAgeingConfig::default(),
             statutory_dues: StatutoryDuesConfig::default(),
             base_dir: base_dir.to_path_buf(),
@@ -876,6 +1011,48 @@ pub fn depreciation_on(
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 
+/// Run `loans_interest` on a book and return its canonical parity dump, with the module's own
+/// LOAN-1/2/3 invariants. The previous-year turnover is `[tds].previous_year_turnover_paise`, as
+/// the reference's pack reads it; absent without a `[tds]` table.
+pub fn loans_interest_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("loans_interest needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    if bound.loans.not_a_table {
+        return Err(AuditError::Config("[loans] is not a table".to_string()));
+    }
+    let loans = loans_interest::loan_config(&bound.loans.loan_ledgers)?;
+    let cash = book.ledgers_under_any(&bound.cash_groups);
+    let bank = book.ledgers_under_any(&bound.bank_groups);
+    let shared: BTreeSet<String> = bound
+        .loans
+        .shared_interest_ledgers
+        .iter()
+        .cloned()
+        .collect();
+    let turnover = bound
+        .tds
+        .as_ref()
+        .and_then(|t| t.previous_year_turnover_paise);
+    let result = loans_interest::run(
+        book,
+        rules,
+        &entity_type,
+        &loans,
+        turnover,
+        &cash,
+        &bank,
+        &shared,
+    )?;
+    let module_check = loans_interest::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
 /// Read, verify, build the book, run `depreciation` and return its canonical parity dump.
 pub fn depreciation_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     depreciation_on(engagement, &load_book(engagement)?, rules)
@@ -1029,6 +1206,26 @@ pub fn stale_balances_41_1_on(
     let (_engagement, _report) = engagement.bind(book)?;
     let result = stale_balances_41_1::run(book, rules)?;
     let module_check = stale_balances_41_1::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `book_keeping_quality` on a book and return its canonical parity dump, its module check
+/// (BKQ-1) included. Refuses when a required `[roles]` input is missing or mistyped
+/// ([`BookKeepingQualityConfig::inputs`]).
+pub fn book_keeping_quality_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
+    let raw_roles = engagement
+        .raw_cfg
+        .get("roles")
+        .and_then(toml::Value::as_table);
+    let inputs = engagement.book_keeping_quality.inputs(raw_roles)?;
+    let cash = book.ledgers_under_any(&engagement.cash_groups);
+    let result = book_keeping_quality::run(book, rules, &cash, &inputs)?;
+    let module_check = book_keeping_quality::check_invariants(book, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 

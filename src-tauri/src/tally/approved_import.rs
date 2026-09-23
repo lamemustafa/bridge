@@ -20,11 +20,31 @@ pub(crate) struct ApprovedImport {
     ledger_binding: StandardLedgerCatalogBinding,
     /// The group collection, for a Payment, Receipt or Contra: its legs'
     /// classification is re-derived from it inside the queue. A Journal has
-    /// none and its queued request sequence is unchanged.
+    /// none, so it adds no group read to the queue.
     group_collection_request: Option<AgentReadRequest>,
+    /// The company's Currency masters, re-read inside the queue: a post goes
+    /// only into a book with exactly one (bridge#551).
+    currency_request: AgentReadRequest,
+    /// The all-company change marks, read last before the POST to confirm the
+    /// aim and again right after it to see where the voucher went (#574).
+    company_marks_request: AgentReadRequest,
+}
+
+/// What the queue read for the last admission before the POST.
+pub(crate) struct QueuedAdmission<'a> {
+    pub(crate) first: &'a str,
+    pub(crate) second: &'a str,
+    pub(crate) catalogue: &'a str,
+    pub(crate) groups: Option<&'a str>,
+    pub(crate) currencies: &'a str,
+    /// The all-company marks read as the binding reads began (#239).
+    pub(crate) company_marks_at_binding: &'a str,
+    pub(crate) company_marks: &'a str,
+    pub(crate) ledger_binding: &'a StandardLedgerCatalogBinding,
 }
 
 impl ApprovedImport {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn confirm(
         xml: String,
         preview: &str,
@@ -33,6 +53,8 @@ impl ApprovedImport {
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
         group_collection_request: Option<AgentReadRequest>,
+        currency_request: AgentReadRequest,
+        company_marks_request: AgentReadRequest,
     ) -> Result<Self, String> {
         approve(preview).await?;
         Ok(Self {
@@ -42,6 +64,8 @@ impl ApprovedImport {
             ledger_catalogue_request,
             ledger_binding,
             group_collection_request,
+            currency_request,
+            company_marks_request,
         })
     }
 
@@ -65,6 +89,14 @@ impl ApprovedImport {
         self.group_collection_request.clone()
     }
 
+    pub(super) fn currency_request(&self) -> AgentReadRequest {
+        self.currency_request.clone()
+    }
+
+    pub(super) fn company_marks_request(&self) -> AgentReadRequest {
+        self.company_marks_request.clone()
+    }
+
     /// Recheck the operator-approved dates after the endpoint queue admits this
     /// request. The observed product/mode can change while native approval waits.
     pub(super) fn require_boundary_profile(
@@ -84,6 +116,8 @@ impl ApprovedImport {
         voucher_date: TallyDate,
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
+        currency_request: AgentReadRequest,
+        company_marks_request: AgentReadRequest,
     ) -> Self {
         // Carries the seam marker so the shipped-binary scan also covers this
         // bypass (bridge#583).
@@ -98,6 +132,8 @@ impl ApprovedImport {
             ledger_catalogue_request,
             ledger_binding,
             group_collection_request: None,
+            currency_request,
+            company_marks_request,
         }
     }
 }
@@ -118,6 +154,33 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// with one: a wiring fault, refused before any request is sent.
     #[error("import_post_admission_inconsistent")]
     AdmissionInconsistent,
+    /// The snapshot sent last before the POST no longer shows exactly one
+    /// loaded company with the target's GUID and name, or shows another loaded
+    /// company sharing its name (#574).
+    #[error("post_company_scope_changed")]
+    CompanyScopeChanged,
+    /// That snapshot could not be read, so the aim cannot be confirmed.
+    #[error("post_company_scope_unconfirmed")]
+    CompanyScopeUnconfirmed,
+    /// The company defines more than one Currency master. Bridge's amounts are
+    /// plain base-currency figures, and which master is the base cannot be
+    /// identified yet (bridge#601), so no leg can be shown to be in it
+    /// (bridge#551). Carries every master's NAME, for the refusal to name.
+    #[error("import_multi_currency_unsupported")]
+    MultiCurrencyBook { currencies: Vec<String> },
+    /// The company's Currency masters read as none, or the response does not
+    /// parse (a master without a NAME does not).
+    #[error("import_base_currency_undetermined")]
+    BaseCurrencyUndetermined,
+    /// The target's master mark (ALTMSTID) moved between the snapshot taken as
+    /// the queue's binding reads began and the aim snapshot read last before
+    /// the POST: a master changed after the catalogue re-read (bridge#239).
+    #[error("post_masters_moved")]
+    MastersMoved,
+    /// That comparison could not be made: the first snapshot could not be
+    /// read, or either did not hold exactly one row for the target.
+    #[error("post_masters_unconfirmed")]
+    MastersUnconfirmed,
 }
 
 /// The native approval every real post goes through. Outside this crate's own

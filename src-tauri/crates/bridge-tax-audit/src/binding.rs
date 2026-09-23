@@ -2,7 +2,8 @@
 //!
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
 //! `[roles].round_off_ledgers`, `[tds].nature_by_ledger`'s and `[tds].payee_aliases`' keys,
-//! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys,
+//! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys, each loan's
+//! `interest_ledger` and `[loans].shared_interest_ledgers`,
 //! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers`,
 //! `[partners.*].interest_ledger`, `[tds_tcs_26as]`'s three ledger lists and its
 //! `deductor_aliases` values (the keys are TANs),
@@ -90,6 +91,25 @@ pub struct BindingReport {
     pub bound_by_id: usize,
     /// Distinct bare names resolved by exact name.
     pub bound_by_name: usize,
+}
+
+/// The reference binding's `names_at` for a `list` location: a list of names, or
+/// [`BIND_ID_MALFORMED`] naming the location.
+fn names_at(value: &toml::Value, location: &str) -> Result<Vec<String>> {
+    value
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .map(|x| x.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| {
+            AuditError::refused(
+                BIND_ID_MALFORMED,
+                format!("{location}: expected a list of names, got {value}"),
+            )
+        })
 }
 
 fn malformed(table: &str, label: &str, detail: &str) -> AuditError {
@@ -595,6 +615,50 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
+    // `book_keeping_quality`'s name locations, in the reference's `LEDGER_PATHS` order (after
+    // `round_off_ledgers`, before `[tds]`): the three lists, then every `tax_ledgers` head.
+    // Read from the raw config, as the reference's binding reads its own; typed lazily
+    // (`BookKeepingQualityConfig`).
+    let roles = engagement
+        .raw_cfg
+        .get("roles")
+        .and_then(toml::Value::as_table);
+    let mut book_keeping_quality = crate::BookKeepingQualityConfig::default();
+    for (key, slot) in [
+        (
+            "payment_channel_debtors",
+            &mut book_keeping_quality.payment_channel_debtors,
+        ),
+        (
+            "gst_payment_ledgers",
+            &mut book_keeping_quality.gst_payment_ledgers,
+        ),
+        (
+            "writeoff_discount_ledgers",
+            &mut book_keeping_quality.writeoff_discount_ledgers,
+        ),
+    ] {
+        if let Some(value) = roles.and_then(|r| r.get(key)) {
+            let location = format!("roles.{key}");
+            *slot = Some(lbinder.bind_list(&names_at(value, &location)?, &location)?);
+        }
+    }
+    if let Some(value) = roles.and_then(|r| r.get("tax_ledgers")) {
+        book_keeping_quality.tax_ledgers = Some(match value.as_table() {
+            None => crate::TaxLedgers::NotATable,
+            Some(heads) => crate::TaxLedgers::Heads(
+                heads
+                    .iter()
+                    .map(|(head, names)| {
+                        let location = format!("roles.tax_ledgers.{head}");
+                        let bound = lbinder.bind_list(&names_at(names, &location)?, &location)?;
+                        Ok((head.clone(), bound))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+        });
+    }
+
     // `[tds]` and `[tds_payees]` bind before `[loans]` and `[depreciation]`, as they come before
     // both in the reference's `LEDGER_PATHS` (only which refusal is reported first depends on it).
     // A payee alias's VALUE is a payee entity label, not a ledger, and is left as written.
@@ -636,10 +700,46 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
             .collect::<Result<_>>()?;
     }
 
+    // `[loans]`'s three name locations, in the reference's LEDGER_PATHS order: the loan ledgers
+    // (the table's keys), each loan's `interest_ledger`, then `shared_interest_ledgers`. A loan
+    // entry that is not a table has no `interest_ledger` location, as the reference's `_expand`
+    // skips it; `loans_interest` refuses it when it runs. Each `interest_ledger` is named by the
+    // loan's key as written, and lands on the entry under the loan's bound name, as the
+    // reference's `bind_config` does since its commit 76310f60.
+    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &["loans", "loan_ledgers"])?;
     let loan_pairs = lbinder.bind_keys(
-        engagement.loan_ledgers_configured.iter().cloned(),
+        raw_loan_ledgers.into_iter().flat_map(|t| t.keys().cloned()),
         "loans.loan_ledgers",
     )?;
+    let mut loan_ledgers = BTreeMap::new();
+    for (orig, bound) in &loan_pairs {
+        let mut entry = raw_loan_ledgers.expect("a key came from the table")[orig].clone();
+        if let Some(t) = entry.as_table_mut() {
+            if let Some(v) = t.get("interest_ledger") {
+                let location = format!("loans.loan_ledgers.{orig}.interest_ledger");
+                let name = v.as_str().ok_or_else(|| {
+                    AuditError::refused(
+                        BIND_ID_MALFORMED,
+                        format!("{location}: expected a name, got {v}"),
+                    )
+                })?;
+                let name = lbinder.bind_one(name, &location)?;
+                t.insert("interest_ledger".to_string(), toml::Value::from(name));
+            }
+        }
+        loan_ledgers.insert(bound.clone(), entry);
+    }
+    let loans = crate::LoansConfig {
+        not_a_table: engagement
+            .raw_cfg
+            .get("loans")
+            .is_some_and(|v| !v.is_table()),
+        loan_ledgers,
+        shared_interest_ledgers: lbinder.bind_list(
+            &list_at(&engagement.raw_cfg, &["loans", "shared_interest_ledgers"])?,
+            "loans.shared_interest_ledgers",
+        )?,
+    };
     let loan_ledgers_configured: Vec<String> = loan_pairs.into_iter().map(|(_, b)| b).collect();
 
     let mut depreciation = engagement.depreciation.clone();
@@ -776,6 +876,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         bank_groups,
         round_off_ledgers,
         loan_ledgers_configured,
+        loans,
         depreciation,
         partner_interest_ledgers,
         creditor_groups,
@@ -784,6 +885,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         statutory_dues,
         tds,
         tds_tcs_26as,
+        book_keeping_quality,
         ..engagement.clone()
     };
     Ok((bound, report))
@@ -1872,6 +1974,149 @@ deductor_aliases = 5\n"
         assert!(review_register_rows(&[]).is_empty());
     }
 
+    // ---- [loans]: loan_ledgers keys, each loan's interest_ledger, shared_interest_ledgers ----
+
+    fn book_with_loan(
+        loan: &str,
+        loan_guid: &str,
+        interest: &str,
+        interest_guid: &str,
+    ) -> book::Book {
+        let mut b = book("Cash-in-Hand", "", None);
+        b.ledgers.insert(
+            loan.to_string(),
+            ledger(loan, "Unsecured Loans", loan_guid, None),
+        );
+        b.ledgers.insert(
+            interest.to_string(),
+            ledger(interest, "Indirect Expenses", interest_guid, None),
+        );
+        b
+    }
+
+    fn loan_entry(bound: &Engagement, loan: &str) -> toml::Table {
+        bound.loans.loan_ledgers[loan].as_table().unwrap().clone()
+    }
+
+    #[test]
+    fn a_renamed_loan_ledger_keeps_its_interest_ledger() {
+        // The reference raised KeyError here before 76310f60; it now binds the entry whole.
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Old Loan\" = {G_ROUNDOFF:?}\n\
+             \n[loans.loan_ledgers.\"Old Loan\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Loan Interest\"\n"
+        ));
+        let b = book_with_loan("New Loan", G_ROUNDOFF, "Loan Interest", G_OTHER);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            bound.loans.loan_ledgers.keys().collect::<Vec<_>>(),
+            ["New Loan"]
+        );
+        let entry = loan_entry(&bound, "New Loan");
+        assert_eq!(entry["interest_ledger"].as_str(), Some("Loan Interest"));
+        assert_eq!(entry["lender"].as_str(), Some("x"));
+        assert_eq!(bound.loan_ledgers_configured, ["New Loan"]);
+        assert_eq!(report.drifts.len(), 1);
+        assert_eq!(report.drifts[0].paths, ["loans.loan_ledgers"]);
+    }
+
+    #[test]
+    fn a_renamed_interest_ledger_is_bound_and_its_label_is_used() {
+        // A [ledger_ids] label used only by an interest_ledger (or the shared list) is a used label,
+        // as in the reference; before these locations were bound it was refused BIND-ID-UNUSED.
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Old Interest\" = {G_OTHER:?}\n\
+             \n[loans]\nshared_interest_ledgers = [\"Old Interest\"]\n\
+             \n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Old Interest\"\n"
+        ));
+        let b = book_with_loan("Loan A", "", "New Interest", G_OTHER);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            loan_entry(&bound, "Loan A")["interest_ledger"].as_str(),
+            Some("New Interest")
+        );
+        assert_eq!(bound.loans.shared_interest_ledgers, ["New Interest"]);
+        assert_eq!(
+            report.drifts[0].paths,
+            [
+                "loans.loan_ledgers.Loan A.interest_ledger",
+                "loans.shared_interest_ledgers"
+            ]
+        );
+        // The unbound engagement is untouched.
+        assert!(e.loans.loan_ledgers.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_interest_or_shared_ledger_refuses_naming_its_location() {
+        let b = book_with_loan("Loan A", "", "Loan Interest", "");
+        let err = engagement(
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Loan interest\"\n",
+        )
+        .bind(&b)
+        .unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("loans.loan_ledgers.Loan A.interest_ledger"));
+        let err = engagement("\n[loans]\nshared_interest_ledgers = [\"Loan interest\"]\n")
+            .bind(&b)
+            .unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("loans.shared_interest_ledgers"));
+    }
+
+    #[test]
+    fn a_malformed_loans_location_refuses() {
+        let b = book_with_loan("Loan A", "", "Loan Interest", "");
+        for extra in [
+            "\n[loans]\nloan_ledgers = [\"Loan A\"]\n",
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\ninterest_ledger = 5\n",
+            "\n[loans]\nshared_interest_ledgers = \"Loan Interest\"\n",
+        ] {
+            let err = engagement(extra).bind(&b).unwrap_err();
+            assert_eq!(err.code(), Some(BIND_ID_MALFORMED), "{extra}");
+        }
+        // A loan entry that is not a table has no interest_ledger location: it binds its key and
+        // is kept as written, for loans_interest to refuse when it runs.
+        let (bound, _) = engagement("\n[loans.loan_ledgers]\n\"Loan A\" = 5\n")
+            .bind(&b)
+            .unwrap();
+        assert_eq!(bound.loans.loan_ledgers["Loan A"], toml::Value::Integer(5));
+    }
+
+    #[test]
+    fn a_malformed_loans_value_fails_only_loans_interest() {
+        let rules = crate::rules::Rules::vendored().unwrap();
+        let b = book_with_loan("Loan A", "", "Loan Interest", "");
+        let with = |extra: &str| {
+            let mut e = engagement(extra);
+            e.entity_type = Some("firm".to_string());
+            e
+        };
+        // The control: a well-formed loan runs.
+        let ok = with(
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Loan Interest\"\n",
+        );
+        assert!(crate::loans_interest_on(&ok, &b, &rules).is_ok());
+        for extra in [
+            "\n[[loans]]\nloan_ledgers = {}\n",
+            "\n[loans.loan_ledgers]\n\"Loan A\" = 5\n",
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender_type = \"nbfc\"\n",
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = 3\n",
+        ] {
+            let e = with(extra);
+            assert!(e.bind(&b).is_ok(), "{extra}");
+            assert!(crate::cash_44ab_on(&e, &b, &rules).is_ok(), "{extra}");
+            assert!(
+                crate::cash_payments_40a3_on(&e, &b, &rules).is_ok(),
+                "{extra}"
+            );
+            assert!(crate::loans_interest_on(&e, &b, &rules).is_err(), "{extra}");
+        }
+    }
+
     // ---- config parse errors surface through Engagement::from_toml, not bind ----
 
     #[test]
@@ -1893,5 +2138,149 @@ deductor_aliases = 5\n"
     fn helper_engagement_err_reports_config_errors() {
         let err = engagement_err("cash_groups = 5\n"); // shadows the valid list with a bad type
         assert!(matches!(err, AuditError::Config(_)));
+    }
+
+    // ---- book_keeping_quality locations ----
+
+    fn bkq(extra: &str) -> Result<crate::book_keeping_quality::Inputs> {
+        let e = engagement(extra);
+        let (bound, _) = e.bind(&book("Cash-in-Hand", G_CASH, None))?;
+        let roles = bound.raw_cfg.get("roles").and_then(toml::Value::as_table);
+        bound.book_keeping_quality.inputs(roles)
+    }
+
+    const BKQ_ALL: &str = "payment_channel_debtors = [\"Sales\"]\n\
+                           gst_payment_ledgers = []\n\
+                           writeoff_discount_ledgers = [\"Cash\"]\n\
+                           reissue_narration_terms = [\"re-issue\"]\n\
+                           tax_ledgers = { CGST = [\"Sales\"] }\n";
+
+    /// The four name locations bind; the typed inputs come out as the reference passes them.
+    #[test]
+    fn bkq_locations_bind_and_type() {
+        let i = bkq(BKQ_ALL).unwrap();
+        assert_eq!(
+            i.payment_channel_debtors,
+            BTreeSet::from(["Sales".to_string()])
+        );
+        assert!(i.gst_payment_ledgers.is_empty());
+        assert_eq!(
+            i.writeoff_discount_ledgers,
+            BTreeSet::from(["Cash".to_string()])
+        );
+        assert_eq!(i.reissue_narration_terms, vec!["re-issue".to_string()]);
+        assert_eq!(
+            i.tax_ledgers_by_head,
+            BTreeMap::from([("Sales".to_string(), "CGST".to_string())])
+        );
+    }
+
+    /// A renamed ledger follows its GUID in every book_keeping_quality location: each of the
+    /// three lists and a tax_ledgers head.
+    #[test]
+    fn bkq_locations_bind_by_identity() {
+        let extra = format!(
+            "payment_channel_debtors = [\"Old Cash\"]\n\
+             gst_payment_ledgers = [\"Old Cash\"]\n\
+             writeoff_discount_ledgers = [\"Old Cash\"]\n\
+             reissue_narration_terms = []\n\
+             tax_ledgers = {{ CGST = [\"Old Cash\"] }}\n\
+             [ledger_ids]\n\"Old Cash\" = {G_CASH:?}\n"
+        );
+        let i = bkq(&extra).unwrap();
+        let cash = BTreeSet::from(["Cash".to_string()]);
+        assert_eq!(i.payment_channel_debtors, cash);
+        assert_eq!(i.gst_payment_ledgers, cash);
+        assert_eq!(i.writeoff_discount_ledgers, cash);
+        assert_eq!(
+            i.tax_ledgers_by_head,
+            BTreeMap::from([("Cash".to_string(), "CGST".to_string())])
+        );
+    }
+
+    /// A malformed or unknown name refuses binding, as the reference's binding refuses it for
+    /// every test; a missing key or a non-table tax_ledgers refuses only book_keeping_quality.
+    #[test]
+    fn bkq_locations_refuse_as_the_reference_does() {
+        let bind_err = |extra: &str| {
+            engagement(extra)
+                .bind(&book("Cash-in-Hand", G_CASH, None))
+                .unwrap_err()
+        };
+        for bad in [
+            "payment_channel_debtors = \"Sales\"\n",
+            "gst_payment_ledgers = [1]\n",
+            "tax_ledgers = { CGST = \"Sales\" }\n",
+        ] {
+            assert_eq!(bind_err(bad).code(), Some(BIND_ID_MALFORMED), "{bad}");
+        }
+        assert_eq!(
+            bind_err("writeoff_discount_ledgers = [\"Nowhere\"]\n").code(),
+            Some(BIND_NAME_UNKNOWN)
+        );
+        for key in [
+            "payment_channel_debtors",
+            "gst_payment_ledgers",
+            "writeoff_discount_ledgers",
+            "reissue_narration_terms",
+            "tax_ledgers",
+        ] {
+            let without: String = BKQ_ALL
+                .lines()
+                .filter(|l| !l.starts_with(key))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            let err = bkq(&without).unwrap_err();
+            assert!(
+                err.to_string().contains(&format!("roles.{key}")),
+                "{key}: {err}"
+            );
+        }
+        let not_table = BKQ_ALL.replace("{ CGST = [\"Sales\"] }", "\"CGST\"");
+        assert!(bkq(&not_table)
+            .unwrap_err()
+            .to_string()
+            .contains("not a table"));
+    }
+
+    /// `reissue_narration_terms` is read by `list()`: a string's characters, a table's keys, and a
+    /// list whose items must be text.
+    #[test]
+    fn bkq_reissue_terms_are_read_as_list_reads_them() {
+        let with =
+            |terms: &str| bkq(&BKQ_ALL.replace("reissue_narration_terms = [\"re-issue\"]", terms));
+        assert_eq!(
+            with("reissue_narration_terms = \"ab\"")
+                .unwrap()
+                .reissue_narration_terms,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            with("reissue_narration_terms = { x = 1 }")
+                .unwrap()
+                .reissue_narration_terms,
+            vec!["x".to_string()]
+        );
+        assert!(with("reissue_narration_terms = [\"a\", 1]").is_err());
+        assert!(with("reissue_narration_terms = 5").is_err());
+    }
+
+    /// A ledger under two different heads is refused (the file order that decides it in the
+    /// reference is not kept); under the same head twice it is not.
+    #[test]
+    fn bkq_a_ledger_under_two_heads_is_refused() {
+        let two = BKQ_ALL.replace(
+            "{ CGST = [\"Sales\"] }",
+            "{ CGST = [\"Sales\"], SGST = [\"Sales\"] }",
+        );
+        assert!(bkq(&two)
+            .unwrap_err()
+            .to_string()
+            .contains("is listed under GST heads"));
+        let same = BKQ_ALL.replace(
+            "{ CGST = [\"Sales\"] }",
+            "{ CGST = [\"Sales\", \"Sales\"] }",
+        );
+        assert!(bkq(&same).is_ok());
     }
 }

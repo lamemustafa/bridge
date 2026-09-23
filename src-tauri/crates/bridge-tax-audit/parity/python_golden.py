@@ -188,6 +188,18 @@ def _statutory_dues_43b(c):
     return statutory_dues_43b, statutory_dues_43b.run(c.eng, c.rules, nature_by_ledger, salary_expense_ledgers)
 
 
+def _book_keeping_quality(c):
+    from tae.audit_tests import book_keeping_quality
+    from tae.config import book_keeping_quality_config, tax_ledgers_by_head
+    # As tae/pack.py calls it: tax_ledgers flattened first, then the four [roles] values.
+    tax_ledgers = tax_ledgers_by_head(c.cfg)
+    payment_channel_debtors, gst_payment_ledgers, writeoff_discount_ledgers, reissue_narration_terms = \
+        book_keeping_quality_config(c.cfg)
+    return book_keeping_quality, book_keeping_quality.run(
+        c.eng, c.rules, c.cash, payment_channel_debtors, tax_ledgers, gst_payment_ledgers,
+        reissue_narration_terms, writeoff_discount_ledgers)
+
+
 def _tds_payees(c):
     from tae.audit_tests import tds_payees
     from tae.config import tds_config
@@ -195,6 +207,16 @@ def _tds_payees(c):
     nature_by_ledger, payee_aliases, turnover, s194j_category_by_ledger = tds_config(c.cfg)
     return tds_payees, tds_payees.run(c.eng, c.rules, nature_by_ledger, payee_aliases, turnover,
                                       s194j_category_by_ledger)
+
+
+def _loans_interest(c):
+    from tae.audit_tests import loans_interest
+    from tae.config import loan_ledgers_config
+    # As tae/pack.py calls it: the loan table, [tds].previous_year_turnover_paise (tds_config's
+    # optional key) and the declared-shared interest ledgers.
+    return loans_interest, loans_interest.run(
+        c.eng, c.rules, loan_ledgers_config(c.cfg), c.cfg.get("tds", {}).get("previous_year_turnover_paise"),
+        c.cash, c.bank, frozenset(c.cfg.get("loans", {}).get("shared_interest_ledgers", [])))
 
 
 def _traces_documents(c):
@@ -259,6 +281,7 @@ def _tds_tcs_26as(c):
 
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
+    "book_keeping_quality": _book_keeping_quality,
     "cash_44ab": _cash_44ab,
     "cash_book_integrity": _cash_book_integrity,
     "cash_payments_40a3": _cash_payments_40a3,
@@ -266,6 +289,7 @@ RUNNERS = {
     "depreciation": _depreciation,
     "financial_statements": _financial_statements,
     "ledger_scrutiny": _ledger_scrutiny,
+    "loans_interest": _loans_interest,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
     "tds_payees": _tds_payees,

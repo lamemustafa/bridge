@@ -303,6 +303,15 @@ pub(super) fn native_group_snapshot_read(company: &str) -> ReadRequest {
     )
 }
 
+/// The company's Currency masters: the request the outstandings paths send,
+/// verbatim. Its response carries no company GUID, so it is bound only by the
+/// identity brackets it is read inside.
+pub(super) fn company_currency_read(company: &str) -> ReadRequest {
+    ReadRequest(
+        bridge_tally_protocol::native_outstandings::render_company_currency_request(company),
+    )
+}
+
 pub(super) fn voucher_window_part_read(
     shape: super::voucher_window::VoucherReadShape,
     company: &str,

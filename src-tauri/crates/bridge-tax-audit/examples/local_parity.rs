@@ -9,7 +9,8 @@
 //!
 //! `TEST_ID` is any test in `bridge_tax_audit::registry::PORTED`. (`ledger_scrutiny` and
 //! `cash_book_integrity` read `[roles]`: the cash groups, the bank groups for
-//! `cash_book_integrity`, and its optional `own_account_narration_terms`.) For `applicability_44ab`, an optional seventh argument
+//! `cash_book_integrity`, and its optional `own_account_narration_terms`; `book_keeping_quality`
+//! reads its five `[roles]` inputs, see `BookKeepingQualityConfig`.) For `applicability_44ab`, an optional seventh argument
 //! `TURNOVER_INPUTS_JSON` feeds the GSTR-1/GSTR-3B/AIS comparison turnover as caller data -- the
 //! file `parity/python_golden.py --emit-turnover-inputs` wrote -- so both sides compare against the
 //! same numbers; without it neither side has a comparison source. For
@@ -84,9 +85,13 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
 }
 
 /// Narrows `[ledger_ids]`/`[group_ids]` to the labels the locations this port's `Engagement`
-/// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.round_off_ledgers`,
+/// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.creditor_groups`, a legacy
+/// `roles.trade_creditors_source`'s names, `roles.round_off_ledgers`,
+/// `roles.payment_channel_debtors`, `roles.gst_payment_ledgers`, `roles.writeoff_discount_ledgers`,
+/// every `roles.tax_ledgers` head,
 /// `tds.nature_by_ledger`'s and `tds.payee_aliases`' keys, `tds_payees.s194j_category_by_ledger`'s
-/// keys, `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
+/// keys, `loans.loan_ledgers`'s keys, each loan's `interest_ledger`, `loans.shared_interest_ledgers`,
+/// `depreciation.block_by_ledger`'s keys,
 /// `depreciation.dep_expense_ledgers`, `partners.*.interest_ledger`, `tds_tcs_26as`'s three ledger
 /// lists and its `deductor_aliases` values) use, so
 /// `Engagement::bind`'s `BIND-ID-UNUSED` check never refuses over a label a real client TOML
@@ -111,8 +116,20 @@ fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), Stri
                 group_labels.extend(strs(v));
             }
         }
-        if let Some(v) = roles.get("round_off_ledgers") {
-            ledger_labels.extend(strs(v));
+        for key in [
+            "round_off_ledgers",
+            "payment_channel_debtors",
+            "gst_payment_ledgers",
+            "writeoff_discount_ledgers",
+        ] {
+            if let Some(v) = roles.get(key) {
+                ledger_labels.extend(strs(v));
+            }
+        }
+        if let Some(heads) = roles.get("tax_ledgers").and_then(toml::Value::as_table) {
+            for v in heads.values() {
+                ledger_labels.extend(strs(v));
+            }
         }
         let legacy = bridge_tax_audit::legacy_trade_creditor_names(
             roles.get("trade_creditors_source"),
@@ -157,13 +174,19 @@ fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), Stri
             ledger_labels.extend(t.keys().cloned());
         }
     }
-    if let Some(t) = cfg
-        .get("loans")
-        .and_then(toml::Value::as_table)
-        .and_then(|loans| loans.get("loan_ledgers"))
-        .and_then(toml::Value::as_table)
-    {
-        ledger_labels.extend(t.keys().cloned());
+    if let Some(loans) = cfg.get("loans").and_then(toml::Value::as_table) {
+        if let Some(t) = loans.get("loan_ledgers").and_then(toml::Value::as_table) {
+            ledger_labels.extend(t.keys().cloned());
+            ledger_labels.extend(t.values().filter_map(|entry| {
+                entry
+                    .get("interest_ledger")
+                    .and_then(toml::Value::as_str)
+                    .map(String::from)
+            }));
+        }
+        if let Some(v) = loans.get("shared_interest_ledgers") {
+            ledger_labels.extend(strs(v));
+        }
     }
     if let Some(dep) = cfg.get("depreciation").and_then(toml::Value::as_table) {
         if let Some(t) = dep.get("block_by_ledger").and_then(toml::Value::as_table) {

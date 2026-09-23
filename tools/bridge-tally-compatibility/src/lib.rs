@@ -297,7 +297,10 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // The canonical protocol-reference index is retained for legacy links while
 // bridge#317 moves its content into six separately pinned parts. The cap grows
 // by those six pins; it remains an exact count after the coordinated reseal.
-pub const MAX_SURFACE_FILES: usize = 275;
+// `src-tauri/src/agent_import_post_location.rs` (bridge#574) confirms which
+// loaded company a native post is aimed at, last before the POST, and reports
+// which companies' voucher marks moved after it.
+pub const MAX_SURFACE_FILES: usize = 276;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

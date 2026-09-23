@@ -39,10 +39,39 @@ pub(in crate::agent) fn parse_company_marks(
     Ok((vouchers, masters))
 }
 
+/// The one row whose GUID is `expected_guid`. The whole response is parsed
+/// before identity is checked, so a malformed row anywhere refuses as
+/// `agent_read_protocol_invalid` even when the target also appears twice;
+/// before bridge#574 an earlier duplicate reported the ambiguity first. Both
+/// refuse, and no caller acts differently on the two codes.
 fn company_high_water_row(
     xml: &str,
     expected_guid: &str,
 ) -> Result<BTreeMap<String, String>, String> {
+    let mut matched = None;
+    for row in company_high_water_rows(xml)? {
+        if row
+            .get("GUID")
+            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(expected_guid))
+        {
+            if matched.is_some() {
+                return Err("company_high_water_identity_ambiguous".into());
+            }
+            matched = Some(row);
+        }
+    }
+    matched.ok_or_else(|| "company_high_water_identity_absent".to_string())
+}
+
+/// The key under which a row keeps its `NAME` attribute. It cannot collide
+/// with an element: element names never start with `@`.
+const COMPANY_NAME_ATTRIBUTE: &str = "@NAME";
+
+/// Every loaded company's row of the high-water collection, in response order,
+/// with its `NAME` attribute. The collection names one company in
+/// `SVCURRENTCOMPANY` but Tally returns a row for every loaded company
+/// (measured 2026-09-21: 25 rows for 25 loaded companies).
+fn company_high_water_rows(xml: &str) -> Result<Vec<BTreeMap<String, String>>, String> {
     let marked = mark_agent_xml(xml);
     let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
@@ -50,7 +79,7 @@ fn company_high_water_row(
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut current: Option<BTreeMap<String, String>> = None;
-    let mut matched = None;
+    let mut rows = Vec::new();
     let mut tag = String::new();
     let mut scope = NativeCollectionScope::default();
     let scalar = |name: &str| matches!(name, "GUID" | "ALTVCHID" | "ALTMSTID");
@@ -71,7 +100,25 @@ fn company_high_water_row(
                     if empty {
                         return Err(invalid());
                     }
-                    current = Some(BTreeMap::new());
+                    let mut row = BTreeMap::new();
+                    for attribute in event.attributes().with_checks(true) {
+                        let attribute = attribute.map_err(|_| invalid())?;
+                        if attribute.key.as_ref().eq_ignore_ascii_case(b"NAME") {
+                            let value = attribute
+                                .decoded_and_normalized_value(
+                                    quick_xml::XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .map_err(|_| invalid())?;
+                            if row
+                                .insert(COMPANY_NAME_ATTRIBUTE.to_string(), value.into_owned())
+                                .is_some()
+                            {
+                                return Err(invalid());
+                            }
+                        }
+                    }
+                    current = Some(row);
                 }
                 if scope.row("COMPANY") && scalar(&name) {
                     claim_agent_scalar(current.as_mut().ok_or_else(invalid)?, &name)?;
@@ -115,16 +162,7 @@ fn company_high_water_row(
             Ok(Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if scope.row("COMPANY") {
-                    let row = current.take().ok_or_else(invalid)?;
-                    if row
-                        .get("GUID")
-                        .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(expected_guid))
-                    {
-                        if matched.is_some() {
-                            return Err("company_high_water_identity_ambiguous".into());
-                        }
-                        matched = Some(row);
-                    }
+                    rows.push(current.take().ok_or_else(invalid)?);
                 }
                 scope.end(&end)?;
                 tag.clear();
@@ -135,7 +173,52 @@ fn company_high_water_row(
         }
     }
     scope.finish()?;
-    matched.ok_or_else(|| "company_high_water_identity_absent".to_string())
+    Ok(rows)
+}
+
+/// One loaded company's change marks, as the high-water collection reported
+/// them: the row's `NAME` attribute, its GUID, and both AlterID axes. A company
+/// that has never held a voucher omits `ALTVCHID` and is reported as 0 on that
+/// axis, exactly as [`company_voucher_high_water`] does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::agent) struct LoadedCompanyMarks {
+    pub(in crate::agent) name: String,
+    pub(in crate::agent) guid: String,
+    pub(in crate::agent) vouchers: u64,
+    pub(in crate::agent) masters: u64,
+}
+
+/// Every loaded company's marks. A row without a name, a GUID or an observed
+/// master axis is refused, so an unreadable row can never pass as "unchanged".
+pub(in crate::agent) fn parse_all_company_marks(
+    xml: &str,
+) -> Result<Vec<LoadedCompanyMarks>, String> {
+    company_high_water_rows(xml)?
+        .into_iter()
+        .map(|row| {
+            let name = row
+                .get(COMPANY_NAME_ATTRIBUTE)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| "company_marks_name_absent".to_string())?
+                .clone();
+            let guid = row
+                .get("GUID")
+                .map(|guid| guid.trim().to_string())
+                .filter(|guid| !guid.is_empty())
+                .ok_or_else(|| "company_marks_guid_absent".to_string())?;
+            let masters = observed_checkpoint(row.get("ALTMSTID"), "master")?;
+            let vouchers = match row.get("ALTVCHID") {
+                None => 0,
+                value => observed_checkpoint(value, "voucher")?,
+            };
+            Ok(LoadedCompanyMarks {
+                name,
+                guid,
+                vouchers,
+                masters,
+            })
+        })
+        .collect()
 }
 
 /// The company's voucher AlterID high-water for a read-side corroboration.
@@ -197,6 +280,17 @@ mod tests {
         assert_eq!(
             parse_company_high_water(&altered, guid),
             Err("company_high_water_identity_ambiguous".into())
+        );
+        // A malformed later row takes precedence over the ambiguity: the whole
+        // response is parsed before identity is checked. Both refuse.
+        let malformed = altered.replacen(
+            "</COLLECTION>",
+            "<COMPANY NAME=\"Synthetic Broken\"><GUID>a</GUID><GUID>b</GUID></COMPANY></COLLECTION>",
+            1,
+        );
+        assert_eq!(
+            parse_company_high_water(&malformed, guid),
+            Err("agent_read_protocol_invalid".into())
         );
     }
 

@@ -872,6 +872,28 @@ generalisations from a single company, and the rule behind them is not establish
 **UNVERIFIED — XML-driven rename.** Neither capture used one; both renames were performed in the
 UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 
+### 12a.10 An opening bill keeps a date before `BOOKSFROM` — **VERIFIED 2026-09-22; single captured book**
+
+**Scope:** TallyPrime 7.1 Silver, licensed, one synthetic book (`BRIDGE CORPUS FOREX`), the
+production Bills Receivable request for 20250401 to 20250930. Committed as
+`bills_receivable_forex_live` (`LEDGER_CURRENCY_CAPTURE_PROVENANCE.md`). The book's `BOOKSFROM`,
+20250401, was reported by the capturing session; it is not in the committed bytes.
+
+**Measured:** two opening bills, `FX-OPEN-1` and `INR-OPEN-1`, report `BILLDATE` and `BILLDUE` as
+`31-Mar-25`, the day before `BOOKSFROM`, with `BILLOVERDUE` `183` (20250331 to the as-of date).
+`BOOKSFROM` is therefore not a lower bound on a Bills row's dates, and a parser that treats it as
+one refuses the whole read (bridge#612).
+
+**Not measured:**
+- an opening bill dated more than a day before `BOOKSFROM`, or one with a credit period;
+- whether a due date can precede its bill date;
+- whether an as-of Bills report can list a bill dated after its as-of date. The parser assumes it
+  cannot: such a bill refuses the whole read, unless it is dated fifty years or more after
+  `BOOKSFROM`, when it is read into the previous century.
+
+How Bridge resolves the two-digit years is a design choice, documented at
+`native_outstandings/date.rs`.
+
 ---
 
 ## 13. Open questions
@@ -907,3 +929,4 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-09-18 | Added §1.1(d): the rule `mark_forbidden_numeric_references` applies before parsing, now public in `bridge-tally-protocol`, including that a `&#` with no `;` in its window no longer ends the rewrite. |
 | 2026-09-18 | Added §11c: the pre-flight volume bound for windowed voucher reads, with the bytes-per-voucher measurements behind it (a whole-year 35.0 KB mean on an inventory-heavy book, understated by a one-day probe; half-month windows at 98.4% of the cap). The measurements are VERIFIED; the date-first census and the AlterID-narrowed parts the rule sends are UNVERIFIED live. |
 | 2026-09-21 | §11c after the bridge#520 rectify: every census is bounded before it is sent (one date census when the mark fits one, otherwise AlterID spans of 8,192 sized against the whole cap; a mark needing more than 256 spans is refused as `voucher_window_book_too_large`); parts are admitted against the census and their union; the read allowance is spent at dispatch; a divided read is bracketed on `ALTVCHID` and `ALTMSTID`; a replay carries and closes against the first read's witness; the pre-post check refuses a window the bound would divide. Added §11c.5, the first live evidence (licensed 7.1 Silver lab): census and span shapes, `ALTVCHID` as a count bound and on every voucher change, a ledger rename moving only `ALTMSTID`, and end-to-end timings. |
+| 2026-09-23 | Added §12a.10: two opening bills in a licensed TallyPrime 7.1 Bills Receivable capture are dated and due the day before the book's `BOOKSFROM`, so `BOOKSFROM` does not bound a Bills row's dates (bridge#612). Earlier dates, a due date before its bill, and bills dated after the as-of date are not measured. |

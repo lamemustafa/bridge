@@ -141,6 +141,9 @@ base revision.
 <a id="82c-reference-ispostdated-isinvoice-partygstin-on-the-voucher-fetch--verified-presence-2026-09-18-partygstin-population-unverified"></a>
 
 [8.2c `REFERENCE`, `ISPOSTDATED`, `ISINVOICE`, `PARTYGSTIN` on the voucher `FETCH` — **VERIFIED presence 2026-09-18; `PARTYGSTIN` population UNVERIFIED**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#82c-reference-ispostdated-isinvoice-partygstin-on-the-voucher-fetch--verified-presence-2026-09-18-partygstin-population-unverified)
+<a id="82d-a-ledgers-currencyname-is-the-name-of-the-currency-master-it-is-kept-in--verified-2026-09-23-tallyprime-71-synthetic-and-client-derived-books"></a>
+
+[8.2d A ledger's `CURRENCYNAME` is the NAME of the Currency master it is kept in — **VERIFIED 2026-09-23; TallyPrime 7.1, synthetic and client-derived books**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#82d-a-ledgers-currencyname-is-the-name-of-the-currency-master-it-is-kept-in--verified-2026-09-23-tallyprime-71-synthetic-and-client-derived-books)
 <a id="83-gst-duty-head--the-vocabulary-is-irregular-and-taxtype-qualifies-it--verified-2026-09-12-single-instance"></a>
 
 [8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#83-gst-duty-head--the-vocabulary-is-irregular-and-taxtype-qualifies-it--verified-2026-09-12-single-instance)
@@ -342,6 +345,9 @@ base revision.
 <a id="12a9-a-ledger-guid-survived-an-observed-ui-rename--coverage-must-compare-guid-to-name"></a>
 
 [12a.9 A ledger GUID survived an observed UI rename — coverage must compare GUID to name](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#12a9-a-ledger-guid-survived-an-observed-ui-rename--coverage-must-compare-guid-to-name)
+<a id="12a10-an-opening-bill-keeps-a-date-before-booksfrom--verified-2026-09-22-single-captured-book"></a>
+
+[12a.10 An opening bill keeps a date before `BOOKSFROM` — **VERIFIED 2026-09-22; single captured book**](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#12a10-an-opening-bill-keeps-a-date-before-booksfrom--verified-2026-09-22-single-captured-book)
 <a id="13-open-questions"></a>
 
 [13. Open questions](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#13-open-questions)

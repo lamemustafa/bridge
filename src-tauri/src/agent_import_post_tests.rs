@@ -794,6 +794,9 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
             .collect::<Vec<_>>(),
     )
     .unwrap();
+    let single_currency = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
     let ledger_binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
         &catalogue,
         "WR2 Unicode Lab",
@@ -814,6 +817,7 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &captured,
         &catalogue,
         None,
+        &single_currency,
         &ledger_binding,
     )
     .expect_err("captured attributed Journal must block the queued native attempt");
@@ -837,6 +841,7 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &captured,
         &catalogue,
         None,
+        &single_currency,
         &ledger_binding,
     )
     .expect("paired captured source establishes absence of the new candidate");
@@ -866,6 +871,7 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
             &captured,
             &catalogue,
             groups,
+            &single_currency,
             &ledger_binding,
         )
     };
@@ -1082,4 +1088,230 @@ fn a_bank_preview_is_refused_at_each_cap_rather_than_truncated() {
         admit_fresh_saved_voucher(&payment_with(1, |_| "N".repeat(90)), &endpoint).unwrap_err(),
         "import_review_too_large"
     );
+}
+
+fn captured_currencies(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_post_is_admitted_only_into_a_book_with_one_currency_master() {
+    // Both single-master spellings measured on 7.1 are admitted, whatever the
+    // base is called: the gate asks how many masters there are, not which.
+    for single in [
+        &include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )[..],
+        &include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_legacy_live.utf16le.xml"
+        )[..],
+    ] {
+        admit_post_currency(&captured_currencies(single)).expect("one master admits");
+    }
+    // The captured two-master book refuses, naming both masters as read.
+    let multi = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ));
+    let names = bridge_tally_protocol::native_outstandings::parse_company_currency(&multi)
+        .unwrap()
+        .names;
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert_eq!(
+        admit_post_currency(&multi),
+        Err(ApprovedImportAdmissionError::MultiCurrencyBook { currencies: names })
+    );
+    // Kept out of every serialized output that carries the struct.
+    let serialized = serde_json::to_value(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&multi).unwrap(),
+    )
+    .unwrap();
+    assert!(serialized.get("names").is_none(), "{serialized}");
+    // No base can be named from a response that does not parse, from one with
+    // no master, or from one whose only master has no NAME (which the parser
+    // itself refuses). The last two are explicit edits of the one-master
+    // capture, not live evidence.
+    let single = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
+    // The row's own close: CMPINFO's `<CURRENCY>0</CURRENCY>` comes earlier.
+    let row_start = single.find("<CURRENCY NAME=").unwrap();
+    let row_end =
+        row_start + single[row_start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    assert_eq!(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&no_master)
+            .unwrap()
+            .currency_count,
+        0,
+        "the edit must leave a readable collection with no master"
+    );
+    assert_eq!(single.matches(" NAME=\"I₹\"").count(), 1);
+    let nameless = single.replace(" NAME=\"I₹\"", " NAME=\"\"");
+    assert!(bridge_tally_protocol::native_outstandings::parse_company_currency(&nameless).is_err());
+    for undetermined in ["<ENVELOPE/>", no_master.as_str(), nameless.as_str()] {
+        assert_eq!(
+            admit_post_currency(undetermined),
+            Err(ApprovedImportAdmissionError::BaseCurrencyUndetermined),
+            "{undetermined}"
+        );
+    }
+}
+
+#[test]
+fn a_multi_currency_refusal_names_the_masters_in_plain_words_only_when_nothing_was_attempted() {
+    let currencies = (1..=10).map(|n| format!("C{n}")).collect::<Vec<_>>();
+    let refused = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_multi_currency_unsupported","message":"generic"}}});
+        name_refused_currencies(&mut payload, &currencies);
+        payload["result"]["error"].clone()
+    };
+    let error = refused(json!(false));
+    assert_eq!(
+        error["message"],
+        "This company has more than one currency defined (C1, C2, C3, C4, C5, C6, C7, C8 and 2 \
+         more); Bridge does not post into multi-currency books yet. Nothing was posted."
+    );
+    assert_eq!(error["currencies_seen"].as_array().unwrap().len(), 8);
+    assert_eq!(error["currencies_total"], 10);
+    // An unknown attempt keeps its instruction to reconcile.
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(refused(attempted)["message"], "generic");
+    }
+}
+
+/// The captured catalogue's binding of `names`, as a post binds them.
+fn captured_binding(names: &[&str]) -> bridge_tally_protocol::StandardLedgerCatalogBinding {
+    let catalogue = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    ));
+    bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .unwrap()
+    .bind_selected(names.iter().map(|name| name.to_string()))
+    .unwrap()
+}
+
+fn recorded(pairs: &[(&str, &str)]) -> Vec<BoundLedger> {
+    pairs
+        .iter()
+        .map(|(name, guid)| BoundLedger {
+            name: name.to_string(),
+            guid: guid.to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_post_admits_only_the_ledgers_its_build_bound() {
+    // The captured catalogue's GUIDs for these two ledgers.
+    const A: &str = "61c6de69-1748-461c-ad3f-162cb949df9f-000000d5";
+    const B: &str = "61c6de69-1748-461c-ad3f-162cb949df9f-0000001f";
+    let now = captured_binding(&["Bridge Nested Debtor WR4", "Cash"]);
+    // Same ledgers, same GUIDs (GUID case is not identity).
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[
+                ("Cash", &B.to_uppercase()),
+                ("Bridge Nested Debtor WR4", A)
+            ])),
+            &now
+        ),
+        Ok(())
+    );
+    // Cash renamed and a new Cash created since the build: named.
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[
+                ("Bridge Nested Debtor WR4", A),
+                ("Cash", "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff")
+            ])),
+            &now
+        ),
+        Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
+    );
+    // A ledger the record does not hold is not admitted by name alone.
+    assert_eq!(
+        admit_build_binding(Some(&recorded(&[("Bridge Nested Debtor WR4", A)])), &now),
+        Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
+    );
+    // Two ledgers that exchanged names since the build: every GUID is still
+    // recorded, but under the other name, so both refuse.
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[("Cash", A), ("Bridge Nested Debtor WR4", B)])),
+            &now
+        ),
+        Err(BuildBindingRefusal::Changed(vec![
+            "Bridge Nested Debtor WR4".into(),
+            "Cash".into()
+        ]))
+    );
+    // A record built before binding existed has nothing to compare.
+    assert_eq!(
+        admit_build_binding(None, &now),
+        Err(BuildBindingRefusal::Unbound)
+    );
+}
+
+#[test]
+fn a_record_without_ledger_identities_reads_as_built_before_binding() {
+    // An older record, exactly as it was serialized: no `ledger_identities`.
+    let (mut line, _) = batch();
+    line.ledger_identities = None;
+    let json = serde_json::to_value(&line).unwrap();
+    assert!(json.get("ledger_identities").is_none(), "{json}");
+    let reread: ImportLedgerLine = serde_json::from_value(json).unwrap();
+    assert_eq!(reread.ledger_identities, None);
+    // And a current record keeps them across a round trip.
+    line.ledger_identities = Some(recorded(&[("Cash", "g")]));
+    let reread: ImportLedgerLine =
+        serde_json::from_value(serde_json::to_value(&line).unwrap()).unwrap();
+    assert_eq!(reread.ledger_identities, line.ledger_identities);
+}
+
+#[test]
+fn a_changed_ledger_is_named_in_plain_words_only_when_nothing_was_attempted() {
+    let ledgers = (1..=9).map(|n| format!("L{n}")).collect::<Vec<_>>();
+    let refused = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_masters_changed_since_build","message":"generic"}}});
+        name_changed_ledgers(&mut payload, &ledgers);
+        payload["result"]["error"].clone()
+    };
+    let error = refused(json!(false));
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(
+            "A ledger this batch names is no longer the one it was built against (L1, L2, L3, L4, L5, L6, L7, L8 and 1 more)"
+        ),
+        "{message}"
+    );
+    assert_eq!(error["ledgers_changed_total"], 9);
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(refused(attempted)["message"], "generic");
+    }
+    // An unbound batch is told to rebuild, only when nothing was attempted.
+    let unbound = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_batch_predates_ledger_binding","message":"generic"}}});
+        explain_unbound_batch(&mut payload);
+        payload["result"]["error"]["message"].clone()
+    };
+    assert!(unbound(json!(false))
+        .as_str()
+        .unwrap()
+        .contains("Build the batch again"));
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(unbound(attempted), "generic");
+    }
 }

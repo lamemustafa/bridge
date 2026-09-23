@@ -333,7 +333,7 @@ licence mode has been qualified.
 ## Approved voucher posting
 
 **Voucher posting is off by default in the MCPB extension** while two known
-limits remain. The post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established
+limits remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher
 ([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
 delete or roll back a voucher it has posted, so a wrong post must be corrected
 by hand in Tally ([#579](https://github.com/lamemustafa/bridge/issues/579)).
@@ -366,7 +366,25 @@ Bridge-built files of those types have been imported and verified.
    Contra, `post_import` classifies every leg again from the ledgers' current
    parents and the group tree, before approval and again after approval inside
    the endpoint queue (before the final duplicate check and the post), and refuses with `import_bank_classification_changed` if any
-   leg changed; nothing is sent.
+   leg changed; nothing is sent. Every post, of any type, is refused with
+   `import_multi_currency_unsupported` if the company defines more than one
+   currency: Bridge does not post into multi-currency books yet. This is checked
+   before approval and again inside the queue. A Currency read that names no
+   usable master refuses with `import_base_currency_undetermined`. Inside the
+   queue, a change to the company's masters from just before the catalogue
+   re-read to the last read before the post refuses with `post_masters_moved`
+   (`post_masters_unconfirmed` if it cannot be checked); re-run the post. This
+   sees only changes that move the company's master AlterID (`ALTMSTID`):
+   measured for ledger renames and creates made through the gateway. A regroup,
+   an edit made in Tally's own screens, and whether posting a voucher moves it
+   are not yet measured. Separately, the build records each ledger's GUID, and a
+   post refuses any ledger now on another GUID (renamed and replaced, or deleted
+   and recreated, since the build) with `import_masters_changed_since_build`,
+   naming it. The name now means a different ledger: confirm the intended one
+   (it may be under a new name) with `validate_masters` before building again.
+   A batch built before this record existed is refused with
+   `import_batch_predates_ledger_binding`, before any Tally request; build it
+   again. Rebuild only when `attempt_recorded` is `false`.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the

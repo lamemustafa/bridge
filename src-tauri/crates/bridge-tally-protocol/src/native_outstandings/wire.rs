@@ -31,7 +31,7 @@ use crate::tolerant_xml::{
 };
 use crate::{PartyLedgerMasterFieldObservation, TallyNamedMaster};
 
-use super::date::{parse_native_display_date, NativeDisplayDateRole};
+use super::date::{parse_native_bill_date, parse_native_due_date};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
 
 struct PendingBillRow {
@@ -45,8 +45,9 @@ struct PendingBillRow {
 }
 
 /// Parses the flat Bills Receivable/Payable response into fully resolved
-/// rows. The pinned book window resolves their two-digit display dates (see
-/// [`super::date::parse_native_display_date`]).
+/// rows. The pinned book window resolves each bill date's two-digit year, and
+/// the bill date its due date's (see [`super::date::parse_native_bill_date`]
+/// and [`super::date::parse_native_due_date`]).
 pub fn parse_native_bill_rows(
     xml: &str,
     books_from: &bridge_tally_primitives::TallyDate,
@@ -250,18 +251,8 @@ fn finalize_bill_row(
             "bills_fixed_row_missing_billoverdue",
         ));
     }
-    let bill_date = parse_native_display_date(
-        &row.bill_date_raw,
-        books_from,
-        as_of,
-        NativeDisplayDateRole::BillDate,
-    )?;
-    let due_date = parse_native_display_date(
-        &due_date_raw,
-        books_from,
-        as_of,
-        NativeDisplayDateRole::DueDate,
-    )?;
+    let bill_date = parse_native_bill_date(&row.bill_date_raw, books_from, as_of)?;
+    let due_date = parse_native_due_date(&due_date_raw, &bill_date)?;
     Ok(NativeBillRow {
         party: row.party,
         reference: row.reference,
@@ -819,6 +810,8 @@ fn parse_ledger_row(
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
+    // Outer option: the element was seen; inner: it held text.
+    let mut currency_name: Option<Option<String>> = None;
     let mut response_company_guid = None;
     let mut response_company_guid_seen = false;
     loop {
@@ -868,6 +861,19 @@ fn parse_ledger_row(
                         }
                         bill_wise_on = Some(parse_tally_boolean(&text)?);
                     }
+                    b"CURRENCYNAME" => {
+                        // Verbatim, like PARENT: compared by exact codepoint
+                        // with the base master's NAME (`I₹`, `Rs.`).
+                        let text = read_element_identifier_text(reader, child.name())?;
+                        if currency_name.is_some() {
+                            return Err(NativeOutstandingsError::InvalidResponse(
+                                "ledger_duplicate_currency_name",
+                            ));
+                        }
+                        // Emptiness is judged on the trimmed view, as for
+                        // PARENT; the retained value is verbatim.
+                        currency_name = Some((!text.trim().is_empty()).then_some(text));
+                    }
                     b"BRIDGECOMPANYGUID" => {
                         let text = read_element_text(reader, child.name())?;
                         if std::mem::replace(&mut response_company_guid_seen, true) {
@@ -878,6 +884,13 @@ fn parse_ledger_row(
                         response_company_guid = (!text.is_empty()).then_some(text);
                     }
                     _ => skip_subtree(reader)?,
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"CURRENCYNAME") => {
+                if currency_name.replace(None).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "ledger_duplicate_currency_name",
+                    ));
                 }
             }
             Event::Empty(child)
@@ -915,6 +928,7 @@ fn parse_ledger_row(
             bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
                 "ledger_bill_wise_flag_missing",
             ))?,
+            currency_name: currency_name.flatten(),
         },
         response_company_guid,
     })
@@ -1160,6 +1174,7 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
     }
 
     let currency_count = rows.len();
+    let names = rows.iter().map(|row| row.symbol.clone()).collect();
     let CurrencyRow {
         symbol,
         mailing_name,
@@ -1178,6 +1193,7 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         currency_count,
         decimal_places,
         is_inr,
+        names,
     })
 }
 

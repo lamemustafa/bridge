@@ -197,7 +197,7 @@ Gold/Education posting were untested.
 | 9 | Parser-derived Tally counters | Met | `parse_import_outcome` (`bridge-tally-protocol`, `import_outcome.rs`). A clean response requires every counter to be reported, and exactly created 1, altered 0, deleted 0, with zero ignored, errors, cancelled, exceptions and line errors (`is_clean_success_for(1, 0, 0)`), and an application status other than failure (`import_outcome_is_clean`). |
 | 10 | Strict company-bound read-after-write verification | Met, for detection | Readback is mandatory (`verify_import_after_current_dispatch`). It is bound to the verified company GUID and compares accounting entries, not the response. `posted_verified` requires both a clean response and a verified readback (`finalize_current_dispatch`). It detects a write that did not land in the intended company, but it cannot prevent one or find where it went (see "How the write is aimed"). |
 | 11 | First-write canary rule: one sealed synthetic ledger-canary candidate, fixture enrollment with disposable-company and backup acknowledgements, no Passport upgrade | Not met | The first dispatched write was a Journal, not a ledger canary. `post_import` does not consult the write-fixture enrollment (`commands.rs`, `enroll_tally_write_fixture`), which exists but gates nothing on this path. The one part that holds: no Passport upgrade. |
-| 12 | Lifecycle, outcome-unknown after bytes may have been sent, no automatic retry, no rollback | Met, with different terminal names | draft (`build_import_xml`) → validate → preview → approve (native) → arm (lease plus durable intent) → send (`ReadRetryPolicy::SINGLE_ATTEMPT`) → parse → verify. Terminal states are `posted_verified` and `reconciliation_required`. The ADR's separate `partial` and `failed` verdicts are folded into `reconciliation_required`. An error from `post_approved_import` maps to `import_dispatch_outcome_unknown`, except its six named admission refusals (`import_bank_classification_changed` and `import_post_admission_inconsistent` since the 2026-09-22 amendment) and an in-queue unobserved product/mode boundary, which keep their own codes (the latter `financial_read_profile_unqualified`), including errors *before* the intent was recorded, where `attempt_recorded: false` says no attempt exists. Failures earlier in `post_import_checked` keep their own codes. Current-dispatch responses carry `resent: false` and `automatic_retry: false`, and reconciliation responses carry `resent: false`, but `reconciliation_failure_payload` carries neither. No code path re-sends. No rollback is claimed or implemented. Since #582 the REMOTEID a native post sends is recorded in its dispatch intent before the POST, and a native post was deleted by it live (#579); no delete or rollback tool exists. |
+| 12 | Lifecycle, outcome-unknown after bytes may have been sent, no automatic retry, no rollback | Met, with different terminal names | draft (`build_import_xml`) → validate → preview → approve (native) → arm (lease plus durable intent) → send (`ReadRetryPolicy::SINGLE_ATTEMPT`) → parse → verify. Terminal states are `posted_verified` and `reconciliation_required`. The ADR's separate `partial` and `failed` verdicts are folded into `reconciliation_required`. An error from `post_approved_import` maps to `import_dispatch_outcome_unknown`, except its twelve named admission refusals (`import_bank_classification_changed` and `import_post_admission_inconsistent` since the 2026-09-22 amendment, `post_company_scope_changed` and `post_company_scope_unconfirmed` since #574, `import_multi_currency_unsupported` and `import_base_currency_undetermined` since #551, and `post_masters_moved` and `post_masters_unconfirmed` since #239) and an in-queue unobserved product/mode boundary, which keep their own codes (the latter `financial_read_profile_unqualified`), including errors *before* the intent was recorded, where `attempt_recorded: false` says no attempt exists. Failures earlier in `post_import_checked` keep their own codes. Current-dispatch responses carry `resent: false` and `automatic_retry: false`, and reconciliation responses carry `resent: false`, but `reconciliation_failure_payload` carries neither. No code path re-sends. No rollback is claimed or implemented. Since #582 the REMOTEID a native post sends is recorded in its dispatch intent before the POST, and a native post was deleted by it live (#579); no delete or rollback tool exists. |
 | 13 | Domain-separated commitments for wire bytes, canonical intended state, import response, canonical readback state and identity coverage; opaque parser-derived evidence; line-error text reduced to digests | Partly | Import response: the parser's `response_sha256` is domain-separated (`import_outcome.rs`, `domain_sha256`) and is stored inside `DispatchResponse.outcome`. Line errors: kept only as ordered domain-separated digests. Counts: parser-derived only, so a caller cannot assert them. Wire bytes: `DispatchResponse.request_sha256` and `response_sha256` are plain SHA-256 over the wire bytes, not domain-separated. Canonical intended state: the batch `sha256` is plain SHA-256 over the rendered XML. Canonical readback state: only the read evidence's response digest exists. Identity coverage: no commitment exists. |
 | 14 | First qualification profile: ledger-only create/alter, RemoteID-bound preflight, exact counts, a lost response stays unknown | Partly | Counts are exact (row 9). A lost response is never promoted: without a clean persisted response, the verdict stays `reconciliation_required` even if a later readback matches (`finalize_current_dispatch`, `finalize_previous_attempt_reconciliation`). But the profile is voucher create, not ledger create/alter. The preflight is not RemoteID-bound. Each post uses a fresh random `REMOTEID`, so a public file's REMOTEID is never upserted. A voucher export shows Tally's own GUID as its REMOTEID, and a delete keyed by that GUID was refused in the 21-Sep lab ("Voucher does not exist!"). Since #582 the REMOTEID each native post sends is recorded in its dispatch intent before the POST, and a delete by that recorded value succeeded live (#579); no delete or locate tool exists yet. Duplicate absence is checked over the batch's date window, by the `[BRIDGE:…]` narration attribution or an accounting-content fingerprint (`verify_batch`, `agent_import_verification.rs`), twice, inside the queue (`require_absent_verification_result`, `recheck_import_admission`). |
 | 15 | Consequences: private deterministic import bytes; no public byte getter or transport adapter; every prepared write ineligible for dispatch; legacy caller-attested rows not promotable; a migration persisting opaque derived commitments before runtime wiring; fixture enrollment local, explicit, revocable | Partly | No public byte getter: `ApprovedImport::xml` is `pub(super)`. Not met: the native bytes are not deterministic (a fresh `Uuid::new_v4()` REMOTEID on each render). Not met: a transport path now exists (`post_approved_import`), and prepared Journals are eligible for dispatch. Not met: no migration preceded the wiring; the path persists to the JSONL journal instead. Not applicable: the legacy caller-attested rows belong to the database contract, which this path does not use. Fixture enrollment is local, explicit and revocable, and irrelevant to this path (row 11). |
@@ -223,9 +223,39 @@ or an owner decision to amend the requirement instead:
    runtime caller. Decide which one is authoritative, and retire or connect the others.
 7. **Write capability in the Passport (row 1).** Decide whether a verified post
    should become observed write evidence, and under what rule.
-8. **Concurrent external changes:** #239 (accepted limitation).
-9. **Aiming by name (scope, "How the write is aimed"), #574.** Narrow or close the gap between the
-   in-queue identity recheck and the POST, or record it as accepted with #239.
+8. **Concurrent external changes, #239. Narrowed.** Tally offers no conditional import, so
+   nothing binds a POST to the masters Bridge checked. The queue now reads every loaded company's
+   change marks as its binding reads begin (just before the catalogue re-read) and compares the
+   target's master mark (`ALTMSTID`) with the one in the aim snapshot sent last before the POST;
+   any change refuses with `post_masters_moved` (`post_masters_unconfirmed` if the comparison
+   cannot be made), before the intent. A ledger rename made through the gateway is measured to move
+   `ALTMSTID` by 1, and master creates move it too (TALLY_PROTOCOL_REFERENCE §11c.5, §10); only
+   gateway changes were measured (§11c.4). Not yet measured: a regroup, an edit made in Tally's own
+   screens (the likelier concurrent writer), and whether posting a voucher moves `ALTMSTID` (if it
+   does, a busy book refuses more often; it fails closed). A change that does not move the mark is
+   not caught. Any change that does refuses, including unrelated ones; the operator re-runs. During the approval wait, a ledger renamed and a new one created under
+   its old name is refused by the catalogue binding's (name, GUID) check (`import_masters_changed`).
+   Between build and post, which can be days apart, the build now records each named ledger with
+   the GUID its catalogue read bound it to. Before approval, a post refuses any ledger that now
+   resolves to another GUID (`import_masters_changed_since_build`, naming it). A batch saved
+   before that record existed refuses with `import_batch_predates_ledger_binding` and must be
+   rebuilt. The record is trusted local state, as in follow-up 10: its hash covers the rendered
+   file, not these GUIDs. Open: the one round trip from the aim snapshot to the POST, and a check
+   after the POST.
+9. **Aiming by name (scope, "How the write is aimed"), #574. Narrowed.** Live on licensed 7.1
+   Silver (2026-09-21/22): a name matching no loaded company fails closed over the gateway
+   whichever company is selected; a rename between build and post is refused at admission; a
+   post into another company lacking one of the voucher's ledgers is rejected by Tally. What
+   remains is a rename, in the moments before the POST, to another loaded company's exact name
+   whose ledgers all overlap. The queue now reads every loaded company's change marks as its last
+   Tally request before the POST and refuses unless exactly one company has the target's GUID
+   and name and none shares its name (`post_company_scope_changed`, or
+   `post_company_scope_unconfirmed` if that read fails). It reads them again right after the
+   POST, once its response is journaled, and reports which companies' voucher marks moved
+   (`post_location` in the result). This flags a possibly misdirected post; concurrent writers on
+   a shared book can make it ambiguous, and it cannot prevent one, because Tally cannot bind an
+   import to a GUID. The interval between that snapshot and the POST, local work only, stays accepted with
+   #239. Locating the voucher inside another company, and removing it, are not built.
 10. **Batch record integrity (scope, "What it can send"), #575. Resolved by #578.** The post
     path now re-checks the saved file's bytes, as the desktop review already did, and both use one
     reader. Residual, by decision: the record and file are trusted local state against anyone who
@@ -235,6 +265,44 @@ or an owner decision to amend the requirement instead:
 12. **Record the REMOTEID a native post sends, #579. Resolved by #582.** The dispatch intent
     records it before the POST, and a native post was deleted by it live (#579, 2026-09-22).
     Open: a delete or locate tool built on it, under the requirements listed on #579.
+13. **Multi-currency books, #551.** A voucher's amounts are plain base-currency figures, and a
+    foreign-currency ledger's balance can read as a plain amount too, so only the ledger's own
+    currency tells them apart. Which Currency master is the base cannot be identified among
+    several until #601. Until then every post reads the company's Currency masters before
+    approval and again inside the queue, in the same identity brackets as the catalogue, and is
+    refused unless there is exactly one (`import_multi_currency_unsupported`, naming the masters
+    seen, or `import_base_currency_undetermined` when the response parses to no master or does not
+    parse, as a master without a name does not). A transport failure of that read is reported as any failed read
+    before approval, and as `import_dispatch_outcome_unknown` with `attempt_recorded: false` in the
+    queue, as for the catalogue re-read. That a one-master book holds every ledger in the base is
+    an inference, not a measurement (TALLY_PROTOCOL_REFERENCE §8.2d).
+    A master added during the few requests between the queue's read and the POST is not caught,
+    the same window as the catalogue re-read (#239). This refuses every post
+    into a book that defines a second currency, even one whose legs are all in the base. When
+    #601 can name the base, each leg's own `CURRENCYNAME` is compared with it instead.
+14. **Amendments can overwrite work done in Tally, #239. Named, not closed.** An amendment
+    (`amends_batch_id`) is refused unless each voucher it alters is still in the book as a build of
+    that batch wrote it, in these fields only: the date, a bank voucher's effective date when Tally
+    returns one, the voucher type, the voucher number when the batch set one, each entry's ledger,
+    amount and side, and the narration. Two gaps remain, and each needs its own fix:
+    - **Fields not compared.** A voucher's reference, its bill-wise and cost-centre allocations,
+      and which ledger Tally records as its party are not fetched by the verification read, so an
+      edit to any of them, whenever it was made, is not seen. An in-place alteration replaces a
+      voucher's entries rather than merging them (TALLY_PROTOCOL_REFERENCE §9.3, measured over the
+      gateway), and an amendment's entries carry no allocations, so allocations made in Tally,
+      including those Bridge's own build advice asks for after a Payment or Receipt import, are
+      expected to be lost. That loss, and what happens to a reference, are not measured directly.
+      Fetching and comparing those fields, or comparing each voucher's `ALTERID` with the one Bridge
+      last recorded for it, would close this gap.
+    - **The build-to-import window.** The comparison runs when the amendment is built. The import
+      is done by hand through Tally's Import menu, and Bridge refuses to post an amendment
+      (`import_post_amendment_requires_file_import`), so nothing re-checks the vouchers just before
+      they are altered, and an edit made in between is overwritten without warning. Only Bridge
+      posting amendments through its own queue, with the check run last before the POST as the
+      #574 aim check is, would close this gap.
+
+    The build result's warnings and next step, the tool and schema descriptions, and the refusal
+    text state these limits and ask for a prompt import.
 
 ## Amendment — owner decision, 2026-09-22: direct voucher posting
 
@@ -246,6 +314,10 @@ Contra**. Every safeguard of the Journal path applies to all four:
 - a fresh REMOTEID recorded before dispatch (#582);
 - complete identity admission, re-checked inside the endpoint queue
   before the POST (#574);
+- each named ledger bound to its GUID at build, and checked against it before
+  approval (#239, follow-up 8);
+- a company with exactly one Currency master, checked before approval and
+  again inside the queue (#551, follow-up 13);
 - the native approval;
 - a single attempt with no automatic retry;
 - parser-derived counters requiring a clean create;
@@ -261,8 +333,9 @@ import request and before any dispatch intent (`import_bank_classification_chang
 The queued re-read is not the last request before the POST: the mode and
 company re-admission and the two duplicate-absence reads follow it, because
 duplicate absence stays the final source check. A regroup in Tally during those
-few requests is not caught; this is the same inherited gap as the ledger-identity
-check (row 6) and the quiet-company assumption (#239) covers it. The catalogue binding alone cannot see
+few requests is refused by the master-mark comparison (follow-up 8) only if it moves
+the company's `ALTMSTID`, which is not yet measured for a regroup; until then the
+quiet-company assumption (#239) covers it. The catalogue binding alone cannot see
 this: it compares each ledger's name and GUID, not its parent, so a ledger or a
 group re-parented after the build would otherwise go unnoticed. A bank voucher
 without its group read, or a Journal with one, is refused as a wiring fault
@@ -270,8 +343,9 @@ without its group read, or a Journal with one, is refused as a wiring fault
 
 The approval names the type in its first line ("Create ONE Payment in …") and
 states which side had to be bank or cash; the dialog title and button are
-type-neutral ("approve one voucher", "Post voucher"). A Journal's queued request
-sequence is unchanged: it carries no group request. Known limits of the preview:
+type-neutral ("approve one voucher", "Post voucher"). A Journal carries no group
+request. (Since #574 every post, a Journal included, also reads the all-company
+marks last before the POST and once after it.) Known limits of the preview:
 it lists entries in the saved order while the posted XML puts debits first, and
 it does not say which ledger becomes the voucher's party (Tally 7.1 Silver read
 the bank ledger back as the party on Payments and Receipts). A preview over the

@@ -188,6 +188,15 @@ pub struct StandardLedgerCatalogBinding {
 }
 
 impl StandardLedgerCatalogBinding {
+    /// Each selected ledger's observed name with the GUID it was bound to, in
+    /// name order. For recording a build's binding, so a later post can tell
+    /// a ledger renamed and replaced under its old name (bridge#239).
+    pub fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.entries
+            .iter()
+            .map(|(name, guid)| (name.as_str(), guid.as_str()))
+    }
+
     /// True when every selected pair is still present in an already-parsed
     /// catalog.
     ///

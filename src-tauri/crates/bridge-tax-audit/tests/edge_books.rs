@@ -25,9 +25,9 @@ use bridge_tax_audit::documents::traces_documents_from_json;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-    statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts,
-    Tds26asConfig, TdsConfig,
+    book_keeping_quality, cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, loans_interest,
+    stale_balances_41_1, statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
+    twentysixas_receipts, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -279,6 +279,27 @@ fn tds_config(s: &Value) -> TdsConfig {
     }
 }
 
+/// The `loans` table `parity/edge_golden.py` passes `loans_interest`, typed as the crate types a
+/// bound `[loans.loan_ledgers]`.
+fn loans(s: &Value) -> BTreeMap<String, loans_interest::LoanConfig> {
+    s["loans"]
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .map(|(k, v)| {
+                    let text = |key: &str| v[key].as_str().unwrap().to_string();
+                    let cfg = loans_interest::LoanConfig {
+                        lender: text("lender"),
+                        lender_type: text("lender_type"),
+                        interest_ledger: v["interest_ledger"].as_str().map(str::to_string),
+                    };
+                    (k.clone(), cfg)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The `[tds_tcs_26as]` values `parity/edge_golden.py` passes both 26AS tests.
 fn tds_26as_config(s: &Value) -> Tds26asConfig {
     let set = |key: &str| strs(&s[key]).into_iter().collect();
@@ -294,6 +315,32 @@ fn tds_26as_config(s: &Value) -> Tds26asConfig {
                     .collect()
             })
             .unwrap_or_default(),
+    }
+}
+
+/// `book_keeping_quality`'s inputs from the spec's `book_keeping_quality` table, as
+/// `parity/edge_golden.py` passes them: every key optional and empty when absent, `tax_ledgers`
+/// flattened to ledger -> head.
+fn bkq_inputs(s: &Value) -> book_keeping_quality::Inputs {
+    let b = &s["book_keeping_quality"];
+    let set = |k: &str| strs(&b[k]).into_iter().collect();
+    let mut tax_ledgers_by_head = BTreeMap::new();
+    if let Some(heads) = b["tax_ledgers"].as_object() {
+        for (head, ledgers) in heads {
+            for ledger in strs(ledgers) {
+                assert!(
+                    tax_ledgers_by_head.insert(ledger, head.clone()).is_none(),
+                    "an edge book lists a ledger under one GST head only"
+                );
+            }
+        }
+    }
+    book_keeping_quality::Inputs {
+        payment_channel_debtors: set("payment_channel_debtors"),
+        tax_ledgers_by_head,
+        gst_payment_ledgers: set("gst_payment_ledgers"),
+        reissue_narration_terms: strs(&b["reissue_narration_terms"]),
+        writeoff_discount_ledgers: set("writeoff_discount_ledgers"),
     }
 }
 
@@ -369,6 +416,11 @@ fn check(name: &str) {
                 let c = statutory_dues_43b::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
+            "book_keeping_quality" => {
+                let r = book_keeping_quality::run(&book, &rules, &cash, &bkq_inputs(&s)).unwrap();
+                let c = book_keeping_quality::check_invariants(&book, &r).unwrap();
+                (r, c)
+            }
             "tds_payees" => {
                 let entity_type = s["entity_type"].as_str().unwrap_or("individual");
                 let r = tds_payees::run(&book, &rules, entity_type, &tds_config(&s)).unwrap();
@@ -378,6 +430,49 @@ fn check(name: &str) {
                 let diffs = compare(&golden, &rust, None).unwrap();
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
+            }
+            "loans_interest" => {
+                let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                let shared: BTreeSet<String> =
+                    strs(&s["shared_interest_ledgers"]).into_iter().collect();
+                let loans = loans(&s);
+                let turnover = s["previous_year_turnover_paise"].as_i64();
+                // Without a net_reversals key the book runs the rule in force, through run() and
+                // check_invariants(), so the default switch is what that golden pins.
+                match typed(&s, "net_reversals", false, "true or false", Value::as_bool) {
+                    None => {
+                        let r = loans_interest::run(
+                            &book,
+                            &rules,
+                            entity_type,
+                            &loans,
+                            turnover,
+                            &cash,
+                            &bank,
+                            &shared,
+                        )
+                        .unwrap();
+                        let c = loans_interest::check_invariants(&book, &r).unwrap();
+                        (r, c)
+                    }
+                    Some(net_reversals) => {
+                        let r = loans_interest::run_with(
+                            &book,
+                            &rules,
+                            entity_type,
+                            &loans,
+                            turnover,
+                            &cash,
+                            &bank,
+                            &shared,
+                            net_reversals,
+                        )
+                        .unwrap();
+                        let c = loans_interest::check_invariants_with(&book, &r, net_reversals)
+                            .unwrap();
+                        (r, c)
+                    }
+                }
             }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
@@ -412,10 +507,12 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 9] = [
+const EDGE_TESTS: [&str; 11] = [
+    "book_keeping_quality",
     "cash_book_integrity",
     "creditor_ageing_43bh",
     "ledger_scrutiny",
+    "loans_interest",
     "stale_balances_41_1",
     "statutory_dues_43b",
     "tds_payees",

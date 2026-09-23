@@ -635,6 +635,7 @@ fn party_master_currency_assertion_rejects_a_changed_company_extent() {
             currency_count: 1,
             decimal_places: 2,
             is_inr: true,
+            names: Vec::new(),
         },
         extent: read_extent.clone(),
         evidence: RuntimeReadEvidence::empty(),

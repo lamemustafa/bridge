@@ -7,8 +7,8 @@
 //!
 //! Tally does this blind: a same-REMOTEID import replaces whatever the voucher
 //! holds, including an edit someone made in Tally since. So an amendment is
-//! admitted only while every named voucher is still in the book exactly as some
-//! build in its lineage wrote it — the same discipline as `if_version` on a
+//! admitted only while every named voucher is still in the book as some build
+//! in its lineage wrote it, in the fields compared — the same discipline as `if_version` on a
 //! document write. It is checked against the book as read during the build and
 //! cannot see an edit made between the build and the hand import.
 //!
@@ -18,9 +18,12 @@
 //! random private REMOTEID, so an amendment of it would create a duplicate; any
 //! dispatch in the lineage refuses the amendment.
 //!
-//! The comparison covers date, type, entries and narration. It does not cover
-//! a Journal's `REFERENCE`, which the verification read does not fetch, so an
-//! edit made to that field in Tally is overwritten without being detected.
+//! The comparison covers the date, a bank voucher's effective date when read,
+//! the voucher type, the voucher number when the batch set one, each entry's
+//! ledger, amount and side, and the narration. It does not cover `REFERENCE`,
+//! bill-wise or cost-centre allocations, or the party ledger, which the
+//! verification read does not fetch, so an edit to any of them in Tally is
+//! overwritten without being detected.
 use super::*;
 
 /// Every build that shares one wire identity, in journal order.
@@ -133,8 +136,8 @@ impl Lineage {
     }
 
     /// The compare-and-swap. Returns per-voucher evidence when every amended
-    /// voucher is in the book exactly as some build of this lineage wrote it,
-    /// and per-voucher refusals otherwise.
+    /// voucher is in the book as some build of this lineage wrote it, in the
+    /// fields the module doc lists, and per-voucher refusals otherwise.
     pub(super) fn compare_and_swap(
         &self,
         vouchers: &[ImportVoucher],

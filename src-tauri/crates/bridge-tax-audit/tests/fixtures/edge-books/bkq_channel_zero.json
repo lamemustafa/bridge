@@ -1,0 +1,151 @@
+{
+ "comment": "book_keeping_quality with channel sale lines priced against a purchase rate but worth zero: channel sales total zero, so the margin section reports nothing.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Local Debtors": "Sundry Debtors",
+  "Stock-in-Hand": "Current Assets",
+  "Finished Goods": "Stock-in-Hand",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-0"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-1"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-bkq-2"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-bkq-3"
+  },
+  {
+   "name": "Supplier",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-4"
+  },
+  {
+   "name": "Customer",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-5"
+  },
+  {
+   "name": "Expenses",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bkq-6"
+  },
+  {
+   "name": "UPI Collections",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-7"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "zp-1",
+   "date": "2025-04-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1000
+    ],
+    [
+     "Supplier",
+     -1000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Thing",
+     "qty": 2,
+     "amount": 1000
+    }
+   ]
+  },
+  {
+   "guid": "zi-1",
+   "date": "2025-04-05",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     100
+    ],
+    [
+     "Sales",
+     -100
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Thing",
+     "qty": 1,
+     "amount": 0
+    }
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "book_keeping_quality": {
+  "payment_channel_debtors": [
+   "UPI Collections"
+  ],
+  "tax_ledgers": {},
+  "gst_payment_ledgers": [],
+  "reissue_narration_terms": [],
+  "writeoff_discount_ledgers": []
+ },
+ "tests": [
+  "book_keeping_quality"
+ ]
+}
