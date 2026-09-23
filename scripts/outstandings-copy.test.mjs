@@ -186,9 +186,15 @@ test("working-paper failures stay distinct from completed report availability", 
   assert.match(resource.title, /working paper unavailable/i);
   assert.match(resource.message, /report is complete/i);
   assert.match(resource.message, /safe export limits/i);
+  // bridge#551: statements come from the same held source, so they are
+  // unavailable too, and the copy must not promise them.
+  assert.match(resource.message, /party statements/i);
+  assert.doesNotMatch(resource.message, /other report exports remain available/i);
 
   const source = workingPaperUnavailableState("working_paper_complete_source_unavailable");
   assert.match(source.message, /native bill and unallocated controls/i);
+  assert.match(source.message, /party statements/i);
+  assert.doesNotMatch(source.message, /other report exports remain available/i);
 
   const store = workingPaperUnavailableState("working_paper_export_store_unavailable");
   assert.match(store.message, /one-use working-paper snapshot/i);
