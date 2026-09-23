@@ -39,11 +39,11 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "5738ec5fa78916cf25424bda62cc48be709a989199ff5274ef7f6f847fdd3107"
+      "sha256": "27ab6f38b62d63192f869e293748af0e43584602c5f3cb0bef282ac97b923d63"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
-      "sha256": "ad9a20c89e0d84f7c3ab4e6a42d7939a04c028aa24f2f3871e1cdf3073a8423a"
+      "sha256": "f0f732837413b2fb6914a89865b6bcae2f788a1c760b0ae2d363589639731a2e"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
@@ -291,19 +291,19 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/mod.rs",
-      "sha256": "3c5cb332dc52aec9c6cefaa9572506502571c0638016814a050ff433e4292788"
+      "sha256": "0f32deb81575c29ce77a3927754ccb33651b7d3f410e386d23a7f4f0dda696bb"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
-      "sha256": "d00f47a9774272a8e61737d7f4f81886d9bc1f7adacbfeea851bf96ba0dd190a"
+      "sha256": "4d14d0e12482625589d69e64f6bc9428a68a67d911894e282377165b997508a8"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
-      "sha256": "096a1fa851ecbc3822c1b7bdcb1f13085677df1fc34841e89a6459bfd0a5533a"
+      "sha256": "898ec4a405bac7143efd3b35fc2b4e375ed4a6e05137e057c1e81cae5184355f"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
-      "sha256": "c2fe5914008188f5edefc32dfaebdf95203035a8058ce700d9b9d5a608020428"
+      "sha256": "7142d98f65806fe067e72da8e05d52660083f6e1dad8438730cce1704850928b"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/mod.rs",
@@ -1110,5 +1110,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "ba3a76f597e8827ece1a7cb7cc01bf488149b66c28d46311cc4d564a11b22104"
+  "manifest_sha256": "61314750951076b0925068eb2462d5fa75a36e4a5add2759146d4a6ee2ea4277"
 }

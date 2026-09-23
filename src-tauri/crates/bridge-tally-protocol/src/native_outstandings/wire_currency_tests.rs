@@ -1,4 +1,5 @@
 use super::*;
+use crate::native_outstandings::{render_company_currency_request, InrArm};
 
 const MODERN_LIVE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -280,4 +281,151 @@ fn constructed_forex_composite_boundaries_remain_fail_closed() {
         parse_native_ledger_snapshot(&malformed),
         Err(NativeOutstandingsError::InvalidAmount)
     );
+}
+
+fn master(name: &str, original_name: Option<&str>, mailing_name: &str) -> CurrencyMaster {
+    CurrencyMaster {
+        name: name.to_string(),
+        original_name: original_name.map(str::to_string),
+        mailing_name: mailing_name.to_string(),
+        decimal_places: 2,
+    }
+}
+
+/// bridge#551: the INR rule's two arms, on the master shapes measured (the
+/// `I₹`/`₹`/`INR` master, the `₹`/`₹`/`Indian Rupees` master, the `Rs.`
+/// legacy master) and on the edges the rule states: a present but empty
+/// `ORIGINALNAME` takes no `NAME` fallback, a prefixed `I₹` is not `₹`, and
+/// `Rs.` alone never admits.
+#[test]
+fn the_inr_rule_admits_by_the_rupee_symbol_or_an_indian_mailing_name() {
+    let rupee = "\u{20b9}";
+    let prefixed = "I\u{20b9}";
+    for (master, arm) in [
+        (master(prefixed, Some(rupee), "INR"), Some(InrArm::Both)),
+        (
+            master(rupee, Some(rupee), "Indian Rupees"),
+            Some(InrArm::Both),
+        ),
+        (
+            master("Rs.", None, "Indian Rupees"),
+            Some(InrArm::MailingName),
+        ),
+        (master("Rs.", None, "inr"), Some(InrArm::MailingName)),
+        (master(prefixed, Some(rupee), ""), Some(InrArm::Symbol)),
+        (master(rupee, None, "Rupees"), Some(InrArm::Symbol)),
+        (master(rupee, Some(""), ""), None),
+        (master(prefixed, None, ""), None),
+        (master("Rs.", None, ""), None),
+        (master("Rs.", Some("Rs."), "Pakistani Rupees"), None),
+        (master("$", Some("$"), "US Dollar"), None),
+    ] {
+        assert_eq!(master.inr_arm(), arm, "{master:?}");
+    }
+}
+
+/// bridge#551: the base is the only master, or the unique master whose
+/// `ORIGINALNAME` is the company's `CURRENCYNAME`; otherwise none is, and
+/// nothing is INR.
+#[test]
+fn the_base_is_the_only_master_or_the_one_the_company_names() {
+    let rupee = "\u{20b9}";
+    let inr = master("I\u{20b9}", Some(rupee), "INR");
+    let dollar = master("$", Some("$"), "US Dollar");
+
+    let single = CompanyCurrency::from_masters(&[master(rupee, None, "Rupees")], None);
+    assert!(
+        single.is_inr,
+        "a lone master is the base, admitted by its symbol"
+    );
+
+    let identified = CompanyCurrency::from_masters(&[dollar.clone(), inr.clone()], Some(rupee));
+    assert!(identified.is_inr);
+    assert_eq!(identified.symbol, "I\u{20b9}");
+    assert_eq!(identified.mailing_name, "INR");
+    assert_eq!(identified.currency_count, 2);
+    assert_eq!(identified.names, ["$", "I\u{20b9}"]);
+
+    let usd_base = CompanyCurrency::from_masters(&[dollar.clone(), inr.clone()], Some("$"));
+    assert!(!usd_base.is_inr, "an identified base that is not INR");
+    assert_eq!(usd_base.symbol, "$");
+
+    for name in [None, Some(""), Some("I\u{20b9}"), Some("€")] {
+        let unidentified = CompanyCurrency::from_masters(&[dollar.clone(), inr.clone()], name);
+        assert!(!unidentified.is_inr, "{name:?}");
+        assert_eq!(
+            unidentified.symbol, "$",
+            "{name:?}: the first master read, as before"
+        );
+    }
+    let twice = CompanyCurrency::from_masters(&[inr.clone(), inr.clone()], Some(rupee));
+    assert!(
+        !twice.is_inr,
+        "two masters answering the name identify neither"
+    );
+    // An empty company value names nothing, even a master whose
+    // ORIGINALNAME is present but empty.
+    let blank = master(rupee, Some(""), "INR");
+    let empty = CompanyCurrency::from_masters(&[dollar.clone(), blank], Some(""));
+    assert!(!empty.is_inr);
+    assert_eq!(empty.symbol, "$");
+}
+
+/// bridge#551: the captured two-master books, read with `ORIGINALNAME`
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2). Without the company's
+/// `CURRENCYNAME` neither names its base, as before; with the `₹` both books
+/// reported, the rupee master is the base and is INR by both arms.
+#[test]
+fn captured_masters_carry_originalname_and_the_company_name_picks_the_base() {
+    let rupee = "\u{20b9}";
+    for (bytes, expected) in [
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+            ))
+            .as_slice(),
+            [("$", "$", "USD"), ("I\u{20b9}", rupee, "INR")],
+        ),
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/currency_originalname_shape_live.utf16le.xml"
+            ))
+            .as_slice(),
+            [("I\u{20b9}", rupee, "INR"), ("UUSD", "USD", "US Dollar")],
+        ),
+    ] {
+        let masters = parse_currency_masters(&decode_utf16le(bytes)).unwrap();
+        let read = masters
+            .iter()
+            .map(|master| {
+                (
+                    master.name.as_str(),
+                    master.original_name.as_deref().unwrap(),
+                    master.mailing_name.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(read, expected);
+
+        let unnamed = CompanyCurrency::from_masters(&masters, None);
+        assert_eq!(unnamed.currency_count, 2);
+        assert!(!unnamed.is_inr);
+
+        let named = CompanyCurrency::from_masters(&masters, Some(rupee));
+        assert!(named.is_inr);
+        assert_eq!(named.symbol, "I\u{20b9}");
+        let base = masters
+            .iter()
+            .find(|master| master.name == "I\u{20b9}")
+            .unwrap();
+        assert_eq!(base.inr_arm(), Some(InrArm::Both));
+    }
+}
+
+#[test]
+fn the_currency_request_fetches_originalname() {
+    assert!(render_company_currency_request("Synthetic Company")
+        .contains("<FETCH>NAME, MAILINGNAME, DECIMALPLACES, ORIGINALNAME</FETCH>"));
 }

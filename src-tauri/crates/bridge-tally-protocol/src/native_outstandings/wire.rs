@@ -1163,15 +1163,25 @@ fn read_element_text(
         .to_string())
 }
 
-use super::model::CompanyCurrency;
+use super::model::{CompanyCurrency, CurrencyMaster};
 
-/// Parses the company currency collection.
+/// Parses the company currency collection into the company's currency, with
+/// no company `CURRENCYNAME`: a single master is the base, several leave it
+/// unidentified ([`CompanyCurrency::from_masters`]).
+pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutstandingsError> {
+    Ok(CompanyCurrency::from_masters(
+        &parse_currency_masters(xml)?,
+        None,
+    ))
+}
+
+/// Parses the company currency collection into its masters, in read order.
 ///
 /// Ordinary (non-inverted) `STATUS` applies here -- this is a `Collection`
 /// request, not one of the flat `Data` reports. Rows are read only from
 /// `<DATA>`, because the same `CMPINFO` counter block that inflates a naive
 /// ledger scan also carries a bare `<CURRENCY>0</CURRENCY>`.
-pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutstandingsError> {
+pub fn parse_currency_masters(xml: &str) -> Result<Vec<CurrencyMaster>, NativeOutstandingsError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
@@ -1250,52 +1260,40 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         ));
     }
 
-    let currency_count = rows.len();
-    let names = rows.iter().map(|row| row.symbol.clone()).collect();
-    let CurrencyRow {
-        symbol,
-        mailing_name,
-        decimal_places,
-    } = rows.into_iter().next().unwrap_or_default();
-    // Only a single defined currency lets this read name the BASE currency.
-    // "Rs." is shared by several currencies, so only the observed Indian
-    // mailing identity is authoritative enough to put ₹ before real money.
-    let is_inr = currency_count == 1
-        && (mailing_name.eq_ignore_ascii_case("Indian Rupees")
-            || mailing_name.eq_ignore_ascii_case("INR"));
-
-    Ok(CompanyCurrency {
-        symbol,
-        mailing_name,
-        currency_count,
-        decimal_places,
-        is_inr,
-        names,
-    })
-}
-
-#[derive(Default)]
-struct CurrencyRow {
-    symbol: String,
-    mailing_name: String,
-    decimal_places: u8,
+    Ok(rows)
 }
 
 fn parse_currency_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<CurrencyRow, NativeOutstandingsError> {
+) -> Result<CurrencyMaster, NativeOutstandingsError> {
     validate_row_attributes(element, "currency_row_malformed_attributes")?;
     let symbol = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("currency_name_missing"),
     )?;
     let mut mailing_name = None;
     let mut decimal_places = None;
+    let mut original_name = None;
     loop {
         match reader
             .read_event()
             .map_err(|_| NativeOutstandingsError::InvalidResponse("currency_xml_malformed"))?
         {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"ORIGINALNAME") => {
+                let text = read_element_text(reader, child.name())?;
+                if original_name.replace(text).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_original_name",
+                    ));
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"ORIGINALNAME") => {
+                if original_name.replace(String::new()).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_original_name",
+                    ));
+                }
+            }
             Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
                 let text = read_element_text(reader, child.name())?;
                 if mailing_name.replace(text).is_some() {
@@ -1337,8 +1335,9 @@ fn parse_currency_row(
             _ => {}
         }
     }
-    Ok(CurrencyRow {
-        symbol,
+    Ok(CurrencyMaster {
+        name: symbol,
+        original_name,
         mailing_name: mailing_name.unwrap_or_default(),
         decimal_places: decimal_places.ok_or(NativeOutstandingsError::InvalidResponse(
             "currency_decimal_places_missing",

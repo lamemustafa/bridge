@@ -34,8 +34,8 @@ pub use ledger_currency::{
     LedgerCurrencyRefusal,
 };
 pub use model::{
-    AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
-    NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
+    AgeingAnchor, CompanyCurrency, CurrencyMaster, InrArm, LedgerSnapshotEntry, NativeBillRow,
+    NativeOutstandingsError, NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
 };
 pub use request::{
     render_company_currency_request, render_native_bills_request,
@@ -46,8 +46,8 @@ pub use request::{
     NativeLedgerSnapshotPeriod, NativeLedgerSnapshotPeriodError,
 };
 pub use wire::{
-    parse_company_currency, parse_native_bill_rows, parse_native_group_snapshot,
-    parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
-    parse_native_ledger_snapshot_classified, parse_native_ledger_snapshot_for_company,
-    ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
+    parse_company_currency, parse_currency_masters, parse_native_bill_rows,
+    parse_native_group_snapshot, parse_native_group_snapshot_with_evidence,
+    parse_native_ledger_snapshot, parse_native_ledger_snapshot_classified,
+    parse_native_ledger_snapshot_for_company, ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
 };

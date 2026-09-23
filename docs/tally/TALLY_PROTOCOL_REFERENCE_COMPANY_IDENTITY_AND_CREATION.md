@@ -361,7 +361,50 @@ setting. With more than one row, the read therefore cannot establish which curre
 monetary figures. Bridge must fail closed rather than infer INR from any individual row. This does
 **not** say that the Tally company is misconfigured or that it has more than one base currency;
 only that this read cannot establish one. The parser's `currency_count == 1` admission rule and
-the party/ledger-master recovery text rely on this boundary.
+the party/ledger-master recovery text rely on this boundary. §9.10a.2 records the read that does
+identify the base.
+
+#### 9.10a.2 The company's `CURRENCYNAME` names its base master by `ORIGINALNAME` — **VERIFIED 2026-09-23 on two synthetic books; a rule, not a proof**
+
+**Scope:** licensed TallyPrime 7.1 Silver, plain `Collection` exports with no formula and no
+filter, read-only (bridge#551). Two synthetic books with two Currency masters each: `BRIDGE CORPUS
+FOREX` and `BRIDGE SHAPE LAB`.
+
+**Currency collection.** With `ORIGINALNAME` added to the production request's `FETCH`:
+- FOREX: `$` / `$` / `USD` and `I₹` / `₹` / `INR`, as `NAME` / `ORIGINALNAME` / `MAILINGNAME`;
+- SHAPE LAB: `I₹` / `₹` / `INR` and `UUSD` / `USD` / `US Dollar`.
+
+Removing the two `ORIGINALNAME` elements from each response leaves it byte-identical to the same
+session's response without the field. Committed as `currency_originalname_forex_live` and
+`currency_originalname_shape_live` (`CURRENCY_CAPTURE_PROVENANCE.md`).
+
+**Company collection.** Fetching `NAME, GUID, CURRENCYNAME` lists every loaded company, not only the
+one named in `SVCURRENTCOMPANY`. Both books report `CURRENCYNAME` `₹`. That is the rupee master's
+`ORIGINALNAME`, and no master's `NAME`. An earlier session (2026-09-22) also read a USD-based
+control book, whose `CURRENCYNAME` was `$`. Not committed: the response lists other loaded
+companies.
+
+**Bridge's rule.**
+- The base is the only master, or, among several, the unique master whose `ORIGINALNAME` equals
+  the company's `CURRENCYNAME` character for character. With no match, several, or an empty
+  value, it is not identified.
+- An identified base is INR if either arm holds:
+  - its `ORIGINALNAME` is exactly `₹` (U+20B9), or, only when `ORIGINALNAME` is absent, its `NAME`
+    is exactly `₹`;
+  - its `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
+- `Rs.` alone never admits: other currencies share it. A prefixed `I₹` is not `₹`.
+
+A book with several masters is still refused on every path until that path compares each
+ledger's own currency with the base (§8.2d).
+
+**Not established:**
+- that `ORIGINALNAME` rather than `NAME` is the match on a book whose base master was never renamed
+  (the two fields are then the same);
+- that row order, `RESERVEDNAME` or `MASTERID` mean anything. They are never used;
+- any release other than 7.1, or a base symbol changed by a later Company Alteration;
+- a master that only the symbol arm admits (`₹` with another mailing name). No book read has one.
+
+These are exports. §9.10b's trap is `ORIGINALNAME` sent as a `COMPANY` child in an **import**.
 
 ### 9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**
 

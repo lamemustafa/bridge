@@ -750,3 +750,45 @@ async fn a_completed_read_holds_its_statement_source_apart_from_the_working_pape
         assert_eq!(&source.open_bills, statement_open_bills);
     }
 }
+
+/// bridge#551: the INR rule's symbol arm admits a single master whose
+/// `ORIGINALNAME` is `₹` although its mailing name is neither `INR` nor
+/// `Indian Rupees`, on every path that admits through `admit_inr`. The same
+/// master without that `ORIGINALNAME` stays refused as not INR. No book read
+/// has this shape (TALLY_PROTOCOL_REFERENCE §9.10a.2), so it is injected into
+/// the captured single-master read.
+#[tokio::test]
+async fn a_single_rupee_master_is_admitted_by_its_symbol() {
+    let captured = currency_source();
+    let rupees = captured.replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">Rupees</MAILINGNAME>",
+    );
+    assert_ne!(rupees, captured);
+    assert_eq!(rupees.matches("<DECIMALPLACES").count(), 1);
+    let symbol = rupees.replace(
+        "<DECIMALPLACES",
+        "<ORIGINALNAME TYPE=\"String\">\u{20b9}</ORIGINALNAME>\r\n     <DECIMALPLACES",
+    );
+    for (currency, admitted) in [(symbol, true), (rupees, false)] {
+        let simulator = SequenceSimulator::spawn(currency_plans(currency)).unwrap();
+        let read = TallyRuntime::default()
+            .detect_base_currency_with_extent(
+                TallyConfig {
+                    host: simulator.address().ip().to_string(),
+                    port: simulator.address().port(),
+                },
+                &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            )
+            .await
+            .unwrap();
+        simulator.cancel();
+        match read.admit_inr() {
+            Ok(_) => assert!(admitted, "a master INR by neither arm was admitted"),
+            Err(code) => {
+                assert!(!admitted, "the symbol arm was refused: {code}");
+                assert_eq!(code, "company_base_currency_not_inr");
+            }
+        }
+    }
+}
