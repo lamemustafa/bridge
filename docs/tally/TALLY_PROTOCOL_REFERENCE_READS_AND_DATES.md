@@ -506,9 +506,10 @@ field" below).
   must use the NAME read from the same book, never a constant.
 
 **The company's own `CURRENCYNAME` is the base master's ORIGINALNAME, not its NAME.** Measured on
-the Company Object export with `CURRENCYNAME` added (not committed): `₹` on FOREX, `Rs.` on
-Billwise. On FOREX that differs from the `I₹` its ledgers carry. The company field identifies the
-base master (bridge#551); ledgers are compared with that master's NAME.
+a `Company` collection export with `CURRENCYNAME` in its `FETCH` (2026-09-22; it lists every
+loaded company, so it is not committed): `₹` on FOREX, `Rs.` on Billwise. On FOREX that differs
+from the `I₹` its ledgers carry. The company field identifies the base master (bridge#551); ledgers
+are compared with that master's NAME.
 
 **Every ledger carries the field.** No ledger row in any book read lacked `CURRENCYNAME` or had it
 empty:

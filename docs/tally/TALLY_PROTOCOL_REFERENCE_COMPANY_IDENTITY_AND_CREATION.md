@@ -339,7 +339,8 @@ exports them.
 The Currency master collection does return them. The request rendered by
 `render_company_currency_request` is exactly `TYPE=Collection` with `<TYPE>Currency</TYPE>` and
 fetches `NAME`, `MAILINGNAME`, and `DECIMALPLACES`. Three captures committed on this PR establish
-that response shape. On the same licensed TallyPrime Silver 7.1 machine on 2026-08-23, current books
+that response shape. (bridge#551's parser also reads `ORIGINALNAME` when a response carries it; the
+production request does not fetch it yet. See §9.10a.2.) On the same licensed TallyPrime Silver 7.1 machine on 2026-08-23, current books
 reported `I₹` (U+0049 followed by U+20B9) with `MAILINGNAME` `INR`; older books reported `Rs.`
 with `MAILINGNAME` `Indian Rupees`.
 
@@ -361,7 +362,64 @@ setting. With more than one row, the read therefore cannot establish which curre
 monetary figures. Bridge must fail closed rather than infer INR from any individual row. This does
 **not** say that the Tally company is misconfigured or that it has more than one base currency;
 only that this read cannot establish one. The parser's `currency_count == 1` admission rule and
-the party/ledger-master recovery text rely on this boundary.
+the party/ledger-master recovery text rely on this boundary. §9.10a.2 records the read that does
+identify the base.
+
+#### 9.10a.2 The company's `CURRENCYNAME` names its base master by `ORIGINALNAME` — **VERIFIED 2026-09-23 on two synthetic books; a rule, not a proof**
+
+**Scope:** licensed TallyPrime 7.1 Silver, plain `Collection` exports with no formula and no
+filter, read-only (bridge#551). Two synthetic books with two Currency masters each: `BRIDGE CORPUS
+FOREX` and `BRIDGE SHAPE LAB`.
+
+**Currency collection.** With `ORIGINALNAME` added to the production request's `FETCH` (the
+production request does not send it yet; it joins with its first consumer, bridge#551):
+- FOREX: `$` / `$` / `USD` and `I₹` / `₹` / `INR`, as `NAME` / `ORIGINALNAME` / `MAILINGNAME`;
+- SHAPE LAB: `I₹` / `₹` / `INR` and `UUSD` / `USD` / `US Dollar`.
+
+Removing the two `ORIGINALNAME` elements from each response leaves it byte-identical to the same
+session's response without the field (that control response is not committed). Committed as
+`currency_originalname_forex_live` and `currency_originalname_shape_live`
+(`CURRENCY_CAPTURE_PROVENANCE.md`).
+
+**Company collection.** A `TYPE=Collection` export of `Company` fetching `NAME, GUID, CURRENCYNAME`
+(2026-09-23) lists every loaded company, not only the one named in `SVCURRENTCOMPANY`. Both books
+report `CURRENCYNAME` `₹`. That is the rupee master's `ORIGINALNAME`, and no master's `NAME`. The
+same response lists a USD-based control book in the lab with `CURRENCYNAME` `$`, and
+`Bridge Billwise Lab` with `Rs.`. An earlier Company collection read (2026-09-22) with a wider
+`FETCH` gave the same values for FOREX, SHAPE LAB and Billwise; §8.2d records the FOREX and
+Billwise values. Neither read is committed: both list other loaded companies.
+
+That the rupee master is FOREX's base does not rest on this read alone: FOREX is an INR-based book
+with a `$` master (§8.2d). SHAPE LAB's base is known only through this read.
+
+**Bridge's rule.** Bridge parses `ORIGINALNAME` and can identify the base, but no production path
+applies the identification yet: the currency read keeps its single-master rule (§9.10a.1) until
+the several-masters outstandings read (bridge#551).
+- The base is the only master, or, among several, the unique master whose `ORIGINALNAME` equals
+  the company's `CURRENCYNAME` character for character. With no match, several, or an empty
+  value, it is not identified. `ORIGINALNAME` picks which master is the base; it never decides INR.
+- An identified base is INR only if its `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
+- A rupee symbol does not admit, as `NAME` or as `ORIGINALNAME`. Whether `ORIGINALNAME` `₹`
+  survives a Company Alteration that renames the base currency is unmeasured; if it does, a
+  renamed non-INR base would still carry it (inferred). `Rs.` alone never admits: other currencies
+  share it.
+
+A book with several masters is still refused on every path until that path compares each
+ledger's own currency with the base (§8.2d).
+
+**Not established:**
+- that `ORIGINALNAME` rather than `NAME` is the match on every book. The two differ on the FOREX
+  and SHAPE LAB base (`I₹` / `₹`). On Billwise, a one-master book, `NAME`, `ORIGINALNAME` and the
+  company `CURRENCYNAME` are all `Rs.` (§8.2d, not committed), so that book cannot tell them apart;
+- that row order, `RESERVEDNAME` or `MASTERID` mean anything. They are never used;
+- whether `ORIGINALNAME` survives a base-currency rename by Company Alteration;
+- the currency request with `ORIGINALNAME` on a single-master book. Three client-derived lab
+  copies, one master each, answered a wider `FETCH` that includes `ORIGINALNAME` with `STATUS` 1
+  on the same host (not committed);
+- any release other than 7.1, including whether one that does not know the field answers in-band
+  or blocks on a modal.
+
+These are exports. §9.10b's trap is `ORIGINALNAME` sent as a `COMPANY` child in an **import**.
 
 ### 9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**
 
