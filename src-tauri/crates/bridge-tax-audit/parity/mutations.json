@@ -1394,8 +1394,8 @@
  {
   "id": "A36",
   "by": "author",
-  "what": "int() of a string accepts a doubled or edge underscore",
-  "file": "src/lib.rs",
+  "what": "int() of a string accepts a doubled or edge underscore (in py_int_str since the string reader moved there)",
+  "file": "src/support.rs",
   "from": ".all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));",
   "to": ".all(|g| g.bytes().all(|b| b.is_ascii_digit()));"
  },
@@ -2480,14 +2480,6 @@
   "to": ".filter(|(mid, _)| *mid >= last)"
  },
  {
-  "id": "E1B-05",
-  "by": "author",
-  "what": "unparseable MASTERID read as 0",
-  "file": "src/book_keeping_quality.rs",
-  "from": "    if !well_formed {\n        return Ok(None);\n    }",
-  "to": "    if !well_formed {\n        return Ok(Some(0));\n    }"
- },
- {
   "id": "E1B-06",
   "by": "author",
   "what": "a repeated GUID keeps its first lag",
@@ -2672,14 +2664,6 @@
   "to": "let comparison_available = named.lines > 0;"
  },
  {
-  "id": "E1B-29",
-  "by": "author",
-  "what": "a non-ASCII MASTERID digit not treated as a digit",
-  "file": "src/book_keeping_quality.rs",
-  "from": "g.chars().all(support::py_is_decimal)",
-  "to": "g.bytes().all(|b| b.is_ascii_digit())"
- },
- {
   "id": "E1B-30",
   "by": "author",
   "what": "slug separators not collapsed",
@@ -2702,22 +2686,6 @@
   "file": "src/book_keeping_quality.rs",
   "from": ".filter(|l| l.amount_paise > 0)\n            .map(|l| l.amount_paise),\n    )\n}",
   "to": ".map(|l| l.amount_paise.abs()),\n    )\n}"
- },
- {
-  "id": "E1B-33",
-  "by": "author",
-  "what": "MASTERID stripped with str.strip()'s set, not int()'s",
-  "file": "src/book_keeping_quality.rs",
-  "from": "    let t = text.trim();\n",
-  "to": "    let t = support::py_strip(text);\n"
- },
- {
-  "id": "E1B-34",
-  "by": "author",
-  "what": "a non-ASCII digit refused even where int() rejects the text",
-  "file": "src/book_keeping_quality.rs",
-  "from": "    let t = text.trim();\n",
-  "to": "    if text.chars().any(|c| !c.is_ascii() && support::py_is_decimal(c)) {\n        return Err(AuditError::Config(String::new()));\n    }\n    let t = text.trim();\n"
  },
  {
   "id": "E1B-O01",
@@ -2856,14 +2824,6 @@
   "to": "    if eo.unparseable >= 0 {"
  },
  {
-  "id": "E1B-O20",
-  "by": "reviewer",
-  "what": "negative MASTERID read as positive",
-  "file": "src/book_keeping_quality.rs",
-  "from": "if negative { \"-\" } else { \"\" }",
-  "to": "\"\""
- },
- {
   "id": "E1B-O21",
   "by": "reviewer",
   "what": "contra hash truncated to 10 hex",
@@ -2910,22 +2870,6 @@
   "file": "src/book_keeping_quality.rs",
   "from": "    let stock_ledgers = book.ledgers_under_any(&[STOCK_GROUP.to_string()]);",
   "to": "    let stock_ledgers: BTreeSet<String> = book.ledgers.values().filter(|l| l.parent == STOCK_GROUP).map(|l| l.name.clone()).collect();"
- },
- {
-  "id": "E1B-35",
-  "by": "author",
-  "what": "the int() digit limit moved one digit up",
-  "file": "src/book_keeping_quality.rs",
-  "from": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {",
-  "to": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS + 1 {"
- },
- {
-  "id": "E1B-36",
-  "by": "author",
-  "what": "underscores counted as digits toward the int() limit",
-  "file": "src/book_keeping_quality.rs",
-  "from": "if digits.chars().filter(|c| *c != '_').count() > PY_INT_MAX_STR_DIGITS {",
-  "to": "if digits.chars().count() > PY_INT_MAX_STR_DIGITS {"
  },
  {
   "id": "E1B-37",
@@ -3430,5 +3374,29 @@
   "file": "src/partners_40b_194t.rs",
   "from": "let applicable = s194t_on || s40b_rate > 0;",
   "to": "let applicable = s194t_on && s40b_rate > 0;"
+ },
+ {
+  "id": "MI-01",
+  "by": "author (Lane B)",
+  "what": "masterid_int: an unparseable MASTERID read as 0 (was E1B-05)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Err(support::PyIntError::Invalid) => Ok(None),",
+  "to": "Err(support::PyIntError::Invalid) => Ok(Some(0)),"
+ },
+ {
+  "id": "MI-02",
+  "by": "author (Lane B)",
+  "what": "masterid_int: a negative MASTERID read as positive (was E1B-O20)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Ok(n) => Ok(Some(n)),",
+  "to": "Ok(n) => Ok(Some(n.abs())),"
+ },
+ {
+  "id": "PI-09",
+  "by": "author (Lane B)",
+  "what": "py_int_str: the minus sign dropped",
+  "file": "src/support.rs",
+  "from": "Some(b'-') => (true, &t[1..]),",
+  "to": "Some(b'-') => (false, &t[1..]),"
  }
 ]
