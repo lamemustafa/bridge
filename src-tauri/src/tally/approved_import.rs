@@ -441,6 +441,14 @@ pub(crate) mod test_seam {
                 "a log line, then the token",
                 "read nonce; echo starting; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
             ),
+            (
+                "the token, then more output",
+                "read nonce; printf 'bridge-post-approved:%s\\nmore\\n' \"$nonce\"; cat > /dev/null",
+            ),
+            (
+                "the token without its newline",
+                "read nonce; printf 'bridge-post-approved:%s' \"$nonce\"; cat > /dev/null",
+            ),
         ] {
             assert_eq!(
                 super::confirm_with(&stub(directory.path(), body), "Post").await,
@@ -454,6 +462,32 @@ pub(crate) mod test_seam {
             "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
         );
         assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
+    }
+
+    /// Each call sends a nonce of its own: a stub that answers every call
+    /// with the token for the nonce it read sees a different one each time.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn each_post_dialog_gets_a_fresh_nonce() {
+        let directory = tempfile::tempdir().unwrap();
+        let seen = directory.path().join("nonces");
+        let approves = stub(
+            directory.path(),
+            &format!(
+                "read nonce; echo \"$nonce\" >> '{}'; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
+                seen.display()
+            ),
+        );
+        for _ in 0..2 {
+            assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
+        }
+        let nonces = std::fs::read_to_string(&seen).unwrap();
+        let nonces = nonces.lines().collect::<Vec<_>>();
+        assert_eq!(nonces.len(), 2);
+        assert!(nonces
+            .iter()
+            .all(|nonce| uuid::Uuid::parse_str(nonce).is_ok()));
+        assert_ne!(nonces[0], nonces[1]);
     }
 
     /// The dialog subprocesses show a dialog only for input of the shape the
