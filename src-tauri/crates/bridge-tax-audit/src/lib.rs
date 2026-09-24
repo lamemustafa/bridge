@@ -54,6 +54,8 @@ pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
 pub mod statutory_dues_43b;
+pub mod stock;
+pub mod stock_read;
 mod support;
 pub mod tds_payees;
 pub mod tds_tcs_26as;
@@ -1188,6 +1190,22 @@ pub fn trial_balance_on(
     let (_engagement, _report) = engagement.bind(book)?;
     let result = trial_balance::run(book, rules)?;
     let module_check = trial_balance::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `stock` on a book and return its canonical parity dump, with the module's own STK-1 check.
+/// The item masters, both Stock Summaries and the ISINTEGRATED flag come from the read's stock
+/// parts and `[stock]` ([`stock_read::stock_inputs`]), parsed here, so a missing or malformed
+/// stock part refuses this test alone.
+pub fn stock_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (_engagement, _report) = engagement.bind(book)?;
+    let inputs = stock_read::stock_inputs(engagement.raw_cfg.get("stock"), book.stock.as_ref())?;
+    let result = stock::run(book, rules, &inputs)?;
+    let module_check = stock::check_invariants(book, &result, &inputs)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 

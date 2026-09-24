@@ -272,6 +272,24 @@ TB_SKEW = {"Electricity": 500}
 # POP-1 (vouchers vs closing - opening) still ties.
 STALE_TB_DEBIT = {"Hardware Stock": 75_000_00}
 STALE_TB_CREDIT = {"Hardware Stock": 5_000_00}
+# stock: the item masters (the opening Stock Summary is taken from their own opening fields,
+# [stock].opening_summary = "from_masters") and a closing Stock Summary part as of the period end.
+# (name, BASEUNITS, OPENINGBALANCE, OPENINGVALUE) -- values as Tally writes them, Dr negative. The
+# placeholder is a value-only item (BASEUNITS is Tally's reserved "Not Applicable").
+STOCK_ITEMS = (
+    ("Steel Hinge 4in", "Nos", " 120 Nos", "-6000.00"),
+    ("Brass Handle", "Nos", " 30 Nos", "-4500.00"),
+    ("GST Freight Placeholder", "\x04 Not Applicable", "", ""),
+    ("Wall Bracket", "Nos", " 50 Nos", "-2500.00"),  # absent from the closing summary
+)
+# (name, CLOSINGBALANCE, CLOSINGVALUE, CLOSINGRATE) as of the period end: a goods item negative at
+# close, a value-only item with a negative value, and an item the masters do not carry.
+STOCK_SUMMARY_CLOSE = (
+    ("Steel Hinge 4in", " 95 Nos", "-4750.00", "50.00/Nos"),
+    ("Brass Handle", " -5 Nos", "750.00", "150.00/Nos"),
+    ("GST Freight Placeholder", "", "1200.00", ""),
+    ("Door Lock", " 10 Nos", "-3000.00", "300.00/Nos"),
+)
 ALTER_BASE = 100
 HIGH_WATER = (ALTER_BASE + 53, 57)  # closing high-water must be >= the max ALTERID across both windows (masterid 53, H1)
 
@@ -417,6 +435,29 @@ def company_xml() -> str:
     return envelope(MASTER_ATTRS, body)
 
 
+def stock_items_xml() -> str:
+    primary = tally_text("\x04 Primary")
+    body = "".join(
+        f'    <STOCKITEM NAME="{esc(n)}" RESERVEDNAME="">\n'
+        f'     <GUID TYPE="String">{GUID}-stock-{i}</GUID>\n'
+        f'     <PARENT TYPE="String">{primary}</PARENT>\n'
+        f'     <BASEUNITS TYPE="String">{tally_text(u)}</BASEUNITS>\n'
+        f'     <OPENINGBALANCE TYPE="Quantity">{q}</OPENINGBALANCE>\n'
+        f'     <OPENINGVALUE TYPE="Amount">{v}</OPENINGVALUE>\n'
+        f'    </STOCKITEM>\n' for i, (n, u, q, v) in enumerate(STOCK_ITEMS, start=1))
+    return envelope(MASTER_ATTRS, body)
+
+
+def stock_summary_xml(rows) -> str:
+    body = "".join(
+        f'    <STOCKITEM NAME="{esc(n)}" RESERVEDNAME="">\n'
+        f'     <CLOSINGBALANCE TYPE="Quantity">{q}</CLOSINGBALANCE>\n'
+        f'     <CLOSINGVALUE TYPE="Amount">{v}</CLOSINGVALUE>\n'
+        f'     <CLOSINGRATE TYPE="Rate">{r}</CLOSINGRATE>\n'
+        f'    </STOCKITEM>\n' for n, q, v, r in rows)
+    return envelope(MASTER_ATTRS, body)
+
+
 def high_water_xml() -> str:
     body = (f'    <COMPANY NAME="{esc(COMPANY)}" RESERVEDNAME="">\n'
             f'     <GUID TYPE="String">{GUID}</GUID>\n'
@@ -473,6 +514,9 @@ def main(out_dir: str) -> None:
         part(root, "voucher-status-list", "voucher_status_list", "voucher_status_list.json",
              (json.dumps({"vouchers": list(SIDE_LIST)}, indent=1) + "\n").encode(), media="application/json",
              scope={"from": PERIOD[0], "to": PERIOD[1], "exhaustive": True}),
+        part(root, "stock-items", "stock_items", "stock_items.xml", utf16le(stock_items_xml()), encoding="utf-16le"),
+        part(root, "stock-summary-close", "stock_summary", "stock_summary_close.xml",
+             utf16le(stock_summary_xml(STOCK_SUMMARY_CLOSE)), encoding="utf-16le", as_of=PERIOD[1]),
         part(root, "high-water-after", "company_high_water", "high_water_after.xml", high_water_xml().encode()),
     ]
     mark = {"alter_voucher_id": HIGH_WATER[0], "alter_master_id": HIGH_WATER[1], "observed_at": None}

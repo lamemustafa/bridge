@@ -634,6 +634,7 @@ mod tests {
                 ..Default::default()
             }],
             tb: BTreeMap::new(),
+            ..Default::default()
         }
     }
 

@@ -23,6 +23,7 @@ use serde_json::Value;
 
 use crate::error::{AuditError, Result};
 use crate::read::{iso, window_of, Part, Read, Window};
+use crate::stock_read::StockReadParts;
 use crate::xml::{self, Element};
 
 /// Group names Tally reserves as primary (the reference engine's `PRIMARY_GROUPS`).
@@ -193,7 +194,7 @@ impl TbRow {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Book {
     pub company_name: String,
     pub company_guid: String,
@@ -205,6 +206,10 @@ pub struct Book {
     /// Every exported voucher, all statuses, in read order.
     pub vouchers: Vec<Voucher>,
     pub tb: BTreeMap<String, TbRow>,
+    /// The read's stock parts, unparsed: `stock` parses them when it runs
+    /// ([`crate::stock_read::stock_inputs`]), so a bad one refuses that test alone. `None` on a
+    /// book not built from a read.
+    pub stock: Option<StockReadParts>,
 }
 
 impl Book {
@@ -274,7 +279,7 @@ pub fn paise(text: &str, part: &str) -> Result<Option<i64>> {
 }
 
 /// Tally amount text (debit negative) to canonical paise (debit positive).
-fn flip(text: &str, part: &str) -> Result<Option<i64>> {
+pub(crate) fn flip(text: &str, part: &str) -> Result<Option<i64>> {
     Ok(paise(text, part)?.map(|p| -p))
 }
 
@@ -418,7 +423,7 @@ fn refuse_non_ascii_digits(text: &str, field: &str, part: &str) -> Result<()> {
 
 /// The reference adapter's `_qty`: the first match of `-?[\d,]*\.?\d+` anywhere in the text,
 /// commas removed, read by `float()`; `None` when nothing matches.
-fn quantity(text: &str, part: &str) -> Result<Option<f64>> {
+pub(crate) fn quantity(text: &str, part: &str) -> Result<Option<f64>> {
     refuse_non_ascii_digits(text, "a quantity", part)?;
     let chars: Vec<char> = text.chars().collect();
     let Some((start, end)) =
@@ -438,7 +443,7 @@ fn quantity(text: &str, part: &str) -> Result<Option<f64>> {
 /// The reference adapter's `_rate_paise`: the same pattern, anchored after leading whitespace
 /// (`re.match(r"\s*(...)")`), read by `paise`. `paise` here refuses a lexeme starting with a dot
 /// where the reference reads it as `0.`, so a `0` is put in front first.
-fn rate_paise(text: &str, part: &str) -> Result<Option<i64>> {
+pub(crate) fn rate_paise(text: &str, part: &str) -> Result<Option<i64>> {
     refuse_non_ascii_digits(text, "a rate", part)?;
     let chars: Vec<char> = text.chars().collect();
     let start = chars
@@ -981,6 +986,15 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
             ));
         }
     }
+    // The reference's `load_company_isintegrated`: the same first COMPANY carrying a GUID; an
+    // absent or empty tag is unknown, anything else is whether it reads "yes".
+    let is_integrated = company
+        .descendants_named("COMPANY")
+        .into_iter()
+        .find(|c| !c.child_text("GUID").is_empty())
+        .map(|c| c.child_text("ISINTEGRATED"))
+        .filter(|v| !v.is_empty())
+        .map(|v| crate::support::py_lower(v) == "yes");
     Ok(Book {
         company_name: company_name.to_string(),
         company_guid: guid.to_string(),
@@ -990,6 +1004,11 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
         ledgers,
         vouchers,
         tb,
+        stock: Some(StockReadParts {
+            items: read.one("stock_items").cloned(),
+            summaries: read.of_kind("stock_summary").cloned().collect(),
+            is_integrated,
+        }),
     })
 }
 
@@ -1222,6 +1241,7 @@ mod tests {
             ledgers: BTreeMap::new(),
             vouchers: vec![Voucher::default()],
             tb: BTreeMap::new(),
+            ..Default::default()
         };
         assert!(book.population().is_err());
     }

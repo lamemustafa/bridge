@@ -1111,6 +1111,7 @@ mod tests {
                     closing_paise: 10_000,
                 },
             )]),
+            ..Default::default()
         }
     }
 

@@ -1091,6 +1091,7 @@ mod tests {
                     closing_paise: -300,
                 },
             )]),
+            ..Default::default()
         };
         let mut r = TestResult::new(TEST_ID, VERSION, "v");
         let x = || vec![EvidenceRef::new("ledger", "X")];

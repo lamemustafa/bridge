@@ -928,6 +928,7 @@ mod tests {
                 ..Default::default()
             }],
             tb: BTreeMap::new(),
+            ..Default::default()
         };
         let cash: BTreeSet<String> = ["Cash".to_string()].into_iter().collect();
         let r = run(

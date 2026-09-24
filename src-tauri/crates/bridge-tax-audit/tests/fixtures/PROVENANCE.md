@@ -20,7 +20,7 @@ the crate docs), which is never committed.
 
 ## The synthetic read
 
-`synthetic-read/` is a tally-read-v1 directory: `manifest.json` plus ten parts, one of them
+`synthetic-read/` is a tally-read-v1 directory: `manifest.json` plus twelve parts, one of them
 gzip-stored. Written by `parity/generate_fixture.py`, deterministically (gzip mtime 0);
 `python3 parity/generate_fixture.py tests/fixtures` from the crate root reproduces these bytes.
 Its manifest declares `producer.kind = "synthetic"` and every part `transformation = "derived"`.
@@ -440,13 +440,15 @@ range (one rule for an empty or missing value across its renderers) are outside 
 | `edge.tb_rows.trial_balance.order.json` | 219 | `2ace3be45ee1cd6ae4757727e947e07fd2ca3600a83f480b279bdda181d5f43d` | `golden/edge.tb_rows.trial_balance.order.json` |
 | `text-probes.json` | 1,150,882 | `96ca23055262ee348a27ae2672664d9296c869d1ac95fb21f3a904b43631760c` | `text-probes.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |
-| `synthetic-engagement.toml` | 6,343 | `286d1d110fe252f467e57bb8305572a691f3b8e5b22b963006992942611c57ba` | `synthetic-engagement.toml` |
-| `manifest.json` | 9,711 | `d3948085c8466002c269133fd59c5f6361acab028ff6db74bd1fd6d23f7271a7` | `synthetic-read/manifest.json` |
+| `synthetic-engagement.toml` | 6,636 | `e0fb9ae6fae3739419e600222bd6c605b3386063899264811905074a0a7a587a` | `synthetic-engagement.toml` |
+| `manifest.json` | 11,395 | `de808c76c34dc23dae0d208b7162853170f8b00f682d3f516e3004ef7fee5cfa` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 8,102 | `12e4d994960ecd768cd33fb4565f19b140a765d3f9f4982dbcfe1a108d9e5214` | `synthetic-read/parts/groups.xml` |
 | `high_water_after.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_after.xml` |
 | `high_water_before.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_before.xml` |
 | `ledgers.xml` | 27,528 | `89fce4866d4cb45934f50764c6de618421adab52ea0c8b543af02f1e1a7f944e` | `synthetic-read/parts/ledgers.xml` |
+| `stock_items.xml` | 3,732 | `7fd39f6c1d9b445f8e125e97b852d3a639c877dcd9044f6ab5ba8f7618a251f8` | `synthetic-read/parts/stock_items.xml` |
+| `stock_summary_close.xml` | 2,744 | `c3777046099824d901337665765bc742eb3902974e669487d2d4a7ef73871875` | `synthetic-read/parts/stock_summary_close.xml` |
 | `tb_fy.xml` | 13,497 | `261c76d9756be12783e98ec27f19bc4d7960cd47fa62c511639bf285f4bb4213` | `synthetic-read/parts/tb_fy.xml` |
 | `voucher_status_list.json` | 249 | `c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78` | `synthetic-read/parts/voucher_status_list.json` |
 | `vouchers_h1.xml` | 50,762 | `993dc982021b41efb7303a736d70a6c846de87a8cd815ec8c7d049bdad759884` | `synthetic-read/parts/vouchers_h1.xml` |

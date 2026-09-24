@@ -73,6 +73,7 @@ fn book(ledgers: Vec<Ledger>, tb_rows: Vec<(&str, TbRow)>, vouchers: Vec<Voucher
             .into_iter()
             .map(|(n, t)| (n.to_string(), t))
             .collect(),
+        ..Default::default()
     }
 }
 

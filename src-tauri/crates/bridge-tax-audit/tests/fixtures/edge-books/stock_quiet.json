@@ -1,0 +1,59 @@
+{
+ "comment": "stock with nothing to find: no Stock-in-Hand ledger, no stock item, empty Stock Summaries, and ISINTEGRATED unknown. Its 30 figures are the registry's min_figures for this test.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Stock-in-Hand": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-stock_quiet-000"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-stock_quiet-001"
+  }
+ ],
+ "tb": [],
+ "vouchers": [
+  {
+   "guid": "q01",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     1000
+    ],
+    [
+     "Sales",
+     -1000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "stock"
+ ],
+ "stock_opening": {
+  "as_of": "2025-04-01",
+  "rows": {}
+ },
+ "stock_closing": {
+  "as_of": "2026-03-31",
+  "rows": {}
+ }
+}

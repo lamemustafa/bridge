@@ -1,0 +1,461 @@
+{
+ "comment": "stock paths: an item negative only when same-day stock-out goes first (Gadget, s03/s04), one negative at opening that recovers (Bolt: in (a), not in (b)), a stock journal's IN/OUT tags (s05), value-only goods lines counted and valued without sign (s06, s07), lines with no computable movement or no item (s08), a value-only item's line (s09), a voucher on a Stock-in-Hand ledger (s10) and one ledger with no Trial Balance row, an optional voucher left out (s11), 0.1 + 0.2 against a closing 0.3 and -5e-7 within tolerance (s12, s13); openings seeded from the summary and from a master, a summary item without a master, a summary quantity that differs from its master's; negative goods and a negative non-goods value at close; an opening gap of nil beside a closing gap that is not; STK-1 firing on two items.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Stock-in-Hand": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-stock_paths-000"
+  },
+  {
+   "name": "Shop Stock",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-stock_paths-001"
+  },
+  {
+   "name": "Godown Stock",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-stock_paths-002"
+  },
+  {
+   "name": "Customer",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-stock_paths-003"
+  },
+  {
+   "name": "Supplier",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-stock_paths-004"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-stock_paths-005"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-stock_paths-006"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Shop Stock",
+   "opening": 500000,
+   "debit": 20000,
+   "credit": 5000,
+   "closing": 500000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "s01",
+   "date": "2025-04-10",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     100000
+    ],
+    [
+     "Supplier",
+     -100000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 10,
+     "amount": 100000
+    }
+   ]
+  },
+  {
+   "guid": "s02",
+   "date": "2025-05-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     96000
+    ],
+    [
+     "Sales",
+     -96000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 8,
+     "amount": -96000
+    }
+   ]
+  },
+  {
+   "guid": "s03",
+   "date": "2025-06-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     80000
+    ],
+    [
+     "Sales",
+     -80000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Gadget",
+     "qty": 8,
+     "amount": -80000
+    }
+   ]
+  },
+  {
+   "guid": "s04",
+   "date": "2025-06-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     90000
+    ],
+    [
+     "Supplier",
+     -90000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Gadget",
+     "qty": 10,
+     "amount": 90000
+    }
+   ]
+  },
+  {
+   "guid": "s05",
+   "date": "2025-07-01",
+   "base_type": "Stock Journal",
+   "lines": [],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 3,
+     "direction": -1
+    },
+    {
+     "item": "Bolt",
+     "qty": 3,
+     "direction": 1
+    }
+   ]
+  },
+  {
+   "guid": "s06",
+   "date": "2025-07-15",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     5000
+    ],
+    [
+     "Sales",
+     -5000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "amount": -5000
+    }
+   ]
+  },
+  {
+   "guid": "s07",
+   "date": "2025-07-16",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     2500
+    ],
+    [
+     "Supplier",
+     -2500
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Gadget",
+     "amount": 2500
+    }
+   ]
+  },
+  {
+   "guid": "s08",
+   "date": "2025-08-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     0
+    ],
+    [
+     "Sales",
+     0
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 4,
+     "amount": 0
+    },
+    {
+     "item": "Widget",
+     "qty": 2
+    },
+    {
+     "item": "",
+     "qty": 5,
+     "amount": 100
+    }
+   ]
+  },
+  {
+   "guid": "s09",
+   "date": "2025-08-02",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     1000
+    ],
+    [
+     "Sales",
+     -1000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Freight Placeholder",
+     "amount": -1000
+    }
+   ]
+  },
+  {
+   "guid": "s10",
+   "date": "2025-09-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Shop Stock",
+     20000
+    ],
+    [
+     "Purchases",
+     -20000
+    ]
+   ]
+  },
+  {
+   "guid": "s11",
+   "date": "2025-10-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     100
+    ],
+    [
+     "Sales",
+     -100
+    ]
+   ],
+   "status": "optional",
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 100,
+     "amount": -100
+    }
+   ]
+  },
+  {
+   "guid": "s12",
+   "date": "2025-11-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     200
+    ],
+    [
+     "Supplier",
+     -200
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Nut",
+     "qty": 0.2,
+     "amount": 200
+    }
+   ]
+  },
+  {
+   "guid": "s13",
+   "date": "2025-12-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     100
+    ],
+    [
+     "Sales",
+     -100
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Washer",
+     "qty": 1.0000005,
+     "amount": -100
+    }
+   ]
+  }
+ ],
+ "tests": [
+  "stock"
+ ],
+ "is_integrated": true,
+ "stock_items": {
+  "Widget": {
+   "base_unit": "Nos",
+   "opening_qty": 20,
+   "opening_value": 200000
+  },
+  "Gadget": {
+   "base_unit": "Nos",
+   "opening_qty": 6,
+   "opening_value": 60000
+  },
+  "Bolt": {
+   "base_unit": "Nos",
+   "opening_qty": -2,
+   "opening_value": -2000
+  },
+  "Nut": {
+   "base_unit": "Nos",
+   "opening_qty": 0.1,
+   "opening_value": 10
+  },
+  "Washer": {
+   "base_unit": "Nos",
+   "opening_qty": 1,
+   "opening_value": 100
+  },
+  "Freight Placeholder": {
+   "base_unit": "�#4; Not Applicable"
+  }
+ },
+ "stock_opening": {
+  "as_of": "2025-04-01",
+  "rows": {
+   "Widget": {
+    "qty": 20,
+    "value": 200000
+   },
+   "Gadget": {
+    "qty": 5,
+    "value": 50000
+   },
+   "Bolt": {
+    "qty": -2,
+    "value": -2000
+   },
+   "Washer": {
+    "qty": 1,
+    "value": 100
+   },
+   "Freight Placeholder": {
+    "value": 0
+   },
+   "Mystery Item": {
+    "qty": 3,
+    "value": 251900
+   }
+  }
+ },
+ "stock_closing": {
+  "as_of": "2026-03-31",
+  "rows": {
+   "Widget": {
+    "qty": 19,
+    "value": 190000,
+    "rate": 10000
+   },
+   "Gadget": {
+    "qty": 7,
+    "value": 70000
+   },
+   "Bolt": {
+    "qty": 1,
+    "value": 1000
+   },
+   "Nut": {
+    "qty": 0.3,
+    "value": 30
+   },
+   "Washer": {
+    "qty": -5e-07,
+    "value": 0
+   },
+   "Freight Placeholder": {
+    "value": -1500
+   },
+   "Mystery Item": {
+    "qty": 2,
+    "value": 200
+   },
+   "Door Stop": {
+    "qty": -4,
+    "value": -400
+   }
+  }
+ }
+}

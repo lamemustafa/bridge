@@ -284,6 +284,55 @@
    }
   },
   {
+   "id": "stock-items",
+   "kind": "stock_items",
+   "name": "stock_items.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/stock_items.xml",
+    "storage": "identity",
+    "stored_sha256": "7fd39f6c1d9b445f8e125e97b852d3a639c877dcd9044f6ab5ba8f7618a251f8",
+    "stored_bytes": 3732,
+    "sha256": "7fd39f6c1d9b445f8e125e97b852d3a639c877dcd9044f6ab5ba8f7618a251f8",
+    "bytes": 3732,
+    "media_type": "application/xml",
+    "text_encoding": "utf-16le",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  },
+  {
+   "id": "stock-summary-close",
+   "kind": "stock_summary",
+   "name": "stock_summary_close.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/stock_summary_close.xml",
+    "storage": "identity",
+    "stored_sha256": "c3777046099824d901337665765bc742eb3902974e669487d2d4a7ef73871875",
+    "stored_bytes": 2744,
+    "sha256": "c3777046099824d901337665765bc742eb3902974e669487d2d4a7ef73871875",
+    "bytes": 2744,
+    "media_type": "application/xml",
+    "text_encoding": "utf-16le",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null,
+   "as_of": "2026-03-31"
+  },
+  {
    "id": "high-water-after",
    "kind": "company_high_water",
    "name": "high_water_after.xml",

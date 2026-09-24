@@ -363,6 +363,20 @@ def _high_value_register(c):
         s194n_recipient_type=recipient, round_off_ledgers=frozenset(round_off_ledgers),
         counterparty_type_by_ledger=counterparty_types)
 
+def _stock(c):
+    """As tae/pack.py calls it: the item masters and both Stock Summaries from [stock] and the read,
+    and the company's ISINTEGRATED flag from the read's company part."""
+    from tae.adapters import read_format
+    from tae.audit_tests import stock
+    from tae.config import stock_inputs
+    items, opening, closing = stock_inputs(c.cfg, c.path.parent)
+    # STK-1 takes the masters and both summaries as well, as pack.py passes them; the canonical dump
+    # calls check_invariants(eng, result), so it gets them bound here.
+    module = SimpleNamespace(TEST_ID=stock.TEST_ID, check_invariants=lambda eng, result: stock.check_invariants(
+        eng, result, items, closing, opening_snapshot=opening))
+    return module, stock.run(c.eng, {"version": c.rules.version}, items, opening, closing,
+                             read_format.company_isintegrated(c.cfg, c.path.parent))
+
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
     "bank_reconciliation": _bank_reconciliation,
@@ -379,6 +393,7 @@ RUNNERS = {
     "partners_40b_194t": _partners_40b_194t,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
+    "stock": _stock,
     "tds_payees": _tds_payees,
     "tds_tcs_26as": _tds_tcs_26as,
     "trial_balance": _trial_balance,
