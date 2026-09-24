@@ -19,6 +19,9 @@ pub(crate) const REVIEW_BUTTON: &str = "Yes";
 /// What the review dialog's subprocess prints, followed by the nonce it was
 /// given, when and only when the person chose the positive button.
 const REVIEW_TOKEN_PREFIX: &str = "bridge-review-acknowledged:";
+/// The same for the post dialog (#635). Distinct from the review's, so a
+/// subprocess in one mode can never answer the other.
+const POST_TOKEN_PREFIX: &str = "bridge-post-approved:";
 
 #[derive(Clone)]
 pub(crate) struct ApprovedImport {
@@ -379,6 +382,10 @@ pub(crate) mod test_seam {
                 "cat > /dev/null; echo bridge-review-acknowledged:00000000-0000-4000-8000-000000000000",
             ),
             (
+                "the post dialog's token for this nonce",
+                "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
+            ),
+            (
                 "the token, but a failing exit",
                 "read nonce; printf 'bridge-review-acknowledged:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
             ),
@@ -403,13 +410,52 @@ pub(crate) mod test_seam {
         );
     }
 
-    /// The review subprocess shows its dialog only for input of the shape the
+    /// The post dialog is answered only by the token echoing this call's
+    /// nonce, and a clean exit (#635). An executable that ignores
+    /// `--confirm-journal` and exits 0, one that echoes its input, a token for
+    /// another nonce, the review dialog's token, and the right token with a
+    /// failing exit are all refused, never approved.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_post_is_approved_only_by_the_token_for_its_nonce() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            ("an executable ignoring the flag exits 0", "cat > /dev/null; exit 0"),
+            ("an echo of the input", "cat"),
+            (
+                "a token for another nonce",
+                "cat > /dev/null; echo bridge-post-approved:00000000-0000-4000-8000-000000000000",
+            ),
+            (
+                "the review dialog's token for this nonce",
+                "read nonce; printf 'bridge-review-acknowledged:%s\\n' \"$nonce\"; cat > /dev/null",
+            ),
+            (
+                "the token, but a failing exit",
+                "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
+            ),
+        ] {
+            assert_eq!(
+                super::confirm_with(&stub(directory.path(), body), "Post").await,
+                Err("import_approval_declined".to_string()),
+                "{name}"
+            );
+        }
+        // The control: the token for this call's nonce, then a clean exit.
+        let approves = stub(
+            directory.path(),
+            "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
+        );
+        assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
+    }
+
+    /// The dialog subprocesses show a dialog only for input of the shape the
     /// parent sends: a nonce line, then a preview within the limit.
     #[test]
-    fn the_review_subprocess_admits_only_the_parents_input_shape() {
+    fn a_dialog_subprocess_admits_only_the_parents_input_shape() {
         let nonce = "9c8d8de4-c06c-447b-8309-60ba702bf663";
         assert_eq!(
-            super::review_input(&format!("{nonce}\nReview")),
+            super::dialog_input(&format!("{nonce}\nReview")),
             Some((nonce, "Review"))
         );
         let oversized = "x".repeat(super::MAX_PREVIEW_BYTES + 1);
@@ -420,30 +466,37 @@ pub(crate) mod test_seam {
             format!("{nonce}\nRe\0view"),
             format!("{nonce}\n{oversized}"),
         ] {
-            assert_eq!(super::review_input(&input), None, "{input:.40}");
+            assert_eq!(super::dialog_input(&input), None, "{input:.40}");
         }
     }
 }
 
+/// The post dialog. An exit status alone is not an answer (#635): an
+/// executable that does not know `--confirm-journal`, such as a build of
+/// `bridge_mcp` older than the flag left at `current_exe()`, starts the MCP
+/// server instead, reads the preview as input and exits 0 at its end. So the
+/// parent sends a fresh nonce and requires the token that echoes it, which
+/// only this dialog's positive button prints, and a clean exit as well.
 async fn confirm(preview: &str) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|_| "import_approval_unavailable")?;
+    confirm_with(&executable, preview).await
+}
+
+async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
     if preview.len() > MAX_PREVIEW_BYTES {
         return Err("import_review_too_large".into());
     }
-    if run_dialog("--confirm-journal", preview).await? {
-        Ok(())
-    } else {
-        Err("import_approval_declined".into())
+    match nonce_bound_dialog(executable, "--confirm-journal", POST_TOKEN_PREFIX, preview).await {
+        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
+        Ok(_) => Err("import_approval_declined".into()),
+        Err(DialogFailure::Unavailable) => Err("import_approval_unavailable".into()),
+        Err(DialogFailure::TimedOut) => Err("import_approval_timed_out".into()),
     }
 }
 
 /// The review dialog for a doubted post (#239): its own subprocess mode, so
-/// its title and button never read as approving a post.
-///
-/// An exit status alone is not an answer here: an older build of this
-/// executable does not know `--confirm-review`, starts the MCP server instead,
-/// reads the preview as input and exits 0 at its end. So the parent sends a
-/// fresh nonce and requires the token that echoes it, which only this
-/// dialog's positive button prints.
+/// its title and button never read as approving a post. It is answered by
+/// the token alone, as the post dialog is by the token and a clean exit.
 async fn confirm_review(preview: &str) -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|_| "ack_review_unavailable")?;
     confirm_review_with(&executable, preview).await
@@ -453,88 +506,94 @@ async fn confirm_review_with(executable: &std::path::Path, preview: &str) -> Res
     if preview.len() > MAX_PREVIEW_BYTES {
         return Err("ack_review_too_large".into());
     }
+    match nonce_bound_dialog(executable, "--confirm-review", REVIEW_TOKEN_PREFIX, preview).await {
+        Ok(answer) if answer.token_matched => Ok(()),
+        Ok(_) => Err("ack_review_declined".into()),
+        Err(DialogFailure::Unavailable) => Err("ack_review_unavailable".into()),
+        Err(DialogFailure::TimedOut) => Err("ack_review_timed_out".into()),
+    }
+}
+
+/// What a dialog subprocess answered: whether it printed exactly the token
+/// for this call's nonce, and whether it exited cleanly.
+struct DialogAnswer {
+    token_matched: bool,
+    exited_cleanly: bool,
+}
+
+enum DialogFailure {
+    Unavailable,
+    TimedOut,
+}
+
+/// Show `preview` in the native dialog `mode` selects, in a subprocess of
+/// `executable`, and read its answer. The parent sends a fresh nonce line and
+/// then the preview; the child prints `prefix` and that nonce only when the
+/// person chose the positive button.
+async fn nonce_bound_dialog(
+    executable: &std::path::Path,
+    mode: &str,
+    prefix: &str,
+    preview: &str,
+) -> Result<DialogAnswer, DialogFailure> {
     let nonce = uuid::Uuid::new_v4().to_string();
     let mut child = tokio::process::Command::new(executable)
-        .arg("--confirm-review")
+        .arg(mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|_| "ack_review_unavailable")?;
-    let answer = tokio::time::timeout(Duration::from_secs(120), async {
-        let mut input = child.stdin.take().ok_or("ack_review_unavailable")?;
+        .map_err(|_| DialogFailure::Unavailable)?;
+    let (answer, status) = tokio::time::timeout(Duration::from_secs(120), async {
+        let mut input = child.stdin.take().ok_or(DialogFailure::Unavailable)?;
         input
             .write_all(format!("{nonce}\n{preview}").as_bytes())
             .await
-            .map_err(|_| "ack_review_unavailable")?;
+            .map_err(|_| DialogFailure::Unavailable)?;
         drop(input);
         // The answer is one short line, so at most 128 bytes are read. A
         // child that writes more without exiting is waited on until the
         // timeout, then killed on drop: bounded on purpose.
-        let mut output = child.stdout.take().ok_or("ack_review_unavailable")?;
+        let mut output = child.stdout.take().ok_or(DialogFailure::Unavailable)?;
         let mut answer = Vec::new();
         tokio::io::AsyncReadExt::read_to_end(
             &mut tokio::io::AsyncReadExt::take(&mut output, 128),
             &mut answer,
         )
         .await
-        .map_err(|_| "ack_review_unavailable")?;
-        child.wait().await.map_err(|_| "ack_review_unavailable")?;
-        Ok::<_, &str>(answer)
+        .map_err(|_| DialogFailure::Unavailable)?;
+        let status = child.wait().await.map_err(|_| DialogFailure::Unavailable)?;
+        Ok::<_, DialogFailure>((answer, status))
     })
     .await
-    .map_err(|_| "ack_review_timed_out")??;
-    if answer == review_token(&nonce).as_bytes() {
-        Ok(())
-    } else {
-        Err("ack_review_declined".into())
-    }
-}
-
-fn review_token(nonce: &str) -> String {
-    format!("{REVIEW_TOKEN_PREFIX}{nonce}\n")
-}
-
-/// Show `preview` in the native dialog `mode` selects, in a subprocess of this
-/// executable, and return whether the person chose its positive button.
-async fn run_dialog(mode: &str, preview: &str) -> Result<bool, String> {
-    let executable = std::env::current_exe().map_err(|_| "import_approval_unavailable")?;
-    let mut child = tokio::process::Command::new(executable)
-        .arg(mode)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| "import_approval_unavailable")?;
-    let result = tokio::time::timeout(Duration::from_secs(120), async {
-        let mut input = child.stdin.take().ok_or("import_approval_unavailable")?;
-        input
-            .write_all(preview.as_bytes())
-            .await
-            .map_err(|_| "import_approval_unavailable")?;
-        drop(input);
-        child
-            .wait()
-            .await
-            .map_err(|_| "import_approval_unavailable")
+    .map_err(|_| DialogFailure::TimedOut)??;
+    Ok(DialogAnswer {
+        token_matched: answer == dialog_token(prefix, &nonce).as_bytes(),
+        exited_cleanly: status.success(),
     })
-    .await
-    .map_err(|_| "import_approval_timed_out")??;
-    Ok(result.success())
+}
+
+fn dialog_token(prefix: &str, nonce: &str) -> String {
+    format!("{prefix}{nonce}\n")
 }
 
 /// Entry point for the same executable's private native-dialog subprocess.
 /// Runs before Tokio starts, because macOS dialogs require the main thread.
+/// It prints the token for the nonce it was given only when the person chose
+/// to post (#635); the parent trusts nothing else.
 pub fn run_confirmation() -> bool {
-    read_preview().is_some_and(|preview| show_review(&preview))
+    answer_with_token(POST_TOKEN_PREFIX, show_review)
 }
 
 /// Entry point for the review dialog's subprocess (#239), under the same rules.
-/// It prints the token for the nonce it was given only when the person
-/// chose the positive button; the parent trusts nothing else.
 pub fn run_review_confirmation() -> bool {
+    answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)
+}
+
+/// Read the parent's nonce line and preview, show `dialog`, and print the
+/// token for that nonce only when it returns true.
+fn answer_with_token(prefix: &str, dialog: fn(&str) -> bool) -> bool {
     let mut input = String::new();
     if std::io::stdin()
         .take(MAX_PREVIEW_BYTES as u64 + 64)
@@ -543,41 +602,29 @@ pub fn run_review_confirmation() -> bool {
     {
         return false;
     }
-    let Some((nonce, preview)) = review_input(&input) else {
+    let Some((nonce, preview)) = dialog_input(&input) else {
         return false;
     };
-    if !show_review_acknowledgement(preview) {
+    if !dialog(preview) {
         return false;
     }
     use std::io::Write as _;
     let mut stdout = std::io::stdout();
-    stdout.write_all(review_token(nonce).as_bytes()).is_ok() && stdout.flush().is_ok()
+    stdout
+        .write_all(dialog_token(prefix, nonce).as_bytes())
+        .is_ok()
+        && stdout.flush().is_ok()
 }
 
 /// The nonce line and the preview, when the input has the shape the parent
 /// sends; `None` shows no dialog.
-fn review_input(input: &str) -> Option<(&str, &str)> {
+fn dialog_input(input: &str) -> Option<(&str, &str)> {
     let (nonce, preview) = input.split_once('\n')?;
     (uuid::Uuid::parse_str(nonce).is_ok()
         && !preview.contains('\0')
         && !preview.is_empty()
         && preview.len() <= MAX_PREVIEW_BYTES)
         .then_some((nonce, preview))
-}
-
-fn read_preview() -> Option<String> {
-    let mut preview = String::new();
-    if std::io::stdin()
-        .take(MAX_PREVIEW_BYTES as u64 + 1)
-        .read_to_string(&mut preview)
-        .is_err()
-        || preview.contains('\0')
-        || preview.is_empty()
-        || preview.len() > MAX_PREVIEW_BYTES
-    {
-        return None;
-    }
-    Some(preview)
 }
 
 /// The acknowledgement dialog. It posts nothing, so neither its title nor its
