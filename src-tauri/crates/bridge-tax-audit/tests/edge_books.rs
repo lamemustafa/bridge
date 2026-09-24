@@ -1213,7 +1213,7 @@ fn a_goods_line_without_a_quantity_field_is_refused() {
     let err = stock::run(&book, &rules, &stock_inputs(&s)).expect_err("refused");
     assert!(
         format!("{err}")
-            .contains("1 goods inventory line(s) in the population carry no quantity field"),
+            .contains("1 goods inventory line(s) in the population carry no quantity field (BILLEDQTY/ACTUALQTY) at all, first 'Widget' on Receipt q01 on 2025-04-05;"),
         "{err}"
     );
 }

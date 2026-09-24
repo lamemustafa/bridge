@@ -31,7 +31,7 @@ use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value}
 use crate::read::iso;
 use crate::rules::Rules;
 use crate::stock_read::{StockInputs, StockItemMaster, StockSnapshot};
-use crate::support::{count, voucher_label};
+use crate::support::{count, py_repr_str, voucher_label};
 
 pub const TEST_ID: &str = "stock";
 pub const VERSION: &str = "1";
@@ -197,10 +197,10 @@ company object when available; 'unknown' if the tag was not found.",
     if let Some((v0, il0)) = no_field.first() {
         return Err(AuditError::Config(format!(
             "stock: {} goods inventory line(s) in the population carry no quantity field \
-(BILLEDQTY/ACTUALQTY) at all, first {:?} on {}; the read did not carry quantities, so no quantity \
+(BILLEDQTY/ACTUALQTY) at all, first {} on {}; the read did not carry quantities, so no quantity \
 figure can be computed from it",
             no_field.len(),
-            il0.item,
+            py_repr_str(&il0.item),
             voucher_label(v0)
         )));
     }

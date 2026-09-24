@@ -267,7 +267,12 @@ pub fn stock_inputs(
                 "CFG-stock",
                 format!(
                     "[stock].{kind}_summary = {}; with a read use from_read or from_masters",
-                    src.map_or("None".to_string(), ToString::to_string)
+                    match src {
+                        // The reference formats the value with `!r`.
+                        None => "None".to_string(),
+                        Some(toml::Value::String(s)) => crate::support::py_repr_str(s),
+                        Some(v) => v.to_string(),
+                    }
                 ),
             )),
         }
