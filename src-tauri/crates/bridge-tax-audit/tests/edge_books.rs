@@ -25,9 +25,10 @@ use bridge_tax_audit::documents::{bank_statement_from_json, traces_documents_fro
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny,
-    loans_interest, partners_40b_194t, stale_balances_41_1, statutory_dues_43b, tds_payees,
-    tds_tcs_26as, trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
+    bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
+    ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1, statutory_dues_43b,
+    tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig,
+    TdsConfig,
 };
 use serde_json::Value;
 

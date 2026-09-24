@@ -275,7 +275,13 @@ mod tests {
             assert!(traces_documents_from_json(&bad).is_err(), "{bad}");
         }
         let err = traces_documents_from_json(&json!([])).unwrap_err();
-        assert_eq!(format!("{err}"), format!("{}", AuditError::Config("traces documents: not an object".into())));
+        assert_eq!(
+            format!("{err}"),
+            format!(
+                "{}",
+                AuditError::Config("traces documents: not an object".into())
+            )
+        );
     }
 
     #[test]
@@ -291,14 +297,28 @@ mod tests {
                                         "credit_paise": 0, "balance_paise": null}]});
         let d = bank_statement_from_json(&doc).unwrap();
         assert_eq!((d.start.as_str(), d.end.as_str()), ("20260301", "20260331"));
-        assert_eq!((d.rows.len(), d.rows[0].balance_paise, d.rows[1].balance_paise), (2, Some(1500), None));
+        assert_eq!(
+            (
+                d.rows.len(),
+                d.rows[0].balance_paise,
+                d.rows[1].balance_paise
+            ),
+            (2, Some(1500), None)
+        );
         assert_eq!(d.opening_balance_paise, 1000);
-        for (key, value) in [("period", json!("2026-03")), ("opening_balance_paise", json!(1.5)),
-                             ("rows", json!({})), ("bank", json!(null))] {
+        for (key, value) in [
+            ("period", json!("2026-03")),
+            ("opening_balance_paise", json!(1.5)),
+            ("rows", json!({})),
+            ("bank", json!(null)),
+        ] {
             let mut broken = doc.clone();
             broken[key] = value;
             let err = bank_statement_from_json(&broken).unwrap_err();
-            assert!(format!("{err}").contains("bank statement: "), "{key}: {err}");
+            assert!(
+                format!("{err}").contains("bank statement: "),
+                "{key}: {err}"
+            );
         }
         let mut broken = doc.clone();
         broken["rows"][0]["debit_paise"] = json!("0");

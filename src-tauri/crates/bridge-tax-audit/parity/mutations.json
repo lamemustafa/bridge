@@ -3860,8 +3860,8 @@
   "by": "author",
   "what": "statement evidence labels cut by bytes, not code points",
   "file": "src/bank_reconciliation.rs",
-  "from": "&prefix_chars(&stmt[i].narration, 60)))",
-  "to": "&stmt[i].narration.get(..60).unwrap_or(&stmt[i].narration).to_string()))"
+  "from": "&prefix_chars(&stmt[i].narration, 60),",
+  "to": "&stmt[i].narration.get(..60).unwrap_or(&stmt[i].narration).to_string(),"
  },
  {
   "id": "E2A-12",

@@ -132,8 +132,12 @@ struct BookRow {
     amount_paise: i64,
 }
 
-fn books_rows(book: &Book, bank_ledger: &str, start: &TallyDate,
-              end: &TallyDate) -> Result<Vec<BookRow>> {
+fn books_rows(
+    book: &Book,
+    bank_ledger: &str,
+    start: &TallyDate,
+    end: &TallyDate,
+) -> Result<Vec<BookRow>> {
     let mut out = Vec::new();
     for v in book.population()? {
         if !(start <= &v.date && &v.date <= end) {
@@ -189,8 +193,12 @@ fn statement_order(rows: &[BankStatementRow], of: impl IntoIterator<Item = usize
 
 /// The reference's `_match`: each books row, in (date, GUID) order, takes the unmatched statement
 /// row with the smallest (day gap, index) that agrees within `tol` and `max_days`.
-fn match_rows(books: &[BookRow], stmt: &[BankStatementRow], tol: i64, max_days: i64)
-    -> Result<Vec<(usize, usize)>> {
+fn match_rows(
+    books: &[BookRow],
+    stmt: &[BankStatementRow],
+    tol: i64,
+    max_days: i64,
+) -> Result<Vec<(usize, usize)>> {
     let mut used: BTreeSet<usize> = BTreeSet::new();
     let mut pairs = Vec::new();
     for bi in books_order(books, 0..books.len()) {
@@ -262,7 +270,10 @@ pub fn run(
     match_max_days: i64,
 ) -> Result<TestResult> {
     let mut r = TestResult::new(TEST_ID, VERSION, &rules.version);
-    let terms: BTreeSet<String> = bank_charge_narration_terms.iter().map(|t| py_upper(t)).collect();
+    let terms: BTreeSet<String> = bank_charge_narration_terms
+        .iter()
+        .map(|t| py_upper(t))
+        .collect();
     let (start, end) = (&statement.start, &statement.end);
     let stmt = &statement.rows;
 
@@ -274,16 +285,42 @@ pub fn run(
         iso(end)
     );
     let note = r.population_note.clone();
-    fig(&mut r, "months_covered", Value::Text(format!("{}..{}", iso(start), iso(end))), Unit::Text,
-        &note, vec![])?;
-    fig(&mut r, "months_not_reconciled_note",
-        Value::Text("Any FY month outside the window above has no bank statement in this \
-                     engagement and is not reconciled.".to_string()),
-        Unit::Text, "Scope statement.", vec![])?;
-    fig(&mut r, "bank_statement_source_sha256", Value::Text(statement.source_sha256.clone()),
-        Unit::Text, "sha256 of the raw bank-statement document bytes.", vec![])?;
-    fig(&mut r, "bank_statement_account_ref", Value::Text(statement.account_ref.clone()),
-        Unit::Text, "Masked account number, as extracted.", vec![])?;
+    fig(
+        &mut r,
+        "months_covered",
+        Value::Text(format!("{}..{}", iso(start), iso(end))),
+        Unit::Text,
+        &note,
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "months_not_reconciled_note",
+        Value::Text(
+            "Any FY month outside the window above has no bank statement in this \
+                     engagement and is not reconciled."
+                .to_string(),
+        ),
+        Unit::Text,
+        "Scope statement.",
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "bank_statement_source_sha256",
+        Value::Text(statement.source_sha256.clone()),
+        Unit::Text,
+        "sha256 of the raw bank-statement document bytes.",
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "bank_statement_account_ref",
+        Value::Text(statement.account_ref.clone()),
+        Unit::Text,
+        "Masked account number, as extracted.",
+        vec![],
+    )?;
 
     // ------------------------------------------------------------ opening/closing tie
     let books_opening = books_balance_before(book, bank_ledger, start)?;
@@ -292,28 +329,70 @@ pub fn run(
     for b in &book_rows {
         books_closing = add(books_closing, b.amount_paise)?;
     }
-    let f_books_open = fig(&mut r, "books_opening_paise", Value::Int(books_opening), Unit::Paise,
-        &format!("TB opening plus every population line on '{bank_ledger}' dated before {}.",
-                 iso(start)), vec![])?;
-    let f_stmt_open = fig(&mut r, "statement_opening_paise",
-        Value::Int(statement.opening_balance_paise), Unit::Paise,
-        "The statement's own declared opening balance.", vec![])?;
-    fig(&mut r, "opening_tie_diff_paise",
-        Value::Int(sub(books_opening, statement.opening_balance_paise)?), Unit::Paise,
-        "books_opening_paise minus statement_opening_paise; reported even when zero.", vec![])?;
-    let f_books_close = fig(&mut r, "books_closing_paise", Value::Int(books_closing), Unit::Paise,
-        "books_opening_paise plus every books row in the window (below).", vec![])?;
-    let f_stmt_close = fig(&mut r, "statement_closing_paise",
-        Value::Int(statement.closing_balance_paise), Unit::Paise,
-        "The statement's own declared closing balance.", vec![])?;
-    fig(&mut r, "closing_tie_diff_paise",
-        Value::Int(sub(books_closing, statement.closing_balance_paise)?), Unit::Paise,
-        "books_closing_paise minus statement_closing_paise; reported even when zero.", vec![])?;
+    let f_books_open = fig(
+        &mut r,
+        "books_opening_paise",
+        Value::Int(books_opening),
+        Unit::Paise,
+        &format!(
+            "TB opening plus every population line on '{bank_ledger}' dated before {}.",
+            iso(start)
+        ),
+        vec![],
+    )?;
+    let f_stmt_open = fig(
+        &mut r,
+        "statement_opening_paise",
+        Value::Int(statement.opening_balance_paise),
+        Unit::Paise,
+        "The statement's own declared opening balance.",
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "opening_tie_diff_paise",
+        Value::Int(sub(books_opening, statement.opening_balance_paise)?),
+        Unit::Paise,
+        "books_opening_paise minus statement_opening_paise; reported even when zero.",
+        vec![],
+    )?;
+    let f_books_close = fig(
+        &mut r,
+        "books_closing_paise",
+        Value::Int(books_closing),
+        Unit::Paise,
+        "books_opening_paise plus every books row in the window (below).",
+        vec![],
+    )?;
+    let f_stmt_close = fig(
+        &mut r,
+        "statement_closing_paise",
+        Value::Int(statement.closing_balance_paise),
+        Unit::Paise,
+        "The statement's own declared closing balance.",
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "closing_tie_diff_paise",
+        Value::Int(sub(books_closing, statement.closing_balance_paise)?),
+        Unit::Paise,
+        "books_closing_paise minus statement_closing_paise; reported even when zero.",
+        vec![],
+    )?;
     if *end == period.to {
         let closing = book.tb.get(bank_ledger).map_or(0, |t| t.closing_paise);
-        fig(&mut r, "tb_closing_paise", Value::Int(closing), Unit::Paise,
-            &format!("'{bank_ledger}' Trial Balance closing (informational -- window end equals \
-                      the FY end)."), vec![])?;
+        fig(
+            &mut r,
+            "tb_closing_paise",
+            Value::Int(closing),
+            Unit::Paise,
+            &format!(
+                "'{bank_ledger}' Trial Balance closing (informational -- window end equals \
+                      the FY end)."
+            ),
+            vec![],
+        )?;
     }
 
     let opening_ties = distance(books_opening, statement.opening_balance_paise)? <= TOL_PAISE;
@@ -323,7 +402,8 @@ pub fn run(
             id: format!("{TEST_ID}/opening_closing_tie"),
             clauses: Vec::new(),
             title: "The books balance on the bank ledger does not tie to the statement's own \
-                    declared opening or closing balance for this window".to_string(),
+                    declared opening or closing balance for this window"
+                .to_string(),
             facts: vec![
                 ("books_opening_paise".to_string(), f_books_open),
                 ("statement_opening_paise".to_string(), f_stmt_open),
@@ -332,18 +412,35 @@ pub fn run(
             ],
             evidence: Vec::new(),
             confidence: Confidence::NeedsDocument,
-            limits: vec!["A tie failure here can also mean the ledger name or statement window \
+            limits: vec![
+                "A tie failure here can also mean the ledger name or statement window \
                           supplied to this test is wrong, not necessarily a books error."
-                .to_string()],
-            ask_client: vec!["Confirm the opening/closing balance shown on the bank's own \
+                    .to_string(),
+            ],
+            ask_client: vec![
+                "Confirm the opening/closing balance shown on the bank's own \
                               statement for this exact window."
-                .to_string()],
+                    .to_string(),
+            ],
         });
     }
 
-    fig(&mut r, "books_rows_count", count(TEST_ID, book_rows.len())?, Unit::Count, &note, vec![])?;
-    fig(&mut r, "statement_rows_count", count(TEST_ID, stmt.len())?, Unit::Count,
-        "Statement transaction rows in this window.", vec![])?;
+    fig(
+        &mut r,
+        "books_rows_count",
+        count(TEST_ID, book_rows.len())?,
+        Unit::Count,
+        &note,
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "statement_rows_count",
+        count(TEST_ID, stmt.len())?,
+        Unit::Count,
+        "Statement transaction rows in this window.",
+        vec![],
+    )?;
 
     // ------------------------------------------------------------ matching
     let pairs = match_rows(&book_rows, stmt, TOL_PAISE, match_max_days)?;
@@ -352,16 +449,30 @@ pub fn run(
     for &(bi, si) in &pairs {
         let (b, s) = (&book_rows[bi], &stmt[si]);
         let h = hash8(&b.guid);
-        fig(&mut r, &format!("match_pair_{h}"), Value::Text("matched".to_string()), Unit::Text,
+        fig(
+            &mut r,
+            &format!("match_pair_{h}"),
+            Value::Text("matched".to_string()),
+            Unit::Text,
             &format!("Books row (tag {h}) matched to statement row #{}.", s.row),
-            vec![EvidenceRef::with_label("voucher", &b.guid, &b.label),
-                 EvidenceRef::new("document_row", &format!("{}#{}", s.doc, s.row))])?;
+            vec![
+                EvidenceRef::with_label("voucher", &b.guid, &b.label),
+                EvidenceRef::new("document_row", &format!("{}#{}", s.doc, s.row)),
+            ],
+        )?;
     }
-    fig(&mut r, "category_matched_count", count(TEST_ID, pairs.len())?, Unit::Count,
+    fig(
+        &mut r,
+        "category_matched_count",
+        count(TEST_ID, pairs.len())?,
+        Unit::Count,
         &format!("Books rows matched to a statement row within Re 1 and {match_max_days} day(s)."),
-        vec![])?;
+        vec![],
+    )?;
 
-    let unmatched_books: Vec<usize> = (0..book_rows.len()).filter(|i| !used_books.contains(i)).collect();
+    let unmatched_books: Vec<usize> = (0..book_rows.len())
+        .filter(|i| !used_books.contains(i))
+        .collect();
     let unmatched_stmt: Vec<usize> = (0..stmt.len()).filter(|i| !used_stmt.contains(i)).collect();
 
     // ------------------------------------------------------------ split-settlement pass
@@ -433,98 +544,183 @@ pub fn run(
     let reason_of = |m: &BTreeMap<usize, &'static str>, i: usize| -> &'static str {
         m.get(&i).copied().unwrap_or(REASON_UNCLASSIFIED)
     };
-    let mut books_by_reason: BTreeMap<&str, Vec<usize>> = REASONS.iter().map(|&k| (k, Vec::new())).collect();
+    let mut books_by_reason: BTreeMap<&str, Vec<usize>> =
+        REASONS.iter().map(|&k| (k, Vec::new())).collect();
     for &bi in &unmatched_books {
-        books_by_reason.entry(reason_of(&reason_books, bi)).or_default().push(bi);
+        books_by_reason
+            .entry(reason_of(&reason_books, bi))
+            .or_default()
+            .push(bi);
     }
-    let mut stmt_by_reason: BTreeMap<&str, Vec<usize>> = REASONS.iter().map(|&k| (k, Vec::new())).collect();
+    let mut stmt_by_reason: BTreeMap<&str, Vec<usize>> =
+        REASONS.iter().map(|&k| (k, Vec::new())).collect();
     for &si in &unmatched_stmt {
-        stmt_by_reason.entry(reason_of(&reason_stmt, si)).or_default().push(si);
+        stmt_by_reason
+            .entry(reason_of(&reason_stmt, si))
+            .or_default()
+            .push(si);
     }
 
     for reason in REASONS {
         let rows_b = &books_by_reason[reason];
-        let ev_b = rows_b.iter()
+        let ev_b = rows_b
+            .iter()
             .map(|&i| EvidenceRef::with_label("voucher", &book_rows[i].guid, &book_rows[i].label))
             .collect();
-        fig(&mut r, &format!("books_only_reason_{reason}_count"), count(TEST_ID, rows_b.len())?,
-            Unit::Count, &format!("Unmatched books rows classified '{reason}'."), ev_b)?;
+        fig(
+            &mut r,
+            &format!("books_only_reason_{reason}_count"),
+            count(TEST_ID, rows_b.len())?,
+            Unit::Count,
+            &format!("Unmatched books rows classified '{reason}'."),
+            ev_b,
+        )?;
         let mut total_b = 0_i64;
         for &i in rows_b {
             total_b = add(total_b, book_rows[i].amount_paise)?;
         }
-        fig(&mut r, &format!("books_only_reason_{reason}_paise"), Value::Int(total_b), Unit::Paise,
-            &format!("Sum of books amount, reason '{reason}'."), vec![])?;
+        fig(
+            &mut r,
+            &format!("books_only_reason_{reason}_paise"),
+            Value::Int(total_b),
+            Unit::Paise,
+            &format!("Sum of books amount, reason '{reason}'."),
+            vec![],
+        )?;
         let rows_s = &stmt_by_reason[reason];
-        let ev_s = rows_s.iter()
-            .map(|&i| EvidenceRef::with_label("document_row", &format!("{}#{}", stmt[i].doc, stmt[i].row),
-                                              &prefix_chars(&stmt[i].narration, 60)))
+        let ev_s = rows_s
+            .iter()
+            .map(|&i| {
+                EvidenceRef::with_label(
+                    "document_row",
+                    &format!("{}#{}", stmt[i].doc, stmt[i].row),
+                    &prefix_chars(&stmt[i].narration, 60),
+                )
+            })
             .collect();
-        fig(&mut r, &format!("statement_only_reason_{reason}_count"), count(TEST_ID, rows_s.len())?,
-            Unit::Count, &format!("Unmatched statement rows classified '{reason}'."), ev_s)?;
+        fig(
+            &mut r,
+            &format!("statement_only_reason_{reason}_count"),
+            count(TEST_ID, rows_s.len())?,
+            Unit::Count,
+            &format!("Unmatched statement rows classified '{reason}'."),
+            ev_s,
+        )?;
         let mut total_s = 0_i64;
         for &i in rows_s {
             total_s = add(total_s, signed(&stmt[i])?)?;
         }
-        fig(&mut r, &format!("statement_only_reason_{reason}_paise"), Value::Int(total_s), Unit::Paise,
-            &format!("Sum of statement amount, reason '{reason}'."), vec![])?;
+        fig(
+            &mut r,
+            &format!("statement_only_reason_{reason}_paise"),
+            Value::Int(total_s),
+            Unit::Paise,
+            &format!("Sum of statement amount, reason '{reason}'."),
+            vec![],
+        )?;
     }
 
-    let unclassified = books_by_reason[REASON_UNCLASSIFIED].len() + stmt_by_reason[REASON_UNCLASSIFIED].len();
-    fig(&mut r, "unclassified_count", count(TEST_ID, unclassified)?, Unit::Count,
+    let unclassified =
+        books_by_reason[REASON_UNCLASSIFIED].len() + stmt_by_reason[REASON_UNCLASSIFIED].len();
+    fig(
+        &mut r,
+        "unclassified_count",
+        count(TEST_ID, unclassified)?,
+        Unit::Count,
         "books_only + statement_only rows with no reason from the closed set (BANK-3: must be 0).",
-        vec![])?;
-    fig(&mut r, "category_books_only_count", count(TEST_ID, unmatched_books.len())?, Unit::Count,
-        "Books rows with no statement counterpart.", vec![])?;
-    fig(&mut r, "category_statement_only_count", count(TEST_ID, unmatched_stmt.len())?, Unit::Count,
-        "Statement rows with no books counterpart.", vec![])?;
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "category_books_only_count",
+        count(TEST_ID, unmatched_books.len())?,
+        Unit::Count,
+        "Books rows with no statement counterpart.",
+        vec![],
+    )?;
+    fig(
+        &mut r,
+        "category_statement_only_count",
+        count(TEST_ID, unmatched_stmt.len())?,
+        Unit::Count,
+        "Statement rows with no books counterpart.",
+        vec![],
+    )?;
 
     let fid = |name: &str| format!("{TEST_ID}.{name}");
-    if !books_by_reason[REASON_NOT_FOUND].is_empty() || !stmt_by_reason[REASON_NOT_FOUND].is_empty() {
+    if !books_by_reason[REASON_NOT_FOUND].is_empty() || !stmt_by_reason[REASON_NOT_FOUND].is_empty()
+    {
         r.findings.push(Finding {
             id: format!("{TEST_ID}/not_found"),
             clauses: Vec::new(),
             title: "A books or statement bank entry in this window has no counterpart and no \
-                    structural (timing, charge or part-settlement) explanation".to_string(),
+                    structural (timing, charge or part-settlement) explanation"
+                .to_string(),
             facts: vec![
-                ("books_not_found_count".to_string(),
-                 fid(&format!("books_only_reason_{REASON_NOT_FOUND}_count"))),
-                ("statement_not_found_count".to_string(),
-                 fid(&format!("statement_only_reason_{REASON_NOT_FOUND}_count"))),
+                (
+                    "books_not_found_count".to_string(),
+                    fid(&format!("books_only_reason_{REASON_NOT_FOUND}_count")),
+                ),
+                (
+                    "statement_not_found_count".to_string(),
+                    fid(&format!("statement_only_reason_{REASON_NOT_FOUND}_count")),
+                ),
             ],
             evidence: Vec::new(),
             confidence: Confidence::NeedsDocument,
-            limits: vec!["cheque_issued_not_presented/deposit_not_credited are the standard timing \
+            limits: vec![
+                "cheque_issued_not_presented/deposit_not_credited are the standard timing \
                           explanations for the OTHER unmatched rows, not proof either actually \
                           cleared later; only a subsequent statement would confirm that."
-                .to_string()],
-            ask_client: vec!["For each not_found row, the underlying voucher or bank advice.".to_string()],
+                    .to_string(),
+            ],
+            ask_client: vec![
+                "For each not_found row, the underlying voucher or bank advice.".to_string(),
+            ],
         });
     }
 
     if !split_groups.is_empty() || !split_groups_rev.is_empty() {
-        let mut evidence: Vec<EvidenceRef> = split_groups.iter()
-            .map(|&bi| EvidenceRef::with_label("voucher", &book_rows[bi].guid, &book_rows[bi].label))
+        let mut evidence: Vec<EvidenceRef> = split_groups
+            .iter()
+            .map(|&bi| {
+                EvidenceRef::with_label("voucher", &book_rows[bi].guid, &book_rows[bi].label)
+            })
             .collect();
-        evidence.extend(split_groups_rev.iter()
-            .map(|&si| EvidenceRef::new("document_row", &format!("{}#{}", stmt[si].doc, stmt[si].row))));
+        evidence.extend(split_groups_rev.iter().map(|&si| {
+            EvidenceRef::new(
+                "document_row",
+                &format!("{}#{}", stmt[si].doc, stmt[si].row),
+            )
+        }));
         r.findings.push(Finding {
             id: format!("{TEST_ID}/split_settlement"),
             clauses: Vec::new(),
             title: "A single bank entry on one side settles as several entries on the other, \
-                    within the matching window".to_string(),
+                    within the matching window"
+                .to_string(),
             facts: vec![
-                ("books_part_settlement_count".to_string(),
-                 fid(&format!("books_only_reason_{REASON_SPLIT_SETTLEMENT}_count"))),
-                ("statement_part_settlement_count".to_string(),
-                 fid(&format!("statement_only_reason_{REASON_SPLIT_SETTLEMENT}_count"))),
+                (
+                    "books_part_settlement_count".to_string(),
+                    fid(&format!(
+                        "books_only_reason_{REASON_SPLIT_SETTLEMENT}_count"
+                    )),
+                ),
+                (
+                    "statement_part_settlement_count".to_string(),
+                    fid(&format!(
+                        "statement_only_reason_{REASON_SPLIT_SETTLEMENT}_count"
+                    )),
+                ),
             ],
             evidence,
             confidence: Confidence::Indicative,
-            limits: vec!["A sum match within the window is consistent with, not proof of, a \
+            limits: vec![
+                "A sum match within the window is consistent with, not proof of, a \
                           genuine settlement paid in several parts; an unrelated coincidence of \
                           amounts cannot be ruled out from the statement alone."
-                .to_string()],
+                    .to_string(),
+            ],
             ask_client: Vec::new(),
         });
     }
@@ -550,7 +746,10 @@ fn bank1_balance_chain(rows: &[BankStatementRow]) -> Result<Vec<String>> {
             out.push(format!(
                 "BANK-1: statement row #{} ({}) balance {cb}p != prior balance {pb}p + credit {}p \
                  - debit {}p (expected {expected}p)",
-                cur.row, iso(&cur.txn_date), cur.credit_paise, cur.debit_paise
+                cur.row,
+                iso(&cur.txn_date),
+                cur.credit_paise,
+                cur.debit_paise
             ));
         }
     }
@@ -558,10 +757,14 @@ fn bank1_balance_chain(rows: &[BankStatementRow]) -> Result<Vec<String>> {
 }
 
 fn figure_int(result: &TestResult, id: &str) -> Option<i64> {
-    result.figures.iter().find(|f| f.id == id).and_then(|f| match f.value {
-        Value::Int(v) => Some(v),
-        _ => None,
-    })
+    result
+        .figures
+        .iter()
+        .find(|f| f.id == id)
+        .and_then(|f| match f.value {
+            Value::Int(v) => Some(v),
+            _ => None,
+        })
 }
 
 /// BANK-2: every books and statement row is matched or unmatched exactly once, and no statement
@@ -575,13 +778,17 @@ fn bank2_partition_and_no_reuse(result: &TestResult, prefix: &str) -> Result<Vec
     if let Some(total) = val("books_rows_count") {
         let sum = add(matched, books_only)?;
         if sum != total {
-            out.push(format!("BANK-2: matched+books_only ({sum}) != books_rows_count ({total})"));
+            out.push(format!(
+                "BANK-2: matched+books_only ({sum}) != books_rows_count ({total})"
+            ));
         }
     }
     if let Some(total) = val("statement_rows_count") {
         let sum = add(matched, stmt_only)?;
         if sum != total {
-            out.push(format!("BANK-2: matched+statement_only ({sum}) != statement_rows_count ({total})"));
+            out.push(format!(
+                "BANK-2: matched+statement_only ({sum}) != statement_rows_count ({total})"
+            ));
         }
     }
     let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
@@ -590,7 +797,12 @@ fn bank2_partition_and_no_reuse(result: &TestResult, prefix: &str) -> Result<Vec
             *seen.entry(e.id.as_str()).or_insert(0) += 1;
         }
     }
-    let dupes: Vec<String> = seen.into_iter().filter(|&(_, n)| n > 1).map(|(k, _)| py_repr_str(k)).take(10).collect();
+    let dupes: Vec<String> = seen
+        .into_iter()
+        .filter(|&(_, n)| n > 1)
+        .map(|(k, _)| py_repr_str(k))
+        .take(10)
+        .collect();
     if !dupes.is_empty() {
         out.push(format!(
             "BANK-2: statement row(s) referenced more than once across figures: [{}]",
@@ -605,14 +817,21 @@ fn bank3_no_unclassified(result: &TestResult, prefix: &str) -> Vec<String> {
     let id = format!("{prefix}unclassified_count");
     match result.figures.iter().find(|f| f.id == id).map(|f| &f.value) {
         Some(Value::Int(0)) | None => Vec::new(),
-        Some(Value::Int(v)) => vec![format!("BANK-3: {v} unmatched row(s) have no classification reason")],
-        Some(other) => vec![format!("BANK-3: {other:?} unmatched row(s) have no classification reason")],
+        Some(Value::Int(v)) => vec![format!(
+            "BANK-3: {v} unmatched row(s) have no classification reason"
+        )],
+        Some(other) => vec![format!(
+            "BANK-3: {other:?} unmatched row(s) have no classification reason"
+        )],
     }
 }
 
 /// The reference's `check_invariants`: BANK-1 over `statement_rows` (the rows the caller passed to
 /// `run`, as the reference reads `eng.bank`), then BANK-2 and BANK-3 over the result.
-pub fn check_invariants(statement_rows: &[BankStatementRow], result: &TestResult) -> Result<Vec<String>> {
+pub fn check_invariants(
+    statement_rows: &[BankStatementRow],
+    result: &TestResult,
+) -> Result<Vec<String>> {
     let prefix = format!("{}.", result.test_id);
     let mut out = bank1_balance_chain(statement_rows)?;
     out.extend(bank2_partition_and_no_reuse(result, &prefix)?);
@@ -631,11 +850,22 @@ mod tests {
         assert_eq!(find_split(5, &pool, 0).unwrap(), Some(vec![11, 12]));
         assert_eq!(find_split(6, &pool, 0).unwrap(), Some(vec![10, 13]));
         assert_eq!(find_split(9, &pool, 0).unwrap(), Some(vec![10, 11, 13]));
-        assert_eq!(find_split(11, &pool, 0).unwrap(), Some(vec![10, 11, 12, 13]));
+        assert_eq!(
+            find_split(11, &pool, 0).unwrap(),
+            Some(vec![10, 11, 12, 13])
+        );
         assert_eq!(find_split(100, &pool, 0).unwrap(), None);
-        assert_eq!(find_split(5, &[(1, 5)], 0).unwrap(), None, "one row is never a split");
+        assert_eq!(
+            find_split(5, &[(1, 5)], 0).unwrap(),
+            None,
+            "one row is never a split"
+        );
         let big: Vec<(usize, i64)> = (0..41).map(|i| (i, 1)).collect();
-        assert_eq!(find_split(2, &big, 0).unwrap(), None, "a pool over 40 is not searched");
+        assert_eq!(
+            find_split(2, &big, 0).unwrap(),
+            None,
+            "a pool over 40 is not searched"
+        );
         assert_eq!(find_split(2, &big[..40], 0).unwrap(), Some(vec![0, 1]));
     }
 }

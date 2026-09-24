@@ -650,7 +650,10 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         Some(v) => {
             let location = "roles.bank_reconciliation_ledger";
             let name = v.as_str().ok_or_else(|| {
-                AuditError::refused(BIND_ID_MALFORMED, format!("{location}: expected a name, got {v}"))
+                AuditError::refused(
+                    BIND_ID_MALFORMED,
+                    format!("{location}: expected a name, got {v}"),
+                )
             })?;
             Some(lbinder.bind_one(name, location)?)
         }
