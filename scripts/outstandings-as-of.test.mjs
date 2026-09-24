@@ -141,6 +141,18 @@ test("the single-company request emits the selected canonical as-of date", () =>
   assert.equal(singleCompanyOutstandingsInvokeArgument({ host: "127.0.0.1", port: 9000 }, { name: "Lab", guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" }, "2026-8-17", "due_date"), null);
 });
 
+test("a book left to the backend sends no INR assertion (bridge#551)", () => {
+  const argument = singleCompanyOutstandingsInvokeArgument(
+    { host: "127.0.0.1", port: 9000 },
+    { name: "Bridge Validation Lab", guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" },
+    "2026-08-17",
+    "due_date",
+    false,
+  );
+  assert.equal(Object.hasOwn(argument.request, "currency_assertion"), false);
+  assert.equal(argument.request.as_of_yyyymmdd, "20260817");
+});
+
 test("compare clients emits the same selected canonical as-of date", () => {
   assert.deepEqual(
     allCompaniesOutstandingsInvokeArgument(
@@ -159,7 +171,6 @@ test("compare clients emits the same selected canonical as-of date", () => {
           { selected_company: { display_name: "Bridge Validation Lab", company_guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" } },
           { selected_company: { display_name: "Bridge Ageing Lab", company_guid: "guid-2", company_number: "100014", books_from_yyyymmdd: "20270401" } },
         ],
-        currency_assertion: "INR",
         as_of_yyyymmdd: "20260817",
         ageing_anchor: "bill_date",
       },

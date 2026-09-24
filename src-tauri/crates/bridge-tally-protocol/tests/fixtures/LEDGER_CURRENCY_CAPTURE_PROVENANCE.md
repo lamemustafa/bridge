@@ -87,6 +87,36 @@ only, with `ledgers_currency_forex_live` and `bills_receivable_forex_live` above
 - **`bills_payable_forex_live`:** the bare `<ENVELOPE></ENVELOPE>` that a `Data` report returns when
   the book has no open payable bill. A second send in the same session returned the same 46 bytes.
 
+## SHAPE LAB: several masters, every ledger in the base (bridge#551)
+
+A book that defines a second Currency master but keeps every ledger in its INR base. Nothing is left
+out, so it reads as a complete report on every outstandings surface.
+
+- **Host / gateway:** TallyPrime **Silver (licensed)** 7.1, `education_mode` false; `/status`
+  byte-identical before and after.
+- **Date:** 2026-09-23, 10:57–10:59 +0530, one request at a time, read-only; the same session as
+  `currency_originalname_shape_live`. Book `BRIDGE SHAPE LAB` (synthetic), period
+  `20250401`–`20260923`.
+- **Requests:** the production renderers of master `2db6a9c5`: the plain currency collection
+  (`render_company_currency_request`), Bills Receivable and Bills Payable
+  (`render_native_bills_request`), the group snapshot and the ledger snapshot with `CURRENCYNAME`.
+- **Encoding:** BOM-less UTF-16LE, the undecoded wire bytes. Collections report `STATUS 1`.
+
+| file | bytes | sha256 |
+|---|---|---|
+| `currency_shape_live.utf16le.xml` | 3,834 | `9669c937d51b7a7ab01b1647085fc4ff4dd56b71aac2af86fb47ca0106c9a45d` |
+| `bills_receivable_shape_live.utf16le.xml` | 496 | `95c2b1445ba5473f278fbfd29960eb637480224ce7a007a10f1aeda84d76077e` |
+| `bills_payable_shape_live.utf16le.xml` | 1,392 | `9199e5b8588195590d14cc67fb0460cc4442bd4192da41366d43cb3579b021b6` |
+| `groups_shape_live.utf16le.xml` | 62,914 | `78e7c135e1344b7243e0f694d1e7669bb42266c48454b5c27ca0b601343ddb34` |
+| `ledgers_currency_shape_live.utf16le.xml` | 57,766 | `15c501940807c4315508096d11471597a7f0fb6ddf4d45af0a72e670c7258916` |
+
+- **Currency masters:** `I₹` (`INR`) and `UUSD` (`US Dollar`); with `ORIGINALNAME` removed,
+  `currency_originalname_shape_live` is byte-identical to `currency_shape_live`.
+- **Bills:** one receivable (`BILLCL` `-5000.00`) and three payable (`22500.00`, `11799.50`,
+  `5000.00`), plain decimals.
+- **Groups:** 33 rows; every GUID carries SHAPE LAB's company-GUID prefix `3a6bd6e1`.
+- **Ledgers:** 44 rows, every one with `CURRENCYNAME` `I₹`: no ledger is kept in `UUSD`.
+
 ## Known limits
 
 - One release (7.1), one machine, two books.

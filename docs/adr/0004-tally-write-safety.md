@@ -267,8 +267,8 @@ or an owner decision to amend the requirement instead:
     Open: a delete or locate tool built on it, under the requirements listed on #579.
 13. **Multi-currency books, #551.** A voucher's amounts are plain base-currency figures, and a
     foreign-currency ledger's balance can read as a plain amount too, so only the ledger's own
-    currency tells them apart. Among several Currency masters, only the MCP outstandings read
-    identifies the base (bridge#551, TALLY_PROTOCOL_REFERENCE §9.10a.2); the write path does not
+    currency tells them apart. Among several Currency masters, only the outstandings reads
+    identify the base (bridge#551, TALLY_PROTOCOL_REFERENCE §9.10a.2); the write path does not
     compare a leg's currency with it yet. Until it does, every post reads the company's Currency
     masters before approval and again inside the queue, in the same identity brackets as the catalogue, and is
     refused unless there is exactly one (`import_multi_currency_unsupported`, naming the masters

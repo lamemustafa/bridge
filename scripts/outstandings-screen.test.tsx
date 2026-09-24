@@ -112,9 +112,10 @@ test("a plain-string outstandings failure renders unchanged, with no invented re
 });
 
 // bridge#604: only a book with one Currency master may be confirmed as INR by
-// hand. With several, or when the currency read fails, the screen offers no
+// hand. When the currency read fails or names no master, the screen offers no
 // confirmation and never asks for outstandings; with one master Tally does not
-// name INR, the confirmation says what Tally reported.
+// name INR, the confirmation says what Tally reported. A book with several is
+// read without an assertion (bridge#551, below).
 async function renderWithCurrency(detect: () => Promise<unknown>) {
   mocks.invoke.mockImplementation((command: string) => {
     if (command === "detect_tally_base_currency") return detect();
@@ -129,15 +130,63 @@ async function renderWithCurrency(detect: () => Promise<unknown>) {
   return { host, root, invoked };
 }
 
-test("a book with several currencies is not offered an INR confirmation and is not read", async () => {
-  const { host, root, invoked } = await renderWithCurrency(() =>
-    Promise.resolve({ is_inr: false, symbol: "", mailing_name: "", currency_count: 2 }),
-  );
-  expect(host.textContent).toContain("Multi-currency books are not supported yet");
-  expect(host.querySelector("button")?.textContent ?? "").not.toContain("This company uses INR");
-  expect(host.textContent).not.toContain("This company uses INR");
-  expect(invoked).not.toContain("fetch_tally_outstandings");
-  root.unmount();
+// bridge#551: a book with several Currency masters is no longer stopped by the
+// screen. The backend reads the company's own base and decides: FOREX (an INR
+// base with $ ledgers) comes back as the base-currency-ledgers-only partial,
+// shown with the excluded ledgers named and no figures; a company whose base
+// cannot be identified is refused; SHAPE LAB (an INR base, every ledger in it)
+// is a complete report. The screen offers no INR confirmation for any of them.
+test("a book with several currencies is read and the backend's decision is shown", async () => {
+  const exclusion = {
+    state: "partial",
+    reason_code: "foreign_currency_ledgers_excluded",
+    synced_at_unix_ms: 1,
+    foreign_currency_ledgers_excluded: [
+      { ledger: "Synthetic FX Debtor A", currency: "$" },
+      { ledger: "Synthetic FX Debtor B", currency: "$" },
+    ],
+    base_currency_ledgers: {
+      report: { ...completeResult().report, receivable_total: "34500.00" },
+      currency_assertion: "INR",
+      ageing_anchor: "due_date",
+      unallocated_total: "0",
+      statement_unallocated_by_party: [],
+      statement_open_bills: [],
+    },
+  };
+  const undetermined = {
+    state: "partial",
+    reason_code: "company_base_currency_undetermined",
+    synced_at_unix_ms: 1,
+  };
+  for (const [name, response, expected, absent] of [
+    ["exclusion", exclusion, ["Synthetic FX Debtor A ($), Synthetic FX Debtor B ($)", "shows no totals here"], ["34,500", "34500"]],
+    ["undetermined", undetermined, ["could not tell from Tally which one is its base currency"], []],
+    ["complete", completeResult("synthetic-statements"), ["All Excel statements"], ["Multi-currency"]],
+  ] as const) {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "detect_tally_base_currency") {
+        return Promise.resolve({ is_inr: false, symbol: "$", mailing_name: "USD", currency_count: 2 });
+      }
+      if (command === "fetch_tally_outstandings") return Promise.resolve(response);
+      return Promise.resolve(null);
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<OutstandingsScreen {...defaultProps()} />));
+    await flush();
+    const fetches = mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_outstandings");
+    expect(fetches, name).toHaveLength(1);
+    // No INR assertion is sent for a book the backend admits itself.
+    expect((fetches[0][1] as { request: Record<string, unknown> }).request, name).not.toHaveProperty("currency_assertion");
+    expect(host.textContent, name).not.toContain("This company uses INR");
+    for (const text of expected) expect(host.textContent, name).toContain(text);
+    for (const text of absent) expect(host.textContent, name).not.toContain(text);
+    root.unmount();
+    host.remove();
+    mocks.invoke.mockReset();
+  }
 });
 
 test("a failed currency read is not offered an INR confirmation and is not read", async () => {

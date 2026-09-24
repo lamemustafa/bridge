@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "635b4615f832c99cccf8f59c691f96f7c6a53012662aa21768168304ed65fe1d"
+      "sha256": "4e4cdbe00f27a4f6e3ba5232369419bf635a7559ea01e2c7fc3426b7133041dc"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -43,7 +43,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
-      "sha256": "e4b2898760f94e590c677f3308099089c7e43c23b1922b60fe029233b17b8532"
+      "sha256": "ace7e9e7c2062d1bc69573740be76c4610465293ecfd6a7b978720c08b0a1f3d"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
@@ -127,7 +127,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "2c2ba86275a2e5cd8540c4e07e80c2f731e309f25fd6dc74d2d3f0ce85858f54"
+      "sha256": "e0bd2cceca3fbbc10cba953aec5556fe5b154cc901b8a3fcf6f553623d712f80"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -295,11 +295,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
-      "sha256": "fded2b1c806905260c8197690840d5ca0ca6eb9fbb9f4f3313bd3d098c989d66"
+      "sha256": "a58280aa81f00944b8c324b7d2aad366d5420e8dfe6c8d767d349243922270cf"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
-      "sha256": "d064368646ae1b5b83c13b9cbe44fabf601a6d05fcf744e2e78181f0636482a9"
+      "sha256": "eaf0de0a21c0a2ce13fc5780bd8add0695bc8b33f5d616c1e266296ecf2d660e"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
@@ -487,7 +487,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "29f8b4aa7f3ec8da3d3efaaf62ae8ca40fc6e53cb4c52c2383c6423099b8c301"
+      "sha256": "f2bc776b6eec0fd498021dc686b55d3371957987891839d80154545836066236"
     },
     {
       "path": "src-tauri/src/agent_import_post_location.rs",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "95f9a95a055697f243917df2b595eb04e45e6ea5496df17e266250ec73f05132"
+      "sha256": "2d3402902cad31d7e61aae5d3751158f10f67ac145b4c035b73f4b61cb6c502a"
     },
     {
       "path": "src-tauri/src/commands_trial_balance.rs",
@@ -903,7 +903,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "544076cb48d05ee6bc2b55ee36f33a8ffd0ab5ac3f8e46d065fb352222d8de00"
+      "sha256": "97388ab7d8668ed71fee55c41ad994264d37cb766e981021af8c39a7b0b31850"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -943,7 +943,7 @@
     },
     {
       "path": "src/AllClientsScreen.tsx",
-      "sha256": "98f482713e3811d5eccc5944dd546b9c020662c1cb6c05524126edf79c97eb03"
+      "sha256": "cb544e05bf309d25290bf267360b1a73c79c31cc9477e5a624cefb346a5d5b7d"
     },
     {
       "path": "src/ClientSwitcher.tsx",
@@ -979,7 +979,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "992e1c1bd0f63a521d94e1125119d123b88f1874179f8a37052d4db2ae2e02da"
+      "sha256": "fb18c8864db4e453dd68d0f44a069eba34cc10655752e3fe4007599ce5c073f7"
     },
     {
       "path": "src/SourceDraftScreen.tsx",
@@ -1015,7 +1015,7 @@
     },
     {
       "path": "src/outstandings-as-of.ts",
-      "sha256": "0adbdcb1713b8d6035612b7b004425fbb31ee8c4dd110442fda91141c78bf2fc"
+      "sha256": "d97e3d337e5974fb0062d1600ae1af620b044b934610889446415cf77cec606f"
     },
     {
       "path": "src/outstandings-bills.ts",
@@ -1023,7 +1023,7 @@
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "55c3f51cb1b11dcbbf3f6957294d5cc80f56425d90ea41eff14f2497b160d184"
+      "sha256": "2fb12bf8cab08b45340b69427e21c4df9de67d7e7fde4960e1fc2cc2293b29d4"
     },
     {
       "path": "src/outstandings-csv.ts",
@@ -1114,5 +1114,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "c90958efc0617049fcb31267aaffa423d857a2706fbaf9fd2811e387dba9dfc8"
+  "manifest_sha256": "777c6afaf89663c045ae7b11c842ad55eecbdf23fbf005ce5aa05a9491fdc8d9"
 }
