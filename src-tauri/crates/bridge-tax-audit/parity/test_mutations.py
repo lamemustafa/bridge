@@ -242,6 +242,12 @@ class Select(unittest.TestCase):
         self.assertEqual(self.picked(changed), {"N1"}, "an added entry has no record")
         self.muts[0] = dict(self.book, to="edited")
         self.assertEqual(self.picked(changed), {"N1", "B1"}, "an edited entry fails its hash")
+        # Once the branch commits records for them, only the base's list still tells them apart.
+        base = {m["id"]: mu.mutation_hash(m) for m in (self.book, self.support, self.edge)}
+        killer = ["tests/registry.rs::registry_ok"]  # a killer whose file exists and defines it
+        proven = dict(self.results, N1=record(added, killer), B1=record(self.muts[0], killer))
+        self.assertEqual(set(mu.select(self.muts, proven, changed, self.crate)), set(), "without the base: blind")
+        self.assertEqual(set(mu.select(self.muts, proven, changed, self.crate, base=base)), {"N1", "B1"})
         order = [m["id"] for m in self.muts if m["id"] != "S1"]  # S1 removed from the list
         self.assertEqual(mu.verify([], self.results, "t", order),
                          ["S1: a record for a mutation no longer in the list (delete it)"])
@@ -251,7 +257,7 @@ class Select(unittest.TestCase):
         # this fails, so the file must leave INERT (or the test must not read it).
         crate = Path(__file__).resolve().parents[1]
         names = [Path(f).name for f in mu.INERT] + ["accepted-survivors.json"]
-        sources = [p for d in ("src", "tests") for p in (crate / d).rglob("*.rs")]
+        sources = [p for d in ("src", "tests", "examples", "benches") for p in (crate / d).rglob("*.rs")]
         sources += [crate / "build.rs"] if (crate / "build.rs").is_file() else []
         self.assertGreater(len(sources), 20, "the crate's sources were found")
         hits = [f"{p.relative_to(crate)}: {n}" for p in sources for n in names
@@ -552,6 +558,34 @@ class GitRepo(unittest.TestCase):
         mu.RESULTS.write_text(mu.render_results(results, [m["id"] for m in self.muts]))
         self.commit("prove " + " ".join(ids))
         self.assertEqual(mu.crate_tree("HEAD", self.repo, self.CRATE), tree, "the results file is not in the tree")
+
+    def test_a_list_change_is_judged_against_the_base_list(self):
+        self.prove("B1", "R1")
+        sh(self.repo, "branch", "base")
+        results = mu.load_results(mu.RESULTS)
+        n1 = dict(mutation("N1", "src/book.rs"), **{"from": "fn a()", "to": "fn a_()"})
+        self.muts.append(n1)
+        self.write("parity/mutations.json", json.dumps(self.muts))
+        results["N1"] = record(n1, ["tests/registry.rs::registry_ok"], tree="made-on-another-tree")
+        mu.RESULTS.write_text(mu.render_results(results, [m["id"] for m in self.muts]))
+        self.commit("add N1 with a record from another tree")
+        rc, out = self.main("--verify", "--changed-since", "base")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("N1: new or edited since the base", out)
+        self.assertNotIn("B1:", out, "only the entry the change adds")
+        self.prove("N1")
+        self.assertEqual(self.main("--verify", "--changed-since", "base")[0], 0)
+        # Removing a proven mutation and re-adding it under a new id with the same definition (a
+        # rename) carries its record over: the new id is new since the base, so it is selected.
+        self.muts = [dict(m, id="R1b") if m["id"] == "R1" else m for m in self.muts]
+        self.write("parity/mutations.json", json.dumps(self.muts))
+        results = mu.load_results(mu.RESULTS)
+        results["R1b"] = results.pop("R1")
+        mu.RESULTS.write_text(mu.render_results(results, [m["id"] for m in self.muts]))
+        self.commit("rename R1")
+        rc, out = self.main("--verify", "--changed-since", "base")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("R1b: new or edited since the base", out)
 
     def test_changed_since_diffs_from_the_merge_base(self):
         sh(self.repo, "checkout", "-q", "-b", "pr")

@@ -85,9 +85,11 @@ At merge, `--verify --changed-since <base>` (in CI, no build) requires:
     rules, parity scripts, the Markdown tests read, `Cargo.toml`, `build.rs`): then the whole
     list is selected, because tests read such files at run time in ways no file name reveals.
     The runner's own files and `parity/mutations.json` are the exception: no crate test reads
-    them (a unit test fails if any crate source names them), and a change to the list is already
-    covered mutation by mutation: an edited entry fails its definition hash, an added one has no
-    record, and a removed one leaves a record the orphan check refuses; or
+    them (a unit test fails if any crate source names them), and a change to the list is judged
+    entry by entry against the merge base's list: an id that is new there, or whose definition
+    changed, is selected whatever record the branch carries (so a record made on another tree, or
+    carried over under a renamed id, must be made again on the merged tree), and a removed id
+    leaves a record the orphan check refuses; or
   - a nightly tracking issue is open and lists it as failing (`--nightly-issues`), and the
     change touches the crate: so the fix for a nightly failure can merge, and nothing else can
     until the failing mutations are proven killed again (or retired). Every open issue must
@@ -313,7 +315,7 @@ def is_source(path: str) -> bool:
 
 
 def select(mutations: list[dict], results: dict, changed: list[str], crate: Path = ROOT,
-           accepted: dict | None = None) -> dict[str, list[str]]:
+           accepted: dict | None = None, base: dict[str, str] | None = None) -> dict[str, list[str]]:
     """{id: [reasons]} for every mutation the change selects; see the module docstring. `changed`
     is crate-relative paths."""
     changed = [c for c in changed if c not in INERT]
@@ -331,6 +333,8 @@ def select(mutations: list[dict], results: dict, changed: list[str], crate: Path
             reasons.append(f"non-source input changed: {', '.join(other[:3])}{more}")
         if m["file"] in changed_set:
             reasons.append(f"target {m['file']} changed")
+        if base is not None and base.get(m["id"]) != mutation_hash(m):
+            reasons.append("new or edited since the base")
         if not passes(m, rec, accepted):
             reasons.append("no killed record")
         elif rec.get("mutation") != mutation_hash(m):
@@ -486,6 +490,17 @@ def crate_tree(ref: str = "HEAD", repo: Path = REPO, crate: str = CRATE) -> str:
     results = f"{crate}/parity/mutation-results.json"
     rows = [r for r in git("ls-tree", "-r", ref, "--", crate, repo=repo).splitlines() if not r.endswith("\t" + results)]
     return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()[:16]
+
+
+def base_definitions(base: str, repo: Path = REPO, crate: str = CRATE) -> dict[str, str]:
+    """{id: definition hash} of the mutation list at the merge base of `base` and HEAD ({} when
+    the base has no list): what a change to the list is judged against."""
+    mb = git("merge-base", base, "HEAD", repo=repo).strip()
+    shown = subprocess.run(["git", "show", f"{mb}:{crate}/parity/mutations.json"], cwd=repo,
+                           capture_output=True)
+    if shown.returncode != 0:
+        return {}
+    return {m["id"]: mutation_hash(m) for m in json.loads(shown.stdout.decode("utf-8"))}
 
 
 def changed_since(base: str, repo: Path = REPO, crate: str = CRATE) -> list[str]:
@@ -788,7 +803,8 @@ def main(argv: list[str] | None = None) -> int:
     changed: list[str] = []
     if args.changed_since:
         changed = changed_since(args.changed_since, REPO, CRATE)
-        reasons = select(mutations, results, changed, ROOT, accepted)
+        reasons = select(mutations, results, changed, ROOT, accepted,
+                         base_definitions(args.changed_since, REPO, CRATE))
     if args.nightly_issues and changed:
         required = failing_ids(args.nightly_issues.read_text(encoding="utf-8"))
         if required is None:
