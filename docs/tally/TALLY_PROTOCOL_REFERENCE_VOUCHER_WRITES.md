@@ -529,10 +529,15 @@ from a Voucher collection readback, not from the counters alone.
   - A resend therefore undoes a delete, and neither the GUID nor the MASTERID survives it. Anything keyed on either (a baseline, a binding) must treat the re-created voucher as new. The REMOTEID is the only link, and after a delete that link re-creates the voucher rather than restoring it.
   - **Current behaviour:** Bridge's native post sends a fresh random REMOTEID for every post and records it with the dispatch intent (#582), so it never resends one.
   - **Design consequence, not current behaviour:** a batch-posting design must refuse to resend a REMOTEID Bridge has already sent, because a resend after a delete re-creates the voucher under a new GUID.
+- **Manual numbering with duplicates prevented refuses, and two of the three refusals are silent. PARTIAL — observed once each (G).** The same Journal type was switched to Manual with Prevent Duplicates, then restored.
+  - An upsert (same `REMOTEID`) with no `VOUCHERNUMBER` reported `ERRORS=1` with `LINEERROR` "Voucher Number cannot be left BLANK!", and no create or alter counter moved.
+  - A new voucher with no number reported `EXCEPTIONS=1` with **no `LINEERROR`**, and no create counter moved.
+  - A second new voucher reusing a number reported `EXCEPTIONS=1` with **no `LINEERROR`**, and a readback held one voucher under that number.
+  - An `EXCEPTIONS` count without any line error is the case §9.2's four-part success rule exists for: only the counters show the refusal.
 - **Related, same block:**
   - An upsert omitting `REFERENCE` kept the stored value: omitted fields merge. PARTIAL — observed once (G).
   - Each upsert moved the voucher's ALTERID to the book's next mark. PARTIAL — observed across several upserts on one book (G).
 
-**Not measured here:** other voucher types, Manual numbering, Gold concurrency, an edit in Tally's
+**Not measured here:** other voucher types, Gold concurrency, an edit in Tally's
 own screens, and repeatability beyond one run. A masters delete in the same session drew no
 response, and its cause is **UNVERIFIED**; nothing is recorded about it here.
