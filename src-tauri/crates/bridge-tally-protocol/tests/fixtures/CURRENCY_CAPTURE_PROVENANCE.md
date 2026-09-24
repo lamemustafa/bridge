@@ -1,4 +1,4 @@
-# `currency_inr_modern_live`, `currency_inr_legacy_live`, `currency_multi_live` — provenance
+# `currency_inr_modern_live`, `currency_inr_legacy_live`, `currency_multi_live`, `currency_originalname_*` — provenance
 
 Three captures of the base-currency collection, taken to replace the hand-authored `const LIVE` in
 `native_outstandings/wire.rs` and `const CURRENCY` in `tally/runtime.rs`. Those constants were
@@ -48,3 +48,34 @@ put a rupee symbol in front of a dollar balance.
   here are the distinct shapes among them.
 - No company on this machine defines a single **non-Indian** currency, so that case
   (`count == 1`, mailing name `US Dollars`) remains covered only by a constructed variant.
+
+## `currency_originalname_forex_live`, `currency_originalname_shape_live`: `ORIGINALNAME` (bridge#551)
+
+The provenance above covers the three 2026-08-23 captures only. These two answer a different request.
+
+| file | bytes | sha256 | company | first `NAME` | first `MAILINGNAME` | count |
+|---|---|---|---|---|---|---|
+| `currency_originalname_forex_live.utf16le.xml` | 4,006 | `07bd90682e88b1c5155afe7a1b0b5c541c89c8f660aa546a0014f6311261ebc3` | `BRIDGE CORPUS FOREX` | `$` | `USD` | 2 |
+| `currency_originalname_shape_live.utf16le.xml` | 4,042 | `0c3ac1f8bfcc372a8e2213c31980b149faeadc566cf69502f3e1dd61750a241d` | `BRIDGE SHAPE LAB` | `I₹` | `INR` | 2 |
+
+- **Host:** TallyPrime 7.1 Silver, licensed, `education_mode: false`; `/status` byte-identical
+  before and after.
+- **Date:** 2026-09-23, 10:57–10:59 +0530, one request at a time, read-only.
+- **Encoding:** BOM-less UTF-16LE, exactly as received.
+- **Request:** `render_company_currency_request` with `ORIGINALNAME` appended to its `FETCH`. The
+  production request does not send `ORIGINALNAME` yet; it joins with its first consumer
+  (bridge#551).
+- **Control:** the same session also sent the request without `ORIGINALNAME` (not committed).
+  Removing the two `ORIGINALNAME` elements from each committed response leaves it byte-identical
+  to that control, on both books: the field adds nothing else to the response.
+
+| file | masters, as `NAME` / `ORIGINALNAME` / `MAILINGNAME` |
+|---|---|
+| `currency_originalname_forex_live` | `$` / `$` / `USD`; `I₹` / `₹` / `INR` |
+| `currency_originalname_shape_live` | `I₹` / `₹` / `INR`; `UUSD` / `USD` / `US Dollar` |
+
+Each is a two-master book whose base is the rupee master: FOREX is an INR-based book
+(TALLY_PROTOCOL_REFERENCE §8.2d); for SHAPE LAB, only its company `CURRENCYNAME` `₹` says so
+(§9.10a.2, not committed).
+`ORIGINALNAME` identifies the base; INR is still decided by the mailing name alone. A rupee master
+with another mailing name, refused as not INR, is covered only by a constructed variant.

@@ -158,10 +158,13 @@ pub enum NativeOverdueCrosscheck {
 pub struct CompanyCurrency {
     pub symbol: String,
     pub mailing_name: String,
-    /// How many currency masters the company defines. INR is inferred only
-    /// when there is exactly one: with several defined, which is the BASE
-    /// currency is not determinable from this read, and guessing would put a
-    /// wrong currency symbol in front of a real balance.
+    /// How many currency masters the company defines. The parser sets
+    /// `is_inr` only when there is exactly one: with several defined, this
+    /// read cannot tell which is the BASE currency, and guessing would put a
+    /// wrong currency symbol in front of a real balance. Identifying the base
+    /// among several needs the company's own `CURRENCYNAME`
+    /// (TALLY_PROTOCOL_REFERENCE §9.10a.2), and its result is never carried by
+    /// this type.
     pub currency_count: usize,
     /// The base currency's display precision reported by Tally. Consumers
     /// must carry this to their rendering boundary rather than silently
@@ -173,4 +176,85 @@ pub struct CompanyCurrency {
     /// it exists so a refusal can name the masters it saw.
     #[serde(skip)]
     pub names: Vec<String>,
+}
+
+/// One Currency master as the currency read returns it (bridge#551).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct CurrencyMaster {
+    /// `NAME`: the symbol a ledger's `CURRENCYNAME` carries (`I₹`, `Rs.`, `$`).
+    pub name: String,
+    /// `ORIGINALNAME`, when the response carries it, exactly as received (not
+    /// trimmed): on the books measured, the value the company's own
+    /// `CURRENCYNAME` carries when this master is its base (`₹` for a master
+    /// named `I₹`). It identifies the base and never decides INR. `Some("")`
+    /// when the element is present but empty, which is not the same as absent.
+    /// The production request does not fetch it yet (bridge#551).
+    pub original_name: Option<String>,
+    pub mailing_name: String,
+    pub decimal_places: u8,
+}
+
+impl CurrencyMaster {
+    /// The INR rule for an identified base master (bridge#551): its
+    /// `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
+    ///
+    /// The symbol is not an arm. `Rs.` is shared by the Pakistani, Nepali and
+    /// Sri Lankan rupees, and whether `ORIGINALNAME` `₹` survives a Company
+    /// Alteration that renames the base currency is unmeasured
+    /// (TALLY_PROTOCOL_REFERENCE §9.10a.2).
+    pub(crate) fn is_inr(&self) -> bool {
+        self.mailing_name.eq_ignore_ascii_case("Indian Rupees")
+            || self.mailing_name.eq_ignore_ascii_case("INR")
+    }
+}
+
+impl CompanyCurrency {
+    /// The company's currency from its Currency masters, as before bridge#551:
+    /// `symbol`, `mailing_name` and `decimal_places` are the first master
+    /// read, and `is_inr` holds only for a book with exactly one master that
+    /// passes [`CurrencyMaster::is_inr`].
+    pub(crate) fn from_masters(masters: &[CurrencyMaster]) -> Self {
+        let first = masters.first().cloned().unwrap_or_default();
+        Self {
+            is_inr: matches!(masters, [only] if only.is_inr()),
+            symbol: first.name,
+            mailing_name: first.mailing_name,
+            currency_count: masters.len(),
+            decimal_places: first.decimal_places,
+            names: masters.iter().map(|master| master.name.clone()).collect(),
+        }
+    }
+}
+
+/// The base among a book's Currency masters (bridge#551): the only master,
+/// or, among several, the unique master whose `ORIGINALNAME` equals the
+/// company's own `CURRENCYNAME` character for character
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2). A blank company value never matches.
+/// It identifies the base only; whether that base is INR is
+/// [`CurrencyMaster::is_inr`]'s.
+///
+/// Groundwork for the outstandings paths that compare each ledger's currency
+/// with the base (bridge#551); no production path calls it yet.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "consumed by the several-masters outstandings read, bridge#551"
+    )
+)]
+pub(crate) fn identify_base_master<'a>(
+    masters: &'a [CurrencyMaster],
+    company_currency_name: Option<&str>,
+) -> Option<&'a CurrencyMaster> {
+    if let [only] = masters {
+        return Some(only);
+    }
+    let name = company_currency_name.filter(|name| !name.trim().is_empty())?;
+    let mut matching = masters
+        .iter()
+        .filter(|master| master.original_name.as_deref() == Some(name));
+    match (matching.next(), matching.next()) {
+        (Some(base), None) => Some(base),
+        _ => None,
+    }
 }
