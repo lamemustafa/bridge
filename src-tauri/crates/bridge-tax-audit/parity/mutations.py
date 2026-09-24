@@ -83,7 +83,13 @@ At merge, `--verify --changed-since <base>` (in CI, no build) requires:
   - its own definition changed, it has no killed record, or a killer's file is unknown;
   - ANY crate file other than Rust source under `src/` and `tests/` changed (fixtures, goldens,
     rules, parity scripts, the Markdown tests read, `Cargo.toml`, `build.rs`): then the whole
-    list is selected, because tests read such files at run time in ways no file name reveals; or
+    list is selected, because tests read such files at run time in ways no file name reveals.
+    The runner's own files and `parity/mutations.json` are the exception: no crate test reads
+    them (a unit test fails if any crate source names them), and a change to the list is judged
+    entry by entry against the merge base's list: an id that is new there, or whose definition
+    changed, is selected whatever record the branch carries (so a record made on another tree, or
+    carried over under a renamed id, must be made again on the merged tree), and a removed id
+    leaves a record the orphan check refuses; or
   - a nightly tracking issue is open and lists it as failing (`--nightly-issues`), and the
     change touches the crate: so the fix for a nightly failure can merge, and nothing else can
     until the failing mutations are proven killed again (or retired). Every open issue must
@@ -149,8 +155,10 @@ FAILED_NO_TEST = "failed_no_test"
 PASSING = {KILLED, TIMEOUT}  # a test-run timeout is a hang the suite would not let through
 CRASHED = "<crashed>"  # the test name recorded when a test binary dies without naming a failure
 
-# Crate-relative files that never change what a test does.
-INERT = ("parity/mutations.py", "parity/mutation-results.json", "parity/test_mutations.py")
+# Crate-relative files that never change what a test does: no crate source names them (a unit
+# test holds that), and a change to the list is judged entry by entry (see the docstring).
+INERT = ("parity/mutations.py", "parity/mutation-results.json", "parity/test_mutations.py",
+         "parity/mutations.json")
 # The machine-readable line a failed report ends with, which the nightly puts in its issue.
 FAILING_MARK = "mutation-nightly-failing:"
 # The header ci.yml writes before each open issue's body in the --nightly-issues file.
@@ -307,7 +315,7 @@ def is_source(path: str) -> bool:
 
 
 def select(mutations: list[dict], results: dict, changed: list[str], crate: Path = ROOT,
-           accepted: dict | None = None) -> dict[str, list[str]]:
+           accepted: dict | None = None, base: dict[str, str] | None = None) -> dict[str, list[str]]:
     """{id: [reasons]} for every mutation the change selects; see the module docstring. `changed`
     is crate-relative paths."""
     changed = [c for c in changed if c not in INERT]
@@ -325,6 +333,8 @@ def select(mutations: list[dict], results: dict, changed: list[str], crate: Path
             reasons.append(f"non-source input changed: {', '.join(other[:3])}{more}")
         if m["file"] in changed_set:
             reasons.append(f"target {m['file']} changed")
+        if base is not None and base.get(m["id"]) != mutation_hash(m):
+            reasons.append("new or edited since the base")
         if not passes(m, rec, accepted):
             reasons.append("no killed record")
         elif rec.get("mutation") != mutation_hash(m):
@@ -454,6 +464,31 @@ def write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+_ID = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def list_problems(mutations: list[dict], tracked: set[str]) -> list[str]:
+    """Entries the runner cannot judge safely: an id outside [A-Za-z0-9_.-] (the failing-ids line
+    splits on whitespace), or a `file` that is not exactly a tracked crate path in git's spelling
+    (`src/./x.rs` would open the right file but never match a changed path, so a change to it
+    would select nothing)."""
+    out = []
+    for m in mutations:
+        i = m.get("id")
+        if not isinstance(i, str) or not _ID.fullmatch(i):
+            out.append(f"{i!r}: an id may hold only A-Z, a-z, 0-9, '_', '.' and '-'")
+        if m.get("file") not in tracked:
+            out.append(f"{i}: file {m.get('file')!r} is not a tracked crate path, spelled as git spells it")
+    return out
+
+
+def tracked_files(repo: Path = REPO, crate: str = CRATE) -> set[str]:
+    """Crate-relative paths of the files HEAD tracks under the crate, as git spells them."""
+    out = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", crate], cwd=repo,
+                         capture_output=True, check=True).stdout
+    return {n.decode("utf-8")[len(crate) + 1:] for n in out.split(b"\0") if n}
+
+
 def dirty(porcelain: str) -> list[str]:
     """The `git status --porcelain` lines that stop a run: any tracked change but the results file."""
     return [line for line in porcelain.splitlines() if line.strip() and not line.endswith(RESULTS_REL)]
@@ -480,6 +515,17 @@ def crate_tree(ref: str = "HEAD", repo: Path = REPO, crate: str = CRATE) -> str:
     results = f"{crate}/parity/mutation-results.json"
     rows = [r for r in git("ls-tree", "-r", ref, "--", crate, repo=repo).splitlines() if not r.endswith("\t" + results)]
     return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()[:16]
+
+
+def base_definitions(base: str, repo: Path = REPO, crate: str = CRATE) -> dict[str, str]:
+    """{id: definition hash} of the mutation list at the merge base of `base` and HEAD ({} when
+    the base has no list): what a change to the list is judged against."""
+    mb = git("merge-base", base, "HEAD", repo=repo).strip()
+    shown = subprocess.run(["git", "show", f"{mb}:{crate}/parity/mutations.json"], cwd=repo,
+                           capture_output=True)
+    if shown.returncode != 0:
+        return {}
+    return {m["id"]: mutation_hash(m) for m in json.loads(shown.stdout.decode("utf-8"))}
 
 
 def changed_since(base: str, repo: Path = REPO, crate: str = CRATE) -> list[str]:
@@ -744,6 +790,10 @@ def main(argv: list[str] | None = None) -> int:
     if repeated:
         print(f"refusing: mutation ids used more than once: {repeated}", file=sys.stderr)
         return 2
+    malformed = list_problems(mutations, tracked_files(REPO, CRATE))
+    if malformed:
+        print("refusing: mutation entries the runner cannot judge:\n  " + "\n  ".join(malformed), file=sys.stderr)
+        return 2
     unknown = sorted(set(args.ids) - set(order))
     if unknown:
         print(f"refusing: no such mutation ids: {unknown}", file=sys.stderr)
@@ -782,7 +832,8 @@ def main(argv: list[str] | None = None) -> int:
     changed: list[str] = []
     if args.changed_since:
         changed = changed_since(args.changed_since, REPO, CRATE)
-        reasons = select(mutations, results, changed, ROOT, accepted)
+        reasons = select(mutations, results, changed, ROOT, accepted,
+                         base_definitions(args.changed_since, REPO, CRATE))
     if args.nightly_issues and changed:
         required = failing_ids(args.nightly_issues.read_text(encoding="utf-8"))
         if required is None:

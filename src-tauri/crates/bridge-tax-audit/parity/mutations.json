@@ -3406,5 +3406,317 @@
   "file": "src/partners_40b_194t.rs",
   "from": "tags.insert(tag.clone(), key)",
   "to": "tags.insert(key.to_string(), key)"
+ },
+ {
+  "id": "FX1-01",
+  "by": "author",
+  "what": "Rust's whitespace set in place of Python's (U+001C..U+001F)",
+  "file": "src/book.rs",
+  "from": "(0..s.len()).filter(|&i| xml::is_py_space(s[i]))",
+  "to": "(0..s.len()).filter(|&i| s[i].is_whitespace())"
+ },
+ {
+  "id": "FX1-02",
+  "by": "author",
+  "what": "the text not stripped before matching",
+  "file": "src/book.rs",
+  "from": "let s: Vec<char> = xml::py_strip(text).chars().collect();",
+  "to": "let s: Vec<char> = text.chars().collect();"
+ },
+ {
+  "id": "FX1-03",
+  "by": "author",
+  "what": "the ` @ ` separator not checked",
+  "file": "src/book.rs",
+  "from": "        && is_at(second, \" @ \")\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-04",
+  "by": "author",
+  "what": "the ` = ` separator not checked",
+  "file": "src/book.rs",
+  "from": "        && is_at(equals, \" = \")\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-05",
+  "by": "author",
+  "what": "an empty rate text between the separators accepted",
+  "file": "src/book.rs",
+  "from": "&& equals > second + 3",
+  "to": "&& equals >= second + 3"
+ },
+ {
+  "id": "FX1-06",
+  "by": "author",
+  "what": "a newline in the rate text accepted",
+  "file": "src/book.rs",
+  "from": "        && !s[second + 3..equals].contains(&'\\n')\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-07",
+  "by": "author",
+  "what": "a carriage return read as `.`'s one exclusion",
+  "file": "src/book.rs",
+  "from": "contains(&'\\n')",
+  "to": "contains(&'\\r')"
+ },
+ {
+  "id": "FX1-08",
+  "by": "author",
+  "what": "an end whose run before the space is empty accepted",
+  "file": "src/book.rs",
+  "from": "if space == 0 || s[space] != ' ' {",
+  "to": "if s[space] != ' ' {"
+ },
+ {
+  "id": "FX1-09",
+  "by": "author",
+  "what": "any whitespace char accepted as an end's space",
+  "file": "src/book.rs",
+  "from": "if space == 0 || s[space] != ' ' {",
+  "to": "if space == 0 {"
+ },
+ {
+  "id": "FX1-10",
+  "by": "author",
+  "what": "a leading minus not allowed on a number",
+  "file": "src/book.rs",
+  "from": "let number = number.strip_prefix(&['-']).unwrap_or(number);",
+  "to": ""
+ },
+ {
+  "id": "FX1-11",
+  "by": "author",
+  "what": "a number ending in its dot accepted",
+  "file": "src/book.rs",
+  "from": "                && dot + 1 < number.len()\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-12",
+  "by": "author",
+  "what": "commas accepted after the dot",
+  "file": "src/book.rs",
+  "from": "&& number[dot + 1..].iter().all(digit)",
+  "to": "&& number[dot + 1..].iter().all(digit_or_comma)"
+ },
+ {
+  "id": "FX1-13",
+  "by": "author",
+  "what": "commas refused before the dot",
+  "file": "src/book.rs",
+  "from": "number[..dot].iter().all(digit_or_comma)",
+  "to": "number[..dot].iter().all(digit)"
+ },
+ {
+  "id": "FX1-14",
+  "by": "author",
+  "what": "a number with no dot allowed to end in a comma",
+  "file": "src/book.rs",
+  "from": "None => number.iter().all(digit_or_comma) && number.last().is_some_and(digit),",
+  "to": "None => number.iter().all(digit_or_comma) && !number.is_empty(),"
+ },
+ {
+  "id": "FX1-15",
+  "by": "author",
+  "what": "commas refused in a number with no dot",
+  "file": "src/book.rs",
+  "from": "None => number.iter().all(digit_or_comma) && number.last().is_some_and(digit),",
+  "to": "None => number.iter().all(digit) && number.last().is_some_and(digit),"
+ },
+ {
+  "id": "FX1-16",
+  "by": "author",
+  "what": "ASCII digits only, not Python's `\\d`",
+  "file": "src/book.rs",
+  "from": "let digit = |c: &char| crate::support::py_is_decimal(*c);",
+  "to": "let digit = |c: &char| c.is_ascii_digit();"
+ },
+ {
+  "id": "FX1-17",
+  "by": "author",
+  "what": "names kept in scan order with repeats, not sorted once each",
+  "file": "src/book.rs",
+  "from": "let names: BTreeSet<&str> = names.into_iter().collect();",
+  "to": "let names: Vec<&str> = names.into_iter().collect();"
+ },
+ {
+  "id": "FX1-18",
+  "by": "author",
+  "what": "the part label dropped from the refusal",
+  "file": "src/book.rs",
+  "from": "\"{part}: foreign-currency amounts on {} ledger(s)",
+  "to": "\"foreign-currency amounts on {} ledger(s)"
+ },
+ {
+  "id": "FX1-19",
+  "by": "author",
+  "what": "a ledger master's opening not scanned",
+  "file": "src/book.rs",
+  "from": ".filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": ".filter(|_| false)"
+ },
+ {
+  "id": "FX1-20",
+  "by": "author",
+  "what": "a nameless ledger master named by its empty name",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),",
+  "to": "            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))\n            .filter_map(|l| l.attr(\"NAME\")),"
+ },
+ {
+  "id": "FX1-21",
+  "by": "author",
+  "what": "TBALOPENING not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];"
+ },
+ {
+  "id": "FX1-22",
+  "by": "author",
+  "what": "TBALCLOSING not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALOPENING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];"
+ },
+ {
+  "id": "FX1-23",
+  "by": "author",
+  "what": "DEBITTOTALS not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"CREDITTOTALS\"];"
+ },
+ {
+  "id": "FX1-24",
+  "by": "author",
+  "what": "CREDITTOTALS not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\"];"
+ },
+ {
+  "id": "FX1-25",
+  "by": "author",
+  "what": "the trial balance's refusal discarded",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),\n    )?;",
+  "to": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),\n    )\n    .ok();"
+ },
+ {
+  "id": "FX1-26",
+  "by": "author",
+  "what": "voucher ledger lines not scanned",
+  "file": "src/book.rs",
+  "from": "named_by(\"ALLLEDGERENTRIES.LIST\", \"LEDGERNAME\").chain(",
+  "to": "named_by(\"ALLLEDGERENTRIES.LIST\", \"LEDGERNAME\").filter(|_| false).chain("
+ },
+ {
+  "id": "FX1-27",
+  "by": "author",
+  "what": "a nameless voucher ledger line not named",
+  "file": "src/book.rs",
+  "from": ".map(move |e| e.child_text(name))",
+  "to": ".map(move |e| e.child_text(name))\n            .filter(|n| !n.is_empty())"
+ },
+ {
+  "id": "FX1-28",
+  "by": "author",
+  "what": "ALLINVENTORYENTRIES.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"ALLINVENTORYENTRIES.LIST\",\n    \"INVENTORYALLOCATIONS.LIST\",",
+  "to": "    \"-\",\n    \"INVENTORYALLOCATIONS.LIST\","
+ },
+ {
+  "id": "FX1-29",
+  "by": "author",
+  "what": "INVENTORYALLOCATIONS.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"INVENTORYALLOCATIONS.LIST\",\n    \"INVENTORYENTRIESIN.LIST\",",
+  "to": "    \"-\",\n    \"INVENTORYENTRIESIN.LIST\","
+ },
+ {
+  "id": "FX1-30",
+  "by": "author",
+  "what": "INVENTORYENTRIESIN.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"INVENTORYENTRIESIN.LIST\",\n    \"INVENTORYENTRIESOUT.LIST\",\n];",
+  "to": "    \"-\",\n    \"INVENTORYENTRIESOUT.LIST\",\n];"
+ },
+ {
+  "id": "FX1-31",
+  "by": "author",
+  "what": "INVENTORYENTRIESOUT.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"INVENTORYENTRIESOUT.LIST\",\n];",
+  "to": "    \"-\",\n];"
+ },
+ {
+  "id": "FX1-32",
+  "by": "author",
+  "what": "only lists directly under a voucher scanned",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(list)\n            .into_iter()\n            .filter(|e| is_foreign_amount(e.child_text(\"AMOUNT\")))",
+  "to": "        root.descendants_named(\"VOUCHER\")\n            .into_iter()\n            .flat_map(move |v| v.children_named(list))\n            .filter(|e| is_foreign_amount(e.child_text(\"AMOUNT\")))"
+ },
+ {
+  "id": "FX1-33",
+  "by": "reviewer",
+  "what": "overlapping separators: `!=` in place of `>`",
+  "file": "src/book.rs",
+  "from": "        && equals > second + 3\n",
+  "to": "        && equals != second + 3\n"
+ },
+ {
+  "id": "FX1-34",
+  "by": "reviewer",
+  "what": "voucher-scan names not stripped",
+  "file": "src/book.rs",
+  "from": ".map(move |e| e.child_text(name))",
+  "to": ".map(move |e| e.child(name).map_or(\"\", |c| c.text.as_str()))"
+ },
+ {
+  "id": "FX1-35",
+  "by": "reviewer",
+  "what": "ledger scan reads only direct children of the root",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(\"LEDGER\")\n            .into_iter()\n            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": "        root.children_named(\"LEDGER\")\n            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))"
+ },
+ {
+  "id": "FX1-36",
+  "by": "reviewer",
+  "what": "TB nameless row named by its empty name",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),",
+  "to": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\")),"
+ },
+ {
+  "id": "FX1-37",
+  "by": "reviewer",
+  "what": "only U+001C added to Rust whitespace, not U+001D..U+001F",
+  "file": "src/book.rs",
+  "from": "(0..s.len()).filter(|&i| xml::is_py_space(s[i]))",
+  "to": "(0..s.len()).filter(|&i| s[i].is_whitespace() || s[i] == '\\u{1c}')"
+ },
+ {
+  "id": "FX1-38",
+  "by": "reviewer",
+  "what": "ledger scan reads any OPENINGBALANCE child, not the first",
+  "file": "src/book.rs",
+  "from": ".filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": ".filter(|l| l.children_named(\"OPENINGBALANCE\").any(|c| is_foreign_amount(&c.text)))"
+ },
+ {
+  "id": "FX1-39",
+  "by": "author",
+  "what": "the trial-balance scan reads only direct children of the root",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(\"LEDGER\")\n            .into_iter()\n            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))",
+  "to": "        root.children_named(\"LEDGER\")\n            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))"
  }
 ]
