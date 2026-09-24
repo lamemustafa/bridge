@@ -3774,5 +3774,125 @@
   "file": "src/book.rs",
   "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
   "to": "reference: v.child_text(\"REFERENCE\").trim_start_matches(\"\\u{fffd}#4;\").to_string(),"
+ },
+ {
+  "id": "E2A-01",
+  "by": "author",
+  "what": "the match tie goes to the later statement row",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if best.is_none_or(|x| (gap, si) < x) {",
+  "to": "if best.is_none_or(|x| (gap, si) <= x) {"
+ },
+ {
+  "id": "E2A-02",
+  "by": "author",
+  "what": "an amount off by exactly Re 1 no longer matches",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if distance(signed(s)?, b.amount_paise)? > tol {",
+  "to": "if distance(signed(s)?, b.amount_paise)? >= tol {"
+ },
+ {
+  "id": "E2A-03",
+  "by": "author",
+  "what": "the day window is exclusive",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if gap > max_days {\n                continue;",
+  "to": "            if gap >= max_days {\n                continue;"
+ },
+ {
+  "id": "E2A-04",
+  "by": "author",
+  "what": "a split may be a single row",
+  "file": "src/bank_reconciliation.rs",
+  "from": "for size in 2..=MAX_SPLIT_PARTS.min(pool.len()) {",
+  "to": "for size in 1..=MAX_SPLIT_PARTS.min(pool.len()) {"
+ },
+ {
+  "id": "E2A-05",
+  "by": "author",
+  "what": "a pool of 41 is still searched",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if pool.len() > MAX_SPLIT_POOL {",
+  "to": "if pool.len() > MAX_SPLIT_POOL + 1 {"
+ },
+ {
+  "id": "E2A-06",
+  "by": "author",
+  "what": "a zero-net voucher is a books row",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        if amount != 0 {\n            out.push(BookRow {",
+  "to": "        if amount != 0 || !v.lines.is_empty() {\n            out.push(BookRow {"
+ },
+ {
+  "id": "E2A-07",
+  "by": "author",
+  "what": "a books row with a zero amount is a cheque, not a deposit",
+  "file": "src/bank_reconciliation.rs",
+  "from": "let reason = if book_rows[bi].amount_paise < 0 {",
+  "to": "let reason = if book_rows[bi].amount_paise <= 0 {"
+ },
+ {
+  "id": "E2A-08",
+  "by": "author",
+  "what": "charge terms compared without upper-casing the narration",
+  "file": "src/bank_reconciliation.rs",
+  "from": "let narration = py_upper(&stmt[si].narration);",
+  "to": "let narration = stmt[si].narration.clone();"
+ },
+ {
+  "id": "E2A-09",
+  "by": "author",
+  "what": "the opening includes the first day of the window",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        if &v.date >= start {\n            continue;",
+  "to": "        if &v.date > start {\n            continue;"
+ },
+ {
+  "id": "E2A-10",
+  "by": "author",
+  "what": "the Trial Balance closing reported on every window",
+  "file": "src/bank_reconciliation.rs",
+  "from": "    if *end == period.to {",
+  "to": "    if true || *end == period.to {"
+ },
+ {
+  "id": "E2A-11",
+  "by": "author",
+  "what": "statement evidence labels cut by bytes, not code points",
+  "file": "src/bank_reconciliation.rs",
+  "from": "&prefix_chars(&stmt[i].narration, 60)))",
+  "to": "&stmt[i].narration.get(..60).unwrap_or(&stmt[i].narration).to_string()))"
+ },
+ {
+  "id": "E2A-12",
+  "by": "author",
+  "what": "BANK-1 compares a pair with a missing balance as zero",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        let (Some(pb), Some(cb)) = (prev.balance_paise, cur.balance_paise) else {\n            continue;\n        };",
+  "to": "        let (pb, cb) = (prev.balance_paise.unwrap_or(0), cur.balance_paise.unwrap_or(0));"
+ },
+ {
+  "id": "E2A-13",
+  "by": "author",
+  "what": "a repeated figure id overwrites instead of refusing",
+  "file": "src/bank_reconciliation.rs",
+  "from": "    if r.figures.iter().any(|f| f.id == id) {\n        return Err(",
+  "to": "    if false && r.figures.iter().any(|f| f.id == id) {\n        return Err("
+ },
+ {
+  "id": "E2A-14",
+  "by": "author",
+  "what": "the reverse split pass is skipped",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        if let Some(found) = find_split(signed(s)?, &pool, TOL_PAISE)? {",
+  "to": "        if let Some(found) = None::<Vec<usize>> {"
+ },
+ {
+  "id": "E2A-15",
+  "by": "author",
+  "what": "a statement balance of null read as zero",
+  "file": "src/documents.rs",
+  "from": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => None,",
+  "to": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => Some(0),"
  }
 ]
