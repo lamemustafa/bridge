@@ -204,6 +204,9 @@ pub(super) struct ListingSnapshots {
     held: Vec<Arc<ListingSnapshot>>,
     ttl: std::time::Duration,
     max_bytes: usize,
+    /// Every company a write dropped, so a test can see the call was made.
+    #[cfg(test)]
+    dropped: Vec<String>,
 }
 
 impl Default for ListingSnapshots {
@@ -212,6 +215,8 @@ impl Default for ListingSnapshots {
             held: Vec::new(),
             ttl: LISTING_SNAPSHOT_TTL,
             max_bytes: LISTING_SNAPSHOT_MAX_BYTES,
+            #[cfg(test)]
+            dropped: Vec::new(),
         }
     }
 }
@@ -259,6 +264,13 @@ impl ListingSnapshots {
     pub(super) fn drop_company(&mut self, company_guid: &str) {
         self.held
             .retain(|held| !held.company_guid.eq_ignore_ascii_case(company_guid));
+        #[cfg(test)]
+        self.dropped.push(company_guid.to_string());
+    }
+
+    #[cfg(test)]
+    pub(super) fn dropped_companies(&self) -> &[String] {
+        &self.dropped
     }
 }
 

@@ -369,12 +369,17 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch(&server);
+    let company_guid = args["company_guid"].as_str().unwrap().to_string();
     let scripted = ScriptedApproval::approving();
     let response = SCRIPTED_APPROVAL
         .scope(scripted.clone(), server.call_tool("post_import", args))
         .await;
     let observed = sent(simulator);
     assert!(observed.len() > post_at, "{response}");
+    // The post drops every ledger listing snapshot of its company (#630).
+    let dropped = server.listings.lock().unwrap().dropped_companies().to_vec();
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert!(dropped[0].eq_ignore_ascii_case(&company_guid), "{dropped:?}");
 
     let intent = dispatch_intent(directory.path());
     assert_journaled_clean_create(directory.path());
