@@ -365,6 +365,7 @@ fn parse_voucher_rows(
                         // row's voucher type (bridge#625).
                         if let Some(resolved) = resolve_row_voucher_type(&row, company_guid)? {
                             parsed["voucher_type_guid"] = json!(resolved.guid);
+                            parsed["voucher_type_reserved_name"] = json!(resolved.reserved_name);
                             parsed["voucher_class"] =
                                 json!(resolved.class.map(ReservedVoucherClass::name));
                         }

@@ -17,7 +17,7 @@
 //!   is refused, never read as `No`.
 //!
 //! Child-type resolution was measured for Purchase only; the other classes were
-//! measured on their own reserved type.
+//! measured on their own reserved type. See protocol reference §8.2e.
 use super::*;
 use std::collections::{BTreeMap as Map, BTreeSet};
 
@@ -129,6 +129,8 @@ pub(super) fn is_voucher_type_class_scalar(field: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ResolvedVoucherType {
     pub(super) guid: String,
+    /// The type's own `RESERVEDNAME`: empty for a type the user created.
+    pub(super) reserved_name: String,
     /// `None` for a type outside the measured classes (for example Attendance).
     pub(super) class: Option<ReservedVoucherClass>,
 }
@@ -168,17 +170,23 @@ pub(super) fn resolve_row_voucher_type(
         return Err("voucher_type_class_contradictory".to_string());
     }
     let class = classes.first().copied();
+    let reserved_name = row[VOUCHER_TYPE_RESERVED_NAME_TAG].trim();
     // A type's own reserved name is a direct observation of its class; the
-    // class function must agree with it.
-    if let Some(direct) =
-        ReservedVoucherClass::parse(row[VOUCHER_TYPE_RESERVED_NAME_TAG].trim())
-    {
-        if class != Some(direct) {
-            return Err("voucher_type_class_contradictory".to_string());
+    // class function must agree with it. A reserved type outside the measured
+    // classes (Memorandum, Reversing Journal, ...) answering Yes to one is
+    // unmeasured, so it is refused rather than counted in that class.
+    match ReservedVoucherClass::parse(reserved_name) {
+        Some(direct) if class != Some(direct) => {
+            return Err("voucher_type_class_contradictory".to_string())
         }
+        None if !reserved_name.is_empty() && class.is_some() => {
+            return Err("voucher_type_class_contradictory".to_string())
+        }
+        _ => {}
     }
     Ok(Some(ResolvedVoucherType {
         guid: guid.to_string(),
+        reserved_name: reserved_name.to_string(),
         class,
     }))
 }
@@ -220,6 +228,7 @@ impl VoucherTypeSelector {
 pub(super) struct WindowVoucherType {
     pub(super) guid: String,
     pub(super) name: String,
+    pub(super) reserved_name: String,
     pub(super) class: Option<ReservedVoucherClass>,
     pub(super) rows: usize,
 }
@@ -229,6 +238,7 @@ impl WindowVoucherType {
         json!({
             "name": self.name,
             "guid": self.guid,
+            "reserved_name": self.reserved_name,
             "class": self.class.map(ReservedVoucherClass::name),
             "rows": self.rows,
         })
@@ -259,13 +269,20 @@ impl VoucherTypeRefusal {
     }
 }
 
-fn row_type(row: &Value) -> Result<(String, String, Option<ReservedVoucherClass>), &'static str> {
-    let guid = row["voucher_type_guid"]
-        .as_str()
-        .ok_or("voucher_type_class_missing")?;
-    let name = row["voucher_type"]
-        .as_str()
-        .ok_or("voucher_type_class_missing")?;
+struct RowType {
+    guid: String,
+    name: String,
+    reserved_name: String,
+    class: Option<ReservedVoucherClass>,
+}
+
+fn row_type(row: &Value) -> Result<RowType, &'static str> {
+    let text = |key: &str| {
+        row[key]
+            .as_str()
+            .map(str::to_string)
+            .ok_or("voucher_type_class_missing")
+    };
     let class = match &row["voucher_class"] {
         Value::Null => None,
         Value::String(class) => {
@@ -273,7 +290,12 @@ fn row_type(row: &Value) -> Result<(String, String, Option<ReservedVoucherClass>
         }
         _ => return Err("voucher_type_class_invalid"),
     };
-    Ok((guid.to_string(), name.to_string(), class))
+    Ok(RowType {
+        guid: text("voucher_type_guid")?,
+        name: text("voucher_type")?,
+        reserved_name: text("voucher_type_reserved_name")?,
+        class,
+    })
 }
 
 /// Applies `selector` to rows that carry their resolved type. Judged over this
@@ -283,7 +305,9 @@ fn row_type(row: &Value) -> Result<(String, String, Option<ReservedVoucherClass>
 /// and the types carrying that name are not exactly the types of that class
 /// in the window: on a book whose Purchase type was renamed, or has child
 /// types, "Purchase" by name would otherwise return a silent part, or none, of
-/// the purchases.
+/// the purchases. The same holds for any reserved name a type in the window
+/// carries (a renamed Stock Journal, say): the types named it must be exactly
+/// the types reserving it.
 pub(super) fn select_voucher_rows(
     rows: Vec<Value>,
     selector: &VoucherTypeSelector,
@@ -291,17 +315,23 @@ pub(super) fn select_voucher_rows(
     let mut types: Map<String, WindowVoucherType> = Map::new();
     let mut keyed = Vec::with_capacity(rows.len());
     for row in rows {
-        let (guid, name, class) = row_type(&row).map_err(VoucherTypeRefusal::bare)?;
+        let RowType {
+            guid,
+            name,
+            reserved_name,
+            class,
+        } = row_type(&row).map_err(VoucherTypeRefusal::bare)?;
         let seen = types
             .entry(guid.clone())
             .or_insert_with(|| WindowVoucherType {
                 guid: guid.clone(),
                 name: name.clone(),
+                reserved_name: reserved_name.clone(),
                 class,
                 rows: 0,
             });
         // One GUID is one type: a second name or class for it is not one state.
-        if seen.name != name || seen.class != class {
+        if seen.name != name || seen.reserved_name != reserved_name || seen.class != class {
             return Err(VoucherTypeRefusal::bare(
                 "voucher_type_snapshot_inconsistent",
             ));
@@ -322,23 +352,28 @@ pub(super) fn select_voucher_rows(
         VoucherTypeSelector::Guid(guid) => guids_where(&|kind| &kind.guid == guid),
         VoucherTypeSelector::Name(name) => {
             let named = guids_where(&|kind| &kind.name == name);
+            let mut rivals = Vec::new();
             if let Some(class) = ReservedVoucherClass::ALL
                 .into_iter()
                 .find(|class| class.name().eq_ignore_ascii_case(name))
             {
-                let of_class = guids_where(&|kind| kind.class == Some(class));
-                if named != of_class {
-                    return Err(VoucherTypeRefusal {
-                        code: "voucher_type_ambiguous",
-                        candidates: window_types
-                            .iter()
-                            .filter(|kind| {
-                                named.contains(&kind.guid) || of_class.contains(&kind.guid)
-                            })
-                            .cloned()
-                            .collect(),
-                    });
-                }
+                rivals.push(guids_where(&|kind| kind.class == Some(class)));
+            }
+            let reserving = guids_where(&|kind| {
+                !kind.reserved_name.is_empty() && kind.reserved_name.eq_ignore_ascii_case(name)
+            });
+            if !reserving.is_empty() {
+                rivals.push(reserving);
+            }
+            if let Some(rival) = rivals.into_iter().find(|rival| *rival != named) {
+                return Err(VoucherTypeRefusal {
+                    code: "voucher_type_ambiguous",
+                    candidates: window_types
+                        .iter()
+                        .filter(|kind| named.contains(&kind.guid) || rival.contains(&kind.guid))
+                        .cloned()
+                        .collect(),
+                });
             }
             named
         }

@@ -67,6 +67,16 @@ pub(crate) async fn selected_voucher_operation_for_verified(
     let outcome = async {
         // Parsed before any read, so a conflicting request costs nothing.
         let type_selector = VoucherTypeSelector::from_args(args)?;
+        // A type GUID that is not this company's cannot name any of its
+        // types: refused rather than answered with an empty selection.
+        if let Some(VoucherTypeSelector::Guid(type_guid)) = &type_selector {
+            if !bridge_tally_protocol::master_guid_belongs_to_company(
+                type_guid,
+                identity.company_guid(),
+            ) {
+                return Err(ToolFailure::from("voucher_type_guid_foreign".to_string()));
+            }
+        }
         let requested_ledger = optional_string(args, "ledger")?;
         let selected_catalogue = if let Some(requested) = requested_ledger {
             let (ledgers, catalogue_evidence) =

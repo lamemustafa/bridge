@@ -877,9 +877,24 @@ impl Server {
                         error["endpoint"] = json!(endpoint);
                     }
                 }
+                // The list grows with the window, so it is kept only within a
+                // quarter of the response budget, like `window` below: the
+                // refusal code must survive the byte cap.
                 if let Some(candidates) = candidates {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
-                        error["candidates"] = json!(candidates);
+                        let budget = self.settings.max_bytes / 4;
+                        let mut used = 0;
+                        let kept = candidates
+                            .iter()
+                            .take_while(|candidate| {
+                                used += candidate.to_string().len();
+                                used <= budget
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        error["candidates_total"] = json!(candidates.len());
+                        error["candidates_truncated"] = json!(kept.len() < candidates.len());
+                        error["candidates"] = json!(kept);
                     }
                 }
                 if let Some(counts) = counts {

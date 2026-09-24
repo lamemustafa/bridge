@@ -535,6 +535,61 @@ Only this field tells such a ledger from a base one.
 
 ---
 
+### 8.2e A voucher type's class comes from Tally's class functions, not its display name — **VERIFIED 2026-09-24; TallyPrime 7.1, one synthetic book**
+
+**Scope:** TallyPrime 7.1 Silver, licensed, `education_mode: false`. One synthetic book (bridge#625).
+- Its reserved Purchase type was renamed to `PURCHASE A/C`.
+- A child type `Purchase Local` was created under it.
+- A user type named exactly `Purchase` was created under Attendance.
+- Three purchase vouchers were posted: two under the renamed type, one under the child.
+
+The class-resolving voucher read's response is committed as
+`native-vouchers-renamed-purchase-class`.
+
+**A renamed reserved type keeps its identity.**
+- It keeps its `RESERVEDNAME` and GUID, and stays self-parented under its new `NAME`.
+- A child's `PARENT` is the parent's new name.
+- A voucher carries its type only by display name (`VOUCHERTYPENAME` and `@VCHTYPE`). That name follows a rename at once.
+- A rename moves the company's `ALTMSTID` and the type's `ALTERID`, but no voucher `ALTERID` and not `ALTVCHID`.
+- Moving a type with vouchers under another class by gateway `Alter` is refused in-band: "Cannot change Type of Voucher!".
+
+**Class, per voucher row, in the same response.** Each is a COMPUTE on the voucher collection.
+
+`$GUID:VoucherType:$VoucherTypeName`:
+- It returns the row's type GUID, company-prefixed like other masters.
+
+`$ReservedName:VoucherType:$VoucherTypeName`:
+- It returns the type's own `RESERVEDNAME`.
+- That is empty for a child type, so on its own it misses children.
+
+`$$Is<Class>:<type name>`:
+- For Sales, Purchase, Payment, Receipt, Contra, Journal, Debit Note and Credit Note, each function
+  returned `Yes` on its own class's reserved type, including Payment under a renamed name.
+- Each returned `No` on:
+  - the Attendance type named `Purchase`;
+  - `PURCHASE A/C`;
+  - another class's reserved type.
+- `$$IsPurchase` returned `Yes` for the child type.
+- **Child resolution is VERIFIED for Purchase only.**
+- The logical values carry `TYPE="Logical"`.
+
+**Two traps.**
+- `$$Is<Class>` on a name that no type carries returns `No`, not an error. So it cannot prove a type
+  exists, and the GUID COMPUTE is what does that.
+- An unknown `$$` function omits its element from every row, rather than returning `No`. A reader
+  must treat a missing element as a refusal.
+
+**Not measured:**
+- child resolution for classes other than Purchase;
+- whether a reserved type outside these eight (Memorandum, Reversing Journal, Stock Journal and so
+  on) answers `Yes` to any of the eight functions;
+- whether a voucher type copied into the book from another company keeps a foreign GUID prefix.
+  Bridge refuses a type GUID that is not the company's (`voucher_type_unresolved`), so such a
+  book would fail loudly on a type-filtered read, not answer wrongly;
+- releases before 7.1.
+
+---
+
 ### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
 
 **Scope: TallyPrime 7.1 Silver, licensed, one company, 28 ledger masters.** Captured from
