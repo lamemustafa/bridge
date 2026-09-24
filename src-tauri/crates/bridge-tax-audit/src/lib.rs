@@ -1050,6 +1050,15 @@ pub fn depreciation_on(
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 
+/// A bound engagement's `[loans.loan_ledgers]`, typed. Refuses when `[loans]` is not a table, as
+/// the reference's `loan_ledgers_config` raises there (`loans_interest`, `high_value_register`).
+fn bound_loans(bound: &Engagement) -> Result<BTreeMap<String, loans_interest::LoanConfig>> {
+    if bound.loans.not_a_table {
+        return Err(AuditError::Config("[loans] is not a table".to_string()));
+    }
+    loans_interest::loan_config(&bound.loans.loan_ledgers)
+}
+
 /// Run `loans_interest` on a book and return its canonical parity dump, with the module's own
 /// LOAN-1/2/3 invariants. The previous-year turnover is `[tds].previous_year_turnover_paise`, as
 /// the reference's pack reads it; absent without a `[tds]` table.
@@ -1062,10 +1071,7 @@ pub fn loans_interest_on(
         AuditError::Config("loans_interest needs [client].entity_type".to_string())
     })?;
     let (bound, _report) = engagement.bind(book)?;
-    if bound.loans.not_a_table {
-        return Err(AuditError::Config("[loans] is not a table".to_string()));
-    }
-    let loans = loans_interest::loan_config(&bound.loans.loan_ledgers)?;
+    let loans = bound_loans(&bound)?;
     let cash = book.ledgers_under_any(&bound.cash_groups);
     let bank = book.ledgers_under_any(&bound.bank_groups);
     let shared: BTreeSet<String> = bound
@@ -1257,10 +1263,7 @@ pub fn high_value_register_on(
     ais_rows: &[documents::AisRow],
 ) -> Result<serde_json::Value> {
     let (bound, _report) = engagement.bind(book)?;
-    if bound.loans.not_a_table {
-        return Err(AuditError::Config("[loans] is not a table".to_string()));
-    }
-    let loans = loans_interest::loan_config(&bound.loans.loan_ledgers)?;
+    let loans = bound_loans(&bound)?;
     let counterparty_types =
         high_value_register::counterparty_types(&loans, &bound.counterparty_type_by_ledger)?;
     let terms = high_value_register::s194n_terms(bound.s194n_withdrawal_narration_terms.as_ref())?;
