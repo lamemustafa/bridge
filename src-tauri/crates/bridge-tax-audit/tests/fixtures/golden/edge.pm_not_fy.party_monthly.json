@@ -1,0 +1,300 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "party_monthly",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "9edcde4d51f763ad",
+  "population_note_text": "Vouchers in the books (optional, cancelled and post-dated vouchers excluded). Parties are per ledger: one person with two ledgers shows as two rows; nothing is merged.",
+  "figures": [
+    {
+      "id": "party_monthly.indirect_expenses_tb_difference",
+      "value": -7700,
+      "unit": "paise",
+      "definition_sha256_16": "8abd4e03f8bb8948",
+      "definition_text": "Indirect Expenses: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.indirect_expenses_tb_movement",
+      "value": 27700,
+      "unit": "paise",
+      "definition_sha256_16": "7e539603dab797f5",
+      "definition_text": "Indirect Expenses: the Trial Balance's period debits less credits on its ledgers (opening balances excluded).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Rent",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_vouchers_45f857c2",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "2012e77139b808d6",
+      "definition_text": "Indirect Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_vouchers_f3dd4d07",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "2012e77139b808d6",
+      "definition_text": "Indirect Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_year_45f857c2",
+      "value": 20000,
+      "unit": "paise",
+      "definition_sha256_16": "7b0935da16718ef0",
+      "definition_text": "Indirect Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_year_f3dd4d07",
+      "value": 20000,
+      "unit": "paise",
+      "definition_sha256_16": "7b0935da16718ef0",
+      "definition_text": "Indirect Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_tb_difference",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ca848aaf1b9d0295",
+      "definition_text": "Purchase Accounts: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.purchases_tb_movement",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "14b1f0ca00e1cc66",
+      "definition_text": "Purchase Accounts: the Trial Balance's period debits less credits on its ledgers (opening balances excluded).",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.purchases_vouchers_569099fe",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "ef5871c7993baf2d",
+      "definition_text": "Purchase Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_year_569099fe",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "7365527c8a1d88a5",
+      "definition_text": "Purchase Accounts: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_tb_difference",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "b78e64e05d28eacc",
+      "definition_text": "Sales Accounts: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.sales_tb_movement",
+      "value": 100000,
+      "unit": "paise",
+      "definition_sha256_16": "bd12d69d06360bc8",
+      "definition_text": "Sales Accounts: the Trial Balance's period credits less debits on its ledgers (opening balances excluded).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_vouchers_85b5df9e",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "a5ca17e61dbf3615",
+      "definition_text": "Sales Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cust A",
+          "label": "Cust A"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_vouchers_a64cfcd9",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "a5ca17e61dbf3615",
+      "definition_text": "Sales Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_year_85b5df9e",
+      "value": 100000,
+      "unit": "paise",
+      "definition_sha256_16": "19f3571ae81fe3d6",
+      "definition_text": "Sales Accounts: amount dated inside the period for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cust A",
+          "label": "Cust A"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_year_a64cfcd9",
+      "value": 100000,
+      "unit": "paise",
+      "definition_sha256_16": "19f3571ae81fe3d6",
+      "definition_text": "Sales Accounts: amount dated inside the period for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "party_monthly/no_group/direct_expenses",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [],
+      "evidence": [],
+      "title_sha256_16": "a9b7b1103c8c0c3e",
+      "title_text": "The books carry no 'Direct Expenses' group, so this block shows no figures",
+      "limits_sha256_16": "6161ac9f0da59284",
+      "limits_text": [
+        "A renamed or missing primary group is not guessed at."
+      ],
+      "ask_client_sha256_16": "f1669bac795c7d12",
+      "ask_client_text": [
+        "Confirm which group holds the ledgers Tally reports as 'Direct Expenses'."
+      ]
+    },
+    {
+      "id": "party_monthly/period_not_fy",
+      "clauses": [],
+      "confidence": "computed",
+      "facts": [],
+      "evidence": [],
+      "title_sha256_16": "a03f047d06caec4b",
+      "title_text": "Month columns need an April-to-March period; only year totals are shown",
+      "limits_sha256_16": "17e02c6e0154976f",
+      "limits_text": [
+        "The period of these books does not run from 1 April to 31 March."
+      ],
+      "ask_client_sha256_16": "e3b0c44298fc1c14",
+      "ask_client_text": []
+    },
+    {
+      "id": "party_monthly/tb_difference/indirect_expenses",
+      "clauses": [],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "difference",
+          "figure_id": "party_monthly.indirect_expenses_tb_difference"
+        },
+        {
+          "name": "trial_balance_movement",
+          "figure_id": "party_monthly.indirect_expenses_tb_movement"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "9753718028385545",
+      "title_text": "'Indirect Expenses' by party differs from the Trial Balance",
+      "limits_sha256_16": "bf8a2599f46eb1d9",
+      "limits_text": [
+        "No one set of optional, cancelled or post-dated vouchers matches it. Possible causes: a voucher the Trial Balance and the voucher export disagree on, a voucher outside the books that the Trial Balance counts, or a ledger with vouchers but no Trial Balance row. It is not balanced away."
+      ],
+      "ask_client_sha256_16": "e3b0c44298fc1c14",
+      "ask_client_text": []
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Rent",
+      "detail": "vouchers 20000 vs TB movement 27700 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 7700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "party_monthly.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

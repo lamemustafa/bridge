@@ -1,0 +1,622 @@
+{
+ "comment": "party_monthly paths: with top_n 2, sales shows two parties by name and 'Others (2 parties)' (Cust C and Cust D tie, so name order decides), purchases 'Others (1 party)'; a sub-group party (Cust B); cash or bank, no party (sales and, as ever for expenses, no party with a cash line) and several parties; credit and debit notes in the notes column; a January that nets to nil (no figure); a voucher dated after the period; two vouchers sharing one GUID, counted as two. The Trial Balance: ties within a rupee (direct expenses), is matched by one optional voucher (sales), by the post-dated and cancelled vouchers only together (purchases), and by two sets at once, so by none (indirect expenses, which also carry an opening balance).",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Debtors North": "Sundry Debtors",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Direct Expenses": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_paths-000"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_paths-001"
+  },
+  {
+   "name": "Cust A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_paths-002"
+  },
+  {
+   "name": "Cust B",
+   "chain": [
+    "Debtors North",
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_paths-003"
+  },
+  {
+   "name": "Cust C",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_paths-004"
+  },
+  {
+   "name": "Cust D",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_paths-005"
+  },
+  {
+   "name": "Supp X",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-pm_paths-006"
+  },
+  {
+   "name": "Supp Y",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-pm_paths-007"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-pm_paths-008"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-pm_paths-009"
+  },
+  {
+   "name": "Freight In",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-pm_paths-010"
+  },
+  {
+   "name": "Wages",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-pm_paths-011"
+  },
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-pm_paths-012"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank",
+   "opening": 0,
+   "debit": 0,
+   "credit": 90000,
+   "closing": -90000
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 20000,
+   "credit": 15000,
+   "closing": 5000
+  },
+  {
+   "ledger": "Cust A",
+   "opening": 0,
+   "debit": 590000,
+   "credit": 50000,
+   "closing": 540000
+  },
+  {
+   "ledger": "Cust B",
+   "opening": 0,
+   "debit": 310000,
+   "credit": 0,
+   "closing": 310000
+  },
+  {
+   "ledger": "Cust C",
+   "opening": 0,
+   "debit": 120000,
+   "credit": 50000,
+   "closing": 70000
+  },
+  {
+   "ledger": "Cust D",
+   "opening": 0,
+   "debit": 130000,
+   "credit": 30000,
+   "closing": 100000
+  },
+  {
+   "ledger": "Freight In",
+   "opening": 0,
+   "debit": 22050,
+   "credit": 0,
+   "closing": 22050
+  },
+  {
+   "ledger": "Purchases",
+   "opening": 0,
+   "debit": 695000,
+   "credit": 20000,
+   "closing": 675000
+  },
+  {
+   "ledger": "Rent",
+   "opening": 500000,
+   "debit": 93300,
+   "credit": 0,
+   "closing": 593300
+  },
+  {
+   "ledger": "Sales",
+   "opening": 0,
+   "debit": 80000,
+   "credit": 1177000,
+   "closing": -1097000
+  },
+  {
+   "ledger": "Supp X",
+   "opening": 0,
+   "debit": 0,
+   "credit": 435000,
+   "closing": -435000
+  },
+  {
+   "ledger": "Supp Y",
+   "opening": 0,
+   "debit": 20000,
+   "credit": 205000,
+   "closing": -185000
+  },
+  {
+   "ledger": "Wages",
+   "opening": 0,
+   "debit": 25000,
+   "credit": 0,
+   "closing": 25000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "p01",
+   "date": "2025-04-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust A",
+     500000
+    ],
+    [
+     "Sales",
+     -500000
+    ]
+   ]
+  },
+  {
+   "guid": "p02",
+   "date": "2025-05-15",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust B",
+     300000
+    ],
+    [
+     "Sales",
+     -300000
+    ]
+   ]
+  },
+  {
+   "guid": "p03",
+   "date": "2025-06-20",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust C",
+     100000
+    ],
+    [
+     "Sales",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "p04",
+   "date": "2025-07-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust D",
+     100000
+    ],
+    [
+     "Sales",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "p05",
+   "date": "2025-08-05",
+   "base_type": "Credit Note",
+   "lines": [
+    [
+     "Sales",
+     50000
+    ],
+    [
+     "Cust A",
+     -50000
+    ]
+   ]
+  },
+  {
+   "guid": "p06",
+   "date": "2025-09-09",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cash",
+     20000
+    ],
+    [
+     "Sales",
+     -20000
+    ]
+   ]
+  },
+  {
+   "guid": "p07",
+   "date": "2025-10-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Sales",
+     -7000
+    ],
+    [
+     "Freight In",
+     7000
+    ]
+   ]
+  },
+  {
+   "guid": "p08",
+   "date": "2025-11-11",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust A",
+     10000
+    ],
+    [
+     "Cust B",
+     10000
+    ],
+    [
+     "Sales",
+     -20000
+    ]
+   ]
+  },
+  {
+   "guid": "p09",
+   "date": "2026-04-05",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust A",
+     40000
+    ],
+    [
+     "Sales",
+     -40000
+    ]
+   ]
+  },
+  {
+   "guid": "p10",
+   "date": "2026-01-05",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust D",
+     30000
+    ],
+    [
+     "Sales",
+     -30000
+    ]
+   ]
+  },
+  {
+   "guid": "p11",
+   "date": "2026-01-20",
+   "base_type": "Credit Note",
+   "lines": [
+    [
+     "Sales",
+     30000
+    ],
+    [
+     "Cust D",
+     -30000
+    ]
+   ]
+  },
+  {
+   "guid": "p12",
+   "date": "2026-02-02",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust C",
+     10000
+    ],
+    [
+     "Sales",
+     -10000
+    ]
+   ]
+  },
+  {
+   "guid": "p12",
+   "date": "2026-02-03",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust C",
+     10000
+    ],
+    [
+     "Sales",
+     -10000
+    ]
+   ]
+  },
+  {
+   "guid": "p13",
+   "date": "2025-04-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     400000
+    ],
+    [
+     "Supp X",
+     -400000
+    ]
+   ]
+  },
+  {
+   "guid": "p14",
+   "date": "2025-05-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     200000
+    ],
+    [
+     "Supp Y",
+     -200000
+    ]
+   ]
+  },
+  {
+   "guid": "p15",
+   "date": "2025-06-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     50000
+    ],
+    [
+     "Cust C",
+     -50000
+    ]
+   ]
+  },
+  {
+   "guid": "p16",
+   "date": "2025-07-15",
+   "base_type": "Debit Note",
+   "lines": [
+    [
+     "Supp Y",
+     20000
+    ],
+    [
+     "Purchases",
+     -20000
+    ]
+   ]
+  },
+  {
+   "guid": "p17",
+   "date": "2025-08-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     30000
+    ],
+    [
+     "Bank",
+     -30000
+    ]
+   ]
+  },
+  {
+   "guid": "p18",
+   "date": "2025-09-15",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Freight In",
+     15000
+    ],
+    [
+     "Cash",
+     -15000
+    ]
+   ]
+  },
+  {
+   "guid": "p19",
+   "date": "2025-10-15",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     25000
+    ],
+    [
+     "Supp X",
+     -25000
+    ]
+   ]
+  },
+  {
+   "guid": "p20",
+   "date": "2025-11-15",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Rent",
+     60000
+    ],
+    [
+     "Bank",
+     -60000
+    ]
+   ]
+  },
+  {
+   "guid": "x01",
+   "date": "2025-12-12",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust A",
+     80000
+    ],
+    [
+     "Sales",
+     -80000
+    ]
+   ],
+   "status": "optional"
+  },
+  {
+   "guid": "x02",
+   "date": "2026-01-10",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     10000
+    ],
+    [
+     "Supp X",
+     -10000
+    ]
+   ],
+   "status": "postdated"
+  },
+  {
+   "guid": "x03",
+   "date": "2026-01-11",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     5000
+    ],
+    [
+     "Supp Y",
+     -5000
+    ]
+   ],
+   "status": "cancelled"
+  },
+  {
+   "guid": "x04",
+   "date": "2026-02-11",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Rent",
+     33300
+    ],
+    [
+     "Bank",
+     -33300
+    ]
+   ],
+   "status": "optional"
+  },
+  {
+   "guid": "x05",
+   "date": "2026-02-12",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Rent",
+     33300
+    ],
+    [
+     "Bank",
+     -33300
+    ]
+   ],
+   "status": "postdated"
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Bank"
+ ],
+ "top_n": 2,
+ "tests": [
+  "party_monthly"
+ ]
+}

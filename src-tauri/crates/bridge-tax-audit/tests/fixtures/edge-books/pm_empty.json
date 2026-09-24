@@ -1,0 +1,30 @@
+{
+ "comment": "party_monthly with all four groups and no voucher: each block publishes its total row's year and voucher count and the Trial Balance movement and difference. These are the registry's min_figures.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Debtors North": "Sundry Debtors",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Direct Expenses": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-pm_empty-000"
+  }
+ ],
+ "tb": [],
+ "vouchers": [],
+ "tests": [
+  "party_monthly"
+ ]
+}

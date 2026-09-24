@@ -377,6 +377,12 @@ def _stock(c):
     return module, stock.run(c.eng, {"version": c.rules.version}, items, opening, closing,
                              read_format.company_isintegrated(c.cfg, c.path.parent))
 
+def _party_monthly(c):
+    from tae.audit_tests import party_monthly
+    # As tae/pack.py calls it: the cash and bank ledgers, and the module's own top-parties cut.
+    return party_monthly, party_monthly.run(c.eng, c.rules, c.cash, c.bank)
+
+
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
     "bank_reconciliation": _bank_reconciliation,
@@ -391,6 +397,7 @@ RUNNERS = {
     "ledger_scrutiny": _ledger_scrutiny,
     "loans_interest": _loans_interest,
     "partners_40b_194t": _partners_40b_194t,
+    "party_monthly": _party_monthly,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
     "stock": _stock,

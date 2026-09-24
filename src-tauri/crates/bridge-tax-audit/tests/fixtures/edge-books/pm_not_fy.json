@@ -1,0 +1,119 @@
+{
+ "comment": "party_monthly on a calendar-year period (no month figures; one finding) whose books carry no Direct Expenses group (that block publishes nothing; one finding), and whose indirect expenses differ from the Trial Balance with no excluded voucher to match.",
+ "period": [
+  "2025-01-01",
+  "2025-12-31"
+ ],
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Debtors North": "Sundry Debtors",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_not_fy-000"
+  },
+  {
+   "name": "Cust A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-pm_not_fy-001"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-pm_not_fy-002"
+  },
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-pm_not_fy-003"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 20000,
+   "closing": -20000
+  },
+  {
+   "ledger": "Cust A",
+   "opening": 0,
+   "debit": 100000,
+   "credit": 0,
+   "closing": 100000
+  },
+  {
+   "ledger": "Rent",
+   "opening": 0,
+   "debit": 27700,
+   "credit": 0,
+   "closing": 27700
+  },
+  {
+   "ledger": "Sales",
+   "opening": 0,
+   "debit": 0,
+   "credit": 100000,
+   "closing": -100000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "n01",
+   "date": "2025-03-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cust A",
+     100000
+    ],
+    [
+     "Sales",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "n02",
+   "date": "2025-08-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Rent",
+     20000
+    ],
+    [
+     "Cash",
+     -20000
+    ]
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "tests": [
+  "party_monthly"
+ ]
+}

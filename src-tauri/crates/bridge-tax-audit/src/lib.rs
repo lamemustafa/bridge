@@ -49,6 +49,7 @@ pub mod ledger_ids;
 pub mod ledger_scrutiny;
 pub mod loans_interest;
 pub mod partners_40b_194t;
+pub mod party_monthly;
 pub mod read;
 pub mod registry;
 pub mod rules;
@@ -1190,6 +1191,29 @@ pub fn trial_balance_on(
     let (_engagement, _report) = engagement.bind(book)?;
     let result = trial_balance::run(book, rules)?;
     let module_check = trial_balance::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `party_monthly` on a book and return its canonical parity dump, with the module's own
+/// PWM-1/PWM-2 check. Cash and bank are the engagement's cash and bank groups, as the reference's
+/// pack passes them; the period is the engagement's, and the top-parties cut is the module's own.
+pub fn party_monthly_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (bound, _report) = engagement.bind(book)?;
+    let cash = book.ledgers_under_any(&bound.cash_groups);
+    let bank = book.ledgers_under_any(&bound.bank_groups);
+    let result = party_monthly::run(
+        book,
+        rules,
+        &bound.period,
+        &cash,
+        &bank,
+        party_monthly::PARTY_TOP_N,
+    )?;
+    let module_check = party_monthly::check_invariants(book, &bound.period, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 

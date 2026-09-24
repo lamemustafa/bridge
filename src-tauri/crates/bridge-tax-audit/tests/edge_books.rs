@@ -26,9 +26,9 @@ use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
     bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
-    high_value_register, ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1,
-    statutory_dues_43b, stock, stock_read, tds_payees, tds_tcs_26as, trial_balance,
-    twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
+    high_value_register, ledger_scrutiny, loans_interest, partners_40b_194t, party_monthly,
+    stale_balances_41_1, statutory_dues_43b, stock, stock_read, tds_payees, tds_tcs_26as,
+    trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -652,6 +652,17 @@ fn check(name: &str) {
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
             }
+            "party_monthly" => {
+                // `top_n` a non-negative integer, the module's own cut when absent.
+                let top_n = typed(&s, "top_n", false, "a non-negative integer", |v| {
+                    v.as_u64().and_then(|n| usize::try_from(n).ok())
+                })
+                .unwrap_or(party_monthly::PARTY_TOP_N);
+                let r =
+                    party_monthly::run(&book, &rules, &period(&s), &cash, &bank, top_n).unwrap();
+                let c = party_monthly::check_invariants(&book, &period(&s), &r).unwrap();
+                (r, c)
+            }
             "stock" => {
                 let inputs = stock_inputs(&s);
                 let r = stock::run(&book, &rules, &inputs).unwrap();
@@ -691,7 +702,7 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 15] = [
+const EDGE_TESTS: [&str; 16] = [
     "bank_reconciliation",
     "book_keeping_quality",
     "cash_book_integrity",
@@ -700,6 +711,7 @@ const EDGE_TESTS: [&str; 15] = [
     "ledger_scrutiny",
     "loans_interest",
     "partners_40b_194t",
+    "party_monthly",
     "stale_balances_41_1",
     "statutory_dues_43b",
     "stock",
@@ -1215,5 +1227,126 @@ fn a_goods_line_without_a_quantity_field_is_refused() {
         format!("{err}")
             .contains("1 goods inventory line(s) in the population carry no quantity field (BILLEDQTY/ACTUALQTY) at all, first 'Widget' on Receipt q01 on 2025-04-05;"),
         "{err}"
+    );
+}
+
+/// A party ledger whose tag equals a fixed row's (a blank-GUID ledger named "sales:total" hashes
+/// to the Total row's tag) repeats a figure id: the reference raises `duplicate figure id
+/// party_monthly.sales_jun_a64cfcd9` on this book, and the port refuses with an error, not a panic.
+#[test]
+fn a_party_tag_equal_to_a_fixed_row_is_refused_not_panicked() {
+    let mut s = spec("pm_empty");
+    s["ledgers"].as_array_mut().unwrap().push(serde_json::json!(
+        {"name": "sales:total", "chain": ["Sundry Debtors", "Current Assets"], "guid": ""}
+    ));
+    s["vouchers"] = serde_json::json!([{"guid": "c01", "date": "2025-06-01", "base_type": "Sales",
+        "lines": [["sales:total", 1000], ["Sales", -1000]]}]);
+    let (book, rules) = (build(&s), rules(&s));
+    let none = BTreeSet::new();
+    let result = std::panic::catch_unwind(|| {
+        party_monthly::run(
+            &book,
+            &rules,
+            &period(&s),
+            &none,
+            &none,
+            party_monthly::PARTY_TOP_N,
+        )
+    })
+    .expect("refused, not panicked");
+    let err = result.expect_err("a repeated figure id is refused");
+    assert!(
+        format!("{err}").contains("party_monthly.sales_jun_a64cfcd9"),
+        "{err}"
+    );
+}
+
+/// The pm_paths result, and a way to change one published figure: the PWM checks read figures
+/// back, so a changed figure is what an engine fault would look like to them.
+fn pm_paths_result() -> (Book, Window, bridge_tax_audit::findings::TestResult) {
+    let s = spec("pm_paths");
+    let (book, rules) = (build(&s), rules(&s));
+    let set = |k: &str| -> BTreeSet<String> { strs(&s[k]).into_iter().collect() };
+    let r = party_monthly::run(&book, &rules, &period(&s), &set("cash"), &set("bank"), 2).unwrap();
+    let window = period(&s);
+    assert!(party_monthly::check_invariants(&book, &window, &r)
+        .unwrap()
+        .is_empty());
+    (book, window, r)
+}
+
+fn nudge(r: &mut bridge_tax_audit::findings::TestResult, prefix: &str, label: &str) {
+    let f = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id.starts_with(prefix) && f.evidence.first().is_some_and(|e| e.label == label))
+        .unwrap_or_else(|| panic!("no {prefix} figure for {label}"));
+    match &mut f.value {
+        bridge_tax_audit::findings::Value::Int(v) => *v += 1,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// PWM-1 fires when a block's rows stop summing to its total row, and when the published Trial
+/// Balance movement is not the Trial Balance's; PWM-2 when a row's months stop summing to its year.
+/// Both are silent on the untouched result.
+#[test]
+fn pwm_1_fires_on_a_total_or_movement_that_does_not_tie() {
+    let (book, window, mut r) = pm_paths_result();
+    nudge(&mut r, "party_monthly.sales_year_", "Total");
+    let out = party_monthly::check_invariants(&book, &window, &r).unwrap();
+    assert!(
+        out.iter()
+            .any(|v| v.starts_with("PWM-1: the sales rows sum to")),
+        "{out:?}"
+    );
+    // The same change leaves the total row's months short of its year, which PWM-2 also reports.
+    assert!(
+        out.iter()
+            .any(|v| v.starts_with("PWM-2: a sales row's months sum to")),
+        "{out:?}"
+    );
+
+    let (book, window, mut r) = pm_paths_result();
+    let f = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id == "party_monthly.purchases_tb_movement")
+        .unwrap();
+    f.value = bridge_tax_audit::findings::Value::Int(0);
+    let out = party_monthly::check_invariants(&book, &window, &r).unwrap();
+    assert_eq!(
+        out,
+        vec!["PWM-1: purchases_tb_movement is 0p but the Trial Balance's period columns give 675000p"]
+    );
+}
+
+/// PWM-2 fires when a named party's row is not what its vouchers give, and when the Others row's
+/// label does not count the parties it holds.
+#[test]
+fn pwm_2_fires_on_a_party_row_or_an_others_label_that_is_wrong() {
+    let (book, window, mut r) = pm_paths_result();
+    nudge(&mut r, "party_monthly.sales_vouchers_", "Cust A");
+    let out = party_monthly::check_invariants(&book, &window, &r).unwrap();
+    assert!(
+        out.iter().any(|v| v
+            == "PWM-2: the sales row for 'Cust A' has 4p in vouchers but the vouchers give 3p"),
+        "{out:?}"
+    );
+
+    let (book, window, mut r) = pm_paths_result();
+    for f in &mut r.figures {
+        if let Some(e) = f
+            .evidence
+            .first_mut()
+            .filter(|e| e.label == "Others (2 parties)")
+        {
+            e.label = "Others (9 parties)".to_string();
+        }
+    }
+    let out = party_monthly::check_invariants(&book, &window, &r).unwrap();
+    assert_eq!(
+        out,
+        vec!["PWM-2: the sales Others row is labelled 'Others (9 parties)' but 2 parties are not shown by name"]
     );
 }

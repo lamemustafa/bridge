@@ -1,0 +1,782 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "party_monthly",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "9edcde4d51f763ad",
+  "population_note_text": "Vouchers in the books (optional, cancelled and post-dated vouchers excluded). Parties are per ledger: one person with two ledgers shows as two rows; nothing is merged.",
+  "figures": [
+    {
+      "id": "party_monthly.direct_expenses_aug_195798ff",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "a0856392785752db",
+      "definition_text": "Direct Expenses: amount dated in August for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "direct_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.direct_expenses_aug_a9fd9709",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "a0856392785752db",
+      "definition_text": "Direct Expenses: amount dated in August for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.direct_expenses_tb_difference",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "e66a4589c138ba70",
+      "definition_text": "Direct Expenses: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.direct_expenses_tb_movement",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "4b2d65ecfe79062f",
+      "definition_text": "Direct Expenses: the Trial Balance's period debits less credits on its ledgers (opening balances excluded).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Freight Inward",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.direct_expenses_vouchers_195798ff",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "7dac0f13521beb7f",
+      "definition_text": "Direct Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "direct_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.direct_expenses_vouchers_a9fd9709",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "7dac0f13521beb7f",
+      "definition_text": "Direct Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.direct_expenses_year_195798ff",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "bb0db0713ba70f73",
+      "definition_text": "Direct Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "direct_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.direct_expenses_year_a9fd9709",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "bb0db0713ba70f73",
+      "definition_text": "Direct Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_jul_c9fe11d8",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "fcb25cccd6fac69b",
+      "definition_text": "Indirect Expenses: amount dated in July for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_jul_f3dd4d07",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "fcb25cccd6fac69b",
+      "definition_text": "Indirect Expenses: amount dated in July for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_jun_45f857c2",
+      "value": 1400000,
+      "unit": "paise",
+      "definition_sha256_16": "d71bfc28905b0343",
+      "definition_text": "Indirect Expenses: amount dated in June for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_jun_f3dd4d07",
+      "value": 1400000,
+      "unit": "paise",
+      "definition_sha256_16": "d71bfc28905b0343",
+      "definition_text": "Indirect Expenses: amount dated in June for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_mar_45f857c2",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "2eaa47c83506f55c",
+      "definition_text": "Indirect Expenses: amount dated in March for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_mar_f3dd4d07",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "2eaa47c83506f55c",
+      "definition_text": "Indirect Expenses: amount dated in March for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_may_45f857c2",
+      "value": 2815050,
+      "unit": "paise",
+      "definition_sha256_16": "fe07447c4d5b9bbb",
+      "definition_text": "Indirect Expenses: amount dated in May for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_may_f3dd4d07",
+      "value": 2815050,
+      "unit": "paise",
+      "definition_sha256_16": "fe07447c4d5b9bbb",
+      "definition_text": "Indirect Expenses: amount dated in May for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_sep_45f857c2",
+      "value": 800000,
+      "unit": "paise",
+      "definition_sha256_16": "4e972bcf31b1bc91",
+      "definition_text": "Indirect Expenses: amount dated in September for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_sep_f3dd4d07",
+      "value": 800000,
+      "unit": "paise",
+      "definition_sha256_16": "4e972bcf31b1bc91",
+      "definition_text": "Indirect Expenses: amount dated in September for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_tb_difference",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "8abd4e03f8bb8948",
+      "definition_text": "Indirect Expenses: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.indirect_expenses_tb_movement",
+      "value": 11515050,
+      "unit": "paise",
+      "definition_sha256_16": "7e539603dab797f5",
+      "definition_text": "Indirect Expenses: the Trial Balance's period debits less credits on its ledgers (opening balances excluded).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Electricity",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Interest to Partners",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Meadow Supplies",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Round Off",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Shop Rent",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_vouchers_45f857c2",
+      "value": 7,
+      "unit": "count",
+      "definition_sha256_16": "2012e77139b808d6",
+      "definition_text": "Indirect Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_vouchers_c9fe11d8",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "2012e77139b808d6",
+      "definition_text": "Indirect Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_vouchers_f3dd4d07",
+      "value": 8,
+      "unit": "count",
+      "definition_sha256_16": "2012e77139b808d6",
+      "definition_text": "Indirect Expenses: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_year_45f857c2",
+      "value": 9515050,
+      "unit": "paise",
+      "definition_sha256_16": "7b0935da16718ef0",
+      "definition_text": "Indirect Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:no_party",
+          "label": "No party"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_year_c9fe11d8",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "7b0935da16718ef0",
+      "definition_text": "Indirect Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.indirect_expenses_year_f3dd4d07",
+      "value": 11515050,
+      "unit": "paise",
+      "definition_sha256_16": "7b0935da16718ef0",
+      "definition_text": "Indirect Expenses: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "indirect_expenses:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_jul_569099fe",
+      "value": 19000000,
+      "unit": "paise",
+      "definition_sha256_16": "287f6a014c8b9ec0",
+      "definition_text": "Purchase Accounts: amount dated in July for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_jul_7e3b8048",
+      "value": 19000000,
+      "unit": "paise",
+      "definition_sha256_16": "287f6a014c8b9ec0",
+      "definition_text": "Purchase Accounts: amount dated in July for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_jun_569099fe",
+      "value": 9000000,
+      "unit": "paise",
+      "definition_sha256_16": "911cd86f3550092b",
+      "definition_text": "Purchase Accounts: amount dated in June for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_jun_a9fd9709",
+      "value": 9000000,
+      "unit": "paise",
+      "definition_sha256_16": "911cd86f3550092b",
+      "definition_text": "Purchase Accounts: amount dated in June for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_nov_569099fe",
+      "value": 1200000,
+      "unit": "paise",
+      "definition_sha256_16": "51f18403471fb451",
+      "definition_text": "Purchase Accounts: amount dated in November for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_nov_7e3b8048",
+      "value": 1200000,
+      "unit": "paise",
+      "definition_sha256_16": "51f18403471fb451",
+      "definition_text": "Purchase Accounts: amount dated in November for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_tb_difference",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ca848aaf1b9d0295",
+      "definition_text": "Purchase Accounts: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.purchases_tb_movement",
+      "value": 29200000,
+      "unit": "paise",
+      "definition_sha256_16": "14b1f0ca00e1cc66",
+      "definition_text": "Purchase Accounts: the Trial Balance's period debits less credits on its ledgers (opening balances excluded).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Purchases - Hardware",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_vouchers_569099fe",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "ef5871c7993baf2d",
+      "definition_text": "Purchase Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_vouchers_7e3b8048",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "ef5871c7993baf2d",
+      "definition_text": "Purchase Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_vouchers_a9fd9709",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "ef5871c7993baf2d",
+      "definition_text": "Purchase Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_year_569099fe",
+      "value": 29200000,
+      "unit": "paise",
+      "definition_sha256_16": "7365527c8a1d88a5",
+      "definition_text": "Purchase Accounts: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_year_7e3b8048",
+      "value": 20200000,
+      "unit": "paise",
+      "definition_sha256_16": "7365527c8a1d88a5",
+      "definition_text": "Purchase Accounts: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "purchases:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.purchases_year_a9fd9709",
+      "value": 9000000,
+      "unit": "paise",
+      "definition_sha256_16": "7365527c8a1d88a5",
+      "definition_text": "Purchase Accounts: amount dated inside the period for this row (debits less credits).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_apr_a64cfcd9",
+      "value": 4200000,
+      "unit": "paise",
+      "definition_sha256_16": "363f96c021caf48d",
+      "definition_text": "Sales Accounts: amount dated in April for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_apr_d37ead04",
+      "value": 4200000,
+      "unit": "paise",
+      "definition_sha256_16": "363f96c021caf48d",
+      "definition_text": "Sales Accounts: amount dated in April for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_jun_a64cfcd9",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "26d3382af67dc634",
+      "definition_text": "Sales Accounts: amount dated in June for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_jun_d37ead04",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "26d3382af67dc634",
+      "definition_text": "Sales Accounts: amount dated in June for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_oct_a64cfcd9",
+      "value": 5550000,
+      "unit": "paise",
+      "definition_sha256_16": "fa6daea13477e751",
+      "definition_text": "Sales Accounts: amount dated in October for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_oct_d37ead04",
+      "value": 5550000,
+      "unit": "paise",
+      "definition_sha256_16": "fa6daea13477e751",
+      "definition_text": "Sales Accounts: amount dated in October for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_tb_difference",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "b78e64e05d28eacc",
+      "definition_text": "Sales Accounts: the period total of the Total row less the Trial Balance's period movement on its ledgers.",
+      "evidence": []
+    },
+    {
+      "id": "party_monthly.sales_tb_movement",
+      "value": 29750000,
+      "unit": "paise",
+      "definition_sha256_16": "bd12d69d06360bc8",
+      "definition_text": "Sales Accounts: the Trial Balance's period credits less debits on its ledgers (opening balances excluded).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales - Hardware",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_vouchers_a64cfcd9",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "a5ca17e61dbf3615",
+      "definition_text": "Sales Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_vouchers_d37ead04",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "a5ca17e61dbf3615",
+      "definition_text": "Sales Accounts: vouchers in this row, including any dated outside the period.",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_year_a64cfcd9",
+      "value": 29750000,
+      "unit": "paise",
+      "definition_sha256_16": "19f3571ae81fe3d6",
+      "definition_text": "Sales Accounts: amount dated inside the period for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:total",
+          "label": "Total"
+        }
+      ]
+    },
+    {
+      "id": "party_monthly.sales_year_d37ead04",
+      "value": 29750000,
+      "unit": "paise",
+      "definition_sha256_16": "19f3571ae81fe3d6",
+      "definition_text": "Sales Accounts: amount dated inside the period for this row (credits less debits).",
+      "evidence": [
+        {
+          "kind": "row",
+          "id": "sales:cash_bank",
+          "label": "Cash or bank (no party)"
+        }
+      ]
+    }
+  ],
+  "findings": [],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "party_monthly.check_invariants"
+  ],
+  "module_invariant_violations": []
+}
