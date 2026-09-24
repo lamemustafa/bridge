@@ -217,7 +217,12 @@ fn utf8_status_response(body: impl AsRef<str>) -> Vec<u8> {
     [headers.as_bytes(), body].concat()
 }
 
-async fn read_complete_http_request(socket: &mut (impl tokio::io::AsyncRead + Unpin)) -> Vec<u8> {
+/// Reads one HTTP/1.1 request to its header terminator and then exactly its
+/// declared Content-Length, so a raw test responder never answers a request it
+/// has only partly read. Shared with the agent's endpoint-failure tests.
+pub(crate) async fn read_complete_http_request(
+    socket: &mut (impl tokio::io::AsyncRead + Unpin),
+) -> Vec<u8> {
     const HEADER_TERMINATOR: &[u8] = b"\r\n\r\n";
     const MAX_TEST_HEADER_BYTES: usize = 64 * 1024;
 

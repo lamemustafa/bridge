@@ -2321,4 +2321,4 @@ fn detect_product(text: &str) -> TallyProduct {
 
 #[cfg(test)]
 #[path = "connection_tests.rs"]
-mod tests;
+pub(crate) mod tests;

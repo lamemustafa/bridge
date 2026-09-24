@@ -136,6 +136,9 @@ pub struct Voucher {
     pub vtype: String,
     pub base_type: String,
     pub number: String,
+    /// The voucher's REFERENCE field (on a purchase, the supplier's invoice number), Python-stripped
+    /// as the reference's adapter reads it; empty when absent.
+    pub reference: String,
     pub status: VoucherStatus,
     pub lines: Vec<LedgerLine>,
     /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
@@ -165,6 +168,7 @@ impl Default for Voucher {
             vtype: String::new(),
             base_type: String::new(),
             number: String::new(),
+            reference: String::new(),
             status: VoucherStatus::Unknown,
             lines: Vec::new(),
             narration: String::new(),
@@ -835,6 +839,7 @@ fn load_vouchers(
             vtype: vtype.to_string(),
             base_type: base_type.clone(),
             number: v.child_text("VOUCHERNUMBER").to_string(),
+            reference: v.child_text("REFERENCE").to_string(),
             status,
             lines,
             narration: v.child_text("NARRATION").to_string(),
@@ -1459,6 +1464,50 @@ mod tests {
             .map(|l| (l.ledger.as_str(), l.amount_paise))
             .collect();
         assert_eq!(lines, [("Cash", 100)]);
+    }
+
+    #[test]
+    fn a_voucher_reference_is_read_as_the_reference_reads_it() {
+        // The reference's own answers on this text: stripped as `str.strip()` strips (U+001C and
+        // U+001F included), the first direct child only, empty whether the element is empty,
+        // absent or only nested deeper, and a `&#4;` marker kept as its marker text.
+        let text = format!(
+            "<ENVELOPE>{}{}{}{}{}{}{}</ENVELOPE>",
+            fx_voucher(
+                "padded",
+                &[],
+                "<REFERENCE> INV/7\t</REFERENCE><REFERENCE>second</REFERENCE>"
+            ),
+            fx_voucher("empty", &[], "<REFERENCE></REFERENCE>"),
+            fx_voucher("absent", &[], ""),
+            fx_voucher("nested", &[], "<WRAP><REFERENCE>deep</REFERENCE></WRAP>"),
+            fx_voucher("marker", &[], "<REFERENCE>&#4; Not Applicable</REFERENCE>"),
+            fx_voucher("fs_ref", &[], "<REFERENCE>&#x1c;X&#x1f;</REFERENCE>"),
+            fx_voucher("fs_raw", &[], "<REFERENCE>\u{1c}X\u{1f}</REFERENCE>")
+        );
+        // Through the loader's own decoding (`xml::read`), which turns `&#4;` and the other
+        // references XML 1.0 forbids into their marker text.
+        let base = [("Receipt".to_string(), "Receipt".to_string())].into();
+        let decoded = xml::read(text.as_bytes(), "probe")
+            .and_then(|root| load_vouchers(&root, "probe", &base, None));
+        let Ok(part) = decoded else { panic!("refused") };
+        let refs: Vec<(&str, &str)> = part
+            .vouchers
+            .iter()
+            .map(|v| (v.guid.as_str(), v.reference.as_str()))
+            .collect();
+        assert_eq!(
+            refs,
+            [
+                ("padded", "INV/7"),
+                ("empty", ""),
+                ("absent", ""),
+                ("nested", ""),
+                ("marker", "\u{fffd}#4; Not Applicable"),
+                ("fs_ref", "\u{fffd}#28;X\u{fffd}#31;"),
+                ("fs_raw", "X"),
+            ]
+        );
     }
 
     #[test]
