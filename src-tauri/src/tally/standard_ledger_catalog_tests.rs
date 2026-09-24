@@ -157,3 +157,25 @@ fn catalog_read_error_codes_are_stable_and_distinct() {
         ]
     );
 }
+
+/// The captured catalogue with one extra row per `(name, guid suffix)`, each
+/// a copy of the capture's first row under its own name and GUID.
+pub(crate) fn catalogue_with_extra_ledgers(
+    catalogue: &str,
+    ledgers: impl IntoIterator<Item = (String, String)>,
+) -> String {
+    let start = catalogue.find("<LEDGER NAME=").unwrap();
+    let end = start + catalogue[start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
+    let template = &catalogue[start..end];
+    assert!(template.contains("Bridge Nested Debtor WR4") && template.contains("-000000d5<"));
+    let rows = ledgers
+        .into_iter()
+        .map(|(name, suffix)| {
+            template
+                .replace("Bridge Nested Debtor WR4", &name)
+                .replace("-000000d5<", &format!("-{suffix}<"))
+        })
+        .collect::<String>();
+    let close = catalogue.rfind("</COLLECTION>").unwrap();
+    format!("{}{rows}{}", &catalogue[..close], &catalogue[close..])
+}

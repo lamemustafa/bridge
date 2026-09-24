@@ -3398,5 +3398,13 @@
   "file": "src/support.rs",
   "from": "Some(b'-') => (true, &t[1..]),",
   "to": "Some(b'-') => (false, &t[1..]),"
+ },
+ {
+  "id": "PC-01",
+  "by": "author (Lane B)",
+  "what": "partners: a figure-tag collision is never detected (keyed by the partner key)",
+  "file": "src/partners_40b_194t.rs",
+  "from": "tags.insert(tag.clone(), key)",
+  "to": "tags.insert(key.to_string(), key)"
  }
 ]
