@@ -559,6 +559,22 @@ class GitRepo(unittest.TestCase):
         self.commit("prove " + " ".join(ids))
         self.assertEqual(mu.crate_tree("HEAD", self.repo, self.CRATE), tree, "the results file is not in the tree")
 
+    def test_an_entry_the_runner_cannot_judge_is_refused_at_load(self):
+        for bad, why in (({"file": "src/./book.rs"}, "file 'src/./book.rs' is not a tracked crate path"),
+                         ({"file": "./src/book.rs"}, "file './src/book.rs' is not a tracked crate path"),
+                         ({"file": "src/gone.rs"}, "file 'src/gone.rs' is not a tracked crate path"),
+                         ({"id": "B 1"}, "'B 1': an id may hold only"),
+                         ({"id": "B1\n"}, "an id may hold only")):
+            muts = [dict(self.muts[0], **bad), self.muts[1]]
+            self.write("parity/mutations.json", json.dumps(muts))
+            self.commit(f"a bad entry: {bad}")
+            rc, out = self.main("--verify")
+            self.assertEqual(rc, 2, bad)
+            self.assertIn(why, out)
+        self.write("parity/mutations.json", json.dumps(self.muts))
+        self.commit("the good list")
+        self.assertEqual(mu.list_problems(self.muts, mu.tracked_files(self.repo, self.CRATE)), [])
+
     def test_a_list_change_is_judged_against_the_base_list(self):
         self.prove("B1", "R1")
         sh(self.repo, "branch", "base")

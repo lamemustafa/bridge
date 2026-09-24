@@ -464,6 +464,31 @@ def write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+_ID = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def list_problems(mutations: list[dict], tracked: set[str]) -> list[str]:
+    """Entries the runner cannot judge safely: an id outside [A-Za-z0-9_.-] (the failing-ids line
+    splits on whitespace), or a `file` that is not exactly a tracked crate path in git's spelling
+    (`src/./x.rs` would open the right file but never match a changed path, so a change to it
+    would select nothing)."""
+    out = []
+    for m in mutations:
+        i = m.get("id")
+        if not isinstance(i, str) or not _ID.fullmatch(i):
+            out.append(f"{i!r}: an id may hold only A-Z, a-z, 0-9, '_', '.' and '-'")
+        if m.get("file") not in tracked:
+            out.append(f"{i}: file {m.get('file')!r} is not a tracked crate path, spelled as git spells it")
+    return out
+
+
+def tracked_files(repo: Path = REPO, crate: str = CRATE) -> set[str]:
+    """Crate-relative paths of the files HEAD tracks under the crate, as git spells them."""
+    out = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", crate], cwd=repo,
+                         capture_output=True, check=True).stdout
+    return {n.decode("utf-8")[len(crate) + 1:] for n in out.split(b"\0") if n}
+
+
 def dirty(porcelain: str) -> list[str]:
     """The `git status --porcelain` lines that stop a run: any tracked change but the results file."""
     return [line for line in porcelain.splitlines() if line.strip() and not line.endswith(RESULTS_REL)]
@@ -764,6 +789,10 @@ def main(argv: list[str] | None = None) -> int:
     repeated = sorted({i for i in order if order.count(i) > 1})
     if repeated:
         print(f"refusing: mutation ids used more than once: {repeated}", file=sys.stderr)
+        return 2
+    malformed = list_problems(mutations, tracked_files(REPO, CRATE))
+    if malformed:
+        print("refusing: mutation entries the runner cannot judge:\n  " + "\n  ".join(malformed), file=sys.stderr)
         return 2
     unknown = sorted(set(args.ids) - set(order))
     if unknown:
