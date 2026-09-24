@@ -171,6 +171,8 @@ pub(crate) enum PairedReadValidationError {
     NativeLedgerCollection,
     #[error("Tally company book changed during native ledger read")]
     NativeLedgerExtent,
+    #[error("Tally group hierarchy changed between paired reads beside a ledger read")]
+    NativeLedgerGroup,
     #[error("Tally ledger master changed between paired reads")]
     PartyLedgerMaster,
     #[error("Tally ledger balances changed between paired reads")]
@@ -197,6 +199,7 @@ impl PairedReadValidationError {
         match self {
             Self::NativeLedgerCollection => "native_ledger_collection_changed",
             Self::NativeLedgerExtent => "native_ledger_extent_changed",
+            Self::NativeLedgerGroup => "native_ledger_group_changed",
             Self::PartyLedgerMaster => "party_ledger_master_changed",
             Self::PartyLedgerBalance => "party_ledger_balance_changed",
             Self::PartyLedgerGroup => "party_ledger_group_changed",

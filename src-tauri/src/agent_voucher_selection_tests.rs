@@ -513,3 +513,114 @@ async fn a_corroboration_refused_after_its_read_carries_no_window() {
     assert_eq!(error["code"], "window_not_honoured", "{response}");
     assert!(error.get("window").is_none(), "{error}");
 }
+
+/// A `vouchers` call filtered to one ledger, with every catalogue read served
+/// `catalogue`. The sequence is the rename case's: company, paired catalogue,
+/// the window's marks, the window, then the repeated catalogue.
+async fn call_filtered_vouchers(catalogue: impl Fn(&str) -> String, ledger: &str) -> Value {
+    let words = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    )
+    .chunks_exact(2)
+    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+    .collect::<Vec<_>>();
+    let vouchers = ScenarioPlan::new(Fixture::SyntheticXml(String::from_utf16(&words).unwrap()))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    let mut plans = cycle[..10].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans.extend([
+        cycle[0].clone(),
+        vouchers.clone(),
+        cycle[1].clone(),
+        vouchers,
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]);
+    plans.extend(cycle[4..10].iter().cloned());
+    for index in [5, 7, 23, 25] {
+        let body = catalogue(&plans[index].fixture.body());
+        plans[index].fixture = Fixture::SyntheticXml(body);
+    }
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let response = server_for(simulator.address(), directory.path())
+        .call_tool(
+            "vouchers",
+            json!({"company_guid":CAPTURED_GUID,
+            "from":"20260801","to":"20260802","ledger":ledger}),
+        )
+        .await;
+    simulator.cancel();
+    simulator.finish().unwrap();
+    response
+}
+
+/// bridge#634: the catalogue parser refused any book past 1,000 ledgers, as
+/// `ledger_export_invalid` whatever the names, so a book of about 9,500 ledgers lost the
+/// ledger filter. Of the capture's three vouchers only one posts to this
+/// ledger, so the filter itself is observed, not only the refusal's absence.
+#[tokio::test]
+async fn a_ledger_filter_reads_a_book_of_more_than_a_thousand_ledgers() {
+    let response = call_filtered_vouchers(
+        |catalogue| {
+            crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
+                catalogue,
+                (0..1_000)
+                    .map(|index| (format!("Bulk Ledger {index:04}"), format!("b{index:07x}"))),
+            )
+        },
+        "Café Naïve Traders",
+    )
+    .await;
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["state"], "complete", "{result}");
+    assert_eq!(result["total"], 1, "{result}");
+    let ledgers = result["items"][0]["amounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["ledger"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(ledgers.contains(&"Café Naïve Traders"), "{ledgers:?}");
+}
+
+/// bridge#634: a catalogue refused for one ledger says why in the refusal's
+/// cause, and never which ledger.
+#[tokio::test]
+async fn a_refused_ledger_catalogue_names_its_cause_and_no_ledger() {
+    for (rows, cause) in [
+        (
+            vec![
+                ("Twice Named".to_string(), "c0000001".to_string()),
+                ("Twice Named".to_string(), "c0000002".to_string()),
+            ],
+            "ledger_catalogue_duplicate_identity",
+        ),
+        (
+            vec![("Twice\u{202E}Turned".to_string(), "c0000003".to_string())],
+            "ledger_catalogue_name_unusable",
+        ),
+    ] {
+        let response = call_filtered_vouchers(
+            |catalogue| {
+                crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
+                    catalogue,
+                    rows.clone(),
+                )
+            },
+            "WR2 Sales",
+        )
+        .await;
+        assert_eq!(response["isError"], true, "{response}");
+        let content = &response["structuredContent"];
+        let error = &content["result"]["error"];
+        // The code still names what failed, for any caller keyed on it.
+        assert_eq!(error["code"], "ledger_export_invalid", "{response}");
+        assert_eq!(error["cause"], cause, "{response}");
+        assert_eq!(content["evidence"]["reason_code"], "ledger_export_invalid");
+        assert!(!response.to_string().contains("Twice"), "{response}");
+    }
+}

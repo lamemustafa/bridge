@@ -1770,3 +1770,59 @@ fn changed_observed_catalogue_refuses_bound_target_before_commit() {
         "source_draft_catalogue_target_changed"
     );
 }
+
+/// bridge#634 raised the shared parser's row bound for large books. The
+/// desktop screen renders every ledger in each entry's picker, so it keeps the
+/// old 1,000: a book of exactly 1,000 ledgers loads, and one of 1,001 is
+/// refused as it was before.
+#[tokio::test]
+async fn the_desktop_catalogue_keeps_its_thousand_ledger_bound() {
+    let (catalog, captured) = captured_catalog_and_xml();
+    let captured_rows = catalog.names().count();
+    for (ledgers, refused) in [(1_000, false), (1_001, true)] {
+        let xml = crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
+            &captured,
+            (captured_rows..ledgers)
+                .map(|index| (format!("Bulk Ledger {index:04}"), format!("b{index:07x}"))),
+        );
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let simulator = SequenceSimulator::spawn(vec![
+            company_plan(CAPTURED_COMPANY, CAPTURED_GUID),
+            company_plan(CAPTURED_COMPANY, CAPTURED_GUID),
+            catalog_plan(xml.clone()),
+            status_plan(),
+            catalog_plan(xml),
+            status_plan(),
+            company_plan(CAPTURED_COMPANY, CAPTURED_GUID),
+        ])
+        .expect("desktop catalogue simulator");
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &TallyRuntime::default(),
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: TallyConfig {
+                    host: simulator.address().ip().to_string(),
+                    port: simulator.address().port(),
+                },
+                selected_company: selected_company(),
+            },
+        )
+        .await;
+        simulator.cancel();
+        simulator
+            .finish()
+            .expect("desktop catalogue requests observed");
+        match loaded {
+            Ok(loaded) => {
+                assert!(!refused, "{ledgers} ledgers loaded");
+                assert_eq!(loaded.targets.len(), ledgers);
+            }
+            Err(error) => {
+                assert!(refused, "{ledgers} ledgers refused: {}", error.code);
+                assert_eq!(error.code, "source_draft_catalogue_bounds_invalid");
+            }
+        }
+    }
+}

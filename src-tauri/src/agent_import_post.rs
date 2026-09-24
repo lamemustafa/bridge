@@ -604,6 +604,7 @@ impl Server {
                     snapshot.as_ref(),
                     received_response.as_ref(),
                 );
+                let cause = failure.cause;
                 let mut outcome = post_failure_outcome(
                     batch_id,
                     guid,
@@ -613,6 +614,13 @@ impl Server {
                     received_response.as_ref(),
                     attempted,
                 );
+                // The typed, data-free reason, under the generic refusal's
+                // budget rule; a post refusal used to drop it (bridge#634).
+                if let Some(cause) = cause {
+                    if self.settings.max_bytes >= crate::agent::REMEDIATION_MIN_RESPONSE_BUDGET {
+                        outcome.payload["result"]["error"]["cause"] = json!(cause);
+                    }
+                }
                 if let Some(located) = post_location {
                     outcome.payload["result"]["post_location"] = located;
                 }
@@ -915,7 +923,7 @@ fn recheck_import_admission(
     })?;
     if !ledger_binding
         .matches(catalogue, company_name, company_guid)
-        .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?
+        .map_err(|error| anyhow::Error::new(error).context("ledger_export_invalid"))?
     {
         return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
     }
@@ -929,7 +937,7 @@ fn recheck_import_admission(
         (true, Some(groups)) => {
             let parents =
                 parse_standard_ledger_catalog_response(catalogue, company_name, company_guid)
-                    .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?;
+                    .map_err(|error| anyhow::Error::new(error).context("ledger_export_invalid"))?;
             let groups = parse_native_group_snapshot(groups, company_guid)
                 .map_err(|_| anyhow::Error::msg("group_export_invalid"))?;
             let payload = ImportPayload {
