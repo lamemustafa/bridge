@@ -58,6 +58,11 @@ Escape on the way out; the failure is total and gives no hint of which field cau
 > **Success requires all four: the intended counter incremented, `ERRORS=0`,
 > `EXCEPTIONS=0`, and no `LINEERROR`.**
 
+An `EXCEPTIONS=1` can also come with **no** `LINEERROR` at all: under Manual numbering with
+duplicates prevented, a missing or reused voucher number was refused that way on licensed 7.1
+Silver (PARTIAL — observed once; §9.14). A rule that looks for a line error to explain a refusal
+misses it.
+
 **Bridge admission rule (2026-09-07).** Clean-result classification additionally
 requires source presence for all seven counters: `CREATED`, `ALTERED`, `DELETED`,
 `IGNORED`, `ERRORS`, `CANCELLED`, and `EXCEPTIONS`. An omitted counter is not an
