@@ -43,7 +43,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
-      "sha256": "ace7e9e7c2062d1bc69573740be76c4610465293ecfd6a7b978720c08b0a1f3d"
+      "sha256": "17478fad5ec5e9165fb5ce8e4f330b91d02a27cde32a423be61d2825087ddd4e"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "2d3402902cad31d7e61aae5d3751158f10f67ac145b4c035b73f4b61cb6c502a"
+      "sha256": "760802f4cca321bce034f52ddcf7ffc14d6d971f271afe327ceb9ccc7f66ff63"
     },
     {
       "path": "src-tauri/src/commands_trial_balance.rs",
@@ -903,7 +903,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "a7a08a97372a1acd357658f40fde0d8491571d03d79fb7e8c60f550c448074ad"
+      "sha256": "f02ec9bcb3fd73dae4a29ce396a1784a1d49eb4b56eeba10fb9a35f24c4dd701"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -979,7 +979,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "fb18c8864db4e453dd68d0f44a069eba34cc10655752e3fe4007599ce5c073f7"
+      "sha256": "32f00a629b0ba923bb8d5845bfdbc2b7d3991ad63c47f7c36ac085e68e0046ff"
     },
     {
       "path": "src/SourceDraftScreen.tsx",
@@ -1015,7 +1015,7 @@
     },
     {
       "path": "src/outstandings-as-of.ts",
-      "sha256": "d97e3d337e5974fb0062d1600ae1af620b044b934610889446415cf77cec606f"
+      "sha256": "f2209cef9431259b2b0fc34deac0ba98369712d18090f83455591e1232eeb82e"
     },
     {
       "path": "src/outstandings-bills.ts",
@@ -1031,7 +1031,7 @@
     },
     {
       "path": "src/outstandings-currency.ts",
-      "sha256": "28e5e9ac7bd14edd7ff8a675b1b5e11df7c568874ecfc73135b588298e0d198e"
+      "sha256": "24f0264e80c8b9d8aa46d828c7f438b138addd1d4766f0dfde84a37c1e556fd5"
     },
     {
       "path": "src/outstandings-provenance.ts",
@@ -1114,5 +1114,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "7a2a316ae2019d5b50bec4476f38be4aea94df3dfa42750f3950557e079419d4"
+  "manifest_sha256": "b551906e41e545a446ed921f071b6785700ed538c8777443d2f7240b057d2a50"
 }

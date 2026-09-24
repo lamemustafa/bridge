@@ -1685,12 +1685,6 @@ pub struct CompanyRequest {
 pub struct OutstandingsRequest {
     pub config: TallyConfig,
     pub selected_company: SelectedCompanyIdentity,
-    /// Sent only when Tally named the company's one Currency master INR or
-    /// the operator confirmed it (bridge#604). Absent for a book the screen
-    /// leaves to the backend (several masters, bridge#551): with one master
-    /// the backend then admits only by the master's mailing name.
-    #[serde(default)]
-    pub currency_assertion: Option<OutstandingsCurrencyAssertion>,
     /// An explicit operator-selected date when present. Omission preserves
     /// today's date for existing callers and licensed Tally users.
     #[serde(default)]
@@ -2009,13 +2003,7 @@ pub(crate) async fn read_screen_outstandings(
     let identity =
         verify_observed_company_tuple(runtime, &request.config, &request.selected_company).await?;
     let result = runtime
-        .fetch_operator_outstandings(
-            request.config,
-            &identity,
-            as_of,
-            request.currency_assertion,
-            request.ageing_anchor,
-        )
+        .fetch_operator_outstandings(request.config, &identity, as_of, request.ageing_anchor)
         .await
         .map_err(tally_runtime_command_error)?;
     let (working_paper_source, source_unavailable_reason_code) =

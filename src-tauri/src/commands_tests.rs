@@ -211,38 +211,32 @@ fn require_utf8_destination_rejects_non_utf8_paths_instead_of_rewriting_them() {
     assert!(error.to_lowercase().contains("unicode"));
 }
 
+/// bridge#551 (601c): the desktop request carries no currency assertion;
+/// Tally's own currency read decides. A request from an older screen that
+/// still sends one, of any value, parses, and the value cannot reach the
+/// read: the request type has no field for it.
 #[test]
-fn outstandings_accepts_only_an_explicit_inr_currency_assertion() {
-    let accepted: OutstandingsRequest = serde_json::from_value(serde_json::json!({
-        "config": { "host": "127.0.0.1", "port": 9000 },
-        "selected_company": {
-            "display_name": "Synthetic Company",
-            "company_guid": "synthetic-guid",
-            "company_number": "100001",
-            "books_from_yyyymmdd": "20260401"
-        },
-        "currency_assertion": "INR"
-    }))
-    .expect("INR is the one supported explicit assertion");
-    assert_eq!(
-        accepted.currency_assertion,
-        Some(OutstandingsCurrencyAssertion::Inr)
-    );
-
-    let rejected = serde_json::from_value::<OutstandingsRequest>(serde_json::json!({
-        "config": { "host": "127.0.0.1", "port": 9000 },
-        "selected_company": {
-            "display_name": "Synthetic Company",
-            "company_guid": "synthetic-guid",
-            "company_number": "100001",
-            "books_from_yyyymmdd": "20260401"
-        },
-        "currency_assertion": "USD"
-    }));
-    assert!(
-        rejected.is_err(),
-        "unsupported currencies must not start a scan"
-    );
+fn an_outstandings_request_carries_no_currency_assertion() {
+    for assertion in [None, Some("INR"), Some("USD")] {
+        let mut request = serde_json::json!({
+            "config": { "host": "127.0.0.1", "port": 9000 },
+            "selected_company": {
+                "display_name": "Synthetic Company",
+                "company_guid": "synthetic-guid",
+                "company_number": "100001",
+                "books_from_yyyymmdd": "20260401"
+            }
+        });
+        if let Some(assertion) = assertion {
+            request["currency_assertion"] = serde_json::json!(assertion);
+        }
+        let parsed: OutstandingsRequest = serde_json::from_value(request)
+            .expect("a request parses without or with a stale field");
+        assert_eq!(
+            parsed.selected_company.company_guid, "synthetic-guid",
+            "{assertion:?}"
+        );
+    }
 }
 
 #[test]

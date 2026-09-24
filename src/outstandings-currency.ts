@@ -2,9 +2,9 @@
 
 export function canStartOutstandingsRead(
   companyIdentityKey: string | null,
-  inrAssertedCompanyIdentity: string | null,
+  permittedCompanyIdentity: string | null,
 ) {
-  return companyIdentityKey !== null && companyIdentityKey === inrAssertedCompanyIdentity;
+  return companyIdentityKey !== null && companyIdentityKey === permittedCompanyIdentity;
 }
 
 export type OutstandingsCurrencyAssertion = "INR";

@@ -111,11 +111,9 @@ test("a plain-string outstandings failure renders unchanged, with no invented re
   root.unmount();
 });
 
-// bridge#604: only a book with one Currency master may be confirmed as INR by
-// hand. When the currency read fails or names no master, the screen offers no
-// confirmation and never asks for outstandings; with one master Tally does not
-// name INR, the confirmation says what Tally reported. A book with several is
-// read without an assertion (bridge#551, below).
+// When the currency read fails or names no master, the screen never asks for
+// outstandings. Any book with a master is read with no currency assertion,
+// and the backend decides (bridge#551, below).
 async function renderWithCurrency(detect: () => Promise<unknown>) {
   mocks.invoke.mockImplementation((command: string) => {
     if (command === "detect_tally_base_currency") return detect();
@@ -197,18 +195,6 @@ test("a failed currency read is not offered an INR confirmation and is not read"
   root.unmount();
 });
 
-test("one currency Tally does not name INR is confirmed against what Tally reported", async () => {
-  const { host, root, invoked } = await renderWithCurrency(() =>
-    Promise.resolve({ is_inr: false, symbol: "$", mailing_name: "US Dollars", currency_count: 1 }),
-  );
-  expect(host.textContent).toContain("Tally reports this company’s currency as US Dollars ($).");
-  expect(host.textContent).toContain("Confirm only if this company’s books are in Indian rupees.");
-  const confirm = [...host.querySelectorAll("button")].find((button) => button.textContent === "This company uses INR");
-  expect(confirm).toBeDefined();
-  expect(invoked).not.toContain("fetch_tally_outstandings");
-  root.unmount();
-});
-
 test("a currency read that names no master is not offered an INR confirmation", async () => {
   const { host, root, invoked } = await renderWithCurrency(() =>
     Promise.resolve({ is_inr: false, symbol: "", mailing_name: "", currency_count: 0 }),
@@ -219,20 +205,33 @@ test("a currency read that names no master is not offered an INR confirmation", 
   root.unmount();
 });
 
-test("confirming one currency Tally does not name INR reads outstandings under the INR assertion", async () => {
-  const { host, root } = await renderWithCurrency(() =>
-    Promise.resolve({ is_inr: false, symbol: "Rs.", mailing_name: "", currency_count: 1 }),
-  );
-  // An empty mailing name shows the master's name alone.
-  expect(host.textContent).toContain("Tally reports this company’s currency as Rs..");
-  const confirm = [...host.querySelectorAll("button")].find((button) => button.textContent === "This company uses INR");
-  await act(async () => confirm?.click());
+// bridge#551 (601c): there is no operator override. A book whose one master
+// Tally does not name INR is read like any other, with no assertion, and the
+// backend's refusal is shown; no confirmation is offered.
+test("one currency Tally does not name INR is read and the backend's refusal is shown", async () => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "detect_tally_base_currency") {
+      return Promise.resolve({ is_inr: false, symbol: "$", mailing_name: "US Dollars", currency_count: 1 });
+    }
+    if (command === "fetch_tally_outstandings") {
+      return Promise.resolve({ state: "partial", reason_code: "company_base_currency_not_inr", synced_at_unix_ms: 1 });
+    }
+    return Promise.resolve(null);
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<OutstandingsScreen {...defaultProps()} />));
   await flush();
   const fetches = mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_outstandings");
   expect(fetches).toHaveLength(1);
-  expect(fetches[0][1]).toMatchObject({ request: { currency_assertion: "INR" } });
+  expect((fetches[0][1] as { request: Record<string, unknown> }).request).not.toHaveProperty("currency_assertion");
+  expect(host.textContent).toMatch(/not INR/i);
+  expect(host.textContent).not.toContain("This company uses INR");
+  expect(host.textContent).not.toContain("Confirm the base currency");
   root.unmount();
 });
+
 
 // bridge#551: party statements come only from the source Bridge holds for the
 // completed read. Without its handle the screen offers no statement control;
