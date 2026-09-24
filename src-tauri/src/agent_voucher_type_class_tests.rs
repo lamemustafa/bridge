@@ -50,7 +50,10 @@ fn a_class_request_finds_a_renamed_type_and_its_child_where_the_name_found_nothi
         &VoucherTypeSelector::Class(ReservedVoucherClass::Purchase),
     )
     .unwrap();
-    assert_eq!(names(&selection), ["PURCHASE A/C", "PURCHASE A/C", "Purchase Local"]);
+    assert_eq!(
+        names(&selection),
+        ["PURCHASE A/C", "PURCHASE A/C", "Purchase Local"]
+    );
     assert_eq!(selection.included.len(), 2);
 
     // The #625 false zero: the class name as a display name matches no row,
@@ -102,9 +105,12 @@ fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
     let mut with_child = stock();
     with_child.push(row("Purchase Local", "000000d4", Some("Purchase")));
     assert_eq!(
-        select_voucher_rows(with_child, &VoucherTypeSelector::Name("Purchase".to_string()))
-            .map_err(|refusal| refusal.code)
-            .unwrap_err(),
+        select_voucher_rows(
+            with_child,
+            &VoucherTypeSelector::Name("Purchase".to_string())
+        )
+        .map_err(|refusal| refusal.code)
+        .unwrap_err(),
         "voucher_type_ambiguous"
     );
     // A type of another class carrying the class name.
@@ -116,7 +122,11 @@ fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
         .unwrap_err();
     assert_eq!(refusal.code, "voucher_type_ambiguous");
     assert_eq!(
-        refusal.candidates.iter().map(|kind| kind.name.as_str()).collect::<Vec<_>>(),
+        refusal
+            .candidates
+            .iter()
+            .map(|kind| kind.name.as_str())
+            .collect::<Vec<_>>(),
         ["PURCHASE A/C", "Purchase"],
         "both the type of the class and the type carrying the name, in GUID order"
     );
@@ -125,9 +135,12 @@ fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
     let stock_journal = |extra: Option<Value>| {
         let mut rows = vec![reserved_row("STOCK JNL", "0000003a", None, "Stock Journal")];
         rows.extend(extra);
-        select_voucher_rows(rows, &VoucherTypeSelector::Name("Stock Journal".to_string()))
-            .map(|selection| names(&selection).len())
-            .map_err(|refusal| refusal.code)
+        select_voucher_rows(
+            rows,
+            &VoucherTypeSelector::Name("Stock Journal".to_string()),
+        )
+        .map(|selection| names(&selection).len())
+        .map_err(|refusal| refusal.code)
     };
     assert_eq!(stock_journal(None), Err("voucher_type_ambiguous"));
     assert_eq!(
@@ -137,7 +150,12 @@ fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
     );
     assert_eq!(
         select_voucher_rows(
-            vec![reserved_row("Stock Journal", "0000003a", None, "Stock Journal")],
+            vec![reserved_row(
+                "Stock Journal",
+                "0000003a",
+                None,
+                "Stock Journal"
+            )],
             &VoucherTypeSelector::Name("Stock Journal".to_string())
         )
         .map(|selection| names(&selection).len())
@@ -157,11 +175,19 @@ fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
 #[test]
 fn one_type_guid_with_two_names_or_classes_in_one_window_is_refused() {
     let mut rows = renamed_book_rows();
-    rows.push(reserved_row("PURCHASE RENAMED", "0000002e", Some("Purchase"), "Purchase"));
+    rows.push(reserved_row(
+        "PURCHASE RENAMED",
+        "0000002e",
+        Some("Purchase"),
+        "Purchase",
+    ));
     assert_eq!(
-        select_voucher_rows(rows, &VoucherTypeSelector::Class(ReservedVoucherClass::Purchase))
-            .unwrap_err()
-            .code,
+        select_voucher_rows(
+            rows,
+            &VoucherTypeSelector::Class(ReservedVoucherClass::Purchase)
+        )
+        .unwrap_err()
+        .code,
         "voucher_type_snapshot_inconsistent"
     );
     let mut reclassed = renamed_book_rows();
@@ -181,7 +207,11 @@ fn one_type_guid_with_two_names_or_classes_in_one_window_is_refused() {
         &VoucherTypeSelector::Guid(format!("{COMPANY}-000000d4")),
     )
     .unwrap();
-    assert_eq!(names(&selection), ["Purchase Local"], "the GUID selector keeps one type");
+    assert_eq!(
+        names(&selection),
+        ["Purchase Local"],
+        "the GUID selector keeps one type"
+    );
     assert_eq!(selection.window_types.len(), 2);
     let unresolved = vec![json!({"voucher_type": "Purchase"})];
     assert_eq!(
@@ -209,7 +239,11 @@ fn purchase_row(reserved: &str) -> Vec<(&'static str, String)> {
         (VOUCHER_TYPE_RESERVED_NAME_TAG, reserved.to_string()),
     ];
     for class in ReservedVoucherClass::ALL {
-        let answer = if class == ReservedVoucherClass::Purchase { "Yes" } else { "No" };
+        let answer = if class == ReservedVoucherClass::Purchase {
+            "Yes"
+        } else {
+            "No"
+        };
         values.push((class.tag(), answer.to_string()));
     }
     values
@@ -219,7 +253,12 @@ fn purchase_row(reserved: &str) -> Vec<(&'static str, String)> {
 fn a_row_resolves_only_from_every_class_element_and_fails_closed_on_a_gap() {
     let full = purchase_row("");
     let as_map = |values: &[(&str, String)]| {
-        resolved_row(&values.iter().map(|(t, v)| (*t, v.as_str())).collect::<Vec<_>>())
+        resolved_row(
+            &values
+                .iter()
+                .map(|(t, v)| (*t, v.as_str()))
+                .collect::<Vec<_>>(),
+        )
     };
     assert_eq!(
         resolve_row_voucher_type(&as_map(&full), COMPANY),
@@ -288,7 +327,9 @@ fn the_selectors_are_exclusive_and_the_schema_offers_only_measured_classes() {
     assert_eq!(parse(json!({})), Ok(None));
     assert_eq!(
         parse(json!({"voucher_class": "Debit Note"})),
-        Ok(Some(VoucherTypeSelector::Class(ReservedVoucherClass::DebitNote)))
+        Ok(Some(VoucherTypeSelector::Class(
+            ReservedVoucherClass::DebitNote
+        )))
     );
     assert_eq!(
         parse(json!({"voucher_type": ""})),
@@ -318,13 +359,22 @@ fn the_selectors_are_exclusive_and_the_schema_offers_only_measured_classes() {
 
     // The class read is the plain read plus exactly the class COMPUTEs.
     let (company, from, to) = ("Synthetic Book", "20250701", "20250731");
-    let plain = VoucherReadShape::EntryWildcard.render(company, from, to, None).unwrap();
+    let plain = VoucherReadShape::EntryWildcard
+        .render(company, from, to, None)
+        .unwrap();
     let classed = VoucherReadShape::ClassEntryWildcard
         .render(company, from, to, None)
         .unwrap();
-    assert_eq!(classed.replacen(&voucher_type_class_computes(), "", 1), plain);
+    assert_eq!(
+        classed.replacen(&voucher_type_class_computes(), "", 1),
+        plain
+    );
     for class in ReservedVoucherClass::ALL {
-        assert!(classed.contains(&format!("{}:{}:$VoucherTypeName", class.tag(), class.function())));
+        assert!(classed.contains(&format!(
+            "{}:{}:$VoucherTypeName",
+            class.tag(),
+            class.function()
+        )));
     }
 }
 
@@ -448,13 +498,22 @@ mod through_the_tool {
         assert_ne!(response["isError"], true, "{response}");
         let result = &response["structuredContent"]["result"];
         assert_eq!(result["items"].as_array().unwrap().len(), 3, "{response}");
-        assert_eq!(result["voucher_types"]["in_scope"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            result["voucher_types"]["in_scope"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(
             result["voucher_types"]["included"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|kind| (kind["name"].as_str().unwrap(), kind["rows"].as_u64().unwrap()))
+                .map(|kind| (
+                    kind["name"].as_str().unwrap(),
+                    kind["rows"].as_u64().unwrap()
+                ))
                 .collect::<Vec<_>>(),
             [("PURCHASE A/C", 2), ("Purchase Local", 1)]
         );

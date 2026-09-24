@@ -103,7 +103,11 @@ pub(super) const VOUCHER_TYPE_RESERVED_NAME_TAG: &str = "BRIDGEVCHRESERVEDNAME";
 fn voucher_type_class_tags() -> impl Iterator<Item = &'static str> + Clone {
     [VOUCHER_TYPE_GUID_TAG, VOUCHER_TYPE_RESERVED_NAME_TAG]
         .into_iter()
-        .chain(ReservedVoucherClass::ALL.into_iter().map(ReservedVoucherClass::tag))
+        .chain(
+            ReservedVoucherClass::ALL
+                .into_iter()
+                .map(ReservedVoucherClass::tag),
+        )
 }
 
 /// The COMPUTE elements the class-resolving read adds after its FETCH.
@@ -155,8 +159,7 @@ pub(super) fn resolve_row_voucher_type(
         return Err("voucher_type_class_missing".to_string());
     }
     let guid = row[VOUCHER_TYPE_GUID_TAG].trim();
-    if guid.is_empty()
-        || !bridge_tally_protocol::master_guid_belongs_to_company(guid, company_guid)
+    if guid.is_empty() || !bridge_tally_protocol::master_guid_belongs_to_company(guid, company_guid)
     {
         return Err("voucher_type_unresolved".to_string());
     }
