@@ -247,6 +247,19 @@ narration."
         .to_string();
 
     let (partners, deed_rate) = partners_config(cfg)?;
+    // Each partner's figures are tagged `hash8(key)`, as the reference tags them, so two keys whose
+    // tags coincide would name one figure twice. The reference raises there (its `fig` refuses a
+    // duplicate id); refuse the same way before any partner figure is built, never panic in `fig`.
+    let mut tags: BTreeMap<String, &str> = BTreeMap::new();
+    for key in partners.keys() {
+        let tag = hash8(key);
+        if let Some(first) = tags.insert(tag.clone(), key) {
+            return Err(AuditError::Config(format!(
+                "{TEST_ID}: [partners].{first} and [partners].{key} share the figure tag {tag}; \
+the reference refuses a duplicate figure id"
+            )));
+        }
+    }
     let deed_missing = deed_rate.is_none();
     let rate_bp = deed_rate.map_or(s40b_rate, |d| d.min(s40b_rate));
     let (tds_rate_bp, tds_limit_paise, s194t_is_default) = match rules.s194t {
@@ -647,6 +660,29 @@ mod tests {
         .unwrap();
         assert_eq!(partners["a"].capital_ledgers, ["A", "A"]);
         assert_eq!(rate, Some(1000));
+    }
+
+    #[test]
+    fn two_partner_keys_sharing_a_figure_tag_are_refused_not_a_panic() {
+        // SHA-1 of "p30395" and of "p89343" both begin 47ff8a3d.
+        assert_eq!(hash8("p30395"), hash8("p89343"));
+        let book = Book {
+            vouchers: Vec::new(),
+            ..unreadable_book()
+        };
+        let rules = Rules::vendored().unwrap();
+        let two = "[p30395]\ncapital_ledgers = [\"A Capital\"]\n\
+[p89343]\ncapital_ledgers = [\"B Capital\"]\n";
+        match run(&book, &rules, &year(), "firm", &cfg(two)) {
+            Err(AuditError::Config(m)) => {
+                assert!(m.contains("[partners].p30395 and [partners].p89343"), "{m}");
+                assert!(m.contains("47ff8a3d"), "{m}");
+            }
+            other => panic!("expected a Config refusal, got {other:?}"),
+        }
+        // Either key alone runs.
+        let one = "[p30395]\ncapital_ledgers = [\"A Capital\"]\n";
+        assert!(run(&book, &rules, &year(), "firm", &cfg(one)).is_ok());
     }
 
     #[test]
