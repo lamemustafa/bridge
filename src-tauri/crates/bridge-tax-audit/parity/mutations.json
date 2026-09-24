@@ -4382,5 +4382,205 @@
   "file": "src/book.rs",
   "from": "items: read.one(\"stock_items\").cloned(),",
   "to": "items: None,"
+ },
+ {
+  "id": "E4-01",
+  "by": "author",
+  "what": "a period ending 31 March is not April-to-March",
+  "file": "src/party_monthly.rs",
+  "from": "(sm, sd, em, ed) == (4, 1, 3, 31)",
+  "to": "(sm, sd, em, ed) == (4, 1, 3, 30)"
+ },
+ {
+  "id": "E4-02",
+  "by": "author",
+  "what": "months are off by one",
+  "file": "src/party_monthly.rs",
+  "from": "MONTHS[(m + 8) % 12]",
+  "to": "MONTHS[(m + 9) % 12]"
+ },
+ {
+  "id": "E4-03",
+  "by": "author",
+  "what": "a sub-group party is not a party",
+  "file": "src/party_monthly.rs",
+  "from": ".filter(|l| PARTY_GROUPS.iter().any(|g| l.under(g)))",
+  "to": ".filter(|l| PARTY_GROUPS.iter().any(|g| l.parent == *g))"
+ },
+ {
+  "id": "E4-04",
+  "by": "author",
+  "what": "a missing group's block is run",
+  "file": "src/party_monthly.rs",
+  "from": "if !book.groups.contains_key(group) {\n            r.findings.push(Finding {",
+  "to": "if false && !book.groups.contains_key(group) {\n            r.findings.push(Finding {"
+ },
+ {
+  "id": "E4-05",
+  "by": "author",
+  "what": "several parties go to the first party",
+  "file": "src/party_monthly.rs",
+  "from": "let key = if named.len() == 1 {",
+  "to": "let key = if !named.is_empty() {"
+ },
+ {
+  "id": "E4-06",
+  "by": "author",
+  "what": "expenses get a cash-or-bank row",
+  "file": "src/party_monthly.rs",
+  "from": "(block == \"sales\" || block == \"purchases\")",
+  "to": "(block == \"sales\" || block != \"sales\")"
+ },
+ {
+  "id": "E4-07",
+  "by": "author",
+  "what": "vouchers outside the period count in the year",
+  "file": "src/party_monthly.rs",
+  "from": "            if in_period(&v.date) {",
+  "to": "            if true {"
+ },
+ {
+  "id": "E4-08",
+  "by": "author",
+  "what": "notes are every voucher but credit and debit notes",
+  "file": "src/party_monthly.rs",
+  "from": "if NOTE_TYPES.contains(&v.base_type.as_str()) {\n                    row.returns",
+  "to": "if !NOTE_TYPES.contains(&v.base_type.as_str()) {\n                    row.returns"
+ },
+ {
+  "id": "E4-09",
+  "by": "author",
+  "what": "every voucher counts as the same one",
+  "file": "src/party_monthly.rs",
+  "from": "row.vouchers.insert(idx);",
+  "to": "row.vouchers.insert(idx.min(0));"
+ },
+ {
+  "id": "E4-10",
+  "by": "author",
+  "what": "parties are shown smallest first",
+  "file": "src/party_monthly.rs",
+  "from": "(Reverse(a.0), a.1).cmp(&(Reverse(b.0), b.1))",
+  "to": "(a.0, a.1).cmp(&(b.0, b.1))"
+ },
+ {
+  "id": "E4-11",
+  "by": "author",
+  "what": "the Others label's singular is wrong",
+  "file": "src/party_monthly.rs",
+  "from": "let label = format!(\"Others ({n} {})\", if n == 1 { \"party\" } else { \"parties\" });",
+  "to": "let label = format!(\"Others ({n} {})\", if n == 2 { \"party\" } else { \"parties\" });"
+ },
+ {
+  "id": "E4-12",
+  "by": "author",
+  "what": "a nil month cell publishes a figure",
+  "file": "src/party_monthly.rs",
+  "from": "if let Some(a) = row.cols.get(c).filter(|a| **a != 0) {",
+  "to": "if let Some(a) = row.cols.get(c).filter(|_| true) {"
+ },
+ {
+  "id": "E4-13",
+  "by": "author",
+  "what": "a nil total row publishes no year",
+  "file": "src/party_monthly.rs",
+  "from": "if row.year != 0 || *is_total {",
+  "to": "if row.year != 0 {"
+ },
+ {
+  "id": "E4-14",
+  "by": "author",
+  "what": "the Trial Balance movement is not business-signed",
+  "file": "src/party_monthly.rs",
+  "from": "let tb_movement = tb_movement.checked_mul(sign)",
+  "to": "let tb_movement = tb_movement.checked_mul(1)"
+ },
+ {
+  "id": "E4-15",
+  "by": "author",
+  "what": "only nil openings are reported",
+  "file": "src/party_monthly.rs",
+  "from": "if t.opening_paise != 0 {",
+  "to": "if t.opening_paise == 0 {"
+ },
+ {
+  "id": "E4-16",
+  "by": "author",
+  "what": "a difference within a rupee is a finding",
+  "file": "src/party_monthly.rs",
+  "from": "if abs(diff)? > TIE_TOLERANCE_PAISE {",
+  "to": "if abs(diff)? > 0 {"
+ },
+ {
+  "id": "E4-17",
+  "by": "author",
+  "what": "no combined set of excluded vouchers is tried",
+  "file": "src/party_monthly.rs",
+  "from": "if candidates.len() > 1 {",
+  "to": "if candidates.len() > 2 {"
+ },
+ {
+  "id": "E4-18",
+  "by": "author",
+  "what": "no set of excluded vouchers ever matches",
+  "file": "src/party_monthly.rs",
+  "from": "if abs(s)? <= TIE_TOLERANCE_PAISE {",
+  "to": "if abs(s)? < 0 {"
+ },
+ {
+  "id": "E4-19",
+  "by": "author",
+  "what": "the first of several matching sets is named",
+  "file": "src/party_monthly.rs",
+  "from": "if matches.len() == 1 {",
+  "to": "if !matches.is_empty() {"
+ },
+ {
+  "id": "E4-20",
+  "by": "author",
+  "what": "a repeated figure id is not refused",
+  "file": "src/party_monthly.rs",
+  "from": "if r.figures.iter().any(|f| f.id == id) {",
+  "to": "if false {"
+ },
+ {
+  "id": "E4-21",
+  "by": "author",
+  "what": "PWM-1 ignores the Trial Balance movement",
+  "file": "src/party_monthly.rs",
+  "from": "if int(published_mv) != movement {",
+  "to": "if false {"
+ },
+ {
+  "id": "E4-22",
+  "by": "author",
+  "what": "PWM-1 ignores rows that do not sum to the total",
+  "file": "src/party_monthly.rs",
+  "from": "if others != cell(&rows[&total], *col) {",
+  "to": "if false {"
+ },
+ {
+  "id": "E4-23",
+  "by": "author",
+  "what": "PWM-2 ignores months that do not sum to the year",
+  "file": "src/party_monthly.rs",
+  "from": "if months != cell(row, \"year\") {",
+  "to": "if false {"
+ },
+ {
+  "id": "E4-24",
+  "by": "author",
+  "what": "PWM-2 ignores a wrong Others label",
+  "file": "src/party_monthly.rs",
+  "from": "if label != want {",
+  "to": "if false {"
+ },
+ {
+  "id": "E4-25",
+  "by": "author",
+  "what": "PWM-2 reads no named party's row",
+  "file": "src/party_monthly.rs",
+  "from": "if e.kind == \"ledger\" {",
+  "to": "if e.kind == \"ledger_\" {"
  }
 ]
