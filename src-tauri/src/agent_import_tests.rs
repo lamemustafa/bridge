@@ -2263,6 +2263,93 @@ fn persisted_dispatch_response(created: u64, altered: u64) -> ledger::DispatchRe
     }
 }
 
+#[tokio::test]
+async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_again() {
+    // bridge#627: a whole-batch response outgrew the agent byte cap.
+    let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server_with = |max_bytes| {
+        Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+            writes_enabled: false,
+        })
+    };
+    let server = server_with(200_000);
+    let built = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
+        .await
+        .expect("build");
+    let batch_id = built.payload["result"]["batch_id"]
+        .as_str()
+        .expect("batch id")
+        .to_string();
+    let args = json!({"company_guid": CAPTURED_GUID, "batch_id": batch_id});
+    let first = server.call_tool_response("verify_import", args.clone()).await.value;
+    let page = &first["structuredContent"]["result"];
+    assert_ne!(first["isError"], true, "{first}");
+    let proof_path = server.imports_dir().unwrap().join(format!("{batch_id}.proof.json"));
+    let persisted = fs::read(&proof_path).unwrap();
+    assert_eq!(page["proof"]["sha256"], crate::agent::sha256_hex(&persisted));
+    assert!(page.get("vouchers").is_none(), "the rows are split, never both");
+    let proof: Value = serde_json::from_slice(&persisted).unwrap();
+    let rows = proof["vouchers"].as_array().unwrap();
+    let verified = rows.iter().filter(|row| row["status"] == "posted_verified").count();
+    assert_eq!(page["verified_total"], verified);
+    assert_eq!(page["items"].as_array().unwrap().len(), verified);
+    assert_eq!(
+        page["unverified_vouchers"].as_array().unwrap().len(),
+        rows.len() - verified
+    );
+    assert_eq!(page["verification_status"], proof["verification_status"]);
+    let requests = simulator.received();
+
+    // A later page comes from the proof alone: same status, no Tally request.
+    let mut next = args.clone();
+    next["proof_sha256"] = page["proof"]["sha256"].clone();
+    next["offset"] = json!(verified);
+    let later = server.call_tool_response("verify_import", next.clone()).await.value;
+    let later_page = &later["structuredContent"]["result"];
+    assert_ne!(later["isError"], true, "{later}");
+    assert_eq!(later_page["items"], json!([]));
+    assert_eq!(later_page["counts"], page["counts"]);
+    assert_eq!(later_page["unverified_vouchers"], page["unverified_vouchers"]);
+    assert_eq!(later_page["verification_status"], page["verification_status"]);
+    assert_eq!(later_page["proof"], page["proof"]);
+    assert_eq!(simulator.received(), requests, "no Tally request for a later page");
+
+    // Never cut to fit: the parts that must stay whole refuse, typed.
+    // Room for the refusal itself, not for the proof's never-cut part.
+    let small = server_with(2_048);
+    let refused = small.call_tool_response("verify_import", next.clone()).await.value;
+    assert_eq!(
+        refused["structuredContent"]["result"]["error"]["code"],
+        "verification_too_large_to_report"
+    );
+
+    // A page belongs to one verification.
+    let mut offset_only = args.clone();
+    offset_only["offset"] = json!(1);
+    let refused = server.call_tool_response("verify_import", offset_only).await.value;
+    assert_eq!(
+        refused["structuredContent"]["result"]["error"]["code"],
+        "verification_page_requires_proof"
+    );
+    fs::write(&proof_path, [persisted.as_slice(), b" "].concat()).unwrap();
+    let refused = server.call_tool_response("verify_import", next).await.value;
+    assert_eq!(
+        refused["structuredContent"]["result"]["error"]["code"],
+        "verification_proof_changed"
+    );
+}
+
 async fn verify_saved_batch_after_dispatch(
     dispatched: bool,
     dispatch_response: Option<ledger::DispatchResponse>,

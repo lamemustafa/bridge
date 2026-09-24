@@ -376,8 +376,8 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string","minLength":43,"maxLength":43}}}),
                     ),
                     "verify_import" => (
-                        "Read back a manually imported local batch and write Proof-of-Post files. This never dispatches import XML to Tally.",
-                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string"}}}),
+                        "Read back a manually imported local batch and write Proof-of-Post files. This never dispatches import XML to Tally. The result gives `verification_status`, `counts`, every voucher that is not posted_verified (`unverified_vouchers`), `duplicates`, `unrelated_duplicates_in_window` and `ambiguous_within_batch` in full, never cut to fit. Only the posted_verified vouchers are paged, as `items` from `offset` out of `verified_total`; when the response cap shortens them it sets `truncated` and `next_offset`. To read further pages, call again with `proof_sha256` set to the returned `proof.sha256` and `offset` set to `next_offset`: those pages come from the persisted proof and never read Tally again. The call is refused with `verification_proof_changed` if a newer verification replaced that proof, and with `verification_too_large_to_report` if the parts never cut do not fit the response cap. The full proof is always written to disk.",
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string"},"offset":{"type":"integer","minimum":0,"default":0},"proof_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}),
                     ),
                     "tally_status" => (
                         "Return loopback endpoint status and observed loaded-company identity tuples.",
