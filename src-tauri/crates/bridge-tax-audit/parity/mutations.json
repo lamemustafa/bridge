@@ -4126,5 +4126,261 @@
   "file": "src/binding.rs",
   "from": "&[\"roles\", \"counterparty_type_by_ledger\"],",
   "to": "&[\"roles\", \"counterparty_types\"],"
+ },
+ {
+  "id": "E3A-01",
+  "by": "author",
+  "what": "a stock journal's IN/OUT tag is ignored",
+  "file": "src/stock.rs",
+  "from": "if let Some(d) = il.direction {",
+  "to": "if let Some(d) = il.direction.filter(|_| false) {"
+ },
+ {
+  "id": "E3A-02",
+  "by": "author",
+  "what": "a zero amount counts as stock out",
+  "file": "src/stock.rs",
+  "from": "None | Some(0) => None,",
+  "to": "None => None,"
+ },
+ {
+  "id": "E3A-03",
+  "by": "author",
+  "what": "a positive amount counts as stock out",
+  "file": "src/stock.rs",
+  "from": "Some(a) if a > 0 => Some(1.0),",
+  "to": "Some(a) if a > 0 => Some(-1.0),"
+ },
+ {
+  "id": "E3A-04",
+  "by": "author",
+  "what": "an item without a master counts as non-goods",
+  "file": "src/stock.rs",
+  "from": "is_none_or(StockItemMaster::is_goods)",
+  "to": "is_some_and(StockItemMaster::is_goods)"
+ },
+ {
+  "id": "E3A-05",
+  "by": "author",
+  "what": "a master-only item is not seeded",
+  "file": "src/stock.rs",
+  "from": ".filter(|(n, _)| !from_summary.contains(*n))",
+  "to": ".filter(|(n, _)| !from_summary.contains(*n) && false)"
+ },
+ {
+  "id": "E3A-06",
+  "by": "author",
+  "what": "an item negative at opening is not seeded as touched",
+  "file": "src/stock.rs",
+  "from": ".filter(|(_, q)| **q < -QTY_TOL)",
+  "to": ".filter(|(_, q)| **q < -1e9)"
+ },
+ {
+  "id": "E3A-07",
+  "by": "author",
+  "what": "stock-in first sorts like stock-out first",
+  "file": "src/stock.rs",
+  "from": "Order::InFirst => moves.sort_by(|a, b| cmp(b.1, a.1)),",
+  "to": "Order::InFirst => moves.sort_by(|a, b| cmp(a.1, b.1)),"
+ },
+ {
+  "id": "E3A-08",
+  "by": "author",
+  "what": "the running-quantity tolerance is dropped",
+  "file": "src/stock.rs",
+  "from": "            if *q < -QTY_TOL {",
+  "to": "            if *q < 0.0 {"
+ },
+ {
+  "id": "E3A-09",
+  "by": "author",
+  "what": "an integrated company reads No",
+  "file": "src/stock.rs",
+  "from": "Some(true) => \"Yes\",",
+  "to": "Some(true) => \"No\","
+ },
+ {
+  "id": "E3A-10",
+  "by": "author",
+  "what": "a goods line with no quantity field is not refused",
+  "file": "src/stock.rs",
+  "from": ".filter(|(_, il)| !il.qty_field_present)",
+  "to": ".filter(|(_, il)| !il.qty_field_present && false)"
+ },
+ {
+  "id": "E3A-11",
+  "by": "author",
+  "what": "only outgoing value-only lines are counted",
+  "file": "src/stock.rs",
+  "from": ".filter(|(_, il)| il.qty.is_none())",
+  "to": ".filter(|(_, il)| il.qty.is_none() && il.amount_paise.is_some_and(|a| a < 0))"
+ },
+ {
+  "id": "E3A-12",
+  "by": "author",
+  "what": "value-only line values keep their sign",
+  "file": "src/stock.rs",
+  "from": ".checked_abs()",
+  "to": ".checked_neg()"
+ },
+ {
+  "id": "E3A-13",
+  "by": "author",
+  "what": "the period credit is added to the books closing",
+  "file": "src/stock.rs",
+  "from": "let mv = sub(add(t.opening_paise, t.debit_paise)?, t.credit_paise)?;",
+  "to": "let mv = add(add(t.opening_paise, t.debit_paise)?, t.credit_paise)?;"
+ },
+ {
+  "id": "E3A-14",
+  "by": "author",
+  "what": "the typed-in finding is raised with no Stock-in-Hand ledger",
+  "file": "src/stock.rs",
+  "from": "if typed_in == 0 && !stock_ledgers.is_empty() {",
+  "to": "if typed_in == 0 {"
+ },
+ {
+  "id": "E3A-15",
+  "by": "author",
+  "what": "the no-TB-row figure is written when every ledger has a row",
+  "file": "src/stock.rs",
+  "from": "if !without_tb.is_empty() {",
+  "to": "if without_tb.is_empty() {"
+ },
+ {
+  "id": "E3A-16",
+  "by": "author",
+  "what": "the two-figures finding needs both gaps",
+  "file": "src/stock.rs",
+  "from": "if gap_open != 0 || gap_close != 0 {",
+  "to": "if gap_open != 0 && gap_close != 0 {"
+ },
+ {
+  "id": "E3A-17",
+  "by": "author",
+  "what": "negative at close ignores the tolerance",
+  "file": "src/stock.rs",
+  "from": ".filter(|(n, row)| is_goods(items, n) && row.qty.unwrap_or(0.0) < -QTY_TOL)",
+  "to": ".filter(|(n, row)| is_goods(items, n) && row.qty.unwrap_or(0.0) < 0.0)"
+ },
+ {
+  "id": "E3A-18",
+  "by": "author",
+  "what": "non-goods items with a positive value are counted",
+  "file": "src/stock.rs",
+  "from": "&& row.value_paise.unwrap_or(0) < 0",
+  "to": "&& row.value_paise.unwrap_or(0) > 0"
+ },
+ {
+  "id": "E3A-19",
+  "by": "author",
+  "what": "the differs count takes the matching items",
+  "file": "src/stock.rs",
+  "from": "(summary_qty - m.opening_qty.unwrap_or(0.0)).abs() > QTY_TOL",
+  "to": "(summary_qty - m.opening_qty.unwrap_or(0.0)).abs() < QTY_TOL"
+ },
+ {
+  "id": "E3A-20",
+  "by": "author",
+  "what": "the negative-at-any-point evidence is the intersection",
+  "file": "src/stock.rs",
+  "from": "in_touched.union(&out_touched)",
+  "to": "in_touched.intersection(&out_touched)"
+ },
+ {
+  "id": "E3A-21",
+  "by": "author",
+  "what": "became-negative keeps items negative at opening",
+  "file": "src/stock.rs",
+  "from": "let became_out: BTreeSet<&String> = out_touched.difference(&at_opening).collect();",
+  "to": "let became_out: BTreeSet<&String> = out_touched.iter().collect();"
+ },
+ {
+  "id": "E3A-22",
+  "by": "author",
+  "what": "the went-negative finding is raised when nothing went negative",
+  "file": "src/stock.rs",
+  "from": "if max_a > 0 {",
+  "to": "if max_a >= 0 {"
+ },
+ {
+  "id": "E3A-23",
+  "by": "author",
+  "what": "STK-1 seeds from the master over the summary",
+  "file": "src/stock.rs",
+  "from": "running.insert(n.clone(), row.qty.unwrap_or(0.0));",
+  "to": "running.entry(n.clone()).or_insert(row.qty.unwrap_or(0.0));"
+ },
+ {
+  "id": "E3A-24",
+  "by": "author",
+  "what": "STK-1 has no tolerance",
+  "file": "src/stock.rs",
+  "from": "if (lhs - rhs).abs() > QTY_TOL {",
+  "to": "if (lhs - rhs).abs() > 0.0 {"
+ },
+ {
+  "id": "E3A-25",
+  "by": "author",
+  "what": "a Not Applicable unit reads as goods",
+  "file": "src/stock_read.rs",
+  "from": "xml::reserved_value(&self.base_unit) != Some(NOT_APPLICABLE_BASEUNITS)",
+  "to": "xml::reserved_value(&self.base_unit) == Some(NOT_APPLICABLE_BASEUNITS)"
+ },
+ {
+  "id": "E3A-26",
+  "by": "author",
+  "what": "a nameless stock item is read",
+  "file": "src/stock_read.rs",
+  "from": ".filter_map(|s| s.attr(\"NAME\").filter(|n| !n.is_empty()).map(|n| (s, n)))",
+  "to": ".filter_map(|s| s.attr(\"NAME\").map(|n| (s, n)))"
+ },
+ {
+  "id": "E3A-27",
+  "by": "author",
+  "what": "[stock].items with a read is not refused",
+  "file": "src/stock_read.rs",
+  "from": "if st.contains_key(\"items\") {",
+  "to": "if st.contains_key(\"items_file\") {"
+ },
+ {
+  "id": "E3A-28",
+  "by": "author",
+  "what": "a from_masters opening takes the closing fields",
+  "file": "src/stock_read.rs",
+  "from": "Side::Opening => (it.opening_qty, it.opening_value_paise),",
+  "to": "Side::Opening => (it.closing_qty, it.closing_value_paise),"
+ },
+ {
+  "id": "E3A-29",
+  "by": "author",
+  "what": "a stock_summary part of any date is taken",
+  "file": "src/stock_read.rs",
+  "from": ".filter(|p| p.as_of.as_ref() == Some(&as_of))",
+  "to": ".filter(|p| p.as_of.is_some())"
+ },
+ {
+  "id": "E3A-30",
+  "by": "author",
+  "what": "the positive summary total takes every value",
+  "file": "src/stock_read.rs",
+  "from": "self.sum(|v| v > 0)",
+  "to": "self.sum(|v| v != 0)"
+ },
+ {
+  "id": "E3A-31",
+  "by": "author",
+  "what": "ISINTEGRATED 'Yes' reads as not integrated",
+  "file": "src/book.rs",
+  "from": ".map(|v| crate::support::py_lower(v) == \"yes\");",
+  "to": ".map(|v| crate::support::py_lower(v) != \"yes\");"
+ },
+ {
+  "id": "E3A-32",
+  "by": "author",
+  "what": "the stock_items part is not kept",
+  "file": "src/book.rs",
+  "from": "items: read.one(\"stock_items\").cloned(),",
+  "to": "items: None,"
  }
 ]
