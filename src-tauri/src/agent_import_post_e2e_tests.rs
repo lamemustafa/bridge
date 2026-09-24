@@ -406,6 +406,61 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     );
 }
 
+/// #632: an amendment is never posted natively, and this refusal is what
+/// keeps the amendment compare-and-swap a build-time check. That check admits
+/// a voucher whose ALTERID equals the verified baseline of *any* build in its
+/// lineage, which is sound only against the read it has just made. If this
+/// test ever has to change because amendments are posted, the post-time check
+/// must bind the exact (GUID, MASTERID, ALTERID) the approval showed, never
+/// reuse that match (see #632 for the design). Refused through the tool, under
+/// an approving script: no Tally request, no approval asked, no attempt.
+#[tokio::test]
+async fn post_import_refuses_an_amendment_before_any_read_or_approval() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (original, _) = saved_batch(&server);
+    let mut amendment = original.clone();
+    amendment.batch_id = "bridge-00000000-0000-4000-8000-000000000632".into();
+    amendment.amends_batch_id = Some(original.batch_id.clone());
+    amendment.vouchers[0].entries[0].amount = "13.50".into();
+    amendment.vouchers[0].entries[1].amount = "13.50".into();
+    let rendered = render_import_xml(
+        "WR2 Unicode Lab",
+        &amendment.vouchers,
+        amendment.identity_batch_id(),
+    );
+    amendment.sha256 = sha256_hex(rendered.as_bytes());
+    server.append_import_ledger(&amendment).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", amendment.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            scripted.clone(),
+            server.call_tool(
+                "post_import",
+                json!({"company_guid":GUID,"batch_id":amendment.batch_id}),
+            ),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_post_amendment_requires_file_import",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(observed.is_empty(), "no Tally request: {response}");
+    assert!(scripted.previews().is_empty(), "no approval asked");
+}
+
 /// Declined, the post sends nothing past the pre-approval reads and journals
 /// no intent; the approval was asked once.
 #[tokio::test]
