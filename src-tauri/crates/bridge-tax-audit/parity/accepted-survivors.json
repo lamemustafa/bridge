@@ -1,0 +1,7 @@
+{
+  "X11": {"documented": "#571 and #587, PR bodies", "mutation": "9fa671eb3321bded", "reason": "accepted, not equivalent: unreachable on realistic books, untested by choice: killing it needs a running cash total past i64::MAX paise, which no realistic book reaches; a unit test with near-i64 inputs could kill it"},
+  "X12": {"documented": "#571 and #587, PR bodies", "mutation": "9aa864c523fc8e08", "reason": "accepted, not equivalent: unreachable on realistic books, untested by choice: the overflow message is reached only on an i64 overflow, which no test drives, so no assertion reads it; a unit test with near-i64 inputs could kill it"},
+  "A04": {"documented": "#593, PR body", "mutation": "33851ba40d1303c8", "reason": "equivalent on fuzz evidence, not proved: swapping the same-day order of bills and payments leaves the lots, and the opening lot's fate, unchanged (0 differences in 200,000 random cases through the reference's own functions)"},
+  "A19": {"documented": "#593, PR body", "mutation": "a7d05b72b786138d", "reason": "equivalent on fuzz evidence, not proved: it changes a branch the reference cannot reach either: a lot marked settled always has nothing left, so the guarded branch never runs with a positive remainder"},
+  "S08": {"documented": "#593, PR body", "mutation": "ef5c6b6a36a12bf3", "reason": "equivalent on fuzz evidence, not proved: A04's twin in the 26(i)(A) walk; the same same-day order swap, the same fuzz evidence"}
+}
