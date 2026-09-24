@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "545572faa187a63a6256a5fcc93dc76f2a2f44085d3041cb3937fca1705a06cf"
+      "sha256": "8c6246406c0daa45d605eca82b73991f47d82f1aadc707738208a885b50f2eb0"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -1114,5 +1114,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "c4fc3d6f3b54c317b92bd227bca131f444ac29c8e8948ae78d433ea29e8efa56"
+  "manifest_sha256": "46a10becca08fa8c54ed9421fed73b3d3c7d9f7687e398c598ed111e5ba749f8"
 }
