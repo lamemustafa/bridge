@@ -315,7 +315,7 @@ async fn operator_outstandings(
             },
             &identity_for_guid(&companies(), guid),
             TallyDate::parse("20260801").unwrap(),
-            OutstandingsCurrencyAssertion::Inr,
+            Some(OutstandingsCurrencyAssertion::Inr),
             OutstandingsAgeingAnchor::DueDate,
         )
         .await;
@@ -339,7 +339,7 @@ fn requests_sent(simulator: SequenceSimulator) -> usize {
 
 const AGEING_GUID: &str = "eebb9a9f-1679-4468-9e8f-814c729674cb";
 
-/// Labelled edits of the edited FOREX Company collection: its FOREX row's
+/// Labelled edits of the captured Company collection: its FOREX row's
 /// `CURRENCYNAME` replaced by `value`.
 fn forex_company_naming(value: &str) -> String {
     let company = forex_company_currency();
@@ -468,7 +468,7 @@ async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
 /// bridge#551, through the desktop command's own body on FOREX's captures:
 /// a book with an INR base and a `$` master reads through, with its dollar
 /// ledgers left out, as the base-currency-ledgers-only partial. No working
-/// paper or statement source is issued for it, and the working paper says why.
+/// paper, statement source or unavailable-reason is issued for it.
 #[tokio::test]
 async fn the_desktop_command_reads_forex_as_base_currency_ledgers_only() {
     let mut plans = vec![xml(companies())];
@@ -1312,4 +1312,65 @@ async fn several_masters_with_every_ledger_in_the_base_read_as_complete() {
     assert!(response.working_paper_export_id.is_some());
     assert!(response.party_statement_source_id.is_some());
     assert_eq!(requests_sent(simulator), plan_count, "desktop");
+}
+
+/// bridge#551, the stale-assertion case: the screen reads a book with several
+/// masters without asserting INR, so its request carries no assertion. If
+/// the book later reads with one master Tally does not name INR (a user
+/// deleted the unused INR master), nothing admits it: the one-master arm
+/// binds only an assertion the screen actually sent. Refused before any bill.
+#[tokio::test]
+async fn a_desktop_read_without_an_assertion_admits_one_master_only_by_its_mailing_name() {
+    let dollar = currency_source().replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+    );
+    assert_ne!(dollar, currency_source());
+    for (currency, admitted) in [(dollar, false), (currency_source(), true)] {
+        let mut plans = vec![xml(companies())];
+        plans.extend(currency_then_native_plans(currency));
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let rows = parse_companies_from_collection(&companies()).unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.guid.as_deref() == Some(AGEING_GUID))
+            .unwrap();
+        let request: crate::commands::OutstandingsRequest =
+            serde_json::from_value(serde_json::json!({
+                "config": {"host": simulator.address().ip().to_string(), "port": simulator.address().port()},
+                "selected_company": {
+                    "display_name": row.name,
+                    "company_guid": row.guid,
+                    "company_number": row.company_number,
+                    "books_from_yyyymmdd": row.books_from,
+                },
+                "as_of_yyyymmdd": "20260801",
+            }))
+            .unwrap();
+        let response = crate::commands::read_screen_outstandings(
+            request,
+            &TallyRuntime::default(),
+            &crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default(),
+            &crate::reports::outstandings_working_paper_store::PartyStatementSourceStore::default(),
+        )
+        .await
+        .unwrap();
+        simulator.cancel();
+        if admitted {
+            assert!(
+                matches!(response.result, OutstandingsLoadResult::Complete { .. }),
+                "INR by its mailing name: {:?}",
+                response.result
+            );
+        } else {
+            assert!(
+                matches!(&response.result, OutstandingsLoadResult::Partial { reason, .. }
+                    if *reason == "company_base_currency_not_inr".into()),
+                "{:?}",
+                response.result
+            );
+            // The company list, then the currency read's 14 requests, no more.
+            assert_eq!(requests_sent(simulator), 15);
+        }
+    }
 }

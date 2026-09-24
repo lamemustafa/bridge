@@ -1009,7 +1009,8 @@ pub(crate) struct ClassifiedCurrencyWitness(PartyLedgerMasterCurrencyAssertion, 
 pub struct ClassifiedBase(());
 
 /// The currency witness an outstandings read runs under: a single master's
-/// (every path that admits through `admit_inr`), or a classified base's.
+/// (MCP's `admit_inr` paths' shape, and the desktop's operator assertion via
+/// `bind_single_master_assertion`), or a classified base's.
 #[derive(Debug, Clone)]
 pub(crate) enum OutstandingsCurrencyWitness {
     SingleMaster(PartyLedgerMasterCurrencyAssertion),
@@ -1067,8 +1068,9 @@ impl ClassifiedCompanyCurrencyRead {
     /// The desktop operator's assertion for a book with exactly one master
     /// (bridge#604's interim, which bridge#551 601c removes), bound to this
     /// read's extent and to that master as the base. `None` for any other
-    /// count: a book with several masters is admitted only by
-    /// [`Self::admit_inr_classified`].
+    /// count (a book with several masters is admitted only by
+    /// [`Self::admit_inr_classified`]), and when the master's NAME is blank,
+    /// which the currency parser already refuses.
     pub(crate) fn bind_single_master_assertion(
         self,
         assertion: OutstandingsCurrencyAssertion,
@@ -3654,7 +3656,7 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
+        currency_assertion: Option<OutstandingsCurrencyAssertion>,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let currency = self
@@ -3662,9 +3664,18 @@ impl TallyRuntime {
             .await?;
         let witness: OutstandingsCurrencyWitness = match currency.currency_count() {
             0 => return Ok(partial_result("company_currency_probe_failed")),
-            1 => match currency.bind_single_master_assertion(currency_assertion) {
-                Some(witness) => witness.into(),
-                None => return Ok(partial_result("company_base_currency_undetermined")),
+            // An assertion binds only when the screen sent one (Tally named
+            // INR, or the operator confirmed it); without one the master's
+            // mailing name decides, as for several masters.
+            1 => match currency_assertion {
+                Some(assertion) => match currency.bind_single_master_assertion(assertion) {
+                    Some(witness) => witness.into(),
+                    None => return Ok(partial_result("company_base_currency_undetermined")),
+                },
+                None => match currency.admit_inr_classified() {
+                    Ok(witness) => witness.into(),
+                    Err(code) => return Ok(partial_result(code)),
+                },
             },
             _ => match currency.admit_inr_classified() {
                 Ok(witness) => witness.into(),
@@ -4275,7 +4286,7 @@ impl TallyRuntime {
                     config,
                     identity,
                     as_of,
-                    currency_assertion,
+                    Some(currency_assertion),
                     ageing_anchor,
                 )
                 .await;

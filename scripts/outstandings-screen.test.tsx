@@ -112,9 +112,10 @@ test("a plain-string outstandings failure renders unchanged, with no invented re
 });
 
 // bridge#604: only a book with one Currency master may be confirmed as INR by
-// hand. With several, or when the currency read fails, the screen offers no
+// hand. When the currency read fails or names no master, the screen offers no
 // confirmation and never asks for outstandings; with one master Tally does not
-// name INR, the confirmation says what Tally reported.
+// name INR, the confirmation says what Tally reported. A book with several is
+// read without an assertion (bridge#551, below).
 async function renderWithCurrency(detect: () => Promise<unknown>) {
   mocks.invoke.mockImplementation((command: string) => {
     if (command === "detect_tally_base_currency") return detect();
@@ -177,6 +178,8 @@ test("a book with several currencies is read and the backend's decision is shown
     await flush();
     const fetches = mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_outstandings");
     expect(fetches, name).toHaveLength(1);
+    // No INR assertion is sent for a book the backend admits itself.
+    expect((fetches[0][1] as { request: Record<string, unknown> }).request, name).not.toHaveProperty("currency_assertion");
     expect(host.textContent, name).not.toContain("This company uses INR");
     for (const text of expected) expect(host.textContent, name).toContain(text);
     for (const text of absent) expect(host.textContent, name).not.toContain(text);

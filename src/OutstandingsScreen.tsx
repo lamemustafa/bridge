@@ -236,6 +236,11 @@ export function OutstandingsScreen({
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [inrAssertedCompanyIdentity, setInrAssertedCompanyIdentity] = React.useState<string | null>(null);
+  // bridge#551: a book with several currencies is read without an INR
+  // assertion; the backend admits it from the company's own base. Kept apart
+  // from the assertion so a later read of the same company never carries an
+  // INR assertion nobody made.
+  const [classifiedCompanyIdentity, setClassifiedCompanyIdentity] = React.useState<string | null>(null);
   const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [view, setView] = React.useState<"ageing" | "unallocated">("ageing");
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
@@ -296,7 +301,8 @@ export function OutstandingsScreen({
   }, [ageingAnchor]);
 
   const currentCompanyIdentity = company ? companyIdentityFor(company) : null;
-  const currencyReadPermitted = canStartOutstandingsRead(currentCompanyIdentity, inrAssertedCompanyIdentity);
+  const currencyReadPermitted = canStartOutstandingsRead(currentCompanyIdentity, inrAssertedCompanyIdentity)
+    || canStartOutstandingsRead(currentCompanyIdentity, classifiedCompanyIdentity);
   const readPermitted = !liveReadSuppressed && currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
     ? outstandingsPartialState(
@@ -350,7 +356,13 @@ export function OutstandingsScreen({
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company || !requestedAsOf) return;
-    const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf, ageingAnchor);
+    const argument = singleCompanyOutstandingsInvokeArgument(
+      config,
+      company,
+      asOf,
+      ageingAnchor,
+      inrAssertedCompanyIdentity === companyIdentityFor(company),
+    );
     if (!argument) return;
     const requestedAsOfYyyymmdd = argument.request.as_of_yyyymmdd;
     const version = requestVersion.current + 1;
@@ -376,7 +388,7 @@ export function OutstandingsScreen({
       if (requestVersion.current === version) setLoading(false);
       onTallyReadActivityChange(-1);
     }
-  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, onTallyReadActivityChange, readPermitted, requestedAsOf]);
+  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, onTallyReadActivityChange, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
     const key = company ? `${companyIdentityFor(company)}:${ageingAnchor}` : null;
@@ -397,7 +409,12 @@ export function OutstandingsScreen({
   // INR, leaving foreign-currency ledgers out (bridge#551). A book with none
   // read is not read at all.
   React.useEffect(() => {
-    if (liveReadSuppressed || !company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
+    if (
+      liveReadSuppressed
+      || !company
+      || inrAssertedCompanyIdentity === companyIdentityFor(company)
+      || classifiedCompanyIdentity === companyIdentityFor(company)
+    ) return;
     let cancelled = false;
     setCurrencyCheck({ state: "checking" });
     onTallyReadActivityChange(1);
@@ -415,9 +432,8 @@ export function OutstandingsScreen({
     )
       .then((currency) => {
         if (cancelled) return;
-        if (currency.is_inr || currency.currency_count > 1) {
-          setInrAssertedCompanyIdentity(companyIdentityFor(company));
-        }
+        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityFor(company));
+        else if (currency.currency_count > 1) setClassifiedCompanyIdentity(companyIdentityFor(company));
         setCurrencyCheck(currencyCheckOf(currency));
       })
       .catch(() => {
@@ -429,7 +445,7 @@ export function OutstandingsScreen({
     return () => {
       cancelled = true;
     };
-  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, liveReadSuppressed, onTallyReadActivityChange]);
+  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, classifiedCompanyIdentity, liveReadSuppressed, onTallyReadActivityChange]);
 
   // Grouped from the COMPLETE source Bridge received -- the display cap is
   // applied per party inside groupOpenBillsByParty, never to the flattened
@@ -477,7 +493,12 @@ export function OutstandingsScreen({
   if (!currencyReadPermitted) {
     // "inr" lands here only for the render before the confirmed identity
     // catches up with the selected company.
-    if (currencyCheck.state === "checking" || currencyCheck.state === "idle" || currencyCheck.state === "inr") {
+    if (
+      currencyCheck.state === "checking"
+      || currencyCheck.state === "idle"
+      || currencyCheck.state === "inr"
+      || currencyCheck.state === "classified"
+    ) {
       return (
         <section className="panel wide outstandings-empty">
           <h2>Opening {company.name}</h2>
@@ -1332,13 +1353,14 @@ function exposureComposition(report: Report, unallocatedTotal: string | undefine
 
 /// What Tally's own currency read settled for the selected company.
 type CurrencyCheck =
-  | { state: "idle" | "checking" | "inr" | "unread" }
+  | { state: "idle" | "checking" | "inr" | "classified" | "unread" }
   | { state: "single"; name: string; mailingName: string };
 
 function currencyCheckOf(currency: { is_inr: boolean; symbol: string; mailing_name: string; currency_count: number }): CurrencyCheck {
-  // Several masters: the backend decides from the company's own base
-  // (bridge#551), so the screen reads as it does for an INR book.
-  if (currency.is_inr || currency.currency_count > 1) return { state: "inr" };
+  if (currency.is_inr) return { state: "inr" };
+  // Several masters: the backend decides from the company's own base, with
+  // no INR assertion from the screen (bridge#551).
+  if (currency.currency_count > 1) return { state: "classified" };
   if (currency.currency_count === 1) {
     return { state: "single", name: currency.symbol, mailingName: currency.mailing_name };
   }

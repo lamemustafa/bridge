@@ -226,7 +226,7 @@ fn outstandings_accepts_only_an_explicit_inr_currency_assertion() {
     .expect("INR is the one supported explicit assertion");
     assert_eq!(
         accepted.currency_assertion,
-        OutstandingsCurrencyAssertion::Inr
+        Some(OutstandingsCurrencyAssertion::Inr)
     );
 
     let rejected = serde_json::from_value::<OutstandingsRequest>(serde_json::json!({

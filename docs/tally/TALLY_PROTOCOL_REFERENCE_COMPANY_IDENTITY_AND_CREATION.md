@@ -423,8 +423,8 @@ On the outstandings reads, a book with several masters and an INR base whose led
 base (SHAPE LAB: 44 ledgers in `I₹` beside an unused `UUSD` master) reads as a complete report. One
 with foreign-currency ledgers is read with them left out of every figure and listed (§8.2d): MCP
 reports the figures of the base-currency ledgers, labelled as such, and the desktop and the sweep
-show no figures, only which ledgers were left out. A book whose base is not identified, or not INR,
-is refused before any bill. Every other path still refuses a book with several masters, until it
+show no figures, only which ledgers were left out. Among several masters, a book whose base is not
+identified, or not INR, is refused before any bill. Every other path still refuses a book with several masters, until it
 compares each ledger's own currency with the base.
 
 **Not established:**

@@ -1685,7 +1685,12 @@ pub struct CompanyRequest {
 pub struct OutstandingsRequest {
     pub config: TallyConfig,
     pub selected_company: SelectedCompanyIdentity,
-    pub currency_assertion: OutstandingsCurrencyAssertion,
+    /// Sent only when Tally named the company's one Currency master INR or
+    /// the operator confirmed it (bridge#604). Absent for a book the screen
+    /// leaves to the backend (several masters, bridge#551): with one master
+    /// the backend then admits only by the master's mailing name.
+    #[serde(default)]
+    pub currency_assertion: Option<OutstandingsCurrencyAssertion>,
     /// An explicit operator-selected date when present. Omission preserves
     /// today's date for existing callers and licensed Tally users.
     #[serde(default)]
