@@ -25,7 +25,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::TallyDate;
-use sha1::{Digest, Sha1};
 
 use crate::book::Book;
 use crate::depreciation::civil_day_number;
@@ -34,7 +33,7 @@ use crate::error::{AuditError, Result};
 use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value};
 use crate::read::{iso, Window};
 use crate::rules::Rules;
-use crate::support::{count, overflow, py_repr_str, py_upper, voucher_label};
+use crate::support::{count, hash8, overflow, py_repr_str, py_upper, voucher_label};
 
 pub const TEST_ID: &str = "bank_reconciliation";
 pub const VERSION: &str = "1";
@@ -61,10 +60,6 @@ const REASONS: [&str; 6] = [
     REASON_NOT_FOUND,
     REASON_UNCLASSIFIED,
 ];
-
-fn hash8(text: &str) -> String {
-    crate::canonical::hex(&Sha1::digest(text.as_bytes()))[..8].to_string()
-}
 
 /// The first `n` characters (code points), as Python's `text[:n]`.
 fn prefix_chars(text: &str, n: usize) -> String {
