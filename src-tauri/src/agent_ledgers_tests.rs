@@ -65,6 +65,7 @@ fn party_ledger_master_request_fetches_tax_type_and_gst_duty_head() {
 
     let request = render_party_ledger_master_request("BRIDGE GST RECON LAB", &period);
     assert!(request.contains("TAXTYPE, GSTDUTYHEAD"));
+    assert!(request.contains(", LEDGSTREGDETAILS.LIST</FETCH>"));
 }
 
 #[test]
@@ -281,6 +282,188 @@ fn live_capture_backs_the_recognised_duty_head_vocabulary() {
             GstDutyHeadObservation::NotTaxLedger { .. }
         )),
         "the same capture must also carry ordinary non-tax ledgers"
+    );
+}
+
+#[test]
+fn a_gstin_held_only_in_the_dated_registration_history_is_reported_in_force() {
+    // bridge#624, over a live TallyPrime 7.1 Silver capture of the request this
+    // tool sends: party A's GSTIN is only in its second dated entry, and the
+    // flat PARTYGSTIN is empty. Before the fix A read as `party_gstin: null`.
+    let period = NativeLedgerExportPeriod::new(
+        DateBoundaryProfile::ModeAgnostic,
+        TallyDate::parse("20250401").unwrap(),
+        TallyDate::parse("20250401").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        sha256_hex(render_party_ledger_master_request("BRIDGE READS LAB", &period).as_bytes()),
+        "c2f9f8e9fefab44077b222402254a2be3dfd9a9690d4e577efbae99d531c819c",
+        "the fixture answers exactly the request ledger_masters sends"
+    );
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-masters-gst-registrations.utf16le.xml"
+    );
+    let capture = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let parsed = parse_native_party_ledger_master_records_with_evidence(
+        &capture,
+        "de2e15f2-6d42-4715-b6e7-b7a95a68abe8",
+    )
+    .expect("the live registration-history capture parses");
+    let answer = |name: &str, as_of: &str| {
+        let row = parsed
+            .records
+            .iter()
+            .find(|row| row.record.ledger.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the capture"));
+        let gstin = party_gstin_on(
+            row.record.ledger.party_gstin.returned_text(),
+            &row.record.fields.gst_registrations,
+            as_of,
+        );
+        assert!(!gstin.sources_disagree, "{name}: the capture's sources agree");
+        (gstin.gstin, gstin.status, gstin.registration_type, gstin.flat)
+    };
+    let text = |value: &str| Some(value.to_string());
+    assert_eq!(
+        answer("G1 Party A Later GSTIN", "20250930"),
+        (text("27ZZZZZ0000Z1Z5"), "in_force", text("Regular"), None)
+    );
+    assert_eq!(
+        answer("G1 Party A Later GSTIN", "20250630"),
+        (None, "no_gstin_in_force", text("Unregistered/Consumer"), None),
+        "the first entry is dated but carries no GSTIN"
+    );
+    assert_eq!(
+        answer("G1 Party B Flat GSTIN", "20250930"),
+        (text("29ZZZZZ0000Z1Z5"), "flat_field", None, text("29ZZZZZ0000Z1Z5")),
+        "Tally returns an empty placeholder list beside the flat field"
+    );
+    assert_eq!(
+        answer("G1 Party C Unregistered", "20250930"),
+        (None, "not_reported", None, None)
+    );
+    assert_eq!(
+        answer("G1 Party D Two GSTINs", "20250930"),
+        (text("27ZZZZZ0000Z1Z5"), "in_force", text("Regular"), None)
+    );
+    assert_eq!(
+        answer("G1 Party D Two GSTINs", "20251001"),
+        (text("29ZZZZZ0000Z1Z5"), "in_force", text("Regular"), None),
+        "the later registration applies from its own date"
+    );
+}
+
+#[test]
+fn both_gstin_sources_are_reported_and_a_difference_is_flagged_not_resolved() {
+    use bridge_tally_protocol::gst_registration::GstRegistrationEntry;
+    let entry = |date: &str, gstin: Option<&str>, kind: &str| GstRegistrationEntry {
+        applicable_from: date.to_string(),
+        gstin: gstin.map(str::to_string),
+        registration_type: Some(kind.to_string()),
+    };
+    let history = |entries| GstRegistrationHistory::Entries { entries };
+    const FLAT: &str = "27ZZZZZ0000Z1Z5";
+    const DATED: &str = "29ZZZZZ0000Z1Z5";
+    let text = |value: &str| Some(value.to_string());
+
+    // The flat field names a GSTIN; the history says none on that date.
+    let unregistered = history(vec![entry("20170701", None, "Unregistered/Consumer")]);
+    let got = party_gstin_on(Some(FLAT), &unregistered, "20260331");
+    assert_eq!((got.gstin, got.status), (None, "no_gstin_in_force"));
+    assert_eq!(got.flat, text(FLAT), "the flat GSTIN is still reported");
+    assert!(got.sources_disagree);
+
+    // The two sources name different GSTINs.
+    let other = history(vec![entry("20170701", Some(DATED), "Regular")]);
+    let got = party_gstin_on(Some(FLAT), &other, "20260331");
+    assert_eq!((got.gstin, got.status), (text(DATED), "in_force"));
+    assert_eq!(got.flat, text(FLAT));
+    assert!(got.sources_disagree);
+
+    // Agreement is not a disagreement, and an absent flat field is not one.
+    assert!(!party_gstin_on(Some(DATED), &other, "20260331").sources_disagree);
+    assert!(!party_gstin_on(None, &other, "20260331").sources_disagree);
+
+    // An explicitly empty flat field (`<PARTYGSTIN/>`, seen live) names no
+    // GSTIN: it is reported as read but neither disagrees nor is used.
+    let got = party_gstin_on(Some(""), &other, "20260331");
+    assert_eq!((got.status, got.flat.as_deref()), ("in_force", Some("")));
+    assert!(!got.sources_disagree);
+    let got = party_gstin_on(Some(""), &unregistered, "20260331");
+    assert!(!got.sources_disagree);
+    let got = party_gstin_on(Some(""), &history(vec![]), "20260331");
+    assert_eq!((got.gstin, got.status), (None, "not_reported"));
+
+    // A history that starts after the date names nothing yet.
+    let future = history(vec![entry("20270401", Some(DATED), "Regular")]);
+    let got = party_gstin_on(None, &future, "20260331");
+    assert_eq!(
+        (got.gstin, got.status, got.registration_type),
+        (None, "no_gstin_in_force", None)
+    );
+
+    // Registered with no GSTIN recorded is not read as unregistered.
+    let regular = history(vec![entry("20170701", None, "Regular")]);
+    let got = party_gstin_on(None, &regular, "20260331");
+    assert_eq!(
+        (got.status, got.registration_type),
+        ("no_gstin_in_force", text("Regular"))
+    );
+
+    // An unreadable history never falls back to the flat field.
+    let unreadable = GstRegistrationHistory::Unreadable {
+        defect: bridge_tally_protocol::gst_registration::GstRegistrationDefect::DateInvalid,
+    };
+    let got = party_gstin_on(Some(FLAT), &unreadable, "20260331");
+    assert_eq!((got.gstin, got.status), (None, "history_unreadable"));
+    assert_eq!(got.flat, text(FLAT), "reported as read, not used");
+    assert!(!got.sources_disagree, "nothing readable to compare");
+}
+
+#[test]
+fn a_repeated_registration_field_fails_its_own_ledger_not_the_read() {
+    let ledger = |name: &str, id: u8, registrations: &str| {
+        format!(
+            "<LEDGER NAME=\"{name}\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-000000{id:02x}</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>{id}</MASTERID><ALTERID>{id}</ALTERID><PARENT>Sundry Creditors</PARENT>{registrations}<OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>"
+        )
+    };
+    let repeated = |gstins: &str| {
+        format!("<LEDGSTREGDETAILS.LIST><APPLICABLEFROM TYPE=\"Date\">20250401</APPLICABLEFROM>{gstins}</LEDGSTREGDETAILS.LIST>")
+    };
+    let response = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}{}{}{}</COLLECTION></DATA></BODY></ENVELOPE>",
+        ledger(
+            "Repeated",
+            1,
+            &repeated("<GSTIN>27ZZZZZ0000Z1Z5</GSTIN><GSTIN>29ZZZZZ0000Z1Z5</GSTIN>")
+        ),
+        ledger("Empty element", 2, "<LEDGSTREGDETAILS.LIST/>"),
+        ledger("Empty then value", 3, &repeated("<GSTIN></GSTIN><GSTIN>29ZZZZZ0000Z1Z5</GSTIN>")),
+        ledger("Self-closing then value", 4, &repeated("<GSTIN/><GSTIN>29ZZZZZ0000Z1Z5</GSTIN>")),
+    );
+    let parsed = parse_native_party_ledger_master_records_with_evidence(&response, COMPANY_GUID)
+        .expect("one ledger's defect does not refuse the book");
+    let histories = parsed
+        .records
+        .iter()
+        .map(|row| serde_json::to_value(&row.record.fields.gst_registrations).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        histories,
+        vec![
+            json!({"observation": "unreadable", "defect": "entry_repeats_a_field"}),
+            json!({"observation": "entries", "entries": []}),
+            json!({"observation": "unreadable", "defect": "entry_repeats_a_field"}),
+            json!({"observation": "unreadable", "defect": "entry_repeats_a_field"}),
+        ],
+        "a field seen twice is a repeat even when the first carried no text"
     );
 }
 
@@ -737,6 +920,16 @@ mod through_the_tool {
         assert!(!rows.is_empty());
         for row in rows {
             assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+            // This capture predates the registration-history FETCH, so every
+            // row falls back to the flat field, and says so (bridge#624).
+            let expected = if row["party_gstin"].is_null() { "not_reported" } else { "flat_field" };
+            assert_eq!(row["party_gstin_status"], expected, "{row}");
+            let flat = row["party_gstin_flat"].as_str().filter(|flat| !flat.is_empty());
+            assert_eq!(flat, row["party_gstin"].as_str(), "{row}");
+            assert_eq!(row["gstin_sources_disagree"], false, "{row}");
+            assert!(row["party_gstin_registration_type"].is_null(), "{row}");
+            assert_eq!(row["party_gstin_as_of"], tally_host_today(), "{row}");
+            assert_eq!(row["compliance"]["gst_registrations"]["observation"], "not_observed", "{row}");
         }
     }
 

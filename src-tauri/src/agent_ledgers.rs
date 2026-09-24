@@ -1,5 +1,6 @@
 //! Ledgers for the local MCP adapter.
 use bridge_tally_core::TallyDate;
+use bridge_tally_protocol::gst_registration::GstRegistrationHistory;
 use bridge_tally_protocol::group_ancestry::{AncestryChain, AncestryGap, GroupIndex};
 
 use super::*;
@@ -56,6 +57,62 @@ fn ancestry_json(chain: &AncestryChain) -> Value {
         "complete": chain.is_complete(),
         "gap": chain.gap.map(ancestry_gap_code),
     })
+}
+
+/// A party's GSTIN on one date, where it came from, and both sources as read
+/// (bridge#624). The dated registration history decides `gstin`; the flat
+/// `PARTYGSTIN` decides it only when the history holds no entries, and never
+/// beside an unreadable history. Which source Tally treats as authoritative
+/// when they differ is unmeasured, so both are reported and a difference is
+/// flagged rather than resolved.
+#[derive(Debug, PartialEq, Eq)]
+struct PartyGstin {
+    gstin: Option<String>,
+    status: &'static str,
+    /// The in-force entry's `GSTREGISTRATIONTYPE`, so "Regular with no GSTIN"
+    /// is not read as unregistered.
+    registration_type: Option<String>,
+    flat: Option<String>,
+    /// The flat field names a GSTIN and a readable history says something
+    /// else on that date: another GSTIN, or none.
+    sources_disagree: bool,
+}
+
+fn party_gstin_on(flat: Option<&str>, history: &GstRegistrationHistory, as_of: &str) -> PartyGstin {
+    // `flat` is the field as returned, so an explicit `<PARTYGSTIN/>` is
+    // `Some("")`: reported as read, but it names no GSTIN.
+    let named = flat.filter(|value| !value.is_empty()).map(str::to_string);
+    let flat = flat.map(str::to_string);
+    let from_flat = |named: Option<String>, flat: Option<String>| PartyGstin {
+        status: if named.is_some() { "flat_field" } else { "not_reported" },
+        gstin: named,
+        registration_type: None,
+        flat,
+        sources_disagree: false,
+    };
+    match history {
+        GstRegistrationHistory::Unreadable { .. } => PartyGstin {
+            gstin: None,
+            status: "history_unreadable",
+            registration_type: None,
+            flat,
+            sources_disagree: false,
+        },
+        GstRegistrationHistory::Entries { entries } if !entries.is_empty() => {
+            let in_force = history.in_force(as_of);
+            let gstin = in_force.and_then(|entry| entry.gstin.clone());
+            PartyGstin {
+                status: if gstin.is_some() { "in_force" } else { "no_gstin_in_force" },
+                registration_type: in_force.and_then(|entry| entry.registration_type.clone()),
+                sources_disagree: named.is_some() && named != gstin,
+                gstin,
+                flat,
+            }
+        }
+        GstRegistrationHistory::Entries { .. } | GstRegistrationHistory::NotObserved => {
+            from_flat(named, flat)
+        }
+    }
 }
 
 /// Whether `group` matches this ledger under the requested scope. `parent` is
@@ -171,17 +228,28 @@ impl Server {
                 // Built once per call, not per ledger: the same group
                 // collection classifies every row.
                 let group_index = GroupIndex::build(groups);
+                let gstin_as_of = tally_host_today();
                 let mut rows = records
                     .into_iter()
                     .map(|record| {
                         let parent = record.ledger.parent.returned_text().map(str::to_string);
                         let chain = group_index.ancestry_chain(parent.as_deref());
+                        let gstin = party_gstin_on(
+                            record.ledger.party_gstin.returned_text(),
+                            &record.fields.gst_registrations,
+                            &gstin_as_of,
+                        );
                         json!({
                             "name": party_name(record.ledger.name),
                             "parent": parent,
                             "opening_balance": record.ledger.opening_balance,
                             "opening_balance_as_of": &opening_as_of,
-                            "party_gstin": record.ledger.party_gstin.returned_text(),
+                            "party_gstin": gstin.gstin,
+                            "party_gstin_status": gstin.status,
+                            "party_gstin_registration_type": gstin.registration_type,
+                            "party_gstin_as_of": &gstin_as_of,
+                            "party_gstin_flat": gstin.flat,
+                            "gstin_sources_disagree": gstin.sources_disagree,
                             "compliance": mark_compliance_party_names(
                                 serde_json::to_value(record.fields).unwrap_or_default(),
                             ),

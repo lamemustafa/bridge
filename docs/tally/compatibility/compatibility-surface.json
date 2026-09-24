@@ -266,6 +266,10 @@
       "sha256": "0f295000643e7408ffeffe5bc0dd1b71a41b3b84fcffefc7d6d888167dddc3d8"
     },
     {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/gst_registration.rs",
+      "sha256": "40bd2e4eaac157afb9121c8f414c96bd77b0c605ec139d550b49b81c6f3b81ab"
+    },
+    {
       "path": "src-tauri/crates/bridge-tally-protocol/src/import_outcome.rs",
       "sha256": "e2b7e1fd98960885d3ea56cd525897ebedf637af554e860bea1f2f7c0743ff4c"
     },
