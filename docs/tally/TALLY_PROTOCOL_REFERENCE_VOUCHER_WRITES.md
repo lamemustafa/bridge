@@ -428,6 +428,10 @@ objects that returns `CREATED=99` gives no way to identify which one failed.
 
 ### 9.7 Operation support matrix — **vouchers cannot be modified**
 
+> **Qualified by §9.14 and §9.5 (2026-09-25):** on licensed TallyPrime 7.1 Silver, a same-`REMOTEID`
+> `ACTION="Create"` alters a voucher in place (`ALTERED=1`, same GUID), and `ACTION="Cancel"` with
+> the full body cancelled in place (observed once). The matrix below records the earlier instance.
+
 **VERIFIED.** Every cell tested directly; "verified" below means the resulting state was read
 back and confirmed, not merely that a counter moved.
 
@@ -468,6 +472,10 @@ stay at zero. That rule has now caught three distinct silent-failure modes.
 
 ### 9.6 `ACTION="Cancel"` by `REMOTEID` creates a new voucher — it does not cancel — **TRAP**
 
+> **Qualified by §9.14 (2026-09-25):** on licensed TallyPrime 7.1 Silver, `ACTION="Cancel"` with
+> the full voucher body cancelled in place (`ALTERED=1`, `CANCELLED=0`; observed once). The result
+> below is from an earlier Education/Edit Log instance with a different request.
+
 **VERIFIED.** A Cancel request naming an existing voucher's `REMOTEID` returned
 `CREATED=1, CANCELLED=0, ERRORS=0, EXCEPTIONS=0` and **created a new voucher** carrying
 `ISCANCELLED=Yes`. The targeted voucher was untouched — same `AlterID`, still
@@ -494,3 +502,37 @@ the official sample shapes verbatim** — the §9.5/§9.6 failures may be a requ
 on our side rather than an Edit Log restriction. This is the cheapest next step on the write
 path and it should be taken before the Phase 4 licensed-Tally gate.
 
+### 9.14 A `REMOTEID` upsert re-states the voucher: cancel, optional, delete and recreate
+
+**Scope of every item below.** TallyPrime 7.1 Silver, licensed, not Education, on a synthetic
+INR-only company. Journal vouchers from one gateway batch, with Automatic numbering (Auto
+Retain, duplicates not prevented). Path: raw gateway requests (G), not Bridge's post path. **One
+run per item, one voucher each (2026-09-25); per P5 an anomaly is repeated before it is believed, so
+each is PARTIAL until it is.** Counters were read from the saved responses and state
+from a Voucher collection readback, not from the counters alone.
+
+- **`ACTION="Cancel"` with the full voucher body cancels in place. PARTIAL — observed once (G).**
+  - The response reported `ALTERED=1` and `CANCELLED=0`, with all other counters zero.
+  - The readback showed the same GUID with `ISCANCELLED=Yes` and its entries gone: one empty entry list, with no ledger and no amount.
+  - On this run the `CANCELLED` counter stayed 0; when, or whether, it is ever non-zero is unmeasured. A success rule keyed on it (§9.2) would have called this cancel a failure. Only the readback showed it took effect, so key a cancel on `ALTERED` and the readback.
+  - This differs from §9.6, which was measured on an earlier Education/Edit Log instance with a hand-built request. Neither the instance nor the request shape is held constant between the two, so which one causes the difference is **UNVERIFIED**.
+- **An upsert (`ACTION="Create"`, same `REMOTEID`) onto a cancelled voucher un-cancels it and restores its entries. PARTIAL — observed once (G).**
+  - The response reported `ALTERED=1`.
+  - The readback showed the same GUID and number, `ISCANCELLED=No`, and both legs carrying the upserted amounts.
+- **`ISOPTIONAL=Yes` by upsert makes the voucher optional and renumbers it. PARTIAL — observed once (G); where the numbers come from is not established.**
+  - The response reported `ALTERED=1`, and the voucher number moved from 5 to 815.
+  - A later upsert that omitted `ISOPTIONAL` left the voucher optional (omitted fields merge, §9.14 last item) and moved its number from 815 to 816.
+  - Where 815 and 816 come from is not established, and the renumbering was seen only under Automatic numbering with Auto Retain. The number cannot be relied on to identify a voucher across an optional change.
+- **`ACTION="Delete"` by `REMOTEID` deletes, and an upsert of the same `REMOTEID` then creates a new voucher. PARTIAL — observed once (G).**
+  - The delete reported `DELETED=1`, and the voucher was absent from the readback.
+  - The upsert reported `CREATED=1`, with a **new GUID**, a **new MASTERID** (7 before, 855 after) and the number 815.
+  - A resend therefore undoes a delete, and neither the GUID nor the MASTERID survives it. Anything keyed on either (a baseline, a binding) must treat the re-created voucher as new. The REMOTEID is the only link, and after a delete that link re-creates the voucher rather than restoring it.
+  - **Current behaviour:** Bridge's native post sends a fresh random REMOTEID for every post and records it with the dispatch intent (#582), so it never resends one.
+  - **Design consequence, not current behaviour:** a batch-posting design must refuse to resend a REMOTEID Bridge has already sent, because a resend after a delete re-creates the voucher under a new GUID.
+- **Related, same block:**
+  - An upsert omitting `REFERENCE` kept the stored value: omitted fields merge. PARTIAL — observed once (G).
+  - Each upsert moved the voucher's ALTERID to the book's next mark. PARTIAL — observed across several upserts on one book (G).
+
+**Not measured here:** other voucher types, Manual numbering, Gold concurrency, an edit in Tally's
+own screens, and repeatability beyond one run. A masters delete in the same session drew no
+response, and its cause is **UNVERIFIED**; nothing is recorded about it here.
