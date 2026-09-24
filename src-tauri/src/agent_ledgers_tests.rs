@@ -789,38 +789,59 @@ mod through_the_tool {
             .collect()
     }
 
-    /// Several calls to one server, replayed from one sequence, so a later
-    /// call can be served from what an earlier one held.
-    async fn calls(
-        plans: Vec<ScenarioPlan>,
-        calls: Vec<Value>,
-        tune: impl FnOnce(&Server),
-    ) -> (Vec<Value>, usize) {
-        let simulator = SequenceSimulator::spawn(plans).unwrap();
-        let directory = tempfile::tempdir().unwrap();
-        let server = Server::new(Settings {
-            endpoint: TallyEndpointConfig {
-                host: "127.0.0.1".into(),
-                port: simulator.address().port(),
-            },
-            data_dir: directory.path().into(),
-            max_rows: 500,
-            max_bytes: 200_000,
-            redaction: Redaction::None,
-            import_enabled: false,
-            writes_enabled: false,
-        });
-        tune(&server);
-        let mut responses = Vec::new();
-        for args in calls {
-            responses.push(server.call_tool("ledger_masters", args).await);
+    /// One server over one replayed sequence, so a later call can be served
+    /// from what an earlier call held.
+    struct OneServer {
+        simulator: SequenceSimulator,
+        server: Server,
+        _directory: tempfile::TempDir,
+    }
+
+    impl OneServer {
+        fn spawn(plans: Vec<ScenarioPlan>) -> Self {
+            let simulator = SequenceSimulator::spawn(plans).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let server = Server::new(Settings {
+                endpoint: TallyEndpointConfig {
+                    host: "127.0.0.1".into(),
+                    port: simulator.address().port(),
+                },
+                data_dir: directory.path().into(),
+                max_rows: 500,
+                max_bytes: 200_000,
+                redaction: Redaction::None,
+                import_enabled: false,
+                writes_enabled: false,
+            });
+            Self {
+                simulator,
+                server,
+                _directory: directory,
+            }
         }
-        let requests = simulator.finish().unwrap().len();
-        (responses, requests)
+
+        async fn call(&self, args: Value) -> Value {
+            self.server.call_tool("ledger_masters", args).await
+        }
+
+        fn requests(self) -> usize {
+            self.simulator.finish().unwrap().len()
+        }
     }
 
     fn snapshot_of(response: &Value) -> &Value {
+        assert_ne!(response["isError"], true, "{response}");
         &response["structuredContent"]["result"]["snapshot"]
+    }
+
+    fn snapshot_id(response: &Value) -> String {
+        snapshot_of(response)["id"].as_str().unwrap().to_string()
+    }
+
+    /// The rows a whole, unpaged basic listing returns, for comparing pages.
+    async fn whole_listing() -> Vec<Value> {
+        let (response, _) = call(basic_plans(), json!({"company_guid":GUID})).await;
+        items(&response).clone()
     }
 
     /// Page 2 costs the identity read and one extent read, and returns the
@@ -830,21 +851,119 @@ mod through_the_tool {
         let mut plans = basic_plans();
         plans.extend(continuation_plans(extent_with_master_mark(219)));
         let total = plans.len();
-        let first = json!({"company_guid":GUID,"limit":4});
-        let (responses, requests) = calls(plans.clone(), vec![first.clone()], |_| {}).await;
-        let id = snapshot_of(&responses[0])["id"].as_str().unwrap().to_string();
-        let (responses, requests_both) = calls(
-            plans,
-            vec![first, json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":"PLACEHOLDER"})],
-            |_| {},
-        )
-        .await;
-        let _ = (id, requests);
-        assert_eq!(requests_both, total);
-        let (page_one, page_two) = (&responses[0], &responses[1]);
-        assert_eq!(snapshot_of(page_one)["reused"], false);
-        assert_eq!(snapshot_of(page_one)["master_alter_id"], 219);
-        let _ = page_two;
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let id = snapshot_id(&first);
+        assert_eq!(snapshot_of(&first)["reused"], false);
+        assert_eq!(snapshot_of(&first)["master_alter_id"], 219);
+        let second = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":id}))
+            .await;
+        assert_eq!(snapshot_of(&second)["reused"], true);
+        assert_eq!(snapshot_of(&second)["id"], id);
+        assert_eq!(one.requests(), total);
+        let whole = whole_listing().await;
+        assert_eq!(items(&first).as_slice(), &whole[..4]);
+        assert_eq!(items(&second).as_slice(), &whole[4..8]);
+    }
+
+    /// A book that moved after page 1 is refused when the caller named the
+    /// snapshot, and read fresh when it did not.
+    #[tokio::test]
+    async fn a_continuation_after_the_book_moved_is_refused_by_id_or_read_fresh() {
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(220)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+        let refused = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":id}))
+            .await;
+        let error = refusal(&refused);
+        assert_eq!(error["code"], "listing_snapshot_changed");
+        assert_eq!(error["cause"], "book_changed_since_first_page");
+        assert_eq!(one.requests(), total, "nothing is read after the extent check");
+
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(220)));
+        plans.extend(basic_plans_marked(220).into_iter().skip(identity_plans().len()));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+        let fresh = one.call(json!({"company_guid":GUID,"offset":4,"limit":4})).await;
+        assert_eq!(snapshot_of(&fresh)["reused"], false);
+        assert_ne!(snapshot_of(&fresh)["id"], id.as_str());
+        assert_eq!(snapshot_of(&fresh)["master_alter_id"], 220);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A first page is a new question: it always reads fresh, even when an
+    /// unexpired snapshot of the same listing is held.
+    #[tokio::test]
+    async fn a_first_page_always_reads_fresh() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans());
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let again = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        assert_eq!(snapshot_of(&again)["reused"], false);
+        assert_ne!(snapshot_of(&again)["id"], snapshot_of(&first)["id"]);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A snapshot that is no longer held refuses a continuation that names
+    /// it: after the TTL, after a write through this server drops it, and
+    /// when it was larger than the byte cap.
+    #[tokio::test]
+    async fn a_snapshot_no_longer_held_refuses_a_continuation_that_names_it() {
+        for case in ["expired", "written", "over_cap"] {
+            let mut plans = basic_plans();
+            plans.extend(continuation_plans(extent_with_master_mark(219)));
+            let total = plans.len();
+            let one = OneServer::spawn(plans);
+            {
+                let mut listings = one.server.listings.lock().unwrap();
+                match case {
+                    "expired" => listings.ttl = std::time::Duration::ZERO,
+                    "over_cap" => listings.max_bytes = 1,
+                    _ => {}
+                }
+            }
+            let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+            if case == "written" {
+                one.server.drop_listing_snapshots(GUID);
+            }
+            let refused = one
+                .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":id}))
+                .await;
+            let error = refusal(&refused);
+            assert_eq!(error["code"], "listing_snapshot_changed", "{case}");
+            assert_eq!(error["cause"], "snapshot_not_held", "{case}");
+            assert_eq!(one.requests(), total, "{case}");
+        }
+    }
+
+    /// The byte cap drops the oldest snapshot to make room for a newer one.
+    #[tokio::test]
+    async fn the_byte_cap_evicts_the_oldest_listing_first() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let held = one.server.listings.lock().unwrap().held[0].bytes;
+        // Room for one listing of this size, not two.
+        one.server.listings.lock().unwrap().max_bytes = held + held / 2;
+        let _grouped = one
+            .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+            .await;
+        let refused = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":snapshot_id(&basic)}))
+            .await;
+        assert_eq!(refusal(&refused)["cause"], "snapshot_not_held");
+        assert_eq!(one.requests(), total);
     }
 
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
