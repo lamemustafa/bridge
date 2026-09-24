@@ -162,12 +162,14 @@ const LISTING_SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs
 const LISTING_SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// Which read a listing snapshot holds. A `basic` listing with a `group`
-/// filter also holds the group collection, so it is a different read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ListingKind {
+/// filter also holds the group collection, so it is a different read; a
+/// trial balance is keyed by its period.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ListingKind {
     Basic,
     BasicWithGroups,
     Compliance,
+    TrialBalance { from: TallyDate, to: TallyDate },
 }
 
 /// One logical ledger listing, read once by its first page (#630). The rows
@@ -175,21 +177,52 @@ enum ListingKind {
 /// persisted, dropped after the TTL, when a newer first page replaces them,
 /// when a write through this server touches the company, or when the byte cap
 /// evicts them.
-struct ListingSnapshot {
+pub(super) struct ListingSnapshot {
     id: String,
     company_guid: String,
     kind: ListingKind,
     extent: bridge_tally_protocol::outstandings_shared::CompanyBookExtent,
-    rows: Arc<Vec<Value>>,
+    /// The rows, rendered but unfiltered, unpaged and unredacted.
+    pub(super) rows: Arc<Vec<Value>>,
     groups: Option<Arc<GroupIndex>>,
-    evidence: Evidence,
+    /// What a page reports besides its rows (a trial balance's period,
+    /// currency and totals); null for a ledger listing.
+    pub(super) frame: Value,
+    pub(super) evidence: Evidence,
     read_at: String,
     taken: std::time::Instant,
     bytes: usize,
 }
 
 impl ListingSnapshot {
-    fn describe(&self, reused: bool) -> Value {
+    /// A fresh read's snapshot, sized by its rendered rows.
+    pub(super) fn new(
+        identity: &VerifiedCompanyIdentity,
+        kind: ListingKind,
+        extent: bridge_tally_protocol::outstandings_shared::CompanyBookExtent,
+        rows: Vec<Value>,
+        groups: Option<GroupIndex>,
+        frame: Value,
+        evidence: Evidence,
+    ) -> Self {
+        let bytes = rows.iter().map(|row| row.to_string().len()).sum::<usize>()
+            + frame.to_string().len();
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            company_guid: identity.company_guid().to_string(),
+            kind,
+            extent,
+            rows: Arc::new(rows),
+            groups: groups.map(Arc::new),
+            frame,
+            evidence,
+            read_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            taken: std::time::Instant::now(),
+            bytes,
+        }
+    }
+
+    pub(super) fn describe(&self, reused: bool) -> Value {
         json!({
             "id": self.id,
             "master_alter_id": self.extent.master_alter_id_high_water().map(|mark| mark.get()),
@@ -248,12 +281,12 @@ impl ListingSnapshots {
     }
 
     /// The unexpired snapshot for this company and kind, if one is held.
-    fn current(&self, company_guid: &str, kind: ListingKind) -> Option<Arc<ListingSnapshot>> {
+    fn current(&self, company_guid: &str, kind: &ListingKind) -> Option<Arc<ListingSnapshot>> {
         self.held
             .iter()
             .find(|held| {
                 held.company_guid.eq_ignore_ascii_case(company_guid)
-                    && held.kind == kind
+                    && held.kind == *kind
                     && held.taken.elapsed() < self.ttl
             })
             .cloned()
@@ -301,44 +334,13 @@ impl Server {
                 (false, true) => ListingKind::BasicWithGroups,
                 (false, false) => ListingKind::Basic,
             };
-            // A first page always reads fresh: a new listing is a new question
-            // (#630). A continuation page is served from the listing's
-            // snapshot only while the book's extent is unchanged.
-            let reused = if offset > 0 {
-                let extent = self
-                    .runtime
-                    .fetch_listing_extent(self.tally_config(), &identity)
-                    .await
-                    .map_err(|error| ToolFailure::from_runtime("listing_extent_read_failed", error))?;
-                let held = self
-                    .listings
-                    .lock()
-                    .map_err(|_| "listing_snapshot_store_unavailable".to_string())?
-                    .current(identity.company_guid(), kind);
-                match (held, snapshot_id.as_deref()) {
-                    (Some(held), Some(id)) if held.id == id => {
-                        if held.extent != extent {
-                            return Err(snapshot_refusal("book_changed_since_first_page"));
-                        }
-                        Some(held)
-                    }
-                    (_, Some(_)) => return Err(snapshot_refusal("snapshot_not_held")),
-                    (Some(held), None) if held.extent == extent => Some(held),
-                    (_, None) => None,
-                }
-            } else {
-                None
-            };
+            let reused = self
+                .continued_listing(&identity, &kind, offset, snapshot_id.as_deref())
+                .await?;
             let snapshot = match reused.clone() {
                 Some(held) => held,
-                None => Arc::new(self.read_ledger_listing(&identity, kind).await?),
+                None => self.hold_listing(self.read_ledger_listing(&identity, kind).await?)?,
             };
-            if reused.is_none() {
-                self.listings
-                    .lock()
-                    .map_err(|_| "listing_snapshot_store_unavailable".to_string())?
-                    .hold(snapshot.clone());
-            }
             evidence = combine_evidence(evidence.clone(), snapshot.evidence.clone());
             let mut ledgers = snapshot.rows.as_ref().clone();
             let group_filter = match (group.as_deref(), snapshot.groups.as_deref()) {
@@ -370,6 +372,57 @@ impl Server {
         result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 
+    /// The held snapshot a continuation page may be served from (#630), or
+    /// `None` when the page must read fresh. A first page always reads fresh.
+    /// A later page sends one bracketed extent read, and is served from the
+    /// snapshot only while the extent equals the one the snapshot was read
+    /// under. When the caller names its snapshot, anything else refuses.
+    pub(super) async fn continued_listing(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        kind: &ListingKind,
+        offset: usize,
+        snapshot_id: Option<&str>,
+    ) -> Result<Option<Arc<ListingSnapshot>>, ToolFailure> {
+        if offset == 0 {
+            return Ok(None);
+        }
+        let extent = self
+            .runtime
+            .fetch_listing_extent(self.tally_config(), identity)
+            .await
+            .map_err(|error| ToolFailure::from_runtime("listing_extent_read_failed", error))?;
+        let held = self
+            .listings
+            .lock()
+            .map_err(|_| "listing_snapshot_store_unavailable".to_string())?
+            .current(identity.company_guid(), kind);
+        match (held, snapshot_id) {
+            (Some(held), Some(id)) if held.id == id => {
+                if held.extent != extent {
+                    return Err(snapshot_refusal("book_changed_since_first_page"));
+                }
+                Ok(Some(held))
+            }
+            (_, Some(_)) => Err(snapshot_refusal("snapshot_not_held")),
+            (Some(held), None) if held.extent == extent => Ok(Some(held)),
+            (_, None) => Ok(None),
+        }
+    }
+
+    /// Holds a first page's fresh read as its listing's snapshot.
+    pub(super) fn hold_listing(
+        &self,
+        snapshot: ListingSnapshot,
+    ) -> Result<Arc<ListingSnapshot>, ToolFailure> {
+        let snapshot = Arc::new(snapshot);
+        self.listings
+            .lock()
+            .map_err(|_| "listing_snapshot_store_unavailable".to_string())?
+            .hold(snapshot.clone());
+        Ok(snapshot)
+    }
+
     /// Drops every ledger listing snapshot of a company. Every write this
     /// server dispatches calls it before returning, whatever the outcome.
     pub(super) fn drop_listing_snapshots(&self, company_guid: &str) {
@@ -388,7 +441,7 @@ impl Server {
         identity: &VerifiedCompanyIdentity,
         kind: ListingKind,
     ) -> Result<ListingSnapshot, ToolFailure> {
-        let (rows, groups, extent, read_evidence) = match kind {
+        let (rows, groups, extent, read_evidence) = match &kind {
             ListingKind::Compliance => {
                 let listing = self
                     .runtime
@@ -446,20 +499,19 @@ impl Server {
                     .collect::<Vec<_>>();
                 (rows, None, listing.extent, listing.evidence)
             }
+            ListingKind::TrialBalance { .. } => {
+                return Err("listing_kind_not_a_ledger_listing".to_string().into());
+            }
         };
-        let bytes = rows.iter().map(|row| row.to_string().len()).sum();
-        Ok(ListingSnapshot {
-            id: uuid::Uuid::new_v4().to_string(),
-            company_guid: identity.company_guid().to_string(),
+        Ok(ListingSnapshot::new(
+            identity,
             kind,
             extent,
-            rows: Arc::new(rows),
-            groups: groups.map(Arc::new),
-            evidence: evidence_from_runtime_read(read_evidence),
-            read_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            taken: std::time::Instant::now(),
-            bytes,
-        })
+            rows,
+            groups,
+            Value::Null,
+            evidence_from_runtime_read(read_evidence),
+        ))
     }
 }
 

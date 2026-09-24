@@ -42,7 +42,7 @@ use company::*;
 mod changes;
 #[path = "agent_ledgers.rs"]
 mod ledgers;
-use ledgers::ListingSnapshots;
+use ledgers::{ListingKind, ListingSnapshot, ListingSnapshots};
 #[path = "agent_outstandings.rs"]
 mod outstandings;
 #[path = "agent_presence.rs"]
