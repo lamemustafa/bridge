@@ -159,7 +159,6 @@ test("compare clients emits the same selected canonical as-of date", () => {
           { selected_company: { display_name: "Bridge Validation Lab", company_guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" } },
           { selected_company: { display_name: "Bridge Ageing Lab", company_guid: "guid-2", company_number: "100014", books_from_yyyymmdd: "20270401" } },
         ],
-        currency_assertion: "INR",
         as_of_yyyymmdd: "20260817",
         ageing_anchor: "bill_date",
       },

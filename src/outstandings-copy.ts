@@ -34,7 +34,7 @@ export function outstandingsPartialReason(
     return "this company's verified base currency is not INR";
   }
   if (value === "company_base_currency_undetermined") {
-    return "Tally defines more than one currency for this company. Multi-currency books are not supported yet, so Bridge does not read outstandings for it";
+    return "Tally defines more than one currency for this company, and Bridge could not tell from Tally which one is its base currency, so it does not read outstandings for it";
   }
   if (value === "company_outstandings_read_failed") {
     return "this company read failed while the remaining companies continued";
@@ -52,10 +52,8 @@ export function outstandingsPartialReason(
   if (value === "ledger_currency_unobserved") {
     return "Tally did not report the currency of every ledger in this multi-currency company";
   }
-  if (value === "foreign_currency_ledger_present") {
-    return foreignCurrencyLedgerName
-      ? `Tally keeps ledger ${foreignCurrencyLedgerName} in a foreign currency`
-      : "Tally keeps a ledger in a foreign currency";
+  if (value === "foreign_currency_ledgers_excluded") {
+    return "Tally keeps some of this company's ledgers in a currency other than its base currency";
   }
   if (value === "tally_segment_latency_trending_restart_recommended") {
     return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
@@ -93,6 +91,22 @@ export function outstandingsPartialReason(
   return value.replace(/_/g, " ");
 }
 
+export type ExcludedCurrencyLedger = { ledger: string; currency: string };
+
+const EXCLUDED_LEDGERS_NAMED = 5;
+
+function excludedLedgersSentence(excluded: ReadonlyArray<ExcludedCurrencyLedger>) {
+  const named = excluded
+    .slice(0, EXCLUDED_LEDGERS_NAMED)
+    .map(({ ledger, currency }) => `${ledger} (${currency})`)
+    .join(", ");
+  const more = excluded.length > EXCLUDED_LEDGERS_NAMED
+    ? ` and ${excluded.length - EXCLUDED_LEDGERS_NAMED} more`
+    : "";
+  const count = excluded.length === 1 ? "1 ledger" : `${excluded.length} ledgers`;
+  return `Tally keeps ${count} in a currency other than this company's base currency: ${named}${more}`;
+}
+
 export type OutstandingsPartialState = {
   title: string;
   message: string;
@@ -105,7 +119,16 @@ export function outstandingsPartialState(
   requestedAsOf?: string,
   tallyAsOf?: string,
   foreignCurrencyLedgerName?: string,
+  excludedLedgers?: ReadonlyArray<ExcludedCurrencyLedger>,
 ): OutstandingsPartialState {
+  if (reasonCode === "foreign_currency_ledgers_excluded") {
+    return {
+      title: "Outstandings totals withheld on the desktop",
+      message: `${excludedLedgers?.length ? excludedLedgersSentence(excludedLedgers) : outstandingsPartialReason(reasonCode)}. Bridge left those ledgers out of the figures and shows no totals here, because figures without them would not describe the whole book. The agent connection (MCP outstandings) reports the base-currency ledgers only, labelled as such.`,
+      retryable: false,
+      tallyReadAttempted: true,
+    };
+  }
   if (reasonCode === "native_outstandings_as_of_refused") {
     return {
       title: "Tally did not accept this as-of date",
@@ -152,7 +175,6 @@ export function outstandingsPartialState(
   if (
     reasonCode === "ledger_currency_base_unmatched"
     || reasonCode === "ledger_currency_unobserved"
-    || reasonCode === "foreign_currency_ledger_present"
   ) {
     return {
       title: "Outstandings are not available for this company",

@@ -120,7 +120,6 @@ export function allCompaniesOutstandingsInvokeArgument(
     request: {
       config,
       companies: companies.map((company) => ({ selected_company: selectedCompanyIdentity(company) })),
-      currency_assertion: "INR" as const,
       as_of_yyyymmdd: asOfYyyymmddValue,
       ageing_anchor: ageingAnchor,
     },

@@ -28,3 +28,25 @@ TALLY_PROTOCOL_REFERENCE §9.10a.2), captured as received.
 - Missing, duplicated, blank and ambiguous rows are tested as labelled edits of this capture, and the
   runtime's refusal cases edit FOREX's row (`$`, or a value naming no master).
 - It does **not** show a company whose base is not INR: no such book was loaded.
+
+## `company_list_synthetic_live`, `company_extents_synthetic_live`: identity for SHAPE LAB
+
+Captured so that SHAPE LAB can be read end to end in tests (the older committed company fixtures do
+not list it).
+
+- **Host / date:** TallyPrime 7.1 Silver, licensed, `education_mode` false; 2026-09-24, 11:35
+  +0530, read-only, one request at a time.
+- **Loaded companies:** only synthetic books. The opening `/status` listed the four above; the owner
+  created a fifth synthetic book, `BRIDGE READS LAB`, during the block, and both responses list it.
+- **Requests:** the production company-list request and the production company book-extent
+  request for `BRIDGE SHAPE LAB`, as master `2db6a9c5`'s renderers produce them. Both list every
+  loaded company.
+- **Encoding:** BOM-less UTF-16LE, the undecoded wire bytes.
+
+| file | bytes | sha256 |
+|---|---|---|
+| `company_list_synthetic_live.utf16le.xml` | 8,324 | `326801874dec020c5ab6c3677e5a7dcc984ff39877a1b0576ab50b1fa2d3292b` |
+| `company_extents_synthetic_live.utf16le.xml` | 7,416 | `daa78388f1f9e7e870e7c56c03e5bbfd03feec72f74659cf288b9d90e74205aa` |
+
+Companies in both: `Bridge Billwise Lab`, `BRIDGE CORPUS FOREX`, `BRIDGE READS LAB`, `BRIDGE SHAPE
+LAB`, `Bridge Validation Lab`.

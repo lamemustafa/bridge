@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "635b4615f832c99cccf8f59c691f96f7c6a53012662aa21768168304ed65fe1d"
+      "sha256": "4e4cdbe00f27a4f6e3ba5232369419bf635a7559ea01e2c7fc3426b7133041dc"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -43,7 +43,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
-      "sha256": "e4b2898760f94e590c677f3308099089c7e43c23b1922b60fe029233b17b8532"
+      "sha256": "dd57b734a2ed364523fe7f52d4507b4fec028e8531220c657b8927c21f9e60de"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
@@ -127,7 +127,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "2c2ba86275a2e5cd8540c4e07e80c2f731e309f25fd6dc74d2d3f0ce85858f54"
+      "sha256": "e0bd2cceca3fbbc10cba953aec5556fe5b154cc901b8a3fcf6f553623d712f80"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -295,11 +295,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
-      "sha256": "fded2b1c806905260c8197690840d5ca0ca6eb9fbb9f4f3313bd3d098c989d66"
+      "sha256": "a58280aa81f00944b8c324b7d2aad366d5420e8dfe6c8d767d349243922270cf"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
-      "sha256": "d064368646ae1b5b83c13b9cbe44fabf601a6d05fcf744e2e78181f0636482a9"
+      "sha256": "eaf0de0a21c0a2ce13fc5780bd8add0695bc8b33f5d616c1e266296ecf2d660e"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
@@ -487,7 +487,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "dca75344928e70b55d3e219a505ad7f88bdbad43b70b8d920de6961a7a9eac14"
+      "sha256": "b22b85fa1693e5c1e899dbedc4e6c342dbcf9b344de506b7783fe28d419deebf"
     },
     {
       "path": "src-tauri/src/agent_import_post_location.rs",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "95f9a95a055697f243917df2b595eb04e45e6ea5496df17e266250ec73f05132"
+      "sha256": "bb613bc1a5202ee5c8540c92d88190c6778805a5ce769bc02d32490c64715c08"
     },
     {
       "path": "src-tauri/src/commands_trial_balance.rs",
@@ -903,7 +903,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "dac661a33783c5a99dccdbaadaf063bf87431a65f226b786d0acc90dca179215"
+      "sha256": "0273ee1eb1d5629b21e714d698881414f817df0b71796cd91da16e231b98371a"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -943,7 +943,7 @@
     },
     {
       "path": "src/AllClientsScreen.tsx",
-      "sha256": "98f482713e3811d5eccc5944dd546b9c020662c1cb6c05524126edf79c97eb03"
+      "sha256": "cb544e05bf309d25290bf267360b1a73c79c31cc9477e5a624cefb346a5d5b7d"
     },
     {
       "path": "src/ClientSwitcher.tsx",
@@ -979,7 +979,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "992e1c1bd0f63a521d94e1125119d123b88f1874179f8a37052d4db2ae2e02da"
+      "sha256": "24e4ece6507e8ce8212763337e09a5dd44bd51d1d161e59ec8c852ef9de387ef"
     },
     {
       "path": "src/SourceDraftScreen.tsx",
@@ -1015,7 +1015,7 @@
     },
     {
       "path": "src/outstandings-as-of.ts",
-      "sha256": "0adbdcb1713b8d6035612b7b004425fbb31ee8c4dd110442fda91141c78bf2fc"
+      "sha256": "a2cf0a4190618c50c89f0aa1aab473960f25fd4e0a0e1d47552383d1451f6105"
     },
     {
       "path": "src/outstandings-bills.ts",
@@ -1023,7 +1023,7 @@
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "55c3f51cb1b11dcbbf3f6957294d5cc80f56425d90ea41eff14f2497b160d184"
+      "sha256": "2fb12bf8cab08b45340b69427e21c4df9de67d7e7fde4960e1fc2cc2293b29d4"
     },
     {
       "path": "src/outstandings-csv.ts",
@@ -1114,5 +1114,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "b5bcdd6acd6c6109578294e1e8f6b093d6647a577ddd55a9b5e59435e65ca80e"
+  "manifest_sha256": "3ba6922f63f5b4ea52403b2bde5a829cd2603fa672014b9143989d04bce078e1"
 }

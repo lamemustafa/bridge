@@ -1,7 +1,7 @@
 import React from "react";
 import { Building2, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, workingPaperUnavailableState, type OutstandingsAgeingAnchor } from "./outstandings-copy";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, workingPaperUnavailableState, type ExcludedCurrencyLedger, type OutstandingsAgeingAnchor } from "./outstandings-copy";
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead, outstandingsCurrencySymbol } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
@@ -136,6 +136,9 @@ type LoadResult =
       requested_as_of_yyyymmdd?: string;
       tally_as_of_yyyymmdd?: string;
       foreign_currency_ledger_name?: string;
+      // bridge#551: present with reason foreign_currency_ledgers_excluded.
+      // The base-currency figures that come with it are not shown here.
+      foreign_currency_ledgers_excluded?: Array<ExcludedCurrencyLedger>;
       synced_at_unix_ms: number;
     };
 
@@ -301,6 +304,7 @@ export function OutstandingsScreen({
       result.requested_as_of_yyyymmdd,
       result.tally_as_of_yyyymmdd,
       result.foreign_currency_ledger_name,
+      result.foreign_currency_ledgers_excluded,
     )
     : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
@@ -388,8 +392,10 @@ export function OutstandingsScreen({
   // a foreign balance misstates money -- but it is a fact Tally holds, and
   // asking for it on every company was a step the product can answer itself.
   // Where Tally names one currency but not INR, the operator may still
-  // confirm it below; a book with several currencies, or none read, is not
-  // read at all (bridge#604).
+  // confirm it below (bridge#604). A book with several currencies goes to the
+  // backend, which reads the company's base itself and refuses unless it is
+  // INR, leaving foreign-currency ledgers out (bridge#551). A book with none
+  // read is not read at all.
   React.useEffect(() => {
     if (liveReadSuppressed || !company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
@@ -409,7 +415,9 @@ export function OutstandingsScreen({
     )
       .then((currency) => {
         if (cancelled) return;
-        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityFor(company));
+        if (currency.is_inr || currency.currency_count > 1) {
+          setInrAssertedCompanyIdentity(companyIdentityFor(company));
+        }
         setCurrencyCheck(currencyCheckOf(currency));
       })
       .catch(() => {
@@ -478,17 +486,8 @@ export function OutstandingsScreen({
       );
     }
     // bridge#604: only a book with one Currency master may be confirmed by
-    // hand, and the backend re-reads the masters and refuses the rest. With
-    // several, the Bills reports return a foreign-currency party's bills as
-    // plain amounts that would be shown as rupees.
-    if (currencyCheck.state === "several") {
-      return (
-        <section className="panel wide outstandings-empty">
-          <h2>Multi-currency books are not supported yet</h2>
-          <p>Tally reports more than one currency in this company. Bridge cannot yet tell which of its outstanding amounts are in a foreign currency, so it does not read outstandings for this company.</p>
-        </section>
-      );
-    }
+    // hand. A book with several is read under the backend's own classified
+    // admission (bridge#551) and never reaches this panel.
     if (currencyCheck.state !== "single") {
       return (
         <section className="panel wide outstandings-empty">
@@ -1333,15 +1332,17 @@ function exposureComposition(report: Report, unallocatedTotal: string | undefine
 
 /// What Tally's own currency read settled for the selected company.
 type CurrencyCheck =
-  | { state: "idle" | "checking" | "inr" | "several" | "unread" }
+  | { state: "idle" | "checking" | "inr" | "unread" }
   | { state: "single"; name: string; mailingName: string };
 
 function currencyCheckOf(currency: { is_inr: boolean; symbol: string; mailing_name: string; currency_count: number }): CurrencyCheck {
-  if (currency.is_inr) return { state: "inr" };
+  // Several masters: the backend decides from the company's own base
+  // (bridge#551), so the screen reads as it does for an INR book.
+  if (currency.is_inr || currency.currency_count > 1) return { state: "inr" };
   if (currency.currency_count === 1) {
     return { state: "single", name: currency.symbol, mailingName: currency.mailing_name };
   }
-  return { state: currency.currency_count > 1 ? "several" : "unread" };
+  return { state: "unread" };
 }
 
 function formatMoney(value: string, currencyAssertion: "INR") {

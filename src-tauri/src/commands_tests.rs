@@ -40,13 +40,12 @@ use super::all_clients::{
     ClientGroupLabelMigrationPreparationError,
 };
 use super::{
-    company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
-    first_calendar_day_canary_window, party_ledger_master_currency_admission_error,
-    party_ledger_master_runtime_command_error, portable_export_file_name, reconcile_review_cleanup,
-    reviewed_probe_commitment_sha256, tally_command_error, tally_runtime_command_error,
-    verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
-    OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
-    VerifiedCompanyIdentity,
+    company_sweep_result, establish_inr_currency, first_calendar_day_canary_window,
+    party_ledger_master_currency_admission_error, party_ledger_master_runtime_command_error,
+    portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
+    tally_command_error, tally_runtime_command_error, verify_observed_company_tuple_from_companies,
+    write_unique_download, CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany,
+    SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
 };
 // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
 // path cannot be constructed portably. The import must carry the same gate as
@@ -319,30 +318,30 @@ fn company_sweep_preserves_a_company_listing_transport_reason() {
 }
 
 #[test]
-fn company_sweep_currency_preflight_names_undetermined_base_currency() {
+fn the_workbook_inr_admission_names_undetermined_base_currency() {
     assert_eq!(
-        company_sweep_currency_preflight_failure(2, false),
+        establish_inr_currency(2, false).err(),
         Some("company_base_currency_undetermined"),
         "several currency masters do not identify the company's base currency"
     );
     assert_eq!(
-        company_sweep_currency_preflight_failure(2, true),
+        establish_inr_currency(2, true).err(),
         Some("company_base_currency_undetermined"),
         "the parser's INR flag is not authoritative when several currency masters exist"
     );
     assert_eq!(
-        company_sweep_currency_preflight_failure(1, false),
+        establish_inr_currency(1, false).err(),
         Some("company_base_currency_not_inr"),
         "one non-Indian currency identifies an unsupported base currency"
     );
-    assert_eq!(company_sweep_currency_preflight_failure(1, true), None);
+    assert_eq!(establish_inr_currency(1, true).err(), None);
     assert_eq!(
         establish_inr_currency(1, true),
         Ok(OutstandingsCurrencyAssertion::Inr),
         "the backend boundary receives a typed INR admission only after the probe established one INR master"
     );
     assert_eq!(
-        company_sweep_currency_preflight_failure(0, false),
+        establish_inr_currency(0, false).err(),
         Some("company_currency_probe_failed"),
         "an impossible empty collection remains fail-closed"
     );

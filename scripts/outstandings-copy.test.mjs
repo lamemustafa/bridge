@@ -33,7 +33,7 @@ test("new native and sweep boundaries have operator-readable reasons", () => {
   assert.match(outstandingsPartialReason("company_base_currency_not_inr"), /not INR/i);
   assert.match(
     outstandingsPartialReason("company_base_currency_undetermined"),
-    /more than one currency.*not supported yet/i,
+    /more than one currency.*could not tell.*base currency/i,
   );
   assert.match(outstandingsPartialReason("company_outstandings_read_failed"), /company read failed/i);
 });
@@ -54,7 +54,7 @@ test("a foreign-currency ledger names the blocked book without inviting a repeat
 });
 
 test("a ledger kept in another currency names the ledger without inviting a repeat", () => {
-  for (const code of ["ledger_currency_base_unmatched", "foreign_currency_ledger_present"]) {
+  for (const code of ["ledger_currency_base_unmatched"]) {
     const state = outstandingsPartialState(code, undefined, undefined, "Synthetic FX Debtor");
     assert.match(state.title, /not available for this company/i, code);
     assert.match(state.message, /ledger Synthetic FX Debtor/, code);
@@ -67,6 +67,29 @@ test("a ledger kept in another currency names the ledger without inviting a repe
     assert.doesNotMatch(state.message, /could not prove every requested segment/i, code);
     assert.equal(state.retryable, false, code);
   }
+});
+
+test("foreign-currency ledgers left out withhold desktop totals and name the ledgers", () => {
+  const excluded = [
+    { ledger: "Synthetic FX Debtor A", currency: "$" },
+    { ledger: "Synthetic FX Debtor B", currency: "$" },
+  ];
+  const state = outstandingsPartialState("foreign_currency_ledgers_excluded", undefined, undefined, undefined, excluded);
+  assert.match(state.title, /totals withheld/i);
+  assert.match(state.message, /2 ledgers in a currency other than this company's base currency/);
+  assert.match(state.message, /Synthetic FX Debtor A \(\$\), Synthetic FX Debtor B \(\$\)/);
+  assert.match(state.message, /shows no totals here/);
+  assert.match(state.message, /MCP outstandings\) reports the base-currency ledgers only/);
+  assert.equal(state.retryable, false);
+  assert.equal(state.tallyReadAttempted, true);
+  const many = Array.from({ length: 7 }, (_, index) => ({ ledger: `Synthetic FX ${index}`, currency: "$" }));
+  const long = outstandingsPartialState("foreign_currency_ledgers_excluded", undefined, undefined, undefined, many);
+  assert.match(long.message, /7 ledgers/);
+  assert.match(long.message, /Synthetic FX 4 \(\$\) and 2 more/);
+  assert.doesNotMatch(long.message, /Synthetic FX 5/);
+  const unnamed = outstandingsPartialState("foreign_currency_ledgers_excluded");
+  assert.match(unnamed.message, /keeps some of this company's ledgers in a currency other than its base currency/);
+  assert.equal(isNonRetryableOutstandingsBoundary("foreign_currency_ledgers_excluded"), true);
 });
 
 test("missing, empty, or zero-only counters name the unconfirmed effective-date boundary", () => {

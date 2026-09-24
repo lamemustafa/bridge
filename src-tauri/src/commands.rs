@@ -2051,7 +2051,6 @@ pub(crate) async fn read_screen_outstandings(
 pub struct AllCompaniesOutstandingsRequest {
     pub config: TallyConfig,
     pub companies: Vec<AllCompaniesEntry>,
-    pub currency_assertion: OutstandingsCurrencyAssertion,
     #[serde(default)]
     pub as_of_yyyymmdd: Option<TallyDate>,
     #[serde(default)]
@@ -2103,15 +2102,7 @@ pub(crate) enum CompanySweepFailure {
     OutstandingsRead,
 }
 
-fn company_sweep_currency_preflight_failure(
-    currency_count: usize,
-    is_inr: bool,
-) -> Option<&'static str> {
-    establish_inr_currency(currency_count, is_inr).err()
-}
-
-/// The one INR admission rule used by both the existing outstandings sweep and
-/// the party/ledger workbook boundary. A workbook can obtain this typed value
+/// The INR admission rule of the party/ledger workbook boundary. A workbook can obtain this typed value
 /// only after `detect_base_currency` has read Tally's own Currency masters.
 fn establish_inr_currency(
     currency_count: usize,
@@ -2129,37 +2120,35 @@ fn establish_inr_currency(
     Err("company_currency_probe_failed")
 }
 
-/// One company of the sweep: its own currency read, the INR admission, then
-/// outstandings under that read, whose single master's NAME each ledger's own
-/// currency is compared with (bridge#551).
+/// One company of the sweep: its own classified currency read, the INR
+/// admission of its base (the only master, or, among several, the one the
+/// company names; bridge#551), then outstandings under that witness, which
+/// compares each ledger's own currency with the base and leaves foreign-
+/// currency ledgers out.
 pub(crate) async fn sweep_company_outstandings(
     runtime: &TallyRuntime,
     config: &TallyConfig,
     identity: &VerifiedCompanyIdentity,
     as_of: &TallyDate,
-    currency_assertion: OutstandingsCurrencyAssertion,
     ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
 ) -> Result<OutstandingsLoadResult, CompanySweepFailure> {
     let Ok(currency) = runtime
-        .detect_base_currency_with_extent(config.clone(), identity)
+        .detect_classified_base_currency_with_extent(config.clone(), identity)
         .await
     else {
         return Err(CompanySweepFailure::ReasonCode(
             "company_currency_probe_failed",
         ));
     };
-    if let Some(reason_code) =
-        company_sweep_currency_preflight_failure(currency.currency_count(), currency.is_inr())
-    {
-        return Err(CompanySweepFailure::ReasonCode(reason_code));
-    }
+    let witness = currency
+        .admit_inr_classified()
+        .map_err(CompanySweepFailure::ReasonCode)?;
     runtime
-        .fetch_outstandings_under_currency_read(
+        .fetch_outstandings_under_witness(
             config.clone(),
             identity,
             as_of.clone(),
-            currency,
-            currency_assertion,
+            witness.into(),
             ageing_anchor,
         )
         .await
@@ -2206,7 +2195,6 @@ pub async fn fetch_tally_outstandings_all_companies(
                     &request.config,
                     &identity,
                     &as_of,
-                    request.currency_assertion,
                     request.ageing_anchor,
                 )
                 .await
