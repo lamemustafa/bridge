@@ -267,7 +267,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/gst_registration.rs",
-      "sha256": "40bd2e4eaac157afb9121c8f414c96bd77b0c605ec139d550b49b81c6f3b81ab"
+      "sha256": "62e5c36e17334b4c911031b14f49bb5159e3cf58fd5b38f4920286ada3a2cf0a"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/import_outcome.rs",
@@ -275,11 +275,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "93777dfd40eab0bf11526115bbc0917e86387735fb7d7b7d1d3c7c17adf3cf2e"
+      "sha256": "f0a0d989078aac2eb08142bd7ed67616c00fceaea128e88e7ec5d08723ae9735"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_ledger_collection.rs",
-      "sha256": "a4fe9a593d7ca182f81d6688741112cd140a5d4346a982f0ec56db700d809ee3"
+      "sha256": "af59e77f5786c94c8b7176a5ce206d6239a6ebcaeb905aa15f21b1212a9a44b8"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -303,7 +303,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
-      "sha256": "b668e4e438e3d6ad6ff54e24c579eda452a5b4a8e960d566eae1030906decf8a"
+      "sha256": "a5a1be78509aaa64b3739056cd796c5310807a5c450d22673c415ce185f654f3"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "bedf6668ef14c6c6b73bb55df7b85aa1e7d6713ebec600b0fb1726b93fdff2bd"
+      "sha256": "62105a3873bcf026a920cee5ea1dac1119b78693d6ee5aa52ab8ae7dfce87ed6"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -503,7 +503,7 @@
     },
     {
       "path": "src-tauri/src/agent_ledgers.rs",
-      "sha256": "13e3a8c2cc96c74331b0248c317a21495c4c961262dd2209091b01b185c24f10"
+      "sha256": "4dc44bce41edcbc55635615cd0a184d0fa1f6e2732bcc4294da86ec1c9104125"
     },
     {
       "path": "src-tauri/src/agent_movement.rs",
@@ -1083,7 +1083,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "2362415307280eb159b52c555cb0209b93f31a9c9e3695058815640fa325ba33"
+      "sha256": "a7f96b92822b41736ee0c9a5a366d15e9f3c7d6aa36d45f6f021d560265c231b"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -1118,5 +1118,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "6bd89369253afa6fd7a449555a365cf6bd093f0b624c93c62fcd83d3f3d688d7"
+  "manifest_sha256": "9c15ecc2e6bbf58cf8844ce95e04d837842ae1572f29a41aad41583873fc5b87"
 }
