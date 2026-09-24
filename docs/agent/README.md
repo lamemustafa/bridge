@@ -88,8 +88,25 @@ A read whose two paired halves differ, because the book changed while Bridge was
 carries `native_report_pair_changed`. A voucher-window part that is not admitted
 (`voucher_window_part_not_admitted`) names why, and a census disagreement also carries
 `counts`, the rows the part `returned` against the rows the census `counted`.
-Like `remediation`, `cause` and `counts` are omitted when `BRIDGE_AGENT_MAX_BYTES` is below 4,096, so
-that the code always fits. Before a tool response is written, Bridge appends a metadata-only
+When Bridge got no response it could read, the `cause` names why and the error also carries
+`endpoint`, the configured origin that was tried (#629). The causes are:
+- `endpoint_invalid`: the configured endpoint failed validation. The `endpoint` field then appears only
+  if a valid origin can still be formed from the configuration.
+- `endpoint_unreachable`: the connection was not accepted.
+- `request_failed` or `request_deadline_exceeded`: the request failed before any response, or its
+  deadline passed.
+- `http_status_failure`, `response_content_type_unsupported` or
+  `response_content_encoding_unsupported`: the responder was rejected on its HTTP status or headers
+  before any body was read.
+- An `endpoint_…` runtime code: Bridge held the request back and sent nothing.
+
+A wrong or reset port therefore reads as an endpoint problem, not as a Tally data problem. A
+failed read without `endpoint` either received a response whose body then failed to read, decode,
+parse or pass Bridge's checks, or hit a local limit or fault that does not involve the endpoint. A
+withdrawn call is `request_cancelled`.
+
+Like `remediation`, `cause`, `counts` and `endpoint` are omitted when `BRIDGE_AGENT_MAX_BYTES` is below
+4,096, so that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
 After `write_all` and `flush` succeed, it appends a `stdio_write_completed` record
 with the same ID and response hash plus `bytes_written`. This confirms the local
