@@ -16,8 +16,10 @@
 //! - an unknown `$$` function omits its element entirely, so a missing element
 //!   is refused, never read as `No`.
 //!
-//! Child-type resolution was measured for Purchase only; the other classes were
-//! measured on their own reserved type. See protocol reference §8.2e.
+//! - every child type answers `Yes` to exactly its parent's class, for all
+//!   eight classes, and no other reserved type answers `Yes` to any of them.
+//!
+//! See protocol reference §8.2e.
 use super::*;
 use std::collections::{BTreeMap as Map, BTreeSet};
 
@@ -351,7 +353,10 @@ pub(super) fn select_voucher_rows(
         VoucherTypeSelector::Class(class) => guids_where(&|kind| kind.class == Some(*class)),
         VoucherTypeSelector::Guid(guid) => guids_where(&|kind| &kind.guid == guid),
         VoucherTypeSelector::Name(name) => {
-            let named = guids_where(&|kind| &kind.name == name);
+            // Tally resolves a voucher-type name ignoring case (measured on
+            // 7.1 for ASCII letters, protocol reference §8.2e), so the name
+            // matches the same way; non-ASCII case folding is unmeasured.
+            let named = guids_where(&|kind| kind.name.eq_ignore_ascii_case(name));
             let mut rivals = Vec::new();
             if let Some(class) = ReservedVoucherClass::ALL
                 .into_iter()

@@ -75,13 +75,22 @@ fn a_class_request_finds_a_renamed_type_and_its_child_where_the_name_found_nothi
 fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
     // Unrenamed book, reserved type only: the name and the class agree.
     let stock = || vec![row("Purchase", "0000002e", Some("Purchase"))];
-    // Names compare exactly, so a lower-case class name matches no type; it
-    // is refused rather than answered with a zero.
+    // Tally resolves a type name ignoring case, and so does the filter: a
+    // lower-case name selects the type rather than a zero.
     assert_eq!(
         select_voucher_rows(stock(), &VoucherTypeSelector::Name("purchase".to_string()))
-            .map_err(|refusal| refusal.code)
-            .unwrap_err(),
-        "voucher_type_ambiguous"
+            .map(|selection| names(&selection).len())
+            .map_err(|refusal| refusal.code),
+        Ok(1)
+    );
+    assert_eq!(
+        select_voucher_rows(
+            renamed_book_rows(),
+            &VoucherTypeSelector::Name("purchase local".to_string())
+        )
+        .map(|selection| names(&selection).len())
+        .map_err(|refusal| refusal.code),
+        Ok(1)
     );
     assert_eq!(
         select_voucher_rows(stock(), &VoucherTypeSelector::Name("Purchase".to_string()))
