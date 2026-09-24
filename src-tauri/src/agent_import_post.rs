@@ -515,10 +515,32 @@ impl Server {
                     )
                 }) {
                     "post_masters_unconfirmed"
+                } else if error
+                    .chain()
+                    .any(|cause| cause.is::<crate::tally::approved_import::PreIntentQueueRefusal>())
+                {
+                    // Refused in the queue before the intent (#656): nothing
+                    // was sent, so the outcome is known.
+                    "post_queue_read_failed"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
-                ToolFailure::from_runtime(code, error)
+                // A queue read that failed in transport has no typed cause of
+                // its own; the transport's safe code names it.
+                let transport = (code == "post_queue_read_failed")
+                    .then(|| {
+                        error.chain().find_map(|cause| {
+                            cause
+                                .downcast_ref::<bridge_tally_transport::TallyTransportError>()
+                                .map(bridge_tally_transport::TallyTransportError::safe_code)
+                        })
+                    })
+                    .flatten();
+                let mut failure = ToolFailure::from_runtime(code, error);
+                if failure.cause.is_none() {
+                    failure.cause = transport;
+                }
+                failure
             })?;
             accumulated = combine_evidence(
                 accumulated.clone(),

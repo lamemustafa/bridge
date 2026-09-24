@@ -387,7 +387,9 @@ been observed live on a synthetic Silver 7.1 company, each reading back
    (it may be under a new name) with `validate_masters` before building again.
    A batch built before this record existed is refused with
    `import_batch_predates_ledger_binding`, before any Tally request; build it
-   again. Rebuild only when `attempt_recorded` is `false`.
+   again. Any other read inside the queue that fails before the post is refused
+   with `post_queue_read_failed`, whose `cause` names it; nothing is sent, and
+   the post can be re-run. Rebuild only when `attempt_recorded` is `false`.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the
