@@ -1,7 +1,7 @@
 //! Ledgers for the local MCP adapter.
 use bridge_tally_core::TallyDate;
-use bridge_tally_protocol::gst_registration::GstRegistrationHistory;
 use bridge_tally_protocol::group_ancestry::{AncestryChain, AncestryGap, GroupIndex};
+use bridge_tally_protocol::gst_registration::GstRegistrationHistory;
 
 use super::*;
 
@@ -99,7 +99,11 @@ fn party_gstin_on(flat: Option<&str>, history: &GstRegistrationHistory, as_of: &
     let named = flat.filter(|value| !value.is_empty()).map(str::to_string);
     let flat = flat.map(str::to_string);
     let from_flat = |named: Option<String>, flat: Option<String>| PartyGstin {
-        status: if named.is_some() { "flat_field" } else { "not_reported" },
+        status: if named.is_some() {
+            "flat_field"
+        } else {
+            "not_reported"
+        },
         gstin: named,
         registration_type: None,
         flat,
@@ -117,7 +121,11 @@ fn party_gstin_on(flat: Option<&str>, history: &GstRegistrationHistory, as_of: &
             let in_force = history.in_force(as_of);
             let gstin = in_force.and_then(|entry| entry.gstin.clone());
             PartyGstin {
-                status: if gstin.is_some() { "in_force" } else { "no_gstin_in_force" },
+                status: if gstin.is_some() {
+                    "in_force"
+                } else {
+                    "no_gstin_in_force"
+                },
                 registration_type: in_force.and_then(|entry| entry.registration_type.clone()),
                 sources_disagree: named.is_some() && named != gstin,
                 gstin,

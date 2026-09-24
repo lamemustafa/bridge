@@ -327,8 +327,16 @@ fn a_gstin_held_only_in_the_dated_registration_history_is_reported_in_force() {
             &row.record.fields.gst_registrations,
             as_of,
         );
-        assert!(!gstin.sources_disagree, "{name}: the capture's sources agree");
-        (gstin.gstin, gstin.status, gstin.registration_type, gstin.flat)
+        assert!(
+            !gstin.sources_disagree,
+            "{name}: the capture's sources agree"
+        );
+        (
+            gstin.gstin,
+            gstin.status,
+            gstin.registration_type,
+            gstin.flat,
+        )
     };
     let text = |value: &str| Some(value.to_string());
     assert_eq!(
@@ -337,12 +345,22 @@ fn a_gstin_held_only_in_the_dated_registration_history_is_reported_in_force() {
     );
     assert_eq!(
         answer("G1 Party A Later GSTIN", "20250630"),
-        (None, "no_gstin_in_force", text("Unregistered/Consumer"), None),
+        (
+            None,
+            "no_gstin_in_force",
+            text("Unregistered/Consumer"),
+            None
+        ),
         "the first entry is dated but carries no GSTIN"
     );
     assert_eq!(
         answer("G1 Party B Flat GSTIN", "20250930"),
-        (text("29ZZZZZ0000Z1Z5"), "flat_field", None, text("29ZZZZZ0000Z1Z5")),
+        (
+            text("29ZZZZZ0000Z1Z5"),
+            "flat_field",
+            None,
+            text("29ZZZZZ0000Z1Z5")
+        ),
         "Tally returns an empty placeholder list beside the flat field"
     );
     assert_eq!(
@@ -936,14 +954,23 @@ mod through_the_tool {
             assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
             // This capture predates the registration-history FETCH, so every
             // row falls back to the flat field, and says so (bridge#624).
-            let expected = if row["party_gstin"].is_null() { "not_reported" } else { "flat_field" };
+            let expected = if row["party_gstin"].is_null() {
+                "not_reported"
+            } else {
+                "flat_field"
+            };
             assert_eq!(row["party_gstin_status"], expected, "{row}");
-            let flat = row["party_gstin_flat"].as_str().filter(|flat| !flat.is_empty());
+            let flat = row["party_gstin_flat"]
+                .as_str()
+                .filter(|flat| !flat.is_empty());
             assert_eq!(flat, row["party_gstin"].as_str(), "{row}");
             assert_eq!(row["gstin_sources_disagree"], false, "{row}");
             assert!(row["party_gstin_registration_type"].is_null(), "{row}");
             assert_eq!(row["party_gstin_as_of"], tally_host_today(), "{row}");
-            assert_eq!(row["compliance"]["gst_registrations"]["observation"], "not_observed", "{row}");
+            assert_eq!(
+                row["compliance"]["gst_registrations"]["observation"], "not_observed",
+                "{row}"
+            );
         }
     }
 

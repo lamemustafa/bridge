@@ -24,7 +24,11 @@ fn the_gstin_in_force_is_the_latest_entry_on_or_before_the_date_not_the_first() 
     assert_eq!(gstin("20250601"), None, "the blank first entry is in force");
     assert_eq!(gstin("20250701"), Some(A), "on the entry's own date");
     assert_eq!(gstin("20250930"), Some(A));
-    assert_eq!(gstin("20260331"), Some(B), "a later registration replaces it");
+    assert_eq!(
+        gstin("20260331"),
+        Some(B),
+        "a later registration replaces it"
+    );
 }
 
 #[test]
@@ -76,7 +80,10 @@ fn each_malformed_history_is_unreadable_with_its_own_reason() {
         Some(GstRegistrationDefect::GstinMalformed)
     );
     assert_eq!(
-        unreadable(vec![raw(Some("20250701"), Some(A)), raw(Some("20250701"), Some(B))]),
+        unreadable(vec![
+            raw(Some("20250701"), Some(A)),
+            raw(Some("20250701"), Some(B))
+        ]),
         Some(GstRegistrationDefect::ConflictingEntriesOnOneDate)
     );
     // The same entry twice says one thing, so it is kept once.
@@ -97,7 +104,10 @@ fn each_malformed_history_is_unreadable_with_its_own_reason() {
 
 #[test]
 fn nothing_is_in_force_from_an_unobserved_or_unreadable_history() {
-    assert_eq!(GstRegistrationHistory::NotObserved.in_force("20260331"), None);
+    assert_eq!(
+        GstRegistrationHistory::NotObserved.in_force("20260331"),
+        None
+    );
     assert_eq!(
         GstRegistrationHistory::Unreadable {
             defect: GstRegistrationDefect::DateInvalid

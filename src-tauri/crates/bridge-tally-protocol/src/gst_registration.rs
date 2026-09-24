@@ -90,7 +90,11 @@ impl GstRegistrationHistory {
             if TallyDate::parse(applicable_from.as_str()).is_err() {
                 return Self::unreadable(GstRegistrationDefect::DateInvalid);
             }
-            if entry.gstin.as_deref().is_some_and(|gstin| !is_gstin_shaped(gstin)) {
+            if entry
+                .gstin
+                .as_deref()
+                .is_some_and(|gstin| !is_gstin_shaped(gstin))
+            {
                 return Self::unreadable(GstRegistrationDefect::GstinMalformed);
             }
             entries.push(GstRegistrationEntry {
@@ -106,7 +110,9 @@ impl GstRegistrationHistory {
             match deduplicated.last() {
                 Some(last) if last.applicable_from == entry.applicable_from => {
                     if *last != entry {
-                        return Self::unreadable(GstRegistrationDefect::ConflictingEntriesOnOneDate);
+                        return Self::unreadable(
+                            GstRegistrationDefect::ConflictingEntriesOnOneDate,
+                        );
                     }
                 }
                 _ => deduplicated.push(entry),
