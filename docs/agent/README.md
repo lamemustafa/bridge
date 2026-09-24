@@ -380,7 +380,10 @@ been observed live on a synthetic Silver 7.1 company, each reading back
    sees only changes that move the company's master AlterID (`ALTMSTID`):
    measured for ledger renames and creates made through the gateway. A regroup,
    an edit made in Tally's own screens, and whether posting a voucher moves it
-   are not yet measured. Separately, the build records each ledger's GUID, and a
+   are not yet measured. A queue catalogue re-read that does not parse refuses
+   with `post_catalogue_unreadable`, whose `cause` names why, and nothing is
+   sent; a repeated or unusable ledger name refuses again until it is corrected
+   in Tally. Separately, the build records each ledger's GUID, and a
    post refuses any ledger now on another GUID (renamed and replaced, or deleted
    and recreated, since the build) with `import_masters_changed_since_build`,
    naming it. The name now means a different ledger: confirm the intended one
