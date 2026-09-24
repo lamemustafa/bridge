@@ -882,10 +882,10 @@ impl Server {
                 // refusal code must survive the byte cap.
                 if let Some(candidates) = candidates {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
-                        let kept = bounded_candidates(&candidates, self.settings.max_bytes / 4);
-                        error["candidates_total"] = json!(candidates.len());
-                        error["candidates_truncated"] = json!(kept.len() < candidates.len());
-                        error["candidates"] = json!(kept);
+                        let fields = candidate_fields(&candidates, self.settings.max_bytes / 4);
+                        for (key, value) in fields {
+                            error[key] = value;
+                        }
                     }
                 }
                 if let Some(counts) = counts {
@@ -1480,17 +1480,23 @@ fn add_decimal(left: &str, right: &str) -> Result<String, String> {
         .map_err(|_| "voucher_amount_invalid".to_string())
 }
 
-/// The longest prefix of `candidates` whose serialised size fits `budget`.
-fn bounded_candidates(candidates: &[Value], budget: usize) -> Vec<Value> {
+/// A refusal's `candidates`: the longest prefix whose serialised size fits
+/// `budget`, the full count, and whether any were left out.
+fn candidate_fields(candidates: &[Value], budget: usize) -> [(&'static str, Value); 3] {
     let mut used = 0;
-    candidates
+    let kept = candidates
         .iter()
         .take_while(|candidate| {
             used += candidate.to_string().len();
             used <= budget
         })
         .cloned()
-        .collect()
+        .collect::<Vec<_>>();
+    [
+        ("candidates_total", json!(candidates.len())),
+        ("candidates_truncated", json!(kept.len() < candidates.len())),
+        ("candidates", json!(kept)),
+    ]
 }
 
 fn redact_tool_response(tool: &str, value: Value, redaction: Redaction) -> Value {

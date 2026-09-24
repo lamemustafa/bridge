@@ -94,10 +94,23 @@ fn a_class_request_keeps_only_that_class_and_the_candidates_are_bounded() {
         .map(|index| json!({"name": format!("Type {index}"), "guid": "x".repeat(40)}))
         .collect::<Vec<_>>();
     let each = candidates[0].to_string().len();
-    let kept = bounded_candidates(&candidates, each * 3 + 1);
-    assert_eq!(kept.len(), 3, "only what fits the budget");
-    assert_eq!(kept[..], candidates[..3]);
-    assert_eq!(bounded_candidates(&candidates, usize::MAX).len(), 10);
+    let fields = |budget| {
+        candidate_fields(&candidates, budget)
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect::<serde_json::Map<_, _>>()
+    };
+    let cut = fields(each * 3 + 1);
+    assert_eq!(
+        cut["candidates"],
+        json!(candidates[..3]),
+        "only what fits the budget"
+    );
+    assert_eq!(cut["candidates_total"], 10);
+    assert_eq!(cut["candidates_truncated"], true);
+    let whole = fields(usize::MAX);
+    assert_eq!(whole["candidates"], json!(candidates));
+    assert_eq!(whole["candidates_truncated"], false);
 }
 
 #[test]
