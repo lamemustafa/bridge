@@ -4084,7 +4084,7 @@
   "by": "author",
   "what": "a co-operative society's recipient type is unknown",
   "file": "src/high_value_register.rs",
-  "from": "Some(\"cooperative_society\") => Some(RECIPIENT_CO_OPERATIVE),",
+  "from": "Some(\"cooperative_society\") => Some(Recipient::CoOperative),",
   "to": "Some(\"cooperative_society\") => None,"
  },
  {

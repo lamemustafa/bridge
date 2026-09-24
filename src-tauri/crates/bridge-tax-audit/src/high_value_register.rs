@@ -61,6 +61,24 @@ const COUNTERPARTY_TYPES_EXCLUDED_FROM_269ST: [&str; 3] =
 pub const RECIPIENT_CO_OPERATIVE: &str = "co_operative_society";
 pub const RECIPIENT_NOT_CO_OPERATIVE: &str = "not_co_operative_society";
 
+/// The s.194N recipient: whether this assessee, withdrawing cash, is itself a co-operative
+/// society. A type rather than text, so no value but these two reaches `run`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recipient {
+    CoOperative,
+    NotCoOperative,
+}
+
+impl Recipient {
+    /// The reference's text for this recipient type.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CoOperative => RECIPIENT_CO_OPERATIVE,
+            Self::NotCoOperative => RECIPIENT_NOT_CO_OPERATIVE,
+        }
+    }
+}
+
 /// The reference's fallback defaults, equal to its rules tables' numbers.
 pub const DEFAULT_CA_THRESHOLD_PAISE: i64 = 2_00_000_00;
 pub const DEFAULT_S194N_THRESHOLD_PAISE: i64 = 1_00_00_000_00;
@@ -139,10 +157,10 @@ pub fn counterparty_types(
 }
 
 /// The recipient type pack.py derives from the engagement's own entity type.
-pub fn s194n_recipient_type(entity_type: Option<&str>) -> Option<&'static str> {
+pub fn s194n_recipient_type(entity_type: Option<&str>) -> Option<Recipient> {
     match entity_type {
-        Some("individual" | "huf" | "firm" | "llp" | "company") => Some(RECIPIENT_NOT_CO_OPERATIVE),
-        Some("cooperative_society") => Some(RECIPIENT_CO_OPERATIVE),
+        Some("individual" | "huf" | "firm" | "llp" | "company") => Some(Recipient::NotCoOperative),
+        Some("cooperative_society") => Some(Recipient::CoOperative),
         _ => None,
     }
 }
@@ -376,7 +394,7 @@ pub struct Inputs<'c> {
     pub bank_statement: Option<&'c BankStatementDoc>,
     pub s194n_narration_terms: &'c BTreeSet<String>,
     pub ais_rows: &'c [AisRow],
-    pub s194n_recipient_type: Option<&'c str>,
+    pub s194n_recipient_type: Option<Recipient>,
     pub round_off_ledgers: &'c BTreeSet<String>,
     pub counterparty_type_by_ledger: &'c BTreeMap<String, String>,
 }
@@ -743,23 +761,23 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
         "The s.194N fourth-proviso threshold where the RECIPIENT (the withdrawer -- this assessee) is \
          itself a co-operative society (rules.s194n.threshold_co_operative_paise).", vec![])?;
     let f_recipient = fig(&mut r, "s194n_recipient_type",
-        Value::Text(i.s194n_recipient_type.unwrap_or("unknown").to_string()), Unit::Text,
+        Value::Text(i.s194n_recipient_type.map_or("unknown", Recipient::as_str).to_string()), Unit::Text,
         "Whether this assessee (the RECIPIENT of a s.194N-deducting bank when it withdraws cash) is itself \
          a co-operative society -- derived from the engagement's own entity type; 'unknown' when not \
          supplied or not recognised.", vec![])?;
     match i.s194n_recipient_type {
-        Some(RECIPIENT_CO_OPERATIVE) => {
+        Some(Recipient::CoOperative) => {
             fig(&mut r, "s194n_applicable_threshold_paise", Value::Int(DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE),
                 Unit::Paise,
                 "The threshold that applies to THIS recipient: the co-operative-society figure, because \
                  s194n_recipient_type says so.", vec![])?;
         }
-        Some(RECIPIENT_NOT_CO_OPERATIVE) => {
+        Some(Recipient::NotCoOperative) => {
             fig(&mut r, "s194n_applicable_threshold_paise", Value::Int(DEFAULT_S194N_THRESHOLD_PAISE), Unit::Paise,
                 "The threshold that applies to THIS recipient: the ordinary (non-co-operative) figure, \
                  because s194n_recipient_type says so.", vec![])?;
         }
-        _ => {
+        None => {
             r.findings.push(Finding {
                 id: format!("{TEST_ID}/s194n_recipient_type_unknown"),
                 clauses: Vec::new(),
@@ -931,13 +949,13 @@ mod tests {
         for e in ["individual", "huf", "firm", "llp", "company"] {
             assert_eq!(
                 s194n_recipient_type(Some(e)),
-                Some(RECIPIENT_NOT_CO_OPERATIVE),
+                Some(Recipient::NotCoOperative),
                 "{e}"
             );
         }
         assert_eq!(
             s194n_recipient_type(Some("cooperative_society")),
-            Some(RECIPIENT_CO_OPERATIVE)
+            Some(Recipient::CoOperative)
         );
         assert_eq!(s194n_recipient_type(Some("trust")), None);
         assert_eq!(s194n_recipient_type(None), None);

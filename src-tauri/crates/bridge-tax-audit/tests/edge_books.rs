@@ -562,17 +562,13 @@ fn check(name: &str) {
                         s["entity_type"].as_str().unwrap_or("individual"),
                     )),
                     Some("unknown") => None,
-                    Some(t) => {
-                        assert!(
-                            [
-                                high_value_register::RECIPIENT_CO_OPERATIVE,
-                                high_value_register::RECIPIENT_NOT_CO_OPERATIVE
-                            ]
-                            .contains(&t),
-                            "{name}: s194n_recipient_type {t:?} is not a recipient type"
-                        );
-                        Some(t)
+                    Some(high_value_register::RECIPIENT_CO_OPERATIVE) => {
+                        Some(high_value_register::Recipient::CoOperative)
                     }
+                    Some(high_value_register::RECIPIENT_NOT_CO_OPERATIVE) => {
+                        Some(high_value_register::Recipient::NotCoOperative)
+                    }
+                    Some(t) => panic!("{name}: s194n_recipient_type {t:?} is not a recipient type"),
                 };
                 let inputs = high_value_register::Inputs {
                     cash: &cash,
