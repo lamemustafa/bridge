@@ -1834,3 +1834,27 @@ async fn capability_probe_marks_presentation_equivalent_guid_siblings_ambiguous(
     assert_company_collection_request_shape(&post_xml.text);
     assert!(post_xml.text.contains("<ID>BridgeCompanyExtent</ID>"));
 }
+
+/// The budget admits exactly as many counted ledgers as its estimate allows
+/// and refuses one more, carrying the numbers it refused on (#637).
+#[test]
+fn the_compliance_budget_admits_up_to_its_estimate_and_refuses_one_ledger_more() {
+    let limit = super::COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED
+        / super::COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED;
+    assert!(super::admit_compliance_master_read(usize::try_from(limit).unwrap()).is_ok());
+    match super::admit_compliance_master_read(usize::try_from(limit + 1).unwrap()) {
+        Err(super::PartyLedgerMasterSourceValidationError::TooLarge {
+            ledgers,
+            estimated_bytes,
+            budget_bytes,
+        }) => {
+            assert_eq!(ledgers, limit + 1);
+            assert_eq!(
+                estimated_bytes,
+                (limit + 1) * super::COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED
+            );
+            assert_eq!(budget_bytes, super::COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED);
+        }
+        other => panic!("expected a size refusal, got {other:?}"),
+    }
+}
