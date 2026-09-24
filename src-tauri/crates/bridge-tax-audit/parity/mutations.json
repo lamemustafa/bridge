@@ -3894,5 +3894,237 @@
   "file": "src/documents.rs",
   "from": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => None,",
   "to": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => Some(0),"
+ },
+ {
+  "id": "E2B2-01",
+  "by": "author",
+  "what": "a (party, day) row exactly at the limit is not reported",
+  "file": "src/high_value_register.rs",
+  "from": ".filter(|(_, d)| d.paise >= row_threshold)",
+  "to": ".filter(|(_, d)| d.paise > row_threshold)"
+ },
+ {
+  "id": "E2B2-02",
+  "by": "author",
+  "what": "the at-or-over count excludes a row exactly at the threshold",
+  "file": "src/high_value_register.rs",
+  "from": "let over = rows.values().filter(|d| d.paise >= threshold).count();",
+  "to": "let over = rows.values().filter(|d| d.paise > threshold).count();"
+ },
+ {
+  "id": "E2B2-03",
+  "by": "author",
+  "what": "Contra vouchers are walked",
+  "file": "src/high_value_register.rs",
+  "from": "if v.base_type == \"Contra\" {",
+  "to": "if v.base_type == \"Contra \" {"
+ },
+ {
+  "id": "E2B2-04",
+  "by": "author",
+  "what": "the other money ledger can be a party",
+  "file": "src/high_value_register.rs",
+  "from": "if mode_set.contains(&l.ledger) || other_money.contains(&l.ledger) {",
+  "to": "if mode_set.contains(&l.ledger) {"
+ },
+ {
+  "id": "E2B2-05",
+  "by": "author",
+  "what": "a cash loan receipt is not left out",
+  "file": "src/high_value_register.rs",
+  "from": "if under_any(x.entirely_groups) {",
+  "to": "if false && under_any(x.entirely_groups) {"
+ },
+ {
+  "id": "E2B2-06",
+  "by": "author",
+  "what": "only a 'bank' counterparty type is left out",
+  "file": "src/high_value_register.rs",
+  "from": ".is_some_and(|t| COUNTERPARTY_TYPES_EXCLUDED_FROM_269ST.contains(&t.as_str()))",
+  "to": ".is_some_and(|t| t == \"bank\")"
+ },
+ {
+  "id": "E2B2-07",
+  "by": "author",
+  "what": "a round-off line can be a party",
+  "file": "src/high_value_register.rs",
+  "from": "|| x.round_off_ledgers.contains(&l.ledger);",
+  "to": "|| false;"
+ },
+ {
+  "id": "E2B2-08",
+  "by": "author",
+  "what": "a single party does not take the whole transaction",
+  "file": "src/high_value_register.rs",
+  "from": "if party_amounts.len() == 1 {",
+  "to": "if party_amounts.len() == 2 {"
+ },
+ {
+  "id": "E2B2-09",
+  "by": "author",
+  "what": "a voucher with no party is dropped, not grouped as unidentified",
+  "file": "src/high_value_register.rs",
+  "from": "} else if fallback_total > 0 {",
+  "to": "} else if fallback_total > 0 && false {"
+ },
+ {
+  "id": "E2B2-10",
+  "by": "author",
+  "what": "counterparty types exclude in bank mode too",
+  "file": "src/high_value_register.rs",
+  "from": "                } else {\n                    &no_types\n                },",
+  "to": "                } else {\n                    i.counterparty_type_by_ledger\n                },"
+ },
+ {
+  "id": "E2B2-11",
+  "by": "author",
+  "what": "the Loans (Liability) exclusion applies to bank receipts too",
+  "file": "src/high_value_register.rs",
+  "from": "let entirely: &[&str] = if direction == Direction::Receipt && is_cash {",
+  "to": "let entirely: &[&str] = if direction == Direction::Receipt {"
+ },
+ {
+  "id": "E2B2-12",
+  "by": "author",
+  "what": "limb (b) leaves loans out of payments, not receipts",
+  "file": "src/high_value_register.rs",
+  "from": "let entirely: &[&str] = if direction == Direction::Receipt {\n            &[LOANS_LIABILITY_GROUP]",
+  "to": "let entirely: &[&str] = if direction == Direction::Payment {\n            &[LOANS_LIABILITY_GROUP]"
+ },
+ {
+  "id": "E2B2-13",
+  "by": "author",
+  "what": "a limb (b) group exactly at the limit is not reported",
+  "file": "src/high_value_register.rs",
+  "from": "for (k, d) in rows.iter().filter(|(_, d)| d.paise >= limit_269st) {",
+  "to": "for (k, d) in rows.iter().filter(|(_, d)| d.paise > limit_269st) {"
+ },
+ {
+  "id": "E2B2-14",
+  "by": "author",
+  "what": "a three-line journal counts as a transfer",
+  "file": "src/high_value_register.rs",
+  "from": "if v.lines.len() != 2 {",
+  "to": "if v.lines.len() < 2 {"
+ },
+ {
+  "id": "E2B2-15",
+  "by": "author",
+  "what": "one party line is enough for a journal transfer",
+  "file": "src/high_value_register.rs",
+  "from": "let all_parties = v.lines.iter().all(|l| {",
+  "to": "let all_parties = v.lines.iter().any(|l| {"
+ },
+ {
+  "id": "E2B2-16",
+  "by": "author",
+  "what": "journal codes swapped",
+  "file": "src/high_value_register.rs",
+  "from": "code: if l.amount_paise > 0 { \"I\" } else { \"J\" },",
+  "to": "code: if l.amount_paise > 0 { \"J\" } else { \"I\" },"
+ },
+ {
+  "id": "E2B2-17",
+  "by": "author",
+  "what": "a journal line exactly at the threshold is not reported",
+  "file": "src/high_value_register.rs",
+  "from": ".filter(|j| j.amount_paise >= threshold)",
+  "to": ".filter(|j| j.amount_paise > threshold)"
+ },
+ {
+  "id": "E2B2-18",
+  "by": "author",
+  "what": "a zero-debit statement row can match a withdrawal term",
+  "file": "src/high_value_register.rs",
+  "from": "if row.debit_paise <= 0 {",
+  "to": "if row.debit_paise < 0 {"
+ },
+ {
+  "id": "E2B2-19",
+  "by": "author",
+  "what": "withdrawal terms are not upper-cased",
+  "file": "src/high_value_register.rs",
+  "from": ".map(|t| py_upper(t))",
+  "to": ".map(|t| t.to_string())"
+ },
+ {
+  "id": "E2B2-20",
+  "by": "author",
+  "what": "the no-terms note is written when terms are set",
+  "file": "src/high_value_register.rs",
+  "from": "if terms.is_empty() {",
+  "to": "if !terms.is_empty() {"
+ },
+ {
+  "id": "E2B2-21",
+  "by": "author",
+  "what": "the AIS SFT finding is raised when rows are supplied",
+  "file": "src/high_value_register.rs",
+  "from": "if i.ais_rows.is_empty() {",
+  "to": "if !i.ais_rows.is_empty() {"
+ },
+ {
+  "id": "E2B2-22",
+  "by": "author",
+  "what": "statement evidence labels cut at 61 code points",
+  "file": "src/high_value_register.rs",
+  "from": "&prefix_chars(&row.narration, 60),",
+  "to": "&prefix_chars(&row.narration, 61),"
+ },
+ {
+  "id": "E2B2-23",
+  "by": "author",
+  "what": "the voucher grain keys by date",
+  "file": "src/high_value_register.rs",
+  "from": "                        |v| v.guid.clone(),\n",
+  "to": "                        |v| v.date.clone(),\n"
+ },
+ {
+  "id": "E2B2-24",
+  "by": "author",
+  "what": "a co-operative society's recipient type is unknown",
+  "file": "src/high_value_register.rs",
+  "from": "Some(\"cooperative_society\") => Some(RECIPIENT_CO_OPERATIVE),",
+  "to": "Some(\"cooperative_society\") => None,"
+ },
+ {
+  "id": "E2B2-25",
+  "by": "author",
+  "what": "a loan's lender_type wins over the roles map",
+  "file": "src/high_value_register.rs",
+  "from": "out.insert(ledger.clone(), t.to_string());",
+  "to": "out.entry(ledger.clone()).or_insert_with(|| t.to_string());"
+ },
+ {
+  "id": "E2B2-26",
+  "by": "author",
+  "what": "loan ledgers carry no counterparty type",
+  "file": "src/high_value_register.rs",
+  "from": ".map(|(ledger, cfg)| (ledger.clone(), cfg.lender_type.clone()))",
+  "to": ".filter(|_| false)\n        .map(|(ledger, cfg)| (ledger.clone(), cfg.lender_type.clone()))"
+ },
+ {
+  "id": "E2B2-27",
+  "by": "author",
+  "what": "the engagement's entity type is not passed",
+  "file": "src/lib.rs",
+  "from": "bound.entity_type.as_deref(),",
+  "to": "None,"
+ },
+ {
+  "id": "E2B2-28",
+  "by": "author",
+  "what": "the caller's AIS rows are not passed",
+  "file": "src/registry.rs",
+  "from": "&c.traces.ais)",
+  "to": "&[])"
+ },
+ {
+  "id": "E2B2-29",
+  "by": "author",
+  "what": "the counterparty types are read from the wrong key",
+  "file": "src/binding.rs",
+  "from": "&[\"roles\", \"counterparty_type_by_ledger\"],",
+  "to": "&[\"roles\", \"counterparty_types\"],"
  }
 ]
