@@ -19,8 +19,8 @@
 //!
 //! Python semantics reproduced where they decide a figure: MASTERID is read as `int()` reads it
 //! (its own whitespace set, a sign, single underscores, and any Unicode decimal digit, which
-//! `int()` reads as its value; a value beyond i64 is refused rather than read differently; see
-//! `masterid_int`); the purchase
+//! `int()` reads as its value; more than 4,300 digits is unparseable, as `int()` raises there; a
+//! value beyond i64 is refused rather than read differently; see `masterid_int`); the purchase
 //! rate and the cost are floats accumulated in population order, compared exactly with the integer
 //! sale, and rounded half to even; the invoice, receipt and re-issue maps keep the last voucher per
 //! GUID, as a dict does; a write-off is one row per voucher (by its position, not its GUID) and

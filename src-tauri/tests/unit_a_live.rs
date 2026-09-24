@@ -83,6 +83,9 @@ async fn unit_a_outstandings_live_exit_check_withholds_without_residual_coverage
         OutstandingsLoadResult::Complete { .. } => panic!(
             "the exit harness must not emit totals until residual coverage is independently qualified"
         ),
+        OutstandingsLoadResult::BaseCurrencyLedgersOnly { .. } => panic!(
+            "BaseCurrencyLedgersOnly: this harness does not calibrate a book with several currency masters, so a base-currency-only result is outside what it measures"
+        ),
     }
 }
 

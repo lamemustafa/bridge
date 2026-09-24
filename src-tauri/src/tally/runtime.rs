@@ -2732,9 +2732,9 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, None)
+        self.fetch_ledger_opening_with_evidence(config, identity, None, false)
             .await
-            .map(|(ledgers, _, evidence)| (ledgers, evidence))
+            .map(|(ledgers, _, evidence, _)| (ledgers, evidence))
     }
 
     /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
@@ -2746,8 +2746,33 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(Vec<TallyLedger>, TallyDate, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, None)
+        self.fetch_ledger_opening_with_evidence(config, identity, None, false)
             .await
+            .map(|(ledgers, from, evidence, _)| (ledgers, from, evidence))
+    }
+
+    /// As `fetch_ledgers_with_opening_as_of_evidence`, also reading the group
+    /// collection once, paired, inside the same identity and book-extent
+    /// bracket, so every ledger's `PARENT` resolves against groups from the
+    /// same unchanged book. This is the group request outstandings already
+    /// sends; its size follows the book's group count, not its ledger count.
+    pub async fn fetch_ledgers_and_groups_with_opening_as_of_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(
+        Vec<TallyLedger>,
+        Vec<bridge_tally_protocol::TallyNamedMaster>,
+        TallyDate,
+        RuntimeReadEvidence,
+    )> {
+        let (ledgers, from, evidence, groups) = self
+            .fetch_ledger_opening_with_evidence(config, identity, None, true)
+            .await?;
+        let Some(groups) = groups else {
+            unreachable!("a ledger read asked for groups returns them or an error");
+        };
+        Ok((ledgers, groups, from, evidence))
     }
 
     /// Reads the native period opening at `from`, retaining the existing paired
@@ -2760,9 +2785,9 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         from: TallyDate,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, Some(from))
+        self.fetch_ledger_opening_with_evidence(config, identity, Some(from), false)
             .await
-            .map(|(ledgers, _, evidence)| (ledgers, evidence))
+            .map(|(ledgers, _, evidence, _)| (ledgers, evidence))
     }
 
     async fn fetch_ledger_opening_with_evidence(
@@ -2770,7 +2795,13 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
-    ) -> anyhow::Result<(Vec<TallyLedger>, TallyDate, RuntimeReadEvidence)> {
+        read_groups: bool,
+    ) -> anyhow::Result<(
+        Vec<TallyLedger>,
+        TallyDate,
+        RuntimeReadEvidence,
+        Option<Vec<bridge_tally_protocol::TallyNamedMaster>>,
+    )> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -2809,6 +2840,21 @@ impl TallyRuntime {
                         ));
                         let ledgers =
                             admit_native_ledger_opening_rows(&body, identity.company_guid())?;
+                        let groups = if read_groups {
+                            let request =
+                                render_native_group_snapshot_request(identity.display_name());
+                            let paired = client.fetch_native_report_paired(request.clone()).await?;
+                            let (body, encoded_bytes, encoded_sha256) = paired
+                                .require_stable(PairedReadValidationError::NativeLedgerGroup)?;
+                            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                                &request,
+                                encoded_sha256,
+                                encoded_bytes,
+                            ));
+                            Some(parse_native_group_snapshot(&body, identity.company_guid())?)
+                        } else {
+                            None
+                        };
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != opening_extent {
                             return Err(anyhow::Error::new(
@@ -2819,7 +2865,7 @@ impl TallyRuntime {
                         let closing_evidence =
                             confirm_read_boundary(&client, boundary_profile).await?;
                         evidence = evidence.clone().combine(closing_evidence);
-                        Ok((ledgers, period.from().clone(), evidence.clone()))
+                        Ok((ledgers, period.from().clone(), evidence.clone(), groups))
                     }
                     .await;
                     result.map_err(|error| with_read_evidence(error, evidence))
