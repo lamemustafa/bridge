@@ -518,7 +518,7 @@ fn forex_originalname_currency() -> String {
 
 fn forex_company_currency() -> String {
     decode(include_bytes!(
-        "../../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_forex_edited.utf16le.xml"
+        "../../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_live.utf16le.xml"
     ))
 }
 
@@ -589,7 +589,9 @@ async fn a_book_whose_company_names_no_inr_base_is_refused() {
     let forex_row = company.find("BRIDGE CORPUS FOREX").unwrap();
     let rupee = "<CURRENCYNAME TYPE=\"String\">\u{20b9}</CURRENCYNAME>";
     assert!(company.find(rupee).unwrap() > forex_row);
-    assert!(company.find(rupee).unwrap() < company.find("BRIDGE SHAPE LAB").unwrap());
+    let first = company.find(rupee).unwrap();
+    assert!(company.find("BRIDGE CORPUS FOREX").unwrap() < first);
+    assert!(first < company.find("BRIDGE SHAPE LAB").unwrap());
     let naming = |value: &str| {
         company.replacen(
             rupee,

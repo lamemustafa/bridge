@@ -1,54 +1,30 @@
-# `company_currencyname_forex_edited`: provenance (EDITED capture)
+# `company_currencyname_live`: provenance
 
 The `Company` collection that names each loaded company's `CURRENCYNAME` (bridge#551;
-TALLY_PROTOCOL_REFERENCE §9.10a.2). **This fixture is an edited capture, not a byte-exact one:**
-rows were removed from the captured response, as recorded below.
+TALLY_PROTOCOL_REFERENCE §9.10a.2), captured as received.
 
-## Why it is edited
-
-The collection lists **every loaded company**, whatever `SVCURRENTCOMPANY` names. The lab had other
-companies loaded when it was captured, including client-derived copies, so the response as captured
-cannot be published. The edit keeps the fewest rows that test what the parser needs: the company
-the read is for, and one other synthetic company, so that choosing the row by GUID is tested against
-a real second row.
-
-## Source capture
-
-- **Host / gateway:** TallyPrime **Silver (licensed)** 7.1, `education_mode` false; `/status`
-  byte-identical before and after.
-- **Date:** 2026-09-23, 10:57–10:59 +0530, read-only.
-- **Request:** `render_company_base_currency_request("BRIDGE CORPUS FOREX")`: byte-identical to the
-  request sent.
-- **Source response:** 14,464 bytes, sha256
-  `2f69596ea921c254b0f327e397d60546271db1a650bea1a00143fe36569c20dd`, BOM-less UTF-16LE, `STATUS 1`,
-  23 `COMPANY` rows. Not committed.
-
-## The edit
-
-- **Removed:** 21 of the 23 `COMPANY` rows, each from its leading indentation through the CRLF after
-  its `</COMPANY>`. Nothing else was changed.
-- **Kept, byte for byte and in captured order:** the rows of `BRIDGE CORPUS FOREX` (GUID
-  `b14e9b2d-8a63-4779-804d-25d59eb787eb`) and `BRIDGE SHAPE LAB` (GUID
-  `3a6bd6e1-b835-4bff-89dd-8a6af138c346`), both synthetic, with `CURRENCYNAME` `₹`, and all bytes
-  before the first row and after the last.
-- **`CMPINFO` counters are as captured.** They describe the current company, not the collection:
-  `<COMPANY>0</COMPANY>` was 0 before the edit too, and `<CURRENCY>3</CURRENCY>` and
-  `<LEDGER>11</LEDGER>` are FOREX's own. The parser reads rows only from `<DATA>` and ignores
-  `CMPINFO`, which a test checks.
-- **Scanned after the edit** for every company name and GUID in the source response: only the two
-  kept companies remain.
+- **Host / gateway:** TallyPrime **Silver (licensed)** 7.1, `education_mode` false.
+- **Date:** 2026-09-24, 11:01–11:05 +0530, read-only, one request at a time.
+- **Loaded companies:** only the four synthetic books below. A client-derived demo copy listed by the
+  opening `/status` was closed before this request; the closing `/status` lists only these four.
+- **Request:** `render_company_base_currency_request("BRIDGE CORPUS FOREX")`, as the production
+  renderer produces it. The collection lists every loaded company whatever `SVCURRENTCOMPANY` names.
+  The same request for `BRIDGE SHAPE LAB`, sent next, returned the same bytes.
+- **Encoding:** BOM-less UTF-16LE, the undecoded wire bytes. `STATUS 1`, 4 `COMPANY` rows.
 
 | file | bytes | sha256 |
 |---|---|---|
-| `company_currencyname_forex_edited.utf16le.xml` | 3,912 | `f44ff5795891ec4ba180da8d65a16e574385e6cc69ddd75c51b170144f53ec05` |
+| `company_currencyname_live.utf16le.xml` | 4,914 | `83ad785d1d7d6f0e42c930ea8585461aeb217f6269987dd700d87c3fe5805def` |
 
-## What it establishes, and what it does not
+| company | GUID | `CURRENCYNAME` |
+|---|---|---|
+| `Bridge Billwise Lab` | `75f7566d-7a4f-431a-9642-e93a9d06d57d` | `Rs.` |
+| `BRIDGE CORPUS FOREX` | `b14e9b2d-8a63-4779-804d-25d59eb787eb` | `₹` |
+| `BRIDGE SHAPE LAB` | `3a6bd6e1-b835-4bff-89dd-8a6af138c346` | `₹` |
+| `Bridge Validation Lab` | `c6afd306-00e1-4f51-802a-babe44daddd3` | `₹` |
 
-- The row shape: a `COMPANY` element with `NAME` and `RESERVEDNAME` attributes, and `NAME`, `GUID` and
-  `CURRENCYNAME` children, `CURRENCYNAME` carrying the base master's `ORIGINALNAME` (`₹`, where the
-  master's `NAME` is `I₹`).
-- It does **not** show the collection's full membership, row order among other companies, or how a
-  company whose base is not INR reports (a USD-based control book reported `$`; that row was
-  removed).
-- Missing, duplicated, empty and ambiguous rows are tested as labelled edits of this fixture, not
-  captured.
+- The `CMPINFO` counters describe the current company, not the collection (`<COMPANY>0</COMPANY>`);
+  the parser reads rows only from `<DATA>`, which a test checks.
+- Missing, duplicated, blank and ambiguous rows are tested as labelled edits of this capture, and the
+  runtime's refusal cases edit FOREX's row (`$`, or a value naming no master).
+- It does **not** show a company whose base is not INR: no such book was loaded.

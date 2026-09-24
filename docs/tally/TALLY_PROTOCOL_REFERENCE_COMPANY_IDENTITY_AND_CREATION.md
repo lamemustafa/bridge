@@ -389,9 +389,18 @@ report `CURRENCYNAME` `₹`. That is the rupee master's `ORIGINALNAME`, and no m
 same response lists a USD-based control book in the lab with `CURRENCYNAME` `$`, and
 `Bridge Billwise Lab` with `Rs.`. An earlier Company collection read (2026-09-22) with a wider
 `FETCH` gave the same values for FOREX, SHAPE LAB and Billwise; §8.2d records the FOREX and
-Billwise values. Neither read is committed as captured, since both list other loaded companies;
-`company_currencyname_forex_edited` keeps the FOREX and SHAPE LAB rows of the 2026-09-23 read,
-labelled as edited (`COMPANY_CURRENCY_CAPTURE_PROVENANCE.md`).
+Billwise values. Neither read is committed, since both list other loaded companies. A read on
+2026-09-24 with only the four synthetic books loaded is committed as captured,
+`company_currencyname_live` (`COMPANY_CURRENCY_CAPTURE_PROVENANCE.md`): `CURRENCYNAME` `Rs.` on
+Billwise and `₹` on FOREX, SHAPE LAB and Validation.
+
+**One-master books (2026-09-24).** Read with `ORIGINALNAME` in the same session: Billwise's master is
+`Rs.` / `Rs.` / `Indian Rupees` and Validation's is `I₹` / `₹` / `INR`, as `NAME` / `ORIGINALNAME` /
+`MAILINGNAME`. Each company's `CURRENCYNAME` equals its master's `ORIGINALNAME`, and each response
+equals the same session's response without the field once the `ORIGINALNAME` line is removed.
+Committed as `currency_originalname_billwise_live` and `currency_originalname_validation_live`. So
+the rupee symbol is not the same across INR books: `ORIGINALNAME` is `Rs.` on one and `₹` on the
+other, while both are INR by their mailing names.
 
 That the rupee master is FOREX's base does not rest on this read alone: FOREX is an INR-based book
 with a `$` master (§8.2d). SHAPE LAB's base is known only through this read.
@@ -404,10 +413,10 @@ monetary read keeps the plain request and the single-master rule (§9.10a.1).
   the company's `CURRENCYNAME` character for character. With no match, several, or an empty
   value, it is not identified. `ORIGINALNAME` picks which master is the base; it never decides INR.
 - An identified base is INR only if its `MAILINGNAME` is `Indian Rupees` or `INR`, ignoring case.
-- A rupee symbol does not admit, as `NAME` or as `ORIGINALNAME`. Whether `ORIGINALNAME` `₹`
-  survives a Company Alteration that renames the base currency is unmeasured; if it does, a
-  renamed non-INR base would still carry it (inferred). `Rs.` alone never admits: other currencies
-  share it.
+- A rupee symbol does not admit, as `NAME` or as `ORIGINALNAME`. The symbol differs across INR books
+  (`Rs.`, `₹`; measured above). Whether `ORIGINALNAME` `₹` survives a Company Alteration that renames
+  the base currency is unmeasured; if it does, a renamed non-INR base would still carry it
+  (inferred). `Rs.` alone never admits: other currencies share it.
 
 On the MCP outstandings read, a book with several masters and an INR base is read with its
 foreign-currency ledgers left out of every figure and listed (§8.2d). Every other path still
@@ -415,13 +424,11 @@ refuses a book with several masters, until it compares each ledger's own currenc
 
 **Not established:**
 - that `ORIGINALNAME` rather than `NAME` is the match on every book. The two differ on the FOREX
-  and SHAPE LAB base (`I₹` / `₹`). On Billwise, a one-master book, `NAME`, `ORIGINALNAME` and the
-  company `CURRENCYNAME` are all `Rs.` (§8.2d, not committed), so that book cannot tell them apart;
+  and SHAPE LAB base and on Validation (`I₹` / `₹`), and the company value matches `ORIGINALNAME`
+  on all three. On Billwise, `NAME`, `ORIGINALNAME` and the company `CURRENCYNAME` are all `Rs.`,
+  so that book cannot tell them apart;
 - that row order, `RESERVEDNAME` or `MASTERID` mean anything. They are never used;
 - whether `ORIGINALNAME` survives a base-currency rename by Company Alteration;
-- the currency request with `ORIGINALNAME` on a single-master book. Three client-derived lab
-  copies, one master each, answered a wider `FETCH` that includes `ORIGINALNAME` with `STATUS` 1
-  on the same host (not committed);
 - any release other than 7.1, including whether one that does not know the field answers in-band
   or blocks on a modal.
 

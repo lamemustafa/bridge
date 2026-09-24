@@ -135,7 +135,7 @@ async fn mcp_outstandings_report_base_currency_ledgers_only_on_forex() {
             "../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
         )),
         captured(include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_forex_edited.utf16le.xml"
+            "../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_live.utf16le.xml"
         )),
     ] {
         pair(&mut plans, source);

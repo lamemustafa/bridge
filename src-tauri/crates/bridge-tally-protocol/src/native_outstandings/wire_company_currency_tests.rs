@@ -6,9 +6,9 @@ use crate::native_outstandings::{
     render_company_currency_request_with_originalname,
 };
 
-const COMPANY_CURRENCY_EDITED: &[u8] = include_bytes!(concat!(
+const COMPANY_CURRENCY_LIVE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/company_currencyname_forex_edited.utf16le.xml"
+    "/tests/fixtures/company_currencyname_live.utf16le.xml"
 ));
 const CURRENCY_ORIGINALNAME_FOREX: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -20,16 +20,18 @@ const LEDGERS_CURRENCY_FOREX: &[u8] = include_bytes!(concat!(
 ));
 const FOREX_GUID: &str = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
 const SHAPE_GUID: &str = "3a6bd6e1-b835-4bff-89dd-8a6af138c346";
+const BILLWISE_GUID: &str = "75f7566d-7a4f-431a-9642-e93a9d06d57d";
+const VALIDATION_GUID: &str = "c6afd306-00e1-4f51-802a-babe44daddd3";
 const FOREX_ROW_GUID: &str = "<GUID TYPE=\"String\">b14e9b2d-8a63-4779-804d-25d59eb787eb</GUID>";
 const FOREX_ROW_CURRENCY: &str = "<CURRENCYNAME TYPE=\"String\">\u{20b9}</CURRENCYNAME>";
 
-fn edited() -> String {
+fn captured() -> String {
     assert_eq!(
-        sha256_hex(COMPANY_CURRENCY_EDITED),
-        "f44ff5795891ec4ba180da8d65a16e574385e6cc69ddd75c51b170144f53ec05",
-        "edited capture changed"
+        sha256_hex(COMPANY_CURRENCY_LIVE),
+        "83ad785d1d7d6f0e42c930ea8585461aeb217f6269987dd700d87c3fe5805def",
+        "captured wire bytes changed"
     );
-    decode_utf16le(COMPANY_CURRENCY_EDITED)
+    decode_utf16le(COMPANY_CURRENCY_LIVE)
 }
 
 /// The FOREX row of the edited capture, from its opening tag through its
@@ -63,17 +65,23 @@ fn only_the_classified_read_fetches_originalname() {
 }
 
 /// bridge#551: the company's `CURRENCYNAME` is picked by GUID from a
-/// collection that lists other companies, and `CMPINFO`'s
+/// collection that lists every loaded company (four synthetic books here), and `CMPINFO`'s
 /// `<COMPANY>0</COMPANY>` counter is not a row.
 #[test]
 fn the_company_currency_name_is_picked_by_guid() {
-    let xml = edited();
+    let xml = captured();
     assert_eq!(xml.matches("<COMPANY>0</COMPANY>").count(), 1);
-    assert_eq!(xml.matches("<COMPANY NAME=").count(), 2);
-    for guid in [FOREX_GUID, &FOREX_GUID.to_uppercase(), SHAPE_GUID] {
+    assert_eq!(xml.matches("<COMPANY NAME=").count(), 4);
+    for (guid, name) in [
+        (FOREX_GUID, "\u{20b9}"),
+        (&FOREX_GUID.to_uppercase(), "\u{20b9}"),
+        (SHAPE_GUID, "\u{20b9}"),
+        (BILLWISE_GUID, "Rs."),
+        (VALIDATION_GUID, "\u{20b9}"),
+    ] {
         assert_eq!(
             parse_company_currency_name(&xml, guid).as_deref(),
-            Ok("\u{20b9}"),
+            Ok(name),
             "{guid}"
         );
     }
@@ -85,12 +93,12 @@ fn the_company_currency_name_is_picked_by_guid() {
     );
 }
 
-/// bridge#551: labelled edits of the edited capture. The value is kept
+/// bridge#551: labelled edits of the captured collection. The value is kept
 /// untrimmed; a blank, absent or duplicated value, a GUID answered twice, and a
 /// failed `STATUS` are refused.
 #[test]
 fn the_company_currency_name_fails_closed() {
-    let xml = edited();
+    let xml = captured();
     let row = forex_row(&xml);
     assert_eq!(row.matches(FOREX_ROW_CURRENCY).count(), 1);
     assert_eq!(row.matches(FOREX_ROW_GUID).count(), 1);
@@ -173,7 +181,7 @@ fn forex_identifies_its_rupee_base_and_sets_its_dollar_ledgers_aside() {
     assert!(!parse_company_currency(&currency).unwrap().is_inr);
     assert_eq!(masters.identify_base(None), None);
 
-    let name = parse_company_currency_name(&edited(), FOREX_GUID).unwrap();
+    let name = parse_company_currency_name(&captured(), FOREX_GUID).unwrap();
     let base = masters.identify_base(Some(&name)).unwrap();
     assert_eq!(base.base().name(), "I\u{20b9}");
     assert!(base.is_inr());
@@ -198,4 +206,65 @@ fn forex_identifies_its_rupee_base_and_sets_its_dollar_ledgers_aside() {
         ]
     );
     assert_eq!(snapshot.base.len(), 7);
+}
+
+/// bridge#551, from captures of two one-master books read with `ORIGINALNAME`
+/// in the same session as the Company collection: each company's
+/// `CURRENCYNAME` is its master's `ORIGINALNAME` (`Rs.` on Billwise, `₹` on
+/// Validation, whose NAME is `I₹`). So the rupee symbol is not the same across
+/// INR books, and both are INR by their mailing names.
+#[test]
+fn one_master_books_name_their_master_by_originalname_and_the_symbol_varies() {
+    let company = captured();
+    for (bytes, sha256, guid, name, original_name, mailing_name) in [
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/currency_originalname_billwise_live.utf16le.xml"
+            ))
+            .as_slice(),
+            "ce61be9696b678432297c1a5ae676503ce16edac00f2426b68822ddb8c84e254",
+            BILLWISE_GUID,
+            "Rs.",
+            "Rs.",
+            "Indian Rupees",
+        ),
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/currency_originalname_validation_live.utf16le.xml"
+            ))
+            .as_slice(),
+            "84bb7761903bbc95ce69a9ef6ea3b8b105079f7f57b1d1df2cd768e228f40642",
+            VALIDATION_GUID,
+            "I\u{20b9}",
+            "\u{20b9}",
+            "INR",
+        ),
+    ] {
+        assert_eq!(sha256_hex(bytes), sha256, "captured wire bytes changed");
+        let xml = decode_utf16le(bytes);
+        let masters = crate::native_outstandings::wire::parse_currency_masters(&xml).unwrap();
+        let [master] = masters.as_slice() else {
+            panic!("{guid}: {masters:?}");
+        };
+        assert_eq!(
+            (
+                master.name.as_str(),
+                master.original_name.as_deref(),
+                master.mailing_name.as_str()
+            ),
+            (name, Some(original_name), mailing_name)
+        );
+        assert_eq!(
+            parse_company_currency_name(&company, guid).as_deref(),
+            Ok(original_name)
+        );
+        let base = parse_currency_master_list(&xml)
+            .unwrap()
+            .identify_base(None)
+            .unwrap();
+        assert_eq!(base.base().name(), name);
+        assert!(base.is_inr());
+    }
 }

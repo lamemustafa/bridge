@@ -79,3 +79,23 @@ Each is a two-master book whose base is the rupee master: FOREX is an INR-based 
 (§9.10a.2, not committed).
 `ORIGINALNAME` identifies the base; INR is still decided by the mailing name alone. A rupee master
 with another mailing name, refused as not INR, is covered only by a constructed variant.
+
+## `currency_originalname_billwise_live`, `currency_originalname_validation_live`: one-master books with `ORIGINALNAME` (bridge#551)
+
+- **Host / date:** TallyPrime 7.1 Silver, licensed, `education_mode` false; 2026-09-24, 11:01–11:05
+  +0530, read-only, the same session as `company_currencyname_live`.
+- **Request:** `render_company_currency_request_with_originalname`, for `Bridge Billwise Lab` and
+  `Bridge Validation Lab`. BOM-less UTF-16LE.
+- **Control:** the same session also sent `render_company_currency_request` to each book. Those
+  responses are byte-identical to the committed `currency_inr_legacy_live` and
+  `currency_inr_modern_live` (2026-08-23), and each capture here equals its control once its one
+  `ORIGINALNAME` line is removed.
+
+| file | bytes | sha256 | master `NAME` / `ORIGINALNAME` / `MAILINGNAME` |
+|---|---|---|---|
+| `currency_originalname_billwise_live.utf16le.xml` | 3,534 | `ce61be9696b678432297c1a5ae676503ce16edac00f2426b68822ddb8c84e254` | `Rs.` / `Rs.` / `Indian Rupees` |
+| `currency_originalname_validation_live.utf16le.xml` | 3,506 | `84bb7761903bbc95ce69a9ef6ea3b8b105079f7f57b1d1df2cd768e228f40642` | `I₹` / `₹` / `INR` |
+
+Both books are INR by their mailing names, but their `ORIGINALNAME` differs (`Rs.`, `₹`): the rupee
+symbol is not the same across INR books. Each company's `CURRENCYNAME` in `company_currencyname_live`
+equals its master's `ORIGINALNAME`.
