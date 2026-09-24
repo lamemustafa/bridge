@@ -315,7 +315,6 @@ async fn operator_outstandings(
             },
             &identity_for_guid(&companies(), guid),
             TallyDate::parse("20260801").unwrap(),
-            Some(OutstandingsCurrencyAssertion::Inr),
             OutstandingsAgeingAnchor::DueDate,
         )
         .await;
@@ -411,32 +410,40 @@ async fn operator_outstandings_refuse_a_book_without_an_inr_base_before_any_bill
     }
 }
 
-/// bridge#604: with one Currency master the operator's assertion stands, as
-/// before: a master Tally names INR, and one it does not (the case the
-/// screen's confirmation exists for), both read through to a complete report.
+/// bridge#551 (601c): with one Currency master there is no operator
+/// override. A master Tally names INR reads through to a complete report; one
+/// it does not (the case bridge#604's confirmation used to admit) is refused
+/// as not INR, before any bill.
 #[tokio::test]
-async fn operator_outstandings_with_one_currency_master_read_through() {
+async fn one_currency_master_reads_only_when_tally_names_it_inr() {
     let captured = currency_source();
     let foreign = captured.replace(
         "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
         "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
     );
     assert_ne!(foreign, captured);
-    for currency in [captured, foreign] {
-        let (result, requests) =
-            operator_outstandings(currency_then_native_plans(currency), AGEING_GUID).await;
-        assert!(matches!(
-            result.unwrap(),
-            OutstandingsLoadResult::Complete {
-                currency_assertion: OutstandingsCurrencyAssertion::Inr,
-                ..
-            }
-        ),);
-        assert_eq!(requests, 44);
-    }
+    let (result, requests) =
+        operator_outstandings(currency_then_native_plans(captured), AGEING_GUID).await;
+    assert!(matches!(
+        result.unwrap(),
+        OutstandingsLoadResult::Complete {
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            ..
+        }
+    ));
+    assert_eq!(requests, 44);
+    let (result, requests) =
+        operator_outstandings(currency_then_native_plans(foreign), AGEING_GUID).await;
+    let result = result.unwrap();
+    assert!(
+        matches!(&result, OutstandingsLoadResult::Partial { reason, .. }
+            if *reason == "company_base_currency_not_inr".into()),
+        "{result:?}"
+    );
+    assert_eq!(requests, 14);
 }
 
-/// bridge#604: the operator's assertion is bound to the extent the currency
+/// bridge#604: the desktop read's witness is bound to the extent the currency
 /// read observed, as the agent read's witness is. A book that changed between
 /// the two reads is the retryable partial a change during the read gives,
 /// before any bill is read.
@@ -1314,13 +1321,12 @@ async fn several_masters_with_every_ledger_in_the_base_read_as_complete() {
     assert_eq!(requests_sent(simulator), plan_count, "desktop");
 }
 
-/// bridge#551, the stale-assertion case: the screen reads a book with several
-/// masters without asserting INR, so its request carries no assertion. If
-/// the book later reads with one master Tally does not name INR (a user
-/// deleted the unused INR master), nothing admits it: the one-master arm
-/// binds only an assertion the screen actually sent. Refused before any bill.
+/// bridge#551, through the desktop command's own body: with no operator
+/// assertion in the request, a book with one master Tally does not name INR
+/// (say its unused INR master was deleted) is refused before any bill, and an
+/// INR one reads through.
 #[tokio::test]
-async fn a_desktop_read_without_an_assertion_admits_one_master_only_by_its_mailing_name() {
+async fn the_desktop_command_admits_one_master_only_by_its_mailing_name() {
     let dollar = currency_source().replace(
         "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
         "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",

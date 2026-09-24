@@ -424,7 +424,13 @@ base (SHAPE LAB: 44 ledgers in `I₹` beside an unused `UUSD` master) reads as a
 with foreign-currency ledgers is read with them left out of every figure and listed (§8.2d): MCP
 reports the figures of the base-currency ledgers, labelled as such, and the desktop and the sweep
 show no figures, only which ledgers were left out. Among several masters, a book whose base is not
-identified, or not INR, is refused before any bill. Every other path still refuses a book with several masters, until it
+identified, or not INR, is refused before any bill. No surface in a shipped build (the desktop, the
+sweep, MCP) admits a book as INR on an operator's word: the desktop's confirmation for one master Tally
+does not name INR was removed after three client-derived lab copies, one master each, were all found
+INR by their mailing names (not committed; live client books beyond them are unmeasured). The
+non-default `voucher-scan` feature's calibrated read still takes an explicit INR assertion. It is not
+compiled into shipped builds; CI builds, tests and lints it on macOS only, and only runtime tests and
+the ignored live calibration harness call it. Every other path still refuses a book with several masters, until it
 compares each ledger's own currency with the base.
 
 **Not established:**

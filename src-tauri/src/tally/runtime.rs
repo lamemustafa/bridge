@@ -937,10 +937,9 @@ pub enum CircuitState {
     HalfOpen,
 }
 
-/// A typed INR admission for a monetary document. Outstandings may receive an
-/// explicit operator assertion, while the party/ledger export constructs this
-/// only after the existing Tally currency probe establishes one INR master.
-/// No other currency can reach an INR formatter.
+/// A typed INR admission for a monetary document, constructed only after
+/// Tally's own currency read establishes an INR base (bridge#551: no operator
+/// assertion remains). No other currency can reach an INR formatter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum OutstandingsCurrencyAssertion {
     #[serde(rename = "INR")]
@@ -948,9 +947,9 @@ pub enum OutstandingsCurrencyAssertion {
 }
 
 /// An INR admission that is inseparable from the company extent observed
-/// during the currency read. Party/ledger masters, MCP outstandings, the
-/// desktop single-company outstandings read (bridge#604, carrying the
-/// operator's assertion) and the all-companies sweep consume this witness.
+/// during the currency read. Party/ledger masters and the single-master
+/// paths consume it; the outstandings reads wrap it in a classified witness
+/// ([`ClassifiedCurrencyWitness`]).
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
@@ -1000,8 +999,8 @@ pub(crate) struct ClassifiedCurrencyWitness(PartyLedgerMasterCurrencyAssertion, 
 
 /// Proof that a result was read under a [`ClassifiedCurrencyWitness`], which
 /// [`OutstandingsLoadResult::BaseCurrencyLedgersOnly`] must carry: only
-/// `admit_inr_classified` mints one, so a single-master witness (the
-/// desktop's operator assertion) cannot produce that result by construction.
+/// `admit_inr_classified` mints one, so a single-master witness cannot
+/// produce that result by construction.
 /// A classified witness on a book with one master cannot either: its base
 /// refuses a ledger in another currency in `classify_ledger_currencies`. Its
 /// field is private to this module and its test and child modules.
@@ -1009,8 +1008,7 @@ pub(crate) struct ClassifiedCurrencyWitness(PartyLedgerMasterCurrencyAssertion, 
 pub struct ClassifiedBase(());
 
 /// The currency witness an outstandings read runs under: a single master's
-/// (MCP's `admit_inr` paths' shape, and the desktop's operator assertion via
-/// `bind_single_master_assertion`), or a classified base's.
+/// (`admit_inr`'s shape), or a classified base's.
 #[derive(Debug, Clone)]
 pub(crate) enum OutstandingsCurrencyWitness {
     SingleMaster(PartyLedgerMasterCurrencyAssertion),
@@ -1059,29 +1057,6 @@ pub(crate) struct ClassifiedCompanyCurrencyRead {
 impl ClassifiedCompanyCurrencyRead {
     pub(crate) fn evidence(&self) -> RuntimeReadEvidence {
         self.evidence.clone()
-    }
-
-    pub(crate) fn currency_count(&self) -> usize {
-        self.currency_count
-    }
-
-    /// The desktop operator's assertion for a book with exactly one master
-    /// (bridge#604's interim, which bridge#551 601c removes), bound to this
-    /// read's extent and to that master as the base. `None` for any other
-    /// count (a book with several masters is admitted only by
-    /// [`Self::admit_inr_classified`]), and when the master's NAME is blank,
-    /// which the currency parser already refuses.
-    pub(crate) fn bind_single_master_assertion(
-        self,
-        assertion: OutstandingsCurrencyAssertion,
-    ) -> Option<PartyLedgerMasterCurrencyAssertion> {
-        let identified = self.identified.filter(|_| self.currency_count == 1)?;
-        Some(PartyLedgerMasterCurrencyAssertion {
-            assertion,
-            decimal_places: identified.decimal_places(),
-            currency_read_extent: self.extent,
-            base: Some(identified.base().clone()),
-        })
     }
 
     /// INR for the identified base, by its mailing name; the codes are
@@ -3683,17 +3658,14 @@ impl TallyRuntime {
         .await
     }
 
-    /// The desktop single-company outstandings read, under the INR assertion
-    /// the screen sends: settled by Tally's own currency read, or confirmed by
-    /// the operator for a book with one Currency master that Tally does not
-    /// name INR (bridge#604). It reads the masters itself (the classified
-    /// read, bridge#551), whatever the screen read before:
-    /// - one master: the assertion stands, bound to the extent the currency
-    ///   read observed, as the agent read binds its witness;
-    /// - several masters: read only when the company names an INR base, and
-    ///   then its foreign-currency ledgers are left out and the result is the
-    ///   base-currency-ledgers-only partial; otherwise refused before any bill;
-    /// - none (the probe read no master): refused before any bill.
+    /// The desktop single-company outstandings read (bridge#551). It reads
+    /// the Currency masters itself (the classified read), whatever the screen
+    /// read before, and admits a book only when Tally names its base INR: the
+    /// only master, or among several the one the company names, by its mailing
+    /// name. Anything else is refused before any bill. There is no operator
+    /// override: bridge#604's "This company uses INR" confirmation is removed.
+    /// With several masters, foreign-currency ledgers are left out and the
+    /// result is the base-currency-ledgers-only partial.
     ///
     /// A book that changed since that read is the same retryable partial as
     /// one that changed during the outstandings read.
@@ -3702,34 +3674,24 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
-        currency_assertion: Option<OutstandingsCurrencyAssertion>,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
-        let currency = self
+        let witness = match self
             .detect_classified_base_currency_with_extent(config.clone(), identity)
-            .await?;
-        let witness: OutstandingsCurrencyWitness = match currency.currency_count() {
-            0 => return Ok(partial_result("company_currency_probe_failed")),
-            // An assertion binds only when the screen sent one (Tally named
-            // INR, or the operator confirmed it); without one the master's
-            // mailing name decides, as for several masters.
-            1 => match currency_assertion {
-                Some(assertion) => match currency.bind_single_master_assertion(assertion) {
-                    Some(witness) => witness.into(),
-                    None => return Ok(partial_result("company_base_currency_undetermined")),
-                },
-                None => match currency.admit_inr_classified() {
-                    Ok(witness) => witness.into(),
-                    Err(code) => return Ok(partial_result(code)),
-                },
-            },
-            _ => match currency.admit_inr_classified() {
-                Ok(witness) => witness.into(),
-                Err(code) => return Ok(partial_result(code)),
-            },
+            .await?
+            .admit_inr_classified()
+        {
+            Ok(witness) => witness,
+            Err(code) => return Ok(partial_result(code)),
         };
-        self.fetch_outstandings_under_witness(config, identity, as_of, witness, ageing_anchor)
-            .await
+        self.fetch_outstandings_under_witness(
+            config,
+            identity,
+            as_of,
+            witness.into(),
+            ageing_anchor,
+        )
+        .await
     }
 
     /// Outstandings under a witness the caller has already admitted: the
@@ -3770,8 +3732,8 @@ impl TallyRuntime {
         }
     }
 
-    /// MCP monetary reads require the observed currency's company extent;
-    /// the desktop operator assertion cannot be supplied through this entry point.
+    /// MCP monetary reads require the observed currency's company extent,
+    /// bound into the witness this entry point takes.
     pub(crate) async fn fetch_agent_outstandings_with_evidence(
         &self,
         config: TallyConfig,
@@ -4328,13 +4290,7 @@ impl TallyRuntime {
         // Tally data was read".
         let Some(segment_policy) = self.outstandings_segment_policy else {
             return self
-                .fetch_operator_outstandings(
-                    config,
-                    identity,
-                    as_of,
-                    Some(currency_assertion),
-                    ageing_anchor,
-                )
+                .fetch_operator_outstandings(config, identity, as_of, ageing_anchor)
                 .await;
         };
         let Some(_coverage) = self.unallocated_balance_coverage.as_ref() else {

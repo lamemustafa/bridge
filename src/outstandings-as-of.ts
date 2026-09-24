@@ -87,16 +87,14 @@ function selectedCompanyIdentity(company: OutstandingsCompany) {
   };
 }
 
-/** Builds the exact Tauri argument for one company's requested as-of date. */
-/// `assertInr` only when Tally named the company's currency INR or the
-/// operator confirmed it (bridge#604). A book with several currencies is
-/// left to the backend's own admission and sends no assertion (bridge#551).
+/** Builds the exact Tauri argument for one company's requested as-of date.
+ * It carries no currency assertion: the backend reads Tally's own currency
+ * masters and decides (bridge#551). */
 export function singleCompanyOutstandingsInvokeArgument(
   config: OutstandingsConfig,
   company: OutstandingsCompany,
   asOf: string,
   ageingAnchor: OutstandingsAgeingAnchor,
-  assertInr = true,
 ) {
   const asOfYyyymmddValue = asOfYyyymmdd(asOf);
   if (!asOfYyyymmddValue) return null;
@@ -104,7 +102,6 @@ export function singleCompanyOutstandingsInvokeArgument(
     request: {
       config,
       selected_company: selectedCompanyIdentity(company),
-      ...(assertInr ? { currency_assertion: "INR" as const } : {}),
       as_of_yyyymmdd: asOfYyyymmddValue,
       ageing_anchor: ageingAnchor,
     },

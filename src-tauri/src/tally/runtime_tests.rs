@@ -1156,13 +1156,7 @@ async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non
         .expect_err("a non-loopback endpoint must never be contacted");
     #[cfg(not(feature = "voucher-scan"))]
     let error = runtime
-        .fetch_operator_outstandings(
-            config,
-            &identity,
-            as_of,
-            Some(OutstandingsCurrencyAssertion::Inr),
-            OutstandingsAgeingAnchor::DueDate,
-        )
+        .fetch_operator_outstandings(config, &identity, as_of, OutstandingsAgeingAnchor::DueDate)
         .await
         .expect_err("a non-loopback endpoint must never be contacted");
     assert!(
