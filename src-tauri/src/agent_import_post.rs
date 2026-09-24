@@ -429,6 +429,9 @@ impl Server {
                     },
                 )
                 .await;
+            // Whatever the outcome, the book may have changed: no ledger
+            // listing of this company is continued from before it (#630).
+            self.drop_listing_snapshots(identity.company_guid());
             let posted = posted.map_err(|error| {
                 currencies_seen = error
                     .chain()

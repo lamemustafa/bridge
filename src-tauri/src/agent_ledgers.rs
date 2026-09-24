@@ -149,6 +149,128 @@ fn basic_row(ledger: TallyLedger, opening_as_of: &TallyDate) -> Value {
     })
 }
 
+/// How long a ledger listing snapshot may serve its continuation pages
+/// (#630). A continuation page is served from the snapshot only while the
+/// book's extent, including `ALTMSTID` and `ALTVCHID`, is unchanged. Whether a
+/// regroup, an alteration made in Tally's own screens, or a deletion moves
+/// those marks is unmeasured (ADR 0004), so a change of that kind can leave a
+/// continuation page up to this old. A first page is always read fresh.
+const LISTING_SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The most row bytes all listing snapshots may hold together (#630). The
+/// oldest snapshot is dropped first; a listing larger than this is not held.
+const LISTING_SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// Which read a listing snapshot holds. A `basic` listing with a `group`
+/// filter also holds the group collection, so it is a different read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListingKind {
+    Basic,
+    BasicWithGroups,
+    Compliance,
+}
+
+/// One logical ledger listing, read once by its first page (#630). The rows
+/// are unfiltered and unredacted, held in process memory only, never
+/// persisted, dropped after the TTL, when a newer first page replaces them,
+/// when a write through this server touches the company, or when the byte cap
+/// evicts them.
+struct ListingSnapshot {
+    id: String,
+    company_guid: String,
+    kind: ListingKind,
+    extent: bridge_tally_protocol::outstandings_shared::CompanyBookExtent,
+    rows: Arc<Vec<Value>>,
+    groups: Option<Arc<GroupIndex>>,
+    evidence: Evidence,
+    read_at: String,
+    taken: std::time::Instant,
+    bytes: usize,
+}
+
+impl ListingSnapshot {
+    fn describe(&self, reused: bool) -> Value {
+        json!({
+            "id": self.id,
+            "master_alter_id": self.extent.master_alter_id_high_water().map(|mark| mark.get()),
+            "voucher_alter_id": self.extent.voucher_alter_id_high_water().map(|mark| mark.get()),
+            "read_at": self.read_at,
+            "reused": reused,
+        })
+    }
+}
+
+pub(super) struct ListingSnapshots {
+    held: Vec<Arc<ListingSnapshot>>,
+    ttl: std::time::Duration,
+    max_bytes: usize,
+}
+
+impl Default for ListingSnapshots {
+    fn default() -> Self {
+        Self {
+            held: Vec::new(),
+            ttl: LISTING_SNAPSHOT_TTL,
+            max_bytes: LISTING_SNAPSHOT_MAX_BYTES,
+        }
+    }
+}
+
+impl ListingSnapshots {
+    /// Holds a first page's read, replacing any earlier one for the same
+    /// company and kind, and evicting the oldest until the cap holds.
+    fn hold(&mut self, snapshot: Arc<ListingSnapshot>) {
+        self.held.retain(|held| {
+            !(held.company_guid.eq_ignore_ascii_case(&snapshot.company_guid)
+                && held.kind == snapshot.kind)
+        });
+        if snapshot.bytes > self.max_bytes {
+            return;
+        }
+        while self.held.iter().map(|held| held.bytes).sum::<usize>() + snapshot.bytes
+            > self.max_bytes
+        {
+            let oldest = self
+                .held
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, held)| held.taken)
+                .map(|(index, _)| index)
+                .expect("a held snapshot while over the cap");
+            self.held.remove(oldest);
+        }
+        self.held.push(snapshot);
+    }
+
+    /// The unexpired snapshot for this company and kind, if one is held.
+    fn current(&self, company_guid: &str, kind: ListingKind) -> Option<Arc<ListingSnapshot>> {
+        self.held
+            .iter()
+            .find(|held| {
+                held.company_guid.eq_ignore_ascii_case(company_guid)
+                    && held.kind == kind
+                    && held.taken.elapsed() < self.ttl
+            })
+            .cloned()
+    }
+
+    /// Drops every snapshot of a company, as a write through this server does
+    /// before it returns.
+    pub(super) fn drop_company(&mut self, company_guid: &str) {
+        self.held
+            .retain(|held| !held.company_guid.eq_ignore_ascii_case(company_guid));
+    }
+}
+
+/// Why a continuation page that named its snapshot could not be served from
+/// it: the book moved, or the snapshot is no longer held (expired, replaced
+/// by a newer first page, evicted, or never held).
+fn snapshot_refusal(cause: &'static str) -> ToolFailure {
+    let mut failure = ToolFailure::from("listing_snapshot_changed".to_string());
+    failure.cause = Some(cause);
+    failure
+}
+
 impl Server {
     pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
@@ -158,20 +280,115 @@ impl Server {
             let compliance = ledger_master_fields(&fields)?;
             let scope = group_scope(args)?;
             let group = optional_string(args, "group")?;
-            // A `group` filter needs the group collection under either scope:
-            // to admit sub-group ledgers (ancestry) or to report them
-            // (immediate). `compliance` already reads it; `basic` reads it
-            // only when a filter is given, so an unfiltered read is unchanged.
-            let (ledgers, group_filter, ledger_evidence) = if compliance {
-                let (records, groups, opening_as_of, evidence) = self
+            let offset = arg_usize(args, "offset", 0)?;
+            let limit =
+                arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+            let snapshot_id = optional_string(args, "snapshot_id")?;
+            let kind = match (compliance, group.is_some()) {
+                (true, _) => ListingKind::Compliance,
+                (false, true) => ListingKind::BasicWithGroups,
+                (false, false) => ListingKind::Basic,
+            };
+            // A first page always reads fresh: a new listing is a new question
+            // (#630). A continuation page is served from the listing's
+            // snapshot only while the book's extent is unchanged.
+            let reused = if offset > 0 {
+                let extent = self
                     .runtime
-                    .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), &identity)
+                    .fetch_listing_extent(self.tally_config(), &identity)
+                    .await
+                    .map_err(|error| ToolFailure::from_runtime("listing_extent_read_failed", error))?;
+                let held = self
+                    .listings
+                    .lock()
+                    .map_err(|_| "listing_snapshot_store_unavailable".to_string())?
+                    .current(identity.company_guid(), kind);
+                match (held, snapshot_id.as_deref()) {
+                    (Some(held), Some(id)) if held.id == id => {
+                        if held.extent != extent {
+                            return Err(snapshot_refusal("book_changed_since_first_page"));
+                        }
+                        Some(held)
+                    }
+                    (_, Some(_)) => return Err(snapshot_refusal("snapshot_not_held")),
+                    (Some(held), None) if held.extent == extent => Some(held),
+                    (_, None) => None,
+                }
+            } else {
+                None
+            };
+            let snapshot = match reused.clone() {
+                Some(held) => held,
+                None => Arc::new(self.read_ledger_listing(&identity, kind).await?),
+            };
+            if reused.is_none() {
+                self.listings
+                    .lock()
+                    .map_err(|_| "listing_snapshot_store_unavailable".to_string())?
+                    .hold(snapshot.clone());
+            }
+            evidence = combine_evidence(evidence.clone(), snapshot.evidence.clone());
+            let mut ledgers = snapshot.rows.as_ref().clone();
+            let group_filter = match (group.as_deref(), snapshot.groups.as_deref()) {
+                (Some(group), Some(index)) => Some(apply_group_filter(&mut ledgers, scope, group, index)),
+                (Some(_), None) => return Err("listing_snapshot_groups_missing".to_string().into()),
+                (None, _) => None,
+            };
+            let total = ledgers.len();
+            let page = ledgers
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|ledger| redact_value(ledger, self.settings.redaction))
+                .collect::<Vec<_>>();
+            let truncated = offset.saturating_add(page.len()) < total;
+            let mut result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
+            if let Some(group_filter) = group_filter {
+                result["group_filter"] = group_filter;
+            }
+            result["snapshot"] = snapshot.describe(reused.is_some());
+            Ok(ToolOutcome {
+                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
+                evidence: evidence.clone(),
+                company_guid: Some(guid.to_string()),
+                truncated,
+            })
+        }
+        .await;
+        result.map_err(|failure| failure.with_prior_evidence(evidence))
+    }
+
+    /// Drops every ledger listing snapshot of a company. Every write this
+    /// server dispatches calls it before returning, whatever the outcome.
+    pub(super) fn drop_listing_snapshots(&self, company_guid: &str) {
+        // A poisoned store cannot serve a page either: `ledger_masters`
+        // refuses on the same lock, so nothing stale is served from it.
+        if let Ok(mut listings) = self.listings.lock() {
+            listings.drop_company(company_guid);
+        }
+    }
+
+    /// One fresh read of a ledger listing: the rows unfiltered and unredacted,
+    /// the group collection when the kind needs it, and the extent the read
+    /// was pinned under.
+    async fn read_ledger_listing(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        kind: ListingKind,
+    ) -> Result<ListingSnapshot, ToolFailure> {
+        let (rows, groups, extent, read_evidence) = match kind {
+            ListingKind::Compliance => {
+                let listing = self
+                    .runtime
+                    .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), identity)
                     .await
                     .map_err(|error| ToolFailure::from_runtime("party_ledger_master_read_failed", error))?;
-                // Built once per call, not per ledger: the same group
+                // Built once per read, not per ledger: the same group
                 // collection classifies every row.
-                let group_index = GroupIndex::build(groups);
-                let mut rows = records
+                let group_index = GroupIndex::build(listing.groups);
+                let opening_as_of = listing.opening_as_of;
+                let rows = listing
+                    .records
                     .into_iter()
                     .map(|record| {
                         let parent = record.ledger.parent.returned_text().map(str::to_string);
@@ -189,59 +406,48 @@ impl Server {
                         })
                     })
                     .collect::<Vec<_>>();
-                let report = group
-                    .as_deref()
-                    .map(|group| apply_group_filter(&mut rows, scope, group, &group_index));
-                (rows, report, evidence)
-            } else if let Some(group) = group.as_deref() {
-                let (records, groups, opening_as_of, evidence) = self
-                    .runtime
-                    .fetch_ledgers_and_groups_with_opening_as_of_evidence(self.tally_config(), &identity)
-                    .await
-                    .map_err(|error| ToolFailure::from_runtime("ledger_export_invalid", error))?;
-                let mut rows = records
-                    .into_iter()
-                    .map(|ledger| basic_row(ledger, &opening_as_of))
-                    .collect::<Vec<_>>();
-                let report = apply_group_filter(&mut rows, scope, group, &GroupIndex::build(groups));
-                (rows, Some(report), evidence)
-            } else {
-                let (records, opening_as_of, evidence) = self
-                    .runtime
-                    .fetch_ledgers_with_opening_as_of_evidence(self.tally_config(), &identity)
-                    .await
-                    .map_err(|error| ToolFailure::from_runtime("ledger_export_invalid", error))?;
-                let rows = records
-                    .into_iter()
-                    .map(|ledger| basic_row(ledger, &opening_as_of))
-                    .collect::<Vec<_>>();
-                (rows, None, evidence)
-            };
-            evidence = combine_evidence(evidence.clone(), evidence_from_runtime_read(ledger_evidence));
-            let offset = arg_usize(args, "offset", 0)?;
-            let limit =
-                arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
-            let total = ledgers.len();
-            let page = ledgers
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .map(|ledger| redact_value(ledger, self.settings.redaction))
-                .collect::<Vec<_>>();
-            let truncated = offset.saturating_add(page.len()) < total;
-            let mut result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
-            if let Some(group_filter) = group_filter {
-                result["group_filter"] = group_filter;
+                (rows, Some(group_index), listing.extent, listing.evidence)
             }
-            Ok(ToolOutcome {
-                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-                evidence: evidence.clone(),
-                company_guid: Some(guid.to_string()),
-                truncated,
-            })
-        }
-        .await;
-        result.map_err(|failure| failure.with_prior_evidence(evidence))
+            ListingKind::BasicWithGroups => {
+                let (listing, groups) = self
+                    .runtime
+                    .fetch_ledgers_and_groups_with_opening_as_of_evidence(self.tally_config(), identity)
+                    .await
+                    .map_err(|error| ToolFailure::from_runtime("ledger_export_invalid", error))?;
+                let rows = listing
+                    .ledgers
+                    .into_iter()
+                    .map(|ledger| basic_row(ledger, &listing.opening_as_of))
+                    .collect::<Vec<_>>();
+                (rows, Some(GroupIndex::build(groups)), listing.extent, listing.evidence)
+            }
+            ListingKind::Basic => {
+                let listing = self
+                    .runtime
+                    .fetch_ledgers_with_opening_as_of_evidence(self.tally_config(), identity)
+                    .await
+                    .map_err(|error| ToolFailure::from_runtime("ledger_export_invalid", error))?;
+                let rows = listing
+                    .ledgers
+                    .into_iter()
+                    .map(|ledger| basic_row(ledger, &listing.opening_as_of))
+                    .collect::<Vec<_>>();
+                (rows, None, listing.extent, listing.evidence)
+            }
+        };
+        let bytes = rows.iter().map(|row| row.to_string().len()).sum();
+        Ok(ListingSnapshot {
+            id: uuid::Uuid::new_v4().to_string(),
+            company_guid: identity.company_guid().to_string(),
+            kind,
+            extent,
+            rows: Arc::new(rows),
+            groups: groups.map(Arc::new),
+            evidence: evidence_from_runtime_read(read_evidence),
+            read_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            taken: std::time::Instant::now(),
+            bytes,
+        })
     }
 }
 

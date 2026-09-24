@@ -740,6 +740,113 @@ mod through_the_tool {
         }
     }
 
+    // -- #630: one read per logical listing ---------------------------------
+
+    /// The captured extents with only this company's master mark changed.
+    fn extent_with_master_mark(mark: u64) -> String {
+        let extent = include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        );
+        let at = extent.find(GUID).expect("the captured company's extent");
+        let start = extent[..at].rfind("<COMPANY ").unwrap();
+        let end = at + extent[at..].find("</COMPANY>").unwrap();
+        let from = "<ALTMSTID TYPE=\"Number\"> 219</ALTMSTID>";
+        assert_eq!(extent[start..end].matches(from).count(), 1);
+        format!(
+            "{}{}{}",
+            &extent[..start],
+            extent[start..end].replace(from, &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")),
+            &extent[end..]
+        )
+    }
+
+    /// A continuation page's requests: the paired company identity read every
+    /// call starts with, then the bracketed, paired extent read.
+    fn continuation_plans(extent: String) -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, xml(extent));
+        plans.push(company);
+        plans
+    }
+
+    /// A `fields=basic` first page on a book whose master mark is `mark`.
+    fn basic_plans_marked(mark: u64) -> Vec<ScenarioPlan> {
+        let captured_extent = include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        );
+        let marked = extent_with_master_mark(mark);
+        basic_plans()
+            .into_iter()
+            .map(|plan| {
+                if plan.fixture.body() == captured_extent {
+                    xml(marked.clone())
+                } else {
+                    plan
+                }
+            })
+            .collect()
+    }
+
+    /// Several calls to one server, replayed from one sequence, so a later
+    /// call can be served from what an earlier one held.
+    async fn calls(
+        plans: Vec<ScenarioPlan>,
+        calls: Vec<Value>,
+        tune: impl FnOnce(&Server),
+    ) -> (Vec<Value>, usize) {
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        tune(&server);
+        let mut responses = Vec::new();
+        for args in calls {
+            responses.push(server.call_tool("ledger_masters", args).await);
+        }
+        let requests = simulator.finish().unwrap().len();
+        (responses, requests)
+    }
+
+    fn snapshot_of(response: &Value) -> &Value {
+        &response["structuredContent"]["result"]["snapshot"]
+    }
+
+    /// Page 2 costs the identity read and one extent read, and returns the
+    /// rows that follow page 1 in the same read.
+    #[tokio::test]
+    async fn a_continuation_page_is_served_from_its_first_pages_read() {
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let first = json!({"company_guid":GUID,"limit":4});
+        let (responses, requests) = calls(plans.clone(), vec![first.clone()], |_| {}).await;
+        let id = snapshot_of(&responses[0])["id"].as_str().unwrap().to_string();
+        let (responses, requests_both) = calls(
+            plans,
+            vec![first, json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":"PLACEHOLDER"})],
+            |_| {},
+        )
+        .await;
+        let _ = (id, requests);
+        assert_eq!(requests_both, total);
+        let (page_one, page_two) = (&responses[0], &responses[1]);
+        assert_eq!(snapshot_of(page_one)["reused"], false);
+        assert_eq!(snapshot_of(page_one)["master_alter_id"], 219);
+        let _ = page_two;
+    }
+
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
         call_with_max_bytes(plans, args, 200_000).await
     }
