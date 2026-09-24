@@ -1101,6 +1101,19 @@ impl ClassifiedCompanyCurrencyRead {
     }
 }
 
+/// The compliance ledger records, the group collection read with them, and the
+/// ledgers left out because they are kept in another currency (bridge#551).
+#[derive(Debug)]
+pub(crate) struct PartyLedgerMasterListing {
+    pub(crate) records: Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+    pub(crate) groups: Vec<bridge_tally_protocol::TallyNamedMaster>,
+    pub(crate) foreign_currency_ledgers_excluded:
+        Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
+    /// The master request's SVFROMDATE (the admitted BOOKSFROM).
+    pub(crate) opening_as_of: TallyDate,
+    pub(crate) evidence: RuntimeReadEvidence,
+}
+
 /// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
 /// as INR. The code is one of that function's static reasons, never data.
 #[derive(Debug, thiserror::Error)]
@@ -2915,17 +2928,11 @@ impl TallyRuntime {
     /// to let Schedule III classify the party rows it captures. A caller that
     /// needs ledger *ancestry* (ledger_masters' compliance path) can now
     /// build a `GroupIndex` from this without any additional Tally read.
-    pub async fn fetch_agent_party_ledger_masters_with_evidence(
+    pub(crate) async fn fetch_agent_party_ledger_masters_with_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<(
-        Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
-        Vec<bridge_tally_protocol::TallyNamedMaster>,
-        Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
-        TallyDate,
-        RuntimeReadEvidence,
-    )> {
+    ) -> anyhow::Result<PartyLedgerMasterListing> {
         // The classified read admits a book with several Currency masters
         // when Tally identifies an INR base (bridge#551); the source then
         // leaves foreign ledgers out by name.
@@ -2964,7 +2971,13 @@ impl TallyRuntime {
                 fields: row.fields,
             })
             .collect();
-        Ok((records, groups, foreign, opening_as_of, evidence))
+        Ok(PartyLedgerMasterListing {
+            records,
+            groups,
+            foreign_currency_ledgers_excluded: foreign,
+            opening_as_of,
+            evidence,
+        })
     }
 
     /// Retain the three actual request body commitments alongside their paired

@@ -117,7 +117,13 @@ impl Server {
             // (empty, not absent -- `fields=basic` never reads groups at
             // all, which `group_scope=ancestry` is refused for above).
             let (mut ledgers, ledger_evidence, foreign): (Vec<(Value, Vec<String>)>, _, _) = if compliance {
-                let (records, groups, foreign, opening_as_of, evidence) = self
+                let crate::tally::runtime::PartyLedgerMasterListing {
+                    records,
+                    groups,
+                    foreign_currency_ledgers_excluded: foreign,
+                    opening_as_of,
+                    evidence,
+                } = self
                     .runtime
                     .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), &identity)
                     .await
