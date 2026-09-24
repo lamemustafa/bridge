@@ -226,3 +226,66 @@ fn offset_row_pages_still_advance_after_byte_trimming() {
         assert!(page.to_string().len() <= 500);
     }
 }
+
+/// bridge#551: a base-currency-ledgers-only result nests its figures under
+/// `base_currency_ledgers` and adds the excluded ledgers. The byte cap pages
+/// all three collections by the one offset, and never drops a row.
+#[test]
+fn final_framing_caps_page_a_base_currency_ledgers_only_result() {
+    let rows = |count| {
+        (0..count)
+            .map(|id| json!({"id":id,"padding":"x".repeat(120)}))
+            .collect::<Vec<Value>>()
+    };
+    let page = |offset: usize| {
+        let (bills, _, bill_next) = paginate_open_bills(rows(3), offset, 6);
+        let (parties, _, party_next) = paginate_open_bills(rows(2), offset, 6);
+        let (ledgers, _, ledger_next) = paginate_open_bills(rows(6), offset, 6);
+        json!({"result":{"state":"partial","partial_reason":"foreign_currency_ledgers_excluded",
+            "base_currency_ledgers":{"offset":offset,"open_bills":bills,"next_offset":bill_next,
+                "unallocated":{"count":2,"parties":parties,"next_offset":party_next,"truncated":party_next.is_some()}},
+            "foreign_currency_ledgers_excluded":{"count":6,"ledgers":ledgers,"next_offset":ledger_next,
+                "truncated":ledger_next.is_some()}}})
+    };
+    let ids = |rows: &Value| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_u64().unwrap())
+            .collect::<Vec<_>>()
+    };
+    let (mut offset, mut bills, mut parties, mut ledgers) = (0, Vec::new(), Vec::new(), Vec::new());
+    loop {
+        let unbounded = page(offset);
+        assert_eq!(
+            response_row_count(&unbounded),
+            Some(11 - 3.min(offset) - 2.min(offset) - 6.min(offset))
+        );
+        let (response, _, _) = enforce_response_byte_cap(unbounded, 1000).unwrap();
+        assert!(response.to_string().len() <= 1000);
+        let result = &response["result"];
+        bills.extend(ids(&result["base_currency_ledgers"]["open_bills"]));
+        parties.extend(ids(
+            &result["base_currency_ledgers"]["unallocated"]["parties"]
+        ));
+        ledgers.extend(ids(&result["foreign_currency_ledgers_excluded"]["ledgers"]));
+        let continuing = [
+            result["base_currency_ledgers"]["next_offset"].as_u64(),
+            result["base_currency_ledgers"]["unallocated"]["next_offset"].as_u64(),
+            result["foreign_currency_ledgers_excluded"]["next_offset"].as_u64(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let Some(next) = continuing.first() else {
+            break;
+        };
+        assert!(continuing.iter().all(|cursor| cursor == next));
+        assert!(*next > offset as u64);
+        offset = *next as usize;
+    }
+    assert!(offset > 0, "the cap paged the result");
+    assert_eq!(bills, [0, 1, 2]);
+    assert_eq!(parties, [0, 1]);
+    assert_eq!(ledgers, [0, 1, 2, 3, 4, 5]);
+}

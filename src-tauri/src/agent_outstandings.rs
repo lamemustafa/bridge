@@ -20,13 +20,16 @@ impl Server {
                 "due_date" => OutstandingsAgeingAnchor::DueDate,
                 _ => return Err("invalid_ageing_basis".to_string().into()),
             };
+            // The classified read (bridge#551): a book with several Currency
+            // masters is admitted when its company names an INR base, and
+            // its foreign-currency ledgers are left out below.
             let currency = self
                 .runtime
-                .detect_base_currency_with_extent(self.tally_config(), &identity)
+                .detect_classified_base_currency_with_extent(self.tally_config(), &identity)
                 .await
                 .map_err(|error| ToolFailure::from_runtime("company_currency_probe_failed", error))?;
             result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency.evidence()));
-            let assertion = currency.admit_inr().map_err(str::to_string)?;
+            let assertion = currency.admit_inr_classified().map_err(str::to_string)?;
             let (load, outstandings_evidence) = self
                 .runtime
                 .fetch_agent_outstandings_with_evidence(
@@ -43,6 +46,49 @@ impl Server {
             let bill_offset = arg_usize(args, "offset", 0)?;
             let bill_limit =
                 arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+            let direction =
+                optional_string(args, "direction")?.unwrap_or_else(|| "both".to_string());
+            if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
+                return Err("invalid_direction".to_string().into());
+            }
+            let figures = |statement_open_bills: Vec<OpenBillRow>,
+                           statement_unallocated_by_party: Vec<UnallocatedParty>|
+             -> Result<(Value, bool), ToolFailure> {
+                let all_bills = statement_open_bills
+                    .into_iter()
+                    .filter(|bill| direction_matches(bill.kind, &direction))
+                    .collect::<Vec<_>>();
+                let selected_unallocated = statement_unallocated_by_party
+                    .into_iter()
+                    .filter(|party| direction_matches(party.direction, &direction))
+                    .collect::<Vec<_>>();
+                let parties = ranked_parties_from_exposure(&all_bills, &selected_unallocated, top)?
+                    .into_iter()
+                    .map(|party| redact_value(party, self.settings.redaction))
+                    .collect::<Vec<_>>();
+                let totals = outstanding_totals_from_open_bills(&all_bills)?;
+                let ageing_buckets = ageing_buckets_from_open_bills(&all_bills)?;
+                let (bills, bills_truncated, next_bill_offset) =
+                    paginate_open_bills(all_bills, bill_offset, bill_limit);
+                let bills = bills
+                    .into_iter()
+                    .map(|bill| redact_value(open_bill_json(&bill), self.settings.redaction))
+                    .collect::<Vec<_>>();
+                let unallocated_count = selected_unallocated.len();
+                let unallocated_totals = unallocated_totals_from_parties(&selected_unallocated)?;
+                let (unallocated, unallocated_truncated, next_unallocated_offset) =
+                    paginate_open_bills(selected_unallocated, bill_offset, bill_limit);
+                let unallocated = unallocated
+                    .into_iter()
+                    .map(|party| {
+                        redact_value(unallocated_party_json(&party), self.settings.redaction)
+                    })
+                    .collect::<Vec<_>>();
+                Ok((
+                    json!({"totals":totals, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": ageing_buckets, "top_parties": parties, "top_parties_ranked_by":"gross_exposure", "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "totals": unallocated_totals, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
+                    bills_truncated || unallocated_truncated,
+                ))
+            };
             let (result, bills_truncated) = match load {
                 OutstandingsLoadResult::Complete {
                     report: _,
@@ -50,50 +96,46 @@ impl Server {
                     statement_unallocated_by_party,
                     ..
                 } => {
-                    let direction =
-                        optional_string(args, "direction")?.unwrap_or_else(|| "both".to_string());
-                    if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
-                        return Err("invalid_direction".to_string().into());
-                    }
-                    let all_bills = statement_open_bills
-                        .into_iter()
-                        .filter(|bill| direction_matches(bill.kind, &direction))
-                        .collect::<Vec<_>>();
-                    let selected_unallocated = statement_unallocated_by_party
-                        .into_iter()
-                        .filter(|party| direction_matches(party.direction, &direction))
-                        .collect::<Vec<_>>();
-                    let parties = ranked_parties_from_exposure(&all_bills, &selected_unallocated, top)?
-                        .into_iter()
-                        .map(|party| redact_value(party, self.settings.redaction))
-                        .collect::<Vec<_>>();
-                    let totals = outstanding_totals_from_open_bills(&all_bills)?;
-                    let ageing_buckets = ageing_buckets_from_open_bills(&all_bills)?;
-                    let (bills, bills_truncated, next_bill_offset) =
-                        paginate_open_bills(all_bills, bill_offset, bill_limit);
-                    let bills = bills
-                        .into_iter()
-                        .map(|bill| redact_value(open_bill_json(&bill), self.settings.redaction))
-                        .collect::<Vec<_>>();
-                    let unallocated_count = selected_unallocated.len();
-                    let unallocated_totals = unallocated_totals_from_parties(&selected_unallocated)?;
-                    let (unallocated, unallocated_truncated, next_unallocated_offset) =
-                        paginate_open_bills(selected_unallocated, bill_offset, bill_limit);
-                    let unallocated = unallocated
-                        .into_iter()
-                        .map(|party| {
-                            redact_value(unallocated_party_json(&party), self.settings.redaction)
-                        })
-                        .collect::<Vec<_>>();
-                    (
-                        json!({"state":"complete", "totals":totals, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": ageing_buckets, "top_parties": parties, "top_parties_ranked_by":"gross_exposure", "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "totals": unallocated_totals, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
-                        bills_truncated || unallocated_truncated,
-                    )
+                    let (mut figures, truncated) =
+                        figures(statement_open_bills, statement_unallocated_by_party)?;
+                    figures["state"] = json!("complete");
+                    (figures, truncated)
                 }
                 OutstandingsLoadResult::Partial { reason, .. } => {
                     result_evidence.state = "partial";
                     result_evidence.reason_code = Some(reason.reason_code.clone());
                     (partial_payload(&reason, self.settings.redaction), false)
+                }
+                // bridge#551: foreign-currency ledgers were left out. The
+                // figures are the base-currency ledgers' only, and sit under
+                // their own key, so that nothing reads them as the book's.
+                OutstandingsLoadResult::BaseCurrencyLedgersOnly {
+                    reason,
+                    foreign_currency_ledgers_excluded,
+                    base_currency_ledgers,
+                    ..
+                } => {
+                    result_evidence.state = "partial";
+                    result_evidence.reason_code = Some(reason.reason_code.clone());
+                    let base = *base_currency_ledgers;
+                    let (figures, figures_truncated) =
+                        figures(base.statement_open_bills, base.statement_unallocated_by_party)?;
+                    let excluded_count = foreign_currency_ledgers_excluded.len();
+                    let (excluded, excluded_truncated, next_excluded_offset) =
+                        paginate_open_bills(foreign_currency_ledgers_excluded, bill_offset, bill_limit);
+                    let excluded = excluded
+                        .into_iter()
+                        .map(|ledger| {
+                            json!({
+                                "ledger": redact_value(party_name_value(ledger.ledger), self.settings.redaction),
+                                "currency": ledger.currency,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    (
+                        json!({"state":"partial", "partial_reason": reason.reason_code, "base_currency_ledgers": figures, "foreign_currency_ledgers_excluded": {"count": excluded_count, "ledgers": excluded, "truncated": excluded_truncated, "next_offset": next_excluded_offset}}),
+                        figures_truncated || excluded_truncated,
+                    )
                 }
             };
             Ok(ToolOutcome {

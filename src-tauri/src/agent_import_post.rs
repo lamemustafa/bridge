@@ -962,12 +962,13 @@ fn recheck_import_admission(
 /// Admit a post on the company's Currency masters (bridge#551). Bridge's
 /// amounts are plain base-currency figures, and a foreign-currency ledger's
 /// balance can read as a plain amount too, so only the ledger's own currency
-/// tells them apart (TALLY_PROTOCOL_REFERENCE §8.2d). Which master is the base
-/// cannot be identified among several until bridge#601, so until then a post
-/// goes only into a book with exactly one. That every ledger of such a book is
-/// in the base is an inference (a ledger's currency is one of the book's
-/// masters), not a measurement. When #601 lands, each leg's `CURRENCYNAME` is
-/// compared with the base instead. A response that parses to no master, or
+/// tells them apart (TALLY_PROTOCOL_REFERENCE §8.2d). Among several masters
+/// only the MCP outstandings read identifies the base (§9.10a.2); the write path
+/// does not compare a leg's currency with it yet, so a post goes only into a
+/// book with exactly one. That every ledger of such a book is in the base is
+/// an inference (a ledger's currency is one of the book's masters), not a
+/// measurement. When the write path uses the identified base, each leg's
+/// `CURRENCYNAME` is compared with it instead. A response that parses to no master, or
 /// does not parse (a master without a NAME does not), is
 /// `BaseCurrencyUndetermined`.
 fn admit_post_currency(currencies: &str) -> Result<(), ApprovedImportAdmissionError> {

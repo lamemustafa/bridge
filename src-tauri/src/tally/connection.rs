@@ -185,6 +185,8 @@ pub(crate) enum PairedReadValidationError {
     CompanyBookExtent,
     #[error("Tally currency masters changed between paired reads")]
     CurrencyMaster,
+    #[error("Tally company currency name changed between paired reads")]
+    CompanyCurrencyName,
     #[error("Tally company book changed during currency detection")]
     CurrencyExtent,
     #[error("Tally company changed between the currency read and the master read")]
@@ -204,6 +206,7 @@ impl PairedReadValidationError {
             Self::PartyLedgerExtent => "party_ledger_extent_changed",
             Self::CompanyBookExtent => "company_book_extent_changed",
             Self::CurrencyMaster => "currency_master_changed",
+            Self::CompanyCurrencyName => "company_currency_name_changed",
             Self::CurrencyExtent => "currency_extent_changed",
             Self::CurrencyToMasterExtent => "currency_to_master_extent_changed",
         }

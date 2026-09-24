@@ -83,3 +83,145 @@ fn the_foreign_balance_refusal_names_its_ledger_under_redaction() {
     assert_eq!(masked["ledger"], json!(mask("Synthetic FX Debtor")));
     assert_ne!(masked["ledger"], "Synthetic FX Debtor");
 }
+
+/// bridge#551, through the MCP tool itself on FOREX's captures, with party
+/// names masked: a book with an `I₹` and a `$` master comes back partial,
+/// with the rupee ledgers' figures under `base_currency_ledgers`, no figure
+/// for the whole book, and the three `$` ledgers listed with their currency,
+/// their names masked like any party's.
+#[tokio::test]
+async fn mcp_outstandings_report_base_currency_ledgers_only_on_forex() {
+    use tally_protocol_simulator::{
+        Fixture, ProductStatus, ScenarioPlan, SequenceSimulator, WireEncoding,
+    };
+    fn decode(bytes: &[u8]) -> String {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+    let xml = |body: String| {
+        ScenarioPlan::new(Fixture::SyntheticXml(body)).with_encoding(WireEncoding::Utf16Le)
+    };
+    let status = || ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime));
+    let pair = |plans: &mut Vec<ScenarioPlan>, source: ScenarioPlan| {
+        plans.extend([source.clone(), status(), source, status()]);
+    };
+    let companies = xml(decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+    )));
+    let extent = xml(
+        include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_string(),
+    );
+    let captured = |bytes: &[u8]| xml(decode(bytes));
+
+    let mut plans = Vec::new();
+    pair(&mut plans, companies.clone());
+    // The classified currency read: plain, then with ORIGINALNAME, then the
+    // Company collection.
+    plans.push(companies.clone());
+    pair(&mut plans, extent.clone());
+    for source in [
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+        )),
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+        )),
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_live.utf16le.xml"
+        )),
+    ] {
+        pair(&mut plans, source);
+    }
+    pair(&mut plans, extent.clone());
+    plans.push(companies.clone());
+    // The native outstandings read.
+    plans.extend([status(), companies.clone(), companies.clone()]);
+    pair(&mut plans, extent.clone());
+    for source in [
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/bills_receivable_forex_live.utf16le.xml"
+        )),
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/groups_forex_live.utf16le.xml"
+        )),
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/bills_payable_forex_live.utf16le.xml"
+        )),
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/ledgers_currency_forex_live.utf16le.xml"
+        )),
+    ] {
+        pair(&mut plans, source);
+    }
+    pair(&mut plans, extent);
+    plans.extend([companies.clone(), status(), companies]);
+    let plan_count = plans.len();
+
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().into(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::MaskParties,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    let response = server
+        .call_tool(
+            "outstandings",
+            json!({"company_guid":"b14e9b2d-8a63-4779-804d-25d59eb787eb","as_of":"20250930"}),
+        )
+        .await;
+    assert_eq!(simulator.finish().unwrap().len(), plan_count);
+    assert_eq!(response["isError"], false, "{response}");
+    let content = &response["structuredContent"];
+    assert_eq!(content["evidence"]["state"], "partial");
+    let result = &content["result"];
+    assert_eq!(result["state"], "partial");
+    assert_eq!(
+        result["partial_reason"],
+        "foreign_currency_ledgers_excluded"
+    );
+    for book_level in [
+        "totals",
+        "ageing_buckets",
+        "top_parties",
+        "open_bills",
+        "unallocated",
+    ] {
+        assert!(
+            result.get(book_level).is_none(),
+            "{book_level} at book level"
+        );
+    }
+    let base = &result["base_currency_ledgers"];
+    assert_eq!(base["totals"]["receivable"], "34500");
+    assert_eq!(base["open_bills"].as_array().unwrap().len(), 14);
+    let excluded = &result["foreign_currency_ledgers_excluded"];
+    assert_eq!(excluded["count"], 3);
+    let ledgers = excluded["ledgers"].as_array().unwrap();
+    assert_eq!(ledgers.len(), 3);
+    assert!(ledgers.iter().all(|ledger| ledger["currency"] == "$"));
+    let text = response.to_string();
+    for name in [
+        "BRIDGE FX DEBTOR A",
+        "FX USD Debtor 01",
+        "FX USD Debtor 02",
+        "FX Party",
+    ] {
+        assert!(!text.contains(name), "{name} unmasked");
+    }
+}

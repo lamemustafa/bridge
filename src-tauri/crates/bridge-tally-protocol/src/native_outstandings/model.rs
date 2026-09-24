@@ -188,7 +188,8 @@ pub(crate) struct CurrencyMaster {
     /// `CURRENCYNAME` carries when this master is its base (`₹` for a master
     /// named `I₹`). It identifies the base and never decides INR. `Some("")`
     /// when the element is present but empty, which is not the same as absent.
-    /// The production request does not fetch it yet (bridge#551).
+    /// Only the MCP outstandings read fetches it, and only on a book with several
+    /// masters (bridge#551).
     pub original_name: Option<String>,
     pub mailing_name: String,
     pub decimal_places: u8,
@@ -232,16 +233,6 @@ impl CompanyCurrency {
 /// (TALLY_PROTOCOL_REFERENCE §9.10a.2). A blank company value never matches.
 /// It identifies the base only; whether that base is INR is
 /// [`CurrencyMaster::is_inr`]'s.
-///
-/// Groundwork for the outstandings paths that compare each ledger's currency
-/// with the base (bridge#551); no production path calls it yet.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the several-masters outstandings read, bridge#551"
-    )
-)]
 pub(crate) fn identify_base_master<'a>(
     masters: &'a [CurrencyMaster],
     company_currency_name: Option<&str>,

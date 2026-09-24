@@ -62,9 +62,9 @@ The provenance above covers the three 2026-08-23 captures only. These two answer
   before and after.
 - **Date:** 2026-09-23, 10:57–10:59 +0530, one request at a time, read-only.
 - **Encoding:** BOM-less UTF-16LE, exactly as received.
-- **Request:** `render_company_currency_request` with `ORIGINALNAME` appended to its `FETCH`. The
-  production request does not send `ORIGINALNAME` yet; it joins with its first consumer
-  (bridge#551).
+- **Request:** `render_company_currency_request` with `ORIGINALNAME` appended to its `FETCH`:
+  byte-identical to `render_company_currency_request_with_originalname`, which only the
+  outstandings read sends, and only on a book with several masters (bridge#551).
 - **Control:** the same session also sent the request without `ORIGINALNAME` (not committed).
   Removing the two `ORIGINALNAME` elements from each committed response leaves it byte-identical
   to that control, on both books: the field adds nothing else to the response.
@@ -79,3 +79,23 @@ Each is a two-master book whose base is the rupee master: FOREX is an INR-based 
 (§9.10a.2, not committed).
 `ORIGINALNAME` identifies the base; INR is still decided by the mailing name alone. A rupee master
 with another mailing name, refused as not INR, is covered only by a constructed variant.
+
+## `currency_originalname_billwise_live`, `currency_originalname_validation_live`: one-master books with `ORIGINALNAME` (bridge#551)
+
+- **Host / date:** TallyPrime 7.1 Silver, licensed, `education_mode` false; 2026-09-24, 11:01–11:05
+  +0530, read-only, the same session as `company_currencyname_live`.
+- **Request:** `render_company_currency_request_with_originalname`, for `Bridge Billwise Lab` and
+  `Bridge Validation Lab`. BOM-less UTF-16LE.
+- **Control:** the same session also sent `render_company_currency_request` to each book. Those
+  responses are byte-identical to the committed `currency_inr_legacy_live` and
+  `currency_inr_modern_live` (2026-08-23), and each capture here equals its control once its one
+  `ORIGINALNAME` line is removed.
+
+| file | bytes | sha256 | master `NAME` / `ORIGINALNAME` / `MAILINGNAME` |
+|---|---|---|---|
+| `currency_originalname_billwise_live.utf16le.xml` | 3,534 | `ce61be9696b678432297c1a5ae676503ce16edac00f2426b68822ddb8c84e254` | `Rs.` / `Rs.` / `Indian Rupees` |
+| `currency_originalname_validation_live.utf16le.xml` | 3,506 | `84bb7761903bbc95ce69a9ef6ea3b8b105079f7f57b1d1df2cd768e228f40642` | `I₹` / `₹` / `INR` |
+
+Both books are INR by their mailing names, but their `ORIGINALNAME` differs (`Rs.`, `₹`): the rupee
+symbol is not the same across INR books. Each company's `CURRENCYNAME` in `company_currencyname_live`
+equals its master's `ORIGINALNAME`.

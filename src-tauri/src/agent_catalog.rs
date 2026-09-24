@@ -388,7 +388,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         json!({"type":"object","additionalProperties":false}),
                     ),
                     "outstandings" => (
-                        "Return paired native receivable/payable totals, ageing, top-party ranking, and paginated open bills with a freshly observed supported product/mode and an operation-valid date boundary. `top` applies only to party ranking; use offset and limit for bills.",
+                        "Return paired native receivable/payable totals, ageing, top-party ranking, and paginated open bills with a freshly observed supported product/mode and an operation-valid date boundary. `top` applies only to party ranking; use offset and limit for bills. A book with ledgers in a currency other than its INR base returns state partial with partial_reason foreign_currency_ledgers_excluded: figures for its base-currency ledgers only, under base_currency_ledgers, never a total for the whole book, and the excluded ledgers with their currency, paged by the same offset and limit.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"direction":{"type":"string","enum":["receivable","payable","both"],"default":"both"},"as_of":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ageing_basis":{"type":"string","enum":["bill_date","due_date"],"default":"due_date"},"top":{"type":"integer","minimum":1,"default":25},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "ledger_masters" => (

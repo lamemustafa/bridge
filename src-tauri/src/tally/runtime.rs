@@ -21,15 +21,17 @@ use crate::tally::runtime_control::{
 use crate::warning_codes::WarningCode;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
-    compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
+    compute_native_outstandings_with_exclusions, parse_company_currency,
+    parse_company_currency_name, parse_currency_master_list, parse_native_bill_rows,
     parse_native_group_snapshot, parse_native_ledger_snapshot_classified,
-    render_company_currency_request, render_native_bills_request,
+    render_company_base_currency_request, render_company_currency_request,
+    render_company_currency_request_with_originalname, render_native_bills_request,
     render_native_group_snapshot_request, render_native_ledger_export_request,
     render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, BaseCurrencyName,
-    ClassifiedLedgerSnapshot, CompanyCurrency, LedgerCurrencyRefusal, NativeBillsReportKind,
-    NativeGroupSnapshot, NativeLedgerExportPeriod, NativeLedgerExportPeriodError,
-    NativeLedgerSnapshotPeriod, NativeMasterSnapshot, NativeOutstandingsError,
-    NativeOverdueCrosscheck,
+    ClassifiedLedgerSnapshot, CompanyCurrency, ForeignCurrencyLedger, IdentifiedBaseCurrency,
+    LedgerCurrencyRefusal, NativeBillRow, NativeBillsReportKind, NativeGroupSnapshot,
+    NativeLedgerExportPeriod, NativeLedgerExportPeriodError, NativeLedgerSnapshotPeriod,
+    NativeMasterSnapshot, NativeOutstandingsError, NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -986,6 +988,100 @@ impl PartyLedgerMasterCurrencyAssertion {
     }
 }
 
+/// An INR admission whose base master was identified by the classified
+/// currency read, possibly among several Currency masters (bridge#551). Only
+/// the outstandings read accepts it, through [`OutstandingsCurrencyWitness`]:
+/// a path that does not compare each ledger's own currency with the base would
+/// sum a foreign ledger's plain amounts as rupees. Its fields are private to
+/// this module and its test and child modules; only
+/// [`ClassifiedCompanyCurrencyRead::admit_inr_classified`] builds one.
+#[derive(Debug, Clone)]
+pub(crate) struct ClassifiedCurrencyWitness(PartyLedgerMasterCurrencyAssertion, ClassifiedBase);
+
+/// Proof that a result was read under a [`ClassifiedCurrencyWitness`], which
+/// [`OutstandingsLoadResult::BaseCurrencyLedgersOnly`] must carry: only
+/// `admit_inr_classified` mints one, so a single-master witness (the desktop
+/// and the sweep) cannot produce that result by construction. Its field is
+/// private to this module and its test and child modules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedBase(());
+
+/// The currency witness an outstandings read runs under: a single master's
+/// (every path that admits through `admit_inr`), or a classified base's.
+#[derive(Debug, Clone)]
+pub(crate) enum OutstandingsCurrencyWitness {
+    SingleMaster(PartyLedgerMasterCurrencyAssertion),
+    Classified(ClassifiedCurrencyWitness),
+}
+
+impl From<PartyLedgerMasterCurrencyAssertion> for OutstandingsCurrencyWitness {
+    fn from(witness: PartyLedgerMasterCurrencyAssertion) -> Self {
+        Self::SingleMaster(witness)
+    }
+}
+
+impl From<ClassifiedCurrencyWitness> for OutstandingsCurrencyWitness {
+    fn from(witness: ClassifiedCurrencyWitness) -> Self {
+        Self::Classified(witness)
+    }
+}
+
+impl OutstandingsCurrencyWitness {
+    fn classified_base(&self) -> Option<ClassifiedBase> {
+        match self {
+            Self::SingleMaster(_) => None,
+            Self::Classified(ClassifiedCurrencyWitness(_, base)) => Some(base.clone()),
+        }
+    }
+
+    fn assertion(&self) -> &PartyLedgerMasterCurrencyAssertion {
+        match self {
+            Self::SingleMaster(witness)
+            | Self::Classified(ClassifiedCurrencyWitness(witness, _)) => witness,
+        }
+    }
+}
+
+/// The classified currency read (bridge#551): the Currency masters with
+/// `ORIGINALNAME` and, with several, the company's own `CURRENCYNAME`, which
+/// identify the base master (TALLY_PROTOCOL_REFERENCE §9.10a.2).
+#[derive(Debug, Clone)]
+pub(crate) struct ClassifiedCompanyCurrencyRead {
+    currency_count: usize,
+    identified: Option<IdentifiedBaseCurrency>,
+    extent: CompanyBookExtent,
+    evidence: RuntimeReadEvidence,
+}
+
+impl ClassifiedCompanyCurrencyRead {
+    pub(crate) fn evidence(&self) -> RuntimeReadEvidence {
+        self.evidence.clone()
+    }
+
+    /// INR for the identified base, by its mailing name; the codes are
+    /// `admit_inr`'s.
+    pub(crate) fn admit_inr_classified(self) -> Result<ClassifiedCurrencyWitness, &'static str> {
+        if self.currency_count == 0 {
+            return Err("company_currency_probe_failed");
+        }
+        let Some(identified) = self.identified else {
+            return Err("company_base_currency_undetermined");
+        };
+        if !identified.is_inr() {
+            return Err("company_base_currency_not_inr");
+        }
+        Ok(ClassifiedCurrencyWitness(
+            PartyLedgerMasterCurrencyAssertion {
+                assertion: OutstandingsCurrencyAssertion::Inr,
+                decimal_places: identified.decimal_places(),
+                currency_read_extent: self.extent,
+                base: Some(identified.base().clone()),
+            },
+            ClassifiedBase(()),
+        ))
+    }
+}
+
 /// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
 /// as INR. The code is one of that function's static reasons, never data.
 #[derive(Debug, thiserror::Error)]
@@ -1002,6 +1098,7 @@ pub(crate) struct CompanyCurrencyRead {
 }
 
 impl CompanyCurrencyRead {
+    #[cfg(test)]
     pub(crate) fn evidence(&self) -> RuntimeReadEvidence {
         self.evidence.clone()
     }
@@ -1095,6 +1192,34 @@ pub enum OutstandingsLoadResult {
         reason: OutstandingsPartialReason,
         synced_at_unix_ms: i64,
     },
+    /// Some ledgers are kept in another currency and were left out, with
+    /// their bills (bridge#551). A partial result: `base_currency_ledgers`
+    /// describes the base-currency ledgers only, and no figure for the whole
+    /// book exists. Reason `foreign_currency_ledgers_excluded`. Only a read
+    /// under a classified witness can build it, since it carries that
+    /// witness's [`ClassifiedBase`].
+    #[serde(rename = "partial")]
+    BaseCurrencyLedgersOnly {
+        #[serde(skip)]
+        classified: ClassifiedBase,
+        #[serde(flatten)]
+        reason: OutstandingsPartialReason,
+        synced_at_unix_ms: i64,
+        foreign_currency_ledgers_excluded: Vec<ForeignCurrencyLedger>,
+        base_currency_ledgers: Box<BaseCurrencyLedgersOutstandings>,
+    },
+}
+
+/// The figures of [`OutstandingsLoadResult::Complete`] over the base-currency
+/// ledgers of a book that also holds foreign-currency ones (bridge#551).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BaseCurrencyLedgersOutstandings {
+    pub report: OutstandingsReport,
+    pub currency_assertion: OutstandingsCurrencyAssertion,
+    pub ageing_anchor: OutstandingsAgeingAnchor,
+    pub unallocated_total: ExactDecimal,
+    pub statement_unallocated_by_party: Vec<UnallocatedParty>,
+    pub statement_open_bills: Vec<OpenBillRow>,
 }
 
 /// A machine-readable reason for withholding outstandings totals. The stable
@@ -1514,17 +1639,15 @@ pub(crate) fn inr_witness_for_tests(
     }
 }
 
-/// A one-master base admits every ledger or refuses, so no ledger is foreign
-/// in a production read. Only a base among several masters (bridge#601) can
-/// set one aside, and that lands with the result that discloses it; until
-/// then a foreign ledger withholds every figure, naming the first.
-fn foreign_ledger_withholds_figures(
-    snapshot: &ClassifiedLedgerSnapshot,
-) -> Option<OutstandingsLoadResult> {
-    let foreign = snapshot.foreign.first()?;
-    let mut reason = OutstandingsPartialReason::code("foreign_currency_ledger_present");
-    reason.foreign_currency_ledger_name = Some(foreign.ledger.clone());
-    Some(partial_result(reason))
+/// Every bill row whose party is a foreign-currency ledger left out
+/// (bridge#551).
+fn without_foreign_parties(
+    rows: Vec<NativeBillRow>,
+    foreign: &[ForeignCurrencyLedger],
+) -> Vec<NativeBillRow> {
+    rows.into_iter()
+        .filter(|row| !foreign.iter().any(|ledger| ledger.ledger == row.party))
+        .collect()
 }
 
 /// What a native outstandings read compares each ledger's own currency with
@@ -3602,7 +3725,9 @@ impl TallyRuntime {
                 config,
                 identity,
                 as_of,
-                currency.bind_party_ledger_master_assertion(currency_assertion),
+                currency
+                    .bind_party_ledger_master_assertion(currency_assertion)
+                    .into(),
                 ageing_anchor,
             )
             .await
@@ -3629,7 +3754,7 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
-        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+        currency_witness: impl Into<OutstandingsCurrencyWitness>,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
         #[cfg(feature = "voucher-scan")]
@@ -3640,7 +3765,7 @@ impl TallyRuntime {
             config,
             identity,
             as_of,
-            currency_assertion,
+            currency_witness.into(),
             ageing_anchor,
         )
         .await
@@ -3671,7 +3796,7 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
-        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+        currency_witness: OutstandingsCurrencyWitness,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -3683,7 +3808,7 @@ impl TallyRuntime {
             move |client| {
                 let identity = identity.clone();
                 let as_of = as_of.clone();
-                let currency_assertion = currency_assertion.clone();
+                let currency_witness = currency_witness.clone();
                 async move {
                     let mut read_evidence = RuntimeReadEvidence::empty();
                     let outcome = async {
@@ -3696,13 +3821,12 @@ impl TallyRuntime {
                         let extent = client.fetch_company_book_extent(&identity).await?;
                         // The base each ledger's own currency is compared with
                         // (bridge#551).
-                        let classify_against = currency_assertion.base.clone().map_or(
+                        let witness = currency_witness.assertion();
+                        let classify_against = witness.base.clone().map_or(
                             LedgerClassification::BaseUnknown,
                             LedgerClassification::Against,
                         );
-                        let currency_assertion = currency_assertion
-                            .require_opening_extent(&extent)?
-                            .assertion;
+                        let currency_assertion = witness.require_opening_extent(&extent)?.assertion;
                         if &as_of < extent.books_from() {
                             return Ok((
                                 partial_result("as_of_precedes_books_from"),
@@ -3866,9 +3990,12 @@ impl TallyRuntime {
                                 return Ok((partial, read_evidence.clone()));
                             }
                         };
-                        if let Some(partial) = foreign_ledger_withholds_figures(&snapshot) {
-                            return Ok((partial, read_evidence.clone()));
-                        }
+                        // A foreign ledger's bills are plain amounts that are
+                        // not rupees (TALLY_PROTOCOL_REFERENCE §8.2d): they
+                        // leave every figure, the statement rows included.
+                        let foreign = snapshot.foreign;
+                        let receivable_rows = without_foreign_parties(receivable_rows, &foreign);
+                        let payable_rows = without_foreign_parties(payable_rows, &foreign);
                         let ledger_rows = snapshot.base;
                         let group_rows =
                             parse_native_group_snapshot(&group_body, expected_company_guid)?;
@@ -3879,7 +4006,7 @@ impl TallyRuntime {
                         // BILLDUE, not the 91 days from BILLDATE. Where no credit
                         // period exists the two dates coincide, so this is correct
                         // on both books.
-                        let result = compute_native_outstandings(
+                        let result = compute_native_outstandings_with_exclusions(
                             company,
                             &receivable_rows,
                             &payable_rows,
@@ -3887,6 +4014,7 @@ impl TallyRuntime {
                                 ledgers: &ledger_rows,
                                 groups: NativeGroupSnapshot::Complete(&group_rows),
                             },
+                            &foreign,
                             ageing_anchor.native_anchor(),
                             &as_of,
                             total_bytes,
@@ -3904,6 +4032,40 @@ impl TallyRuntime {
                         );
                         let statement_unallocated_by_party =
                             all_unallocated_parties(&result.residuals);
+                        if !result.foreign_currency_ledgers_excluded.is_empty() {
+                            // A single-master base refuses a ledger in another
+                            // currency before this point (classify_ledger_currencies);
+                            // without a classified witness this result cannot be
+                            // built, so it refuses here too.
+                            let Some(classified) = currency_witness.classified_base() else {
+                                return Ok((
+                                    partial_result("ledger_currency_base_unmatched"),
+                                    read_evidence.clone(),
+                                ));
+                            };
+                            return Ok((
+                                OutstandingsLoadResult::BaseCurrencyLedgersOnly {
+                                    classified,
+                                    reason: OutstandingsPartialReason::code(
+                                        "foreign_currency_ledgers_excluded",
+                                    ),
+                                    synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+                                    foreign_currency_ledgers_excluded: result
+                                        .foreign_currency_ledgers_excluded,
+                                    base_currency_ledgers: Box::new(
+                                        BaseCurrencyLedgersOutstandings {
+                                            report: result.report,
+                                            currency_assertion,
+                                            ageing_anchor,
+                                            unallocated_total: result.residual_total,
+                                            statement_unallocated_by_party,
+                                            statement_open_bills,
+                                        },
+                                    ),
+                                },
+                                read_evidence.clone(),
+                            ));
+                        }
                         Ok((
                             OutstandingsLoadResult::Complete {
                                 report: Box::new(result.report),
@@ -4005,6 +4167,106 @@ impl TallyRuntime {
                         bracket_verified_company_identity(&client, &identity).await?;
                         Ok(CompanyCurrencyRead {
                             currency: parse_company_currency(&body)?,
+                            extent,
+                            evidence: evidence.clone(),
+                        })
+                    }
+                    .await;
+                    result.map_err(|error| with_read_evidence(error, evidence))
+                }
+            },
+        )
+        .await
+    }
+
+    /// The classified currency read (bridge#551), for the outstandings read
+    /// only, inside the same identity and extent bracket as
+    /// [`Self::detect_base_currency_with_extent`]. It sends that read's plain
+    /// currency request first, so a book with one master sends exactly what
+    /// every other monetary read sends. Only with several masters does it
+    /// re-read them with `ORIGINALNAME` and read the company's own
+    /// `CURRENCYNAME` from the `Company` collection, which identify the base
+    /// (TALLY_PROTOCOL_REFERENCE §9.10a.2).
+    pub(crate) async fn detect_classified_base_currency_with_extent(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<ClassifiedCompanyCurrencyRead> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::VoucherExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let identity = identity.clone();
+                async move {
+                    let mut evidence = RuntimeReadEvidence::empty();
+                    let result = async {
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let extent = client.fetch_company_book_extent(&identity).await?;
+                        let paired_read = |request: String, stability| {
+                            let client = &client;
+                            async move {
+                                let body =
+                                    client.fetch_native_report_paired(request.clone()).await?;
+                                let (body, encoded_bytes, encoded_sha256) =
+                                    body.require_stable(stability)?;
+                                anyhow::Ok((
+                                    body,
+                                    RuntimeReadEvidence::paired(
+                                        &request,
+                                        encoded_sha256,
+                                        encoded_bytes,
+                                    ),
+                                ))
+                            }
+                        };
+                        let (body, read) = paired_read(
+                            render_company_currency_request(identity.display_name()),
+                            PairedReadValidationError::CurrencyMaster,
+                        )
+                        .await?;
+                        evidence = read;
+                        let mut masters = parse_currency_master_list(&body)?;
+                        let company_currency_name = if masters.count() > 1 {
+                            let (body, read) = paired_read(
+                                render_company_currency_request_with_originalname(
+                                    identity.display_name(),
+                                ),
+                                PairedReadValidationError::CurrencyMaster,
+                            )
+                            .await?;
+                            evidence = evidence.clone().combine(read);
+                            let with_original_names = parse_currency_master_list(&body)?;
+                            // The re-read must return the masters the plain read
+                            // did; only then does its ORIGINALNAME describe them.
+                            if !with_original_names.same_masters_as(&masters) {
+                                return Err(anyhow::Error::new(
+                                    PairedReadValidationError::CurrencyMaster,
+                                ));
+                            }
+                            masters = with_original_names;
+                            let (body, read) = paired_read(
+                                render_company_base_currency_request(identity.display_name()),
+                                PairedReadValidationError::CompanyCurrencyName,
+                            )
+                            .await?;
+                            evidence = evidence.clone().combine(read);
+                            Some(parse_company_currency_name(&body, identity.company_guid())?)
+                        } else {
+                            None
+                        };
+                        let closing_extent = client.fetch_company_book_extent(&identity).await?;
+                        if closing_extent != extent {
+                            return Err(anyhow::Error::new(
+                                PairedReadValidationError::CurrencyExtent,
+                            ));
+                        }
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        Ok(ClassifiedCompanyCurrencyRead {
+                            currency_count: masters.count(),
+                            identified: masters.identify_base(company_currency_name.as_deref()),
                             extent,
                             evidence: evidence.clone(),
                         })

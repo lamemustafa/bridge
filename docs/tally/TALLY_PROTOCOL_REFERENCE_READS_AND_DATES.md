@@ -531,6 +531,10 @@ Only this field tells such a ledger from a base one.
 **Not measured:**
 - whether a book with a single Currency master can hold a ledger in another currency. It is inferred
   not to, because Tally assigns a ledger its currency from the masters;
+- a base-currency ledger, on a book with several masters, holding a bill entered in another
+  currency: whether its `BILLCL` or its closing balance shows that currency. The bills on FOREX's `$`
+  ledgers are plain decimals, so the bill alone may not; a composite closing balance on a base ledger
+  is refused (bridge#551);
 - releases before 7.1.
 
 ---

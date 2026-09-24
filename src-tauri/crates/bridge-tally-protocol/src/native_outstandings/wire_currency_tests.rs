@@ -19,7 +19,7 @@ const FOREX_COMPOSITE_LIVE: &[u8] = include_bytes!(concat!(
     "/tests/fixtures/ledgers_forex_composite_live.utf16le.xml"
 ));
 
-fn decode_utf16le(bytes: &[u8]) -> String {
+pub(super) fn decode_utf16le(bytes: &[u8]) -> String {
     let (units, remainder) = bytes.as_chunks::<2>();
     assert!(
         remainder.is_empty(),
