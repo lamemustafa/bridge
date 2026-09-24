@@ -335,6 +335,63 @@ fn each_dialog_mode_runs_its_own_dialog() {
     assert!(!dialog_mode_problems(&swapped).is_empty());
 }
 
+/// The block of the queued post whose errors are marked as refused before the
+/// intent (#656) must hold no intent and no POST: a refusal from inside it is
+/// reported as "nothing was sent". So in `post_approved_import` the block
+/// opens once, closes into `PreIntentQueueRefusal` once, holds neither
+/// `before_dispatch()` nor `post_probe_xml(`, and both follow it in that order.
+fn pre_intent_block_problems(runtime: &str) -> Vec<String> {
+    let open = "let (admission_evidence, before_marks) = async {";
+    let close = "PreIntentQueueRefusal { source }";
+    let Some(function) = runtime.find("async fn post_approved_import<") else {
+        return vec!["post_approved_import not found".into()];
+    };
+    let body = &runtime[function..];
+    let body = &body[..body.find("\n    }\n").unwrap_or(body.len())];
+    if body.matches(open).count() != 1 || body.matches(close).count() != 1 {
+        return vec!["expected exactly one marked block in post_approved_import".into()];
+    }
+    let start = body.find(open).unwrap();
+    let end = body.find(close).unwrap();
+    if end < start {
+        return vec!["the marked block closes before it opens".into()];
+    }
+    let mut problems = Vec::new();
+    let block = &body[start..end];
+    for forbidden in ["before_dispatch()", "post_probe_xml("] {
+        if block.contains(forbidden) {
+            problems.push(format!("`{forbidden}` inside the pre-intent block"));
+        }
+    }
+    let after = &body[end..];
+    match (
+        after.find("before_dispatch()"),
+        after.find("post_probe_xml("),
+    ) {
+        (Some(intent), Some(post)) if intent < post => {}
+        _ => problems.push("the intent, then the POST, must follow the block".into()),
+    }
+    problems
+}
+
+#[test]
+fn nothing_is_sent_inside_the_pre_intent_block() {
+    let runtime = read("src-tauri/src/tally/runtime.rs");
+    assert_eq!(pre_intent_block_problems(&runtime), Vec::<String>::new());
+    // The check itself: the intent moved into the block, or the block's error
+    // left unmarked, is caught.
+    let intent_inside = runtime.replacen(
+        "let (admission_evidence, before_marks) = async {",
+        "let (admission_evidence, before_marks) = async {\n                        before_dispatch().ok();",
+        1,
+    );
+    let unmarked = runtime.replacen("PreIntentQueueRefusal { source }", "source", 1);
+    for broken in [intent_inside, unmarked] {
+        assert_ne!(broken, runtime);
+        assert!(!pre_intent_block_problems(&broken).is_empty());
+    }
+}
+
 #[test]
 fn only_test_files_name_the_seam() {
     let source = repo().join("src-tauri").join("src");

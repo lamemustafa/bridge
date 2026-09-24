@@ -1757,6 +1757,61 @@ async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
     }
 }
 
+/// #656: a queue read that fails before the intent is refused under its own
+/// code, not the catch-all that says the outcome is unknown. The queue's
+/// catalogue legs are lost in transport (the queue stops at once), or disagree
+/// (a pair drift); either way no intent is journaled, no POST is sent, and the
+/// cause names the failure.
+#[tokio::test]
+async fn a_queue_read_failing_before_the_intent_is_refused_as_such() {
+    let catalogue_at = probe().len() + 2;
+    let drifted = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    for (lost, cause) in [(true, None), (false, Some("native_report_pair_changed"))] {
+        let mut plans = before_approval();
+        let mut after = after_approval(xml(created_one()));
+        let expected = if lost {
+            after[catalogue_at + 1] = xml(catalogue()).with_delivery(Delivery::ResetBeforeBody);
+            plans.len() + catalogue_at + 2
+        } else {
+            after[catalogue_at + 3] = xml(drifted.clone());
+            plans.len() + catalogue_at + 4
+        };
+        plans.extend(after);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_batch(&server);
+        let before = journal(directory.path());
+        let response = SCRIPTED_APPROVAL
+            .scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            )
+            .await;
+        let observed = sent(simulator).len();
+        let error = &response["structuredContent"]["result"]["error"];
+        assert_eq!(error["code"], "post_queue_read_failed", "{response}");
+        match cause {
+            Some(cause) => assert_eq!(error["cause"], cause, "{response}"),
+            None => assert!(error["cause"].is_string(), "{response}"),
+        }
+        assert_eq!(
+            response["structuredContent"]["result"]["attempt_recorded"],
+            json!(false),
+            "{response}"
+        );
+        assert_eq!(observed, expected, "{response}");
+        assert_eq!(
+            appended_kinds(&before, &journal(directory.path())),
+            ["verification_status"]
+        );
+    }
+}
+
 // bridge#239: the ledgers a batch names must still carry the GUIDs its build
 // bound them to; a name alone cannot tell a ledger renamed and replaced.
 
