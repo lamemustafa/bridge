@@ -517,6 +517,40 @@ fn ancestry_scope_matches_any_hop_but_never_an_unresolved_tail() {
     ));
 }
 
+/// The filter report is not paged with the rows, so its sub-group list is
+/// bounded where it is built; the counts still cover every row.
+#[test]
+fn a_filter_report_names_at_most_twenty_sub_groups_and_counts_them_all() {
+    let mut groups = vec![group(
+        "Sundry Debtors",
+        "\u{fffd}#4; Primary",
+        Some("Sundry Debtors"),
+    )];
+    let mut rows = Vec::new();
+    for n in 0..25 {
+        let name = format!("Debtor Group {n:02}");
+        groups.push(group(&name, "Sundry Debtors", Some("")));
+        rows.push(json!({"name": format!("Ledger {n:02}"), "parent": name}));
+    }
+    // A second ledger in one sub-group: ledgers and sub-groups are counted
+    // separately.
+    rows.push(json!({"name": "Ledger 00b", "parent": "Debtor Group 00"}));
+    let report = apply_group_filter(
+        &mut rows,
+        GroupScope::Immediate,
+        "Sundry Debtors",
+        &bridge_tally_protocol::group_ancestry::GroupIndex::build(groups),
+    );
+    assert!(rows.is_empty());
+    let excluded = &report["excluded_subgroup_ledgers"];
+    assert_eq!(excluded["count"], 26);
+    assert_eq!(excluded["group_count"], 25);
+    let named = excluded["groups"].as_array().unwrap();
+    assert_eq!(named.len(), 20);
+    assert_eq!(named[0], "Debtor Group 00");
+    assert_eq!(report["unresolved_ancestry_ledgers"], 0);
+}
+
 // -- ledger_masters ancestry through the tool call ---------------------------
 //
 // The tests above call the helpers directly, so they stay green if
@@ -617,14 +651,24 @@ mod through_the_tool {
     /// The whole successful `fields=basic` sequence: identity, then the runtime's boundary
     /// probe, the extent-bracketed BOOKSFROM-pinned ledger export and the closing checks.
     fn basic_plans() -> Vec<ScenarioPlan> {
+        basic_plans_reading(period_opening(), None)
+    }
+
+    fn period_opening() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
+        ))
+    }
+
+    /// As `basic_plans`, with the ledger export given and, when `groups` is
+    /// supplied, the paired group collection a `group` filter adds inside the
+    /// same extent and identity bracket.
+    fn basic_plans_reading(ledgers: String, groups: Option<String>) -> Vec<ScenarioPlan> {
         let company = xml(companies());
         let extent = xml(include_str!(
             "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         )
         .to_owned());
-        let ledger = xml(captured(include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
-        )));
         let mut plans = identity_plans();
         plans.extend([
             status(),
@@ -634,10 +678,12 @@ mod through_the_tool {
             status(),
             extent.clone(),
             status(),
-            ledger.clone(),
-            status(),
-            ledger,
-            status(),
+        ]);
+        pair(&mut plans, xml(ledgers));
+        if let Some(groups) = groups {
+            pair(&mut plans, xml(groups));
+        }
+        plans.extend([
             extent.clone(),
             status(),
             extent,
@@ -655,14 +701,28 @@ mod through_the_tool {
 
     #[tokio::test]
     async fn basic_ledger_masters_rows_carry_their_opening_balance_as_of() {
-        let plans = basic_plans();
-        let total = plans.len();
-        let (response, requests) = call(plans, json!({"company_guid":GUID,"fields":"basic"})).await;
-        let rows = items(&response);
-        assert_eq!(requests, total);
-        assert!(!rows.is_empty());
-        for row in rows {
-            assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+        // Without a `group` filter the group collection is never read, whatever
+        // the scope: the whole replayed sequence is the ledger export's, and
+        // the result carries no filter report.
+        for args in [
+            json!({"company_guid":GUID,"fields":"basic"}),
+            json!({"company_guid":GUID,"fields":"basic","group_scope":"ancestry"}),
+        ] {
+            let plans = basic_plans();
+            let total = plans.len();
+            let (response, requests) = call(plans, args.clone()).await;
+            let rows = items(&response);
+            assert_eq!(requests, total, "{args}");
+            assert!(!rows.is_empty());
+            for row in rows {
+                assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+            }
+            assert!(
+                response["structuredContent"]["result"]
+                    .get("group_filter")
+                    .is_none(),
+                "{response}"
+            );
         }
     }
 
@@ -839,24 +899,131 @@ mod through_the_tool {
             .collect()
     }
 
+    fn group_filter(response: &Value) -> &Value {
+        assert_ne!(response["isError"], true, "{response}");
+        &response["structuredContent"]["result"]["group_filter"]
+    }
+
+    /// #631: "the ledgers in Sundry Debtors" means the subtree, and the default
+    /// scope answers a narrower question. The captured book files one ledger
+    /// under a user group below Sundry Debtors; the immediate filter leaves it
+    /// out, and the result must say so, under either field set.
     #[tokio::test]
-    async fn ancestry_scope_with_basic_fields_is_refused_before_any_ledger_read() {
-        for args in [
-            json!({"company_guid":GUID,"fields":"basic","group_scope":"ancestry"}),
-            // `fields` defaults to basic, so omitting it must refuse too.
-            json!({"company_guid":GUID,"group":"Loans (Liability)","group_scope":"ancestry"}),
+    async fn an_immediate_group_filter_names_the_sub_group_ledgers_it_left_out() {
+        for (fields, plans) in [
+            (
+                "basic",
+                basic_plans_reading(period_opening(), Some(groups())),
+            ),
+            ("compliance", compliance_plans(masters(), balances())),
         ] {
-            let (response, requests) = call(identity_plans(), args.clone()).await;
-            assert_eq!(response["isError"], true, "{args}");
+            let total = plans.len();
+            let (response, requests) = call(
+                plans,
+                json!({"company_guid":GUID,"fields":fields,"group":"Sundry Debtors"}),
+            )
+            .await;
+            assert_eq!(requests, total, "{fields}");
+            let found = names(items(&response));
+            assert_eq!(found.len(), 5, "{fields}: {found:?}");
+            assert!(!found.contains("Bridge Nested Debtor WR4"), "{fields}");
             assert_eq!(
-                response["structuredContent"]["result"]["error"]["code"],
-                "group_scope_ancestry_requires_compliance_fields",
-                "{args}"
+                group_filter(&response),
+                &json!({
+                    "group": "Sundry Debtors",
+                    "scope": "immediate",
+                    "excluded_subgroup_ledgers": {
+                        "count": 1,
+                        "group_count": 1,
+                        "groups": ["Bridge Nested Debtors WR4"],
+                    },
+                    "unresolved_ancestry_ledgers": 0,
+                }),
+                "{fields}"
             );
-            // Only the identity pair was served: no profile, ledger or group
-            // read followed the refusal.
-            assert_eq!(requests, 4, "{args}");
         }
+    }
+
+    /// Ancestry scope needs the group collection, not the compliance fields:
+    /// `fields=basic` (also the default) reads it once, paired, inside the
+    /// ledger export's bracket, and its rows stay basic.
+    #[tokio::test]
+    async fn basic_ancestry_scope_admits_the_sub_group_ledger_from_one_paired_group_read() {
+        let plans = basic_plans_reading(period_opening(), Some(groups()));
+        let total = plans.len();
+        let (response, requests) = call(
+            plans,
+            json!({"company_guid":GUID,"group":"Sundry Debtors","group_scope":"ancestry"}),
+        )
+        .await;
+        assert_eq!(requests, total);
+        let found = items(&response);
+        assert_eq!(found.len(), 6, "{found:?}");
+        assert_eq!(
+            row(found, "Bridge Nested Debtor WR4")["parent"],
+            "Bridge Nested Debtors WR4"
+        );
+        for item in found {
+            assert!(item.get("ancestry").is_none(), "{item}");
+        }
+        assert_eq!(
+            group_filter(&response),
+            &json!({
+                "group": "Sundry Debtors",
+                "scope": "ancestry",
+                "excluded_subgroup_ledgers": {"count": 0, "group_count": 0, "groups": []},
+                "unresolved_ancestry_ledgers": 0,
+            })
+        );
+    }
+
+    /// A ledger whose chain stops before reaching the group might sit under it
+    /// or not; Bridge cannot say, so it is counted rather than silently
+    /// treated as outside. Only PARENT changes: `WR2 Sales` is re-parented to
+    /// a group the captured collection does not hold. The baseline tests above
+    /// report 0 for the same book, including the root-parented ledger.
+    #[tokio::test]
+    async fn a_ledger_whose_chain_breaks_before_the_group_is_counted_unresolved() {
+        let from = "<PARENT TYPE=\"String\">Sales Accounts</PARENT>";
+        let ledgers = period_opening();
+        assert_eq!(ledgers.matches(from).count(), 1);
+        let ledgers = ledgers.replace(from, "<PARENT TYPE=\"String\">Group Absent WR631</PARENT>");
+        for scope in ["immediate", "ancestry"] {
+            let (response, _) = call(
+                basic_plans_reading(ledgers.clone(), Some(groups())),
+                json!({"company_guid":GUID,"group":"Sundry Debtors","group_scope":scope}),
+            )
+            .await;
+            assert!(!names(items(&response)).contains("WR2 Sales"), "{scope}");
+            assert_eq!(
+                group_filter(&response)["unresolved_ancestry_ledgers"],
+                1,
+                "{scope}"
+            );
+        }
+    }
+
+    /// The added group read is paired like the ledger export beside it: a
+    /// collection that changes between its two reads is refused, not resolved
+    /// against. Only one group NAME differs in the second read; the closing
+    /// extent and identity reads are never sent.
+    #[tokio::test]
+    async fn a_group_collection_that_changes_between_its_paired_reads_is_refused() {
+        let from = "Bridge Nested Debtors WR4";
+        let source = groups();
+        assert!(source.contains(from));
+        let mut plans = basic_plans_reading(period_opening(), Some(source.clone()));
+        let closing = 7;
+        let second_group_read = plans.len() - closing - 2;
+        plans[second_group_read] = xml(source.replace(from, "Bridge Nested Debtors WR631"));
+        plans.truncate(plans.len() - closing);
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"group":"Sundry Debtors"})).await;
+        assert_eq!(requests, total);
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "native_ledger_group_changed");
     }
 
     #[tokio::test]
