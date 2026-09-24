@@ -57,7 +57,8 @@ for `stock`: `stock_items` ({name: {base_unit?, guid?, opening_qty?, opening_val
 closing_value?}}, default {}), `stock_opening` and `stock_closing` ({as_of, rows: {name: {qty?, value?,
 rate?}}}), each quantity a number, each value or rate integer paise, absent or null meaning None, and
 `is_integrated` (true, false, or absent/null for unknown); and for `party_monthly`: `cash`, `bank` and
-`period` as above, and `top_n` (an integer, default the module's PARTY_TOP_N).
+`period` as above, and `top_n` (a non-negative integer, default the module's PARTY_TOP_N; Python would slice
+a negative one from the end, which the Rust `usize` cannot express, so both sides refuse it).
 """
 from __future__ import annotations
 
@@ -257,7 +258,8 @@ def main() -> int:
             eng, rules, {k: dict(v) for k, v in spec.get("partners", {}).items()}, spec.get("deed"))),
         "party_monthly": lambda: (party_monthly, party_monthly.run(
             eng, rules, cash, bank,
-            top_n=typed(spec, "top_n", integer, "an integer", absent=party_monthly.PARTY_TOP_N, nullable=False))),
+            top_n=typed(spec, "top_n", lambda x: integer(x) and x >= 0, "a non-negative integer",
+                        absent=party_monthly.PARTY_TOP_N, nullable=False))),
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
         "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
             eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
