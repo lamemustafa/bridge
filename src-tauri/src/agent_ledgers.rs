@@ -91,7 +91,10 @@ const EXCLUDED_SUBGROUPS_NAMED: usize = 20;
 ///   zero under ancestry scope, which admits them.
 /// * `unresolved_ancestry_ledgers`: rows not admitted whose chain stops (a
 ///   gap) before reaching `group`; Bridge cannot say whether they sit under
-///   it, so they are counted rather than treated as outside.
+///   it, so they are counted rather than treated as outside. The count is
+///   book-wide: a gap in a subtree unrelated to `group` is counted too,
+///   because Bridge cannot tell whether `group` lies above the point where
+///   the walk stopped.
 fn apply_group_filter(
     rows: &mut Vec<Value>,
     scope: GroupScope,
