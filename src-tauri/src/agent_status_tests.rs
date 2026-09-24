@@ -457,8 +457,15 @@ async fn a_request_held_back_after_repeated_failures_names_the_endpoint() {
         assert_eq!(error["endpoint"], format!("http://127.0.0.1:{port}"));
         causes.push(error["cause"].as_str().unwrap().to_string());
     }
-    assert_eq!(causes[0], "endpoint_unreachable", "{causes:?}");
-    assert!(causes.contains(&"endpoint_circuit_cooldown".to_string()), "{causes:?}");
+    // The first call's retries open the circuit; the next two are held back.
+    assert_eq!(
+        causes,
+        [
+            "endpoint_unreachable",
+            "endpoint_circuit_cooldown",
+            "endpoint_circuit_cooldown"
+        ]
+    );
 }
 
 /// When the operation code already is the unanswered reason (a generic read
@@ -468,7 +475,8 @@ async fn a_request_held_back_after_repeated_failures_names_the_endpoint() {
 fn an_unanswered_code_is_not_repeated_as_its_cause_and_keeps_the_endpoint() {
     let (server, _directory) = server_at(9, 200_000);
     let error_of = |failure: ToolFailure| {
-        let response = server.finish_tool_response("vouchers", &json!({}), Utc::now(), Err(failure));
+        let response =
+            server.finish_tool_response("vouchers", &json!({}), Utc::now(), Err(failure));
         response.value["structuredContent"]["result"]["error"].clone()
     };
     let mut repeated = ToolFailure::from("request_deadline_exceeded".to_string());
