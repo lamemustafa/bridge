@@ -434,6 +434,13 @@ pub(crate) mod test_seam {
                 "the token, but a failing exit",
                 "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
             ),
+            // The answer is matched byte for byte, so any stray output, such
+            // as a log line, declines. That is fail-closed on purpose: do not
+            // trim or search the output to "fix" it.
+            (
+                "a log line, then the token",
+                "read nonce; echo starting; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
+            ),
         ] {
             assert_eq!(
                 super::confirm_with(&stub(directory.path(), body), "Post").await,
