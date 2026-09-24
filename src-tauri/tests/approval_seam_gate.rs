@@ -335,6 +335,48 @@ fn each_dialog_mode_runs_its_own_dialog() {
     assert!(!dialog_mode_problems(&swapped).is_empty());
 }
 
+/// Each dialog subprocess answers with its own token, after its own dialog
+/// (#635). The parent approves a post only on the post token, so pairing that
+/// token with the review dialog would let "I reviewed it" approve a post, and
+/// no stub test could see it: a stub is a script, not this code.
+fn dialog_token_problems(source: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for pairing in [
+        "answer_with_token(POST_TOKEN_PREFIX, show_review)",
+        "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
+    ] {
+        if source.matches(pairing).count() != 1 {
+            problems.push(format!("expected exactly one `{pairing}`"));
+        }
+    }
+    if source.matches("answer_with_token(").count() != 3 {
+        problems.push("expected the two pairings and the definition only".into());
+    }
+    problems
+}
+
+#[test]
+fn each_dialog_answers_with_its_own_token() {
+    let source = read("src-tauri/src/tally/approved_import.rs");
+    assert_eq!(dialog_token_problems(&source), Vec::<String>::new());
+    for broken in [
+        source.replace(
+            "answer_with_token(POST_TOKEN_PREFIX, show_review)",
+            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
+        ),
+        source.replace(
+            "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
+            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
+        ),
+        format!(
+            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true) }}\n"
+        ),
+    ] {
+        assert_ne!(broken, source);
+        assert!(!dialog_token_problems(&broken).is_empty());
+    }
+}
+
 #[test]
 fn only_test_files_name_the_seam() {
     let source = repo().join("src-tauri").join("src");
