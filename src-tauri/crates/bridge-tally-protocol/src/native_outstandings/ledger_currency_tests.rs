@@ -489,3 +489,34 @@ fn with_exclusions_a_bill_of_an_unknown_party_refuses() {
         ))
     );
 }
+
+/// The compliance source's parse (bridge#551): the same classification of the
+/// FOREX capture, admitted only for the company every row's collection-level
+/// GUID names. Another company's GUID refuses before any row is classified.
+#[test]
+fn the_company_checked_classified_snapshot_admits_only_its_own_company() {
+    const FOREX_GUID: &str = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+    let unchecked = crate::native_outstandings::parse_native_ledger_snapshot_classified(
+        &forex_book(),
+        &forex_base(),
+    )
+    .unwrap();
+    let checked = crate::native_outstandings::parse_native_ledger_snapshot_classified_for_company(
+        &forex_book(),
+        FOREX_GUID,
+        &forex_base(),
+    )
+    .unwrap();
+    assert_eq!(checked, unchecked);
+    assert!(!checked.foreign.is_empty());
+    assert_eq!(
+        crate::native_outstandings::parse_native_ledger_snapshot_classified_for_company(
+            &forex_book(),
+            "61c6de69-1748-461c-ad3f-162cb949df9f",
+            &forex_base(),
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_response_company_guid_mismatch"
+        ))
+    );
+}
