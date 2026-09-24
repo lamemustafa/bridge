@@ -235,6 +235,29 @@ class Select(unittest.TestCase):
     def test_the_runner_and_its_results_are_inert(self):
         self.assertEqual(self.picked(list(mu.INERT)), set())
 
+    def test_a_change_to_the_list_selects_only_the_entries_it_changes(self):
+        changed = ["parity/mutations.json"]
+        added = mutation("N1", "src/book.rs")
+        self.muts.append(added)
+        self.assertEqual(self.picked(changed), {"N1"}, "an added entry has no record")
+        self.muts[0] = dict(self.book, to="edited")
+        self.assertEqual(self.picked(changed), {"N1", "B1"}, "an edited entry fails its hash")
+        order = [m["id"] for m in self.muts if m["id"] != "S1"]  # S1 removed from the list
+        self.assertEqual(mu.verify([], self.results, "t", order),
+                         ["S1: a record for a mutation no longer in the list (delete it)"])
+
+    def test_no_crate_source_reads_the_inert_files(self):
+        # INERT is sound only while no test can read these files; name one in a crate source and
+        # this fails, so the file must leave INERT (or the test must not read it).
+        crate = Path(__file__).resolve().parents[1]
+        names = [Path(f).name for f in mu.INERT] + ["accepted-survivors.json"]
+        sources = [p for d in ("src", "tests") for p in (crate / d).rglob("*.rs")]
+        sources += [crate / "build.rs"] if (crate / "build.rs").is_file() else []
+        self.assertGreater(len(sources), 20, "the crate's sources were found")
+        hits = [f"{p.relative_to(crate)}: {n}" for p in sources for n in names
+                if n in p.read_text(encoding="utf-8")]
+        self.assertEqual(hits, [])
+
 
 class Verify(unittest.TestCase):
     def test_a_record_is_fresh_only_on_its_tree_for_its_definition(self):

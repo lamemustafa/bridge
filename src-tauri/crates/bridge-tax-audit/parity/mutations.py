@@ -83,7 +83,11 @@ At merge, `--verify --changed-since <base>` (in CI, no build) requires:
   - its own definition changed, it has no killed record, or a killer's file is unknown;
   - ANY crate file other than Rust source under `src/` and `tests/` changed (fixtures, goldens,
     rules, parity scripts, the Markdown tests read, `Cargo.toml`, `build.rs`): then the whole
-    list is selected, because tests read such files at run time in ways no file name reveals; or
+    list is selected, because tests read such files at run time in ways no file name reveals.
+    The runner's own files and `parity/mutations.json` are the exception: no crate test reads
+    them (a unit test fails if any crate source names them), and a change to the list is already
+    covered mutation by mutation: an edited entry fails its definition hash, an added one has no
+    record, and a removed one leaves a record the orphan check refuses; or
   - a nightly tracking issue is open and lists it as failing (`--nightly-issues`), and the
     change touches the crate: so the fix for a nightly failure can merge, and nothing else can
     until the failing mutations are proven killed again (or retired). Every open issue must
@@ -149,8 +153,10 @@ FAILED_NO_TEST = "failed_no_test"
 PASSING = {KILLED, TIMEOUT}  # a test-run timeout is a hang the suite would not let through
 CRASHED = "<crashed>"  # the test name recorded when a test binary dies without naming a failure
 
-# Crate-relative files that never change what a test does.
-INERT = ("parity/mutations.py", "parity/mutation-results.json", "parity/test_mutations.py")
+# Crate-relative files that never change what a test does: no crate source names them (a unit
+# test holds that), and a change to the list is judged entry by entry (see the docstring).
+INERT = ("parity/mutations.py", "parity/mutation-results.json", "parity/test_mutations.py",
+         "parity/mutations.json")
 # The machine-readable line a failed report ends with, which the nightly puts in its issue.
 FAILING_MARK = "mutation-nightly-failing:"
 # The header ci.yml writes before each open issue's body in the --nightly-issues file.
