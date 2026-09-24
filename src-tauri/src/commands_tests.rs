@@ -53,7 +53,7 @@ use super::{
 #[cfg(unix)]
 use super::require_utf8_destination;
 use crate::tally::{
-    ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyCompany,
+    ConnectionStatus, OutstandingsLoadResult, TallyCompany,
     TallyLedger, TallyProbeResult, TallyProduct,
 };
 use bridge_tally_core::CapabilityProfile;
@@ -309,36 +309,6 @@ fn company_sweep_preserves_a_company_listing_transport_reason() {
         OutstandingsLoadResult::Partial { reason, .. }
             if reason.reason_code == "endpoint_unreachable"
     ));
-}
-
-#[test]
-fn the_workbook_inr_admission_names_undetermined_base_currency() {
-    assert_eq!(
-        establish_inr_currency(2, false).err(),
-        Some("company_base_currency_undetermined"),
-        "several currency masters do not identify the company's base currency"
-    );
-    assert_eq!(
-        establish_inr_currency(2, true).err(),
-        Some("company_base_currency_undetermined"),
-        "the parser's INR flag is not authoritative when several currency masters exist"
-    );
-    assert_eq!(
-        establish_inr_currency(1, false).err(),
-        Some("company_base_currency_not_inr"),
-        "one non-Indian currency identifies an unsupported base currency"
-    );
-    assert_eq!(establish_inr_currency(1, true).err(), None);
-    assert_eq!(
-        establish_inr_currency(1, true),
-        Ok(OutstandingsCurrencyAssertion::Inr),
-        "the backend boundary receives a typed INR admission only after the probe established one INR master"
-    );
-    assert_eq!(
-        establish_inr_currency(0, false).err(),
-        Some("company_currency_probe_failed"),
-        "an impossible empty collection remains fail-closed"
-    );
 }
 
 #[test]

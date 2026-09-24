@@ -74,6 +74,7 @@ fn party_ledger_master_evidence_includes_currency_probe_and_source_responses() {
         balance_response_bytes: 13,
         group_response_bytes: 17,
         groups: Vec::new(),
+        foreign_currency_ledgers_excluded: Vec::new(),
     };
     let currency = RuntimeReadEvidence::paired("<currency/>", sha256_hex(b"currency-response"), 19);
     let baseline = TallyRuntime::party_ledger_master_source_evidence(

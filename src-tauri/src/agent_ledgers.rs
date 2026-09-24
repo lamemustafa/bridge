@@ -75,6 +75,29 @@ fn group_matches(
         || (scope == GroupScope::Ancestry && hop_names.iter().any(|name| name == group))
 }
 
+/// At most this many excluded ledgers are named; `count` covers them all.
+/// The list is not paged with the rows, so it is bounded where it is built.
+const EXCLUDED_LEDGERS_NAMED: usize = 20;
+
+/// The foreign-currency ledgers a read left out: how many, and the first
+/// [`EXCLUDED_LEDGERS_NAMED`] with their currency. A ledger name is party
+/// data and is marked for redaction like every row's name.
+fn excluded_ledgers_json(
+    foreign: &[bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger],
+) -> Value {
+    json!({
+        "count": foreign.len(),
+        "ledgers": foreign
+            .iter()
+            .take(EXCLUDED_LEDGERS_NAMED)
+            .map(|ledger| json!({
+                "ledger": party_name(ledger.ledger.clone()),
+                "currency": ledger.currency,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 impl Server {
     pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
@@ -93,8 +116,8 @@ impl Server {
             // re-parsing the rendered payload; `basic` rows never have any
             // (empty, not absent -- `fields=basic` never reads groups at
             // all, which `group_scope=ancestry` is refused for above).
-            let (mut ledgers, ledger_evidence): (Vec<(Value, Vec<String>)>, _) = if compliance {
-                let (records, groups, opening_as_of, evidence) = self
+            let (mut ledgers, ledger_evidence, foreign): (Vec<(Value, Vec<String>)>, _, _) = if compliance {
+                let (records, groups, foreign, opening_as_of, evidence) = self
                     .runtime
                     .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), &identity)
                     .await
@@ -125,6 +148,7 @@ impl Server {
                         })
                         .collect::<Vec<_>>(),
                     evidence,
+                    foreign,
                 )
             } else {
                 let (records, opening_as_of, evidence) = self
@@ -146,6 +170,7 @@ impl Server {
                         })
                         .collect::<Vec<_>>(),
                     evidence,
+                    Vec::new(),
                 )
             };
             evidence = combine_evidence(evidence.clone(), evidence_from_runtime_read(ledger_evidence));
@@ -166,7 +191,13 @@ impl Server {
                 .map(|ledger| redact_value(ledger, self.settings.redaction))
                 .collect::<Vec<_>>();
             let truncated = offset.saturating_add(page.len()) < total;
-            let result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
+            let mut result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
+            // A book with several Currency masters: its foreign-currency
+            // ledgers are left out and named, never read as rupees (bridge#551).
+            if !foreign.is_empty() {
+                result["ledgers_scope"] = json!("base_currency_ledgers_only");
+                result["foreign_currency_ledgers_excluded"] = excluded_ledgers_json(&foreign);
+            }
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
                 evidence: evidence.clone(),

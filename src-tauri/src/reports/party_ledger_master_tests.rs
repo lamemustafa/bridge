@@ -73,6 +73,7 @@ fn source() -> PartyLedgerMasterSource {
         balance_response_bytes: 200,
         group_response_bytes: 300,
         groups: vec![],
+        foreign_currency_ledgers_excluded: Vec::new(),
     }
 }
 
@@ -181,6 +182,7 @@ fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
         balance_response_bytes: MASTER_FIELDS_LAB_BALANCES.len(),
         group_response_bytes: MASTER_FIELDS_LAB_GROUPS.len(),
         groups,
+        foreign_currency_ledgers_excluded: Vec::new(),
     };
     let workbook = build_party_ledger_master_workbook(source).expect("captured source admits");
     let xlsx = super::super::party_ledger_master_xlsx::render_party_ledger_master_xlsx(&workbook)

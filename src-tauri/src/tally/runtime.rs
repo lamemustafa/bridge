@@ -968,6 +968,14 @@ pub(crate) struct PartyLedgerMasterCurrency {
 }
 
 impl PartyLedgerMasterCurrencyAssertion {
+    /// The base Currency master's NAME each ledger's own currency is compared
+    /// with, where one was read.
+    pub(crate) fn ledger_currency_base(
+        &self,
+    ) -> Option<&bridge_tally_protocol::native_outstandings::BaseCurrencyName> {
+        self.base.as_ref()
+    }
+
     /// Releases the INR assertion only when the monetary master read opens on
     /// the exact company extent that the existing currency probe observed.
     pub(crate) fn require_opening_extent(
@@ -1024,6 +1032,16 @@ impl From<PartyLedgerMasterCurrencyAssertion> for OutstandingsCurrencyWitness {
 impl From<ClassifiedCurrencyWitness> for OutstandingsCurrencyWitness {
     fn from(witness: ClassifiedCurrencyWitness) -> Self {
         Self::Classified(witness)
+    }
+}
+
+impl ClassifiedCurrencyWitness {
+    /// The assertion the compliance source reads under (bridge#551). That
+    /// source compares every ledger's own currency with this base before it
+    /// parses a balance, and leaves a foreign ledger out by name, so it is a
+    /// path that does compare; see this type's doc.
+    pub(crate) fn into_compliance_assertion(self) -> PartyLedgerMasterCurrencyAssertion {
+        self.0
     }
 }
 
@@ -2904,25 +2922,33 @@ impl TallyRuntime {
     ) -> anyhow::Result<(
         Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
         Vec<bridge_tally_protocol::TallyNamedMaster>,
+        Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
         TallyDate,
         RuntimeReadEvidence,
     )> {
+        // The classified read admits a book with several Currency masters
+        // when Tally identifies an INR base (bridge#551); the source then
+        // leaves foreign ledgers out by name.
         let currency_read = self
-            .detect_base_currency_with_extent(config.clone(), identity)
+            .detect_classified_base_currency_with_extent(config.clone(), identity)
             .await?;
-        let currency_evidence = currency_read.evidence.clone();
-        let assertion = currency_read.admit_inr().map_err(|code| {
-            with_read_evidence(
-                anyhow::Error::new(CurrencyAdmissionRefusal(code)),
-                currency_evidence.clone(),
-            )
-        })?;
+        let currency_evidence = currency_read.evidence();
+        let assertion = currency_read
+            .admit_inr_classified()
+            .map_err(|code| {
+                with_read_evidence(
+                    anyhow::Error::new(CurrencyAdmissionRefusal(code)),
+                    currency_evidence.clone(),
+                )
+            })?
+            .into_compliance_assertion();
         let (source, source_evidence) = self
             .fetch_party_ledger_master_source_with_evidence(config, identity, assertion)
             .await
             .map_err(|error| with_read_evidence(error, currency_evidence.clone()))?;
         let evidence = currency_evidence.combine(source_evidence);
         let groups = source.groups.clone();
+        let foreign = source.foreign_currency_ledgers_excluded.clone();
         // The master request's SVFROMDATE (the admitted BOOKSFROM): each opening is as of it.
         let opening_as_of = source.from.clone();
         let records = source
@@ -2938,7 +2964,7 @@ impl TallyRuntime {
                 fields: row.fields,
             })
             .collect();
-        Ok((records, groups, opening_as_of, evidence))
+        Ok((records, groups, foreign, opening_as_of, evidence))
     }
 
     /// Retain the three actual request body commitments alongside their paired
@@ -4062,15 +4088,6 @@ impl TallyRuntime {
 
     /// Runs the existing currency probe while retaining its stable company
     /// extent for the party/ledger master document boundary.
-    pub(crate) async fn detect_party_ledger_master_currency(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<CompanyCurrencyRead> {
-        self.detect_base_currency_with_extent(config, identity)
-            .await
-    }
-
     pub(crate) async fn detect_base_currency_with_extent(
         &self,
         config: TallyConfig,

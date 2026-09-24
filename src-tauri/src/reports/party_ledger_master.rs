@@ -42,6 +42,11 @@ pub(crate) struct PartyLedgerMasterSource {
     /// ledger rows. Schedule III classification remains a pure derivation of
     /// this source; it never performs an independent reader call.
     pub(crate) groups: Vec<TallyNamedMaster>,
+    /// Ledgers kept in a currency other than the base, left out of `rows`
+    /// with their master and balance rows (bridge#551). Empty on a book with
+    /// one Currency master, whose base refuses such a ledger instead.
+    pub(crate) foreign_currency_ledgers_excluded:
+        Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
 }
 
 #[derive(Debug, Clone)]
