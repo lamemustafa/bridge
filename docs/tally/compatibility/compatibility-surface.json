@@ -355,7 +355,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/standard_ledger_catalog.rs",
-      "sha256": "fb968e64fa8dd169d06cb22f13a15bfff449d91c79f15bb79f1ca206d408db82"
+      "sha256": "8450b31d046703d1768cd31f39d7c863490cac68aeebd003799752451d7680ec"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/text_encoding.rs",
@@ -423,7 +423,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "d52d6ca3cf78ca451c9c8e9d21eac913952ca703a1fb9b3963baec0e1b512051"
+      "sha256": "15c9bf49ab18e45f932bcd9673d47835824a4fe4ab1ee722064f91cb60e7edc1"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -459,7 +459,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "62a7745df8ea744e9b247d3637fbd3291dd36cab79690aa0764be5e7986f62aa"
+      "sha256": "2dbb85b2c71979fe57e8df291db0f233e53a4464c798b7b68934d581d4b7c7b3"
     },
     {
       "path": "src-tauri/src/agent_import_ack.rs",
@@ -487,7 +487,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "1d6b824851b19e50e1104159a84df11492296c5016d3355c95687b6dea22eaa7"
+      "sha256": "9e5aa35d360c88adc6f55dd31b400525540bac8cbaf03779a6d0d597d098fe83"
     },
     {
       "path": "src-tauri/src/agent_import_post_location.rs",
@@ -923,7 +923,7 @@
     },
     {
       "path": "src-tauri/src/tally/standard_ledger_catalog.rs",
-      "sha256": "7b92d3130c006b9a3d468e06c1ee10effa35a431353da01f0aae562357ac0711"
+      "sha256": "a77b0a845871c98e82b8f070e09dc6b60409f3970a05574e645467c3ef6f3935"
     },
     {
       "path": "src-tauri/src/tally/tdl_engine.rs",
@@ -1114,5 +1114,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "217df8c7681446b5a8801dc85ec968158d9990fccb2c3fb8c836e45c87a65988"
+  "manifest_sha256": "c4fc3d6f3b54c317b92bd227bca131f444ac29c8e8948ae78d433ea29e8efa56"
 }
