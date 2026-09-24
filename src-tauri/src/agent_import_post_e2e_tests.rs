@@ -1814,6 +1814,34 @@ async fn a_queue_read_failing_before_the_intent_is_refused_as_such() {
     }
 }
 
+/// #656, the other direction: the pre-intent code must never reach a post
+/// whose bytes were sent. The POST's response is lost in transport, after the
+/// intent was journaled, so the outcome is unknown and the attempt recorded.
+#[tokio::test]
+async fn a_post_lost_after_the_intent_is_still_an_unknown_outcome() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(
+        xml(created_one()).with_delivery(Delivery::ResetBeforeBody),
+    ));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_dispatch_outcome_unknown",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(true), "{response}");
+}
+
 // bridge#239: the ledgers a batch names must still carry the GUIDs its build
 // bound them to; a name alone cannot tell a ledger renamed and replaced.
 
