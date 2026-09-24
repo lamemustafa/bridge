@@ -394,8 +394,8 @@ struct ToolFailure {
     /// the failure came out of one. Data-free.
     window_timings: Option<Box<WindowReadTimings>>,
     /// The count and estimate a read was refused on before it was sent (#637).
-    /// Numbers only.
-    read_size: Option<ReadSize>,
+    /// Numbers only; boxed to keep the refusal small on every other path.
+    read_size: Option<Box<ReadSize>>,
     /// Set when no response reached Tally-protocol parsing (#629). The refusal
     /// then names the configured endpoint, so a wrong or reset port is visible
     /// instead of reading as a Tally data problem.
@@ -413,7 +413,9 @@ struct ReadSize {
 
 fn read_size_refusal(error: &anyhow::Error) -> Option<ReadSize> {
     error.chain().find_map(|cause| {
-        match cause.downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()? {
+        match cause
+            .downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()?
+        {
             crate::tally::connection::PartyLedgerMasterSourceValidationError::TooLarge {
                 ledgers,
                 estimated_bytes,
@@ -743,7 +745,7 @@ impl ToolFailure {
             cause,
             counts: None,
             window_timings: None,
-            read_size: read_size_refusal(&error),
+            read_size: read_size_refusal(&error).map(Box::new),
             unanswered: unanswered_cause(&error),
         }
     }

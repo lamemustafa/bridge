@@ -1858,7 +1858,10 @@ fn the_compliance_budget_admits_up_to_its_estimate_and_refuses_one_ledger_more()
                 estimated_bytes,
                 (limit + 1) * super::COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED
             );
-            assert_eq!(budget_bytes, super::COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED);
+            assert_eq!(
+                budget_bytes,
+                super::COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED
+            );
         }
         other => panic!("expected a size refusal, got {other:?}"),
     }

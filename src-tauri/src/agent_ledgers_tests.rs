@@ -880,7 +880,10 @@ mod through_the_tool {
         format!(
             "{}{}{}",
             &extent[..start],
-            extent[start..end].replace(from, &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")),
+            extent[start..end].replace(
+                from,
+                &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")
+            ),
             &extent[end..]
         )
     }
@@ -948,8 +951,11 @@ mod through_the_tool {
     #[tokio::test]
     async fn a_counted_book_over_budget_is_refused_before_the_master_request() {
         let source = balances();
-        let row_start = source.find("<LEDGER NAME=\"Bridge Nested Debtor WR4\"").unwrap();
-        let row_end = row_start + source[row_start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
+        let row_start = source
+            .find("<LEDGER NAME=\"Bridge Nested Debtor WR4\"")
+            .unwrap();
+        let row_end =
+            row_start + source[row_start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
         let row = &source[row_start..row_end];
         let ledgers = 4_300;
         let copies = (0..ledgers - 9)
@@ -974,7 +980,10 @@ mod through_the_tool {
             json!({"ledgers": ledgers, "estimated_bytes": ledgers * 3_750, "budget_bytes": 16_000_000})
         );
         assert!(
-            error["remediation"].as_str().unwrap().contains("fields=basic"),
+            error["remediation"]
+                .as_str()
+                .unwrap()
+                .contains("fields=basic"),
             "{error}"
         );
     }
