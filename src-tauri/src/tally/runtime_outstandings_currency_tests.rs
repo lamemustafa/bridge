@@ -750,3 +750,79 @@ async fn a_completed_read_holds_its_statement_source_apart_from_the_working_pape
         assert_eq!(&source.open_bills, statement_open_bills);
     }
 }
+
+/// bridge#551: a rupee symbol alone does not admit. The captured
+/// single-master read (`I₹`, mailing name `INR`) is admitted through
+/// `admit_inr`; with its mailing name changed to `Rupees` it is refused as
+/// not INR, whether or not an `ORIGINALNAME` `₹` is injected alongside
+/// (TALLY_PROTOCOL_REFERENCE §9.10a.2: whether `ORIGINALNAME` survives a
+/// base-currency rename is unmeasured).
+#[tokio::test]
+async fn a_single_rupee_master_is_not_admitted_by_its_symbol_alone() {
+    let captured = currency_source();
+    let rupees = captured.replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">Rupees</MAILINGNAME>",
+    );
+    assert_ne!(rupees, captured);
+    assert_eq!(rupees.matches("<DECIMALPLACES").count(), 1);
+    let symbol = rupees.replace(
+        "<DECIMALPLACES",
+        "<ORIGINALNAME TYPE=\"String\">\u{20b9}</ORIGINALNAME>\r\n     <DECIMALPLACES",
+    );
+    assert_ne!(symbol, rupees);
+    for (currency, admitted) in [(captured, true), (symbol, false), (rupees, false)] {
+        let simulator = SequenceSimulator::spawn(currency_plans(currency)).unwrap();
+        let read = TallyRuntime::default()
+            .detect_base_currency_with_extent(
+                TallyConfig {
+                    host: simulator.address().ip().to_string(),
+                    port: simulator.address().port(),
+                },
+                &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            )
+            .await
+            .unwrap();
+        simulator.cancel();
+        match read.admit_inr() {
+            Ok(_) => assert!(
+                admitted,
+                "a master without an Indian mailing name was admitted"
+            ),
+            Err(code) => {
+                assert!(!admitted, "the captured INR master was refused: {code}");
+                assert_eq!(code, "company_base_currency_not_inr");
+            }
+        }
+    }
+}
+
+/// bridge#551: a two-master response carrying `ORIGINALNAME` (the captured
+/// FOREX read) is still refused as undetermined through `admit_inr`. The
+/// runtime takes no company `CURRENCYNAME`, so nothing identifies the rupee
+/// master as the base, even though the response now says which master's
+/// `ORIGINALNAME` is `₹`.
+#[tokio::test]
+async fn a_two_master_read_with_originalname_stays_undetermined() {
+    let currency = decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+    ));
+    assert_eq!(currency.matches("<ORIGINALNAME").count(), 2);
+    let simulator = SequenceSimulator::spawn(currency_plans(currency)).unwrap();
+    let read = TallyRuntime::default()
+        .detect_base_currency_with_extent(
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+        )
+        .await
+        .unwrap();
+    simulator.cancel();
+    assert_eq!(read.currency_count(), 2);
+    assert_eq!(
+        read.admit_inr().err(),
+        Some("company_base_currency_undetermined")
+    );
+}
