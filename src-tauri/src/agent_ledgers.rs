@@ -78,6 +78,21 @@ struct PartyGstin {
     sources_disagree: bool,
 }
 
+/// The row keys a [`PartyGstin`] answer is reported under.
+fn party_gstin_fields(gstin: PartyGstin, as_of: &str) -> serde_json::Map<String, Value> {
+    let Value::Object(fields) = json!({
+        "party_gstin": gstin.gstin,
+        "party_gstin_status": gstin.status,
+        "party_gstin_registration_type": gstin.registration_type,
+        "party_gstin_as_of": as_of,
+        "party_gstin_flat": gstin.flat,
+        "gstin_sources_disagree": gstin.sources_disagree,
+    }) else {
+        unreachable!("a json object literal")
+    };
+    fields
+}
+
 fn party_gstin_on(flat: Option<&str>, history: &GstRegistrationHistory, as_of: &str) -> PartyGstin {
     // `flat` is the field as returned, so an explicit `<PARTYGSTIN/>` is
     // `Some("")`: reported as read, but it names no GSTIN.
@@ -239,22 +254,20 @@ impl Server {
                             &record.fields.gst_registrations,
                             &gstin_as_of,
                         );
-                        json!({
+                        let mut row = json!({
                             "name": party_name(record.ledger.name),
                             "parent": parent,
                             "opening_balance": record.ledger.opening_balance,
                             "opening_balance_as_of": &opening_as_of,
-                            "party_gstin": gstin.gstin,
-                            "party_gstin_status": gstin.status,
-                            "party_gstin_registration_type": gstin.registration_type,
-                            "party_gstin_as_of": &gstin_as_of,
-                            "party_gstin_flat": gstin.flat,
-                            "gstin_sources_disagree": gstin.sources_disagree,
                             "compliance": mark_compliance_party_names(
                                 serde_json::to_value(record.fields).unwrap_or_default(),
                             ),
                             "ancestry": ancestry_json(&chain),
-                        })
+                        });
+                        if let Value::Object(fields) = &mut row {
+                            fields.extend(party_gstin_fields(gstin, &gstin_as_of));
+                        }
+                        row
                     })
                     .collect::<Vec<_>>();
                 let report = group

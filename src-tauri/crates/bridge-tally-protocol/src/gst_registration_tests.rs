@@ -67,6 +67,11 @@ fn each_malformed_history_is_unreadable_with_its_own_reason() {
         "a repeated field is a defect even when nothing else was read"
     );
     assert_eq!(
+        unreadable(vec![raw(Some("20250701"), Some("27ZZZZZ0000Z1Z5A"))]),
+        Some(GstRegistrationDefect::GstinMalformed),
+        "sixteen characters"
+    );
+    assert_eq!(
         unreadable(vec![raw(Some("20250701"), Some("27zzzzz0000z1z5"))]),
         Some(GstRegistrationDefect::GstinMalformed)
     );

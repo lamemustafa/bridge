@@ -409,6 +409,20 @@ fn both_gstin_sources_are_reported_and_a_difference_is_flagged_not_resolved() {
         (None, "no_gstin_in_force", None)
     );
 
+    // Every source is reported under its own key.
+    let fields = party_gstin_fields(party_gstin_on(Some(FLAT), &other, "20260331"), "20260331");
+    assert_eq!(
+        Value::Object(fields),
+        json!({
+            "party_gstin": DATED,
+            "party_gstin_status": "in_force",
+            "party_gstin_registration_type": "Regular",
+            "party_gstin_as_of": "20260331",
+            "party_gstin_flat": FLAT,
+            "gstin_sources_disagree": true,
+        })
+    );
+
     // Registered with no GSTIN recorded is not read as unregistered.
     let regular = history(vec![entry("20170701", None, "Regular")]);
     let got = party_gstin_on(None, &regular, "20260331");
