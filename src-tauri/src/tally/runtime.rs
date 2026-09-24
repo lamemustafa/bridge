@@ -3477,7 +3477,18 @@ impl TallyRuntime {
                     }
                     .await
                     .map_err(|source| {
-                        anyhow::Error::from(super::approved_import::PreIntentQueueRefusal { source })
+                        // The captured reads' evidence stays on top, where the
+                        // runtime's callers and tests read it.
+                        let evidence = source
+                            .downcast_ref::<RuntimeReadFailure>()
+                            .map(|failure| failure.evidence.clone());
+                        let marked = anyhow::Error::from(
+                            super::approved_import::PreIntentQueueRefusal { source },
+                        );
+                        match evidence {
+                            Some(evidence) => with_read_evidence(marked, evidence),
+                            None => marked,
+                        }
                     })?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())

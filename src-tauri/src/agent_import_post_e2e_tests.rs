@@ -1649,7 +1649,7 @@ async fn a_new_ledger_under_an_approved_name_during_approval_is_refused_by_ident
 /// bridge#634: the queue's catalogue re-read at post time holds a repeated
 /// ledger. The admission recheck refuses before the POST, and the refusal
 /// carries the catalogue's typed cause, which a post refusal used to drop.
-/// The code is still the queue's catch-all (#641). Below the response budget
+/// It is refused before the intent, so its code says so (#656). Below the response budget
 /// the cause is left out, as on the generic refusal, and the fields a caller
 /// acts on survive. The name is never in the response.
 #[tokio::test]
@@ -1691,7 +1691,7 @@ async fn a_post_time_catalogue_refusal_names_its_cause_and_no_ledger() {
         let result = &response["structuredContent"]["result"];
         assert_eq!(result["error"]["cause"], cause, "{response}");
         assert_eq!(
-            result["error"]["code"], "import_dispatch_outcome_unknown",
+            result["error"]["code"], "post_queue_read_failed",
             "{response}"
         );
         assert_eq!(result["attempt_recorded"], json!(false), "{response}");
