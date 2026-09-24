@@ -267,7 +267,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/gst_registration.rs",
-      "sha256": "62e5c36e17334b4c911031b14f49bb5159e3cf58fd5b38f4920286ada3a2cf0a"
+      "sha256": "7c9ee37ea7fc1c681baffe5a6860d823615e7f30989a004d75b5c0a1ab8c2987"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/import_outcome.rs",
@@ -503,7 +503,7 @@
     },
     {
       "path": "src-tauri/src/agent_ledgers.rs",
-      "sha256": "57239f714275aaa1aeca5f953c635f6e166d7da0e4f2074de0de8771c77d376c"
+      "sha256": "51559bf9628c4ef8f5f32727b7c58bcf10d0d984d9b14ff7c8dbfcc929caf007"
     },
     {
       "path": "src-tauri/src/agent_movement.rs",
@@ -1118,5 +1118,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "e41ddbd6b16f637bad0995169be2da36c9ddf7a4c9f3f66bcc6cc40354dce2c5"
+  "manifest_sha256": "5df2571392db86a13bfacb7ba87bff9f16407c03dd768fd29b3d5bb23534490a"
 }
