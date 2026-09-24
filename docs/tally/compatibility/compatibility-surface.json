@@ -562,6 +562,10 @@
       "sha256": "e9b8d1bdb926f95325a80c48f452565d5e08d6ca7c7f5f9eaa8701ef78c3bf69"
     },
     {
+      "path": "src-tauri/src/agent_voucher_type_class.rs",
+      "sha256": "33e5bbee28017a3a1a965a0cc28b1b0a31e34f0ddba742de018d43aa525fcb72"
+    },
+    {
       "path": "src-tauri/src/agent_voucher_window.rs",
       "sha256": "22793daf2af7a9d9c30be0971c8bffabe4b8c32fe42602bc02da03a28138cdb0"
     },

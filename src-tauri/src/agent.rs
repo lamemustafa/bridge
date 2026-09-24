@@ -74,6 +74,9 @@ use read_profiles::*;
 #[path = "agent_voucher_window.rs"]
 mod voucher_window;
 use voucher_window::*;
+#[path = "agent_voucher_type_class.rs"]
+mod voucher_type_class;
+use voucher_type_class::*;
 #[path = "agent_movement_math.rs"]
 mod movement_math;
 use movement_math::*;
@@ -397,6 +400,10 @@ struct ToolFailure {
     /// then names the configured endpoint, so a wrong or reset port is visible
     /// instead of reading as a Tally data problem.
     unanswered: Option<Unanswered>,
+    /// The voucher types a type-filter refusal is about, so a caller can pick
+    /// one (bridge#625). Type names and GUIDs from the read window, never
+    /// the whole book.
+    candidates: Option<Vec<Value>>,
 }
 
 /// Why a refused request produced no response Bridge could read, as a typed,
@@ -471,6 +478,7 @@ impl From<String> for ToolFailure {
             counts: None,
             window_timings: None,
             unanswered: None,
+            candidates: None,
         }
     }
 }
@@ -705,6 +713,7 @@ impl ToolFailure {
             counts: None,
             window_timings: None,
             unanswered: unanswered_cause(&error),
+            candidates: None,
         }
     }
 
@@ -813,6 +822,7 @@ impl Server {
                 counts,
                 window_timings,
                 unanswered,
+                candidates,
             }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
@@ -865,6 +875,11 @@ impl Server {
                 {
                     if let Ok(endpoint) = endpoint_origin(&self.settings.endpoint) {
                         error["endpoint"] = json!(endpoint);
+                    }
+                }
+                if let Some(candidates) = candidates {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["candidates"] = json!(candidates);
                     }
                 }
                 if let Some(counts) = counts {
