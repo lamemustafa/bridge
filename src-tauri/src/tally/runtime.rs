@@ -2661,7 +2661,7 @@ impl TallyRuntime {
     ///
     /// The listing also carries the book extent the export was read under, so
     /// a caller can tell later whether the book has moved since (#630).
-    pub async fn fetch_ledgers_with_opening_as_of_evidence(
+    pub(crate) async fn fetch_ledgers_with_opening_as_of_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
@@ -2676,7 +2676,7 @@ impl TallyRuntime {
     /// bracket, so every ledger's `PARENT` resolves against groups from the
     /// same unchanged book. This is the group request outstandings already
     /// sends; its size follows the book's group count, not its ledger count.
-    pub async fn fetch_ledgers_and_groups_with_opening_as_of_evidence(
+    pub(crate) async fn fetch_ledgers_and_groups_with_opening_as_of_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
@@ -2861,7 +2861,7 @@ impl TallyRuntime {
     /// to let Schedule III classify the party rows it captures. A caller that
     /// needs ledger *ancestry* (ledger_masters' compliance path) can now
     /// build a `GroupIndex` from this without any additional Tally read.
-    pub async fn fetch_agent_party_ledger_masters_with_evidence(
+    pub(crate) async fn fetch_agent_party_ledger_masters_with_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
@@ -2913,7 +2913,7 @@ impl TallyRuntime {
     /// The company's book extent, paired, inside the identity bracket: the one
     /// request a continuation page of a ledger listing sends before it is
     /// served from the snapshot its first page read (#630).
-    pub async fn fetch_listing_extent(
+    pub(crate) async fn fetch_listing_extent(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
