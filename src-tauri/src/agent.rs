@@ -882,16 +882,7 @@ impl Server {
                 // refusal code must survive the byte cap.
                 if let Some(candidates) = candidates {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
-                        let budget = self.settings.max_bytes / 4;
-                        let mut used = 0;
-                        let kept = candidates
-                            .iter()
-                            .take_while(|candidate| {
-                                used += candidate.to_string().len();
-                                used <= budget
-                            })
-                            .cloned()
-                            .collect::<Vec<_>>();
+                        let kept = bounded_candidates(&candidates, self.settings.max_bytes / 4);
                         error["candidates_total"] = json!(candidates.len());
                         error["candidates_truncated"] = json!(kept.len() < candidates.len());
                         error["candidates"] = json!(kept);
@@ -1487,6 +1478,19 @@ fn add_decimal(left: &str, right: &str) -> Result<String, String> {
     left.checked_add(&right)
         .map(|value| value.as_str().to_string())
         .map_err(|_| "voucher_amount_invalid".to_string())
+}
+
+/// The longest prefix of `candidates` whose serialised size fits `budget`.
+fn bounded_candidates(candidates: &[Value], budget: usize) -> Vec<Value> {
+    let mut used = 0;
+    candidates
+        .iter()
+        .take_while(|candidate| {
+            used += candidate.to_string().len();
+            used <= budget
+        })
+        .cloned()
+        .collect()
 }
 
 fn redact_tool_response(tool: &str, value: Value, redaction: Redaction) -> Value {

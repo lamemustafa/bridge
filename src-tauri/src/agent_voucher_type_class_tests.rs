@@ -75,6 +75,32 @@ fn a_class_request_finds_a_renamed_type_and_its_child_where_the_name_found_nothi
 }
 
 #[test]
+fn a_class_request_keeps_only_that_class_and_the_candidates_are_bounded() {
+    let mut rows = renamed_book_rows();
+    rows.push(row("Sales", "0000002c", Some("Sales")));
+    let selection = select_voucher_rows(
+        rows,
+        &VoucherTypeSelector::Class(ReservedVoucherClass::Purchase),
+    )
+    .unwrap();
+    assert_eq!(
+        names(&selection),
+        ["PURCHASE A/C", "PURCHASE A/C", "Purchase Local"],
+        "a Sales voucher is not a purchase"
+    );
+    assert_eq!(selection.window_types.len(), 3);
+
+    let candidates = (0..10)
+        .map(|index| json!({"name": format!("Type {index}"), "guid": "x".repeat(40)}))
+        .collect::<Vec<_>>();
+    let each = candidates[0].to_string().len();
+    let kept = bounded_candidates(&candidates, each * 3 + 1);
+    assert_eq!(kept.len(), 3, "only what fits the budget");
+    assert_eq!(kept[..], candidates[..3]);
+    assert_eq!(bounded_candidates(&candidates, usize::MAX).len(), 10);
+}
+
+#[test]
 fn a_class_name_is_ambiguous_whenever_its_name_set_and_class_set_differ() {
     // Unrenamed book, reserved type only: the name and the class agree.
     let stock = || vec![row("Purchase", "0000002e", Some("Purchase"))];
@@ -471,6 +497,16 @@ mod through_the_tool {
     }
 
     async fn call(filter: Value) -> Value {
+        call_with(filter, false).await.0
+    }
+
+    /// The response, and the SHA-256 of every request body Tally received.
+    /// Only for a call that consumes every scripted response.
+    async fn call_observed(filter: Value) -> (Value, Vec<String>) {
+        call_with(filter, true).await
+    }
+
+    async fn call_with(filter: Value, observe: bool) -> (Value, Vec<String>) {
         let simulator = SequenceSimulator::spawn(plans()).expect("simulator");
         let directory = tempfile::tempdir().expect("directory");
         let server = Server::new(Settings {
@@ -489,13 +525,36 @@ mod through_the_tool {
         for (key, value) in filter.as_object().unwrap() {
             args[key] = value.clone();
         }
-        server.call_tool_response("vouchers", args).await.value
+        let response = server.call_tool_response("vouchers", args).await.value;
+        if !observe {
+            return (response, Vec::new());
+        }
+        let requests = simulator
+            .finish()
+            .expect("observed requests")
+            .into_iter()
+            .map(|request| request.request_body_sha256)
+            .collect();
+        (response, requests)
     }
 
     #[tokio::test]
     async fn a_class_request_returns_every_purchase_and_the_class_name_is_refused_not_zero() {
-        let response = call(json!({"voucher_class": "Purchase"})).await;
+        let (response, requests) = call_observed(json!({"voucher_class": "Purchase"})).await;
         assert_ne!(response["isError"], true, "{response}");
+        // The class request itself went to Tally, as the transport encodes
+        // it: a UTF-16LE body behind a byte-order mark.
+        let class_request = VoucherReadShape::ClassEntryWildcard
+            .render("BRIDGE READS LAB", "20250701", "20250731", None)
+            .unwrap();
+        let wire = [0xFF_u8, 0xFE]
+            .into_iter()
+            .chain(class_request.encode_utf16().flat_map(u16::to_le_bytes))
+            .collect::<Vec<_>>();
+        assert!(
+            requests.contains(&sha256_hex(&wire)),
+            "the type-filtered read sends the class request"
+        );
         let result = &response["structuredContent"]["result"];
         assert_eq!(result["items"].as_array().unwrap().len(), 3, "{response}");
         assert_eq!(
