@@ -69,3 +69,11 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - Merged origin/master (54eb327; no crate or crate-input change) and **pushed `lane-e/e2a-bank-recon` @ 6a1fad0** (fast-forward from 7330fa8). This is the frozen head.
 - Full run started: `mutations.py --full --jobs 4`, about 519 mutations, estimated 70–80 min. I'll commit the records and open the draft PR when it finishes.
 - PR #682: Lane D pushed 7296886 (merge + reseal). The red "Required checks" is from the superseded run, whose jobs were cancelled by that push. The new run is in progress.
+
+## 2026-09-25 15:57 UTC — PR #682: quoted-path fix pushed
+
+- A reviewer comment on #682 raised a P2: without `-z`, git quotes non-ASCII, `"` and `\` paths, so such a crate file skipped the gate. It was valid; I reproduced it in a scratch repo.
+- Fixed in a7b883a (`git diff --name-only --no-renames -z … | tr '\0' '\n'`) and resealed in 1b482dd (`reseal.sh --verify` current).
+- A fresh Sonnet review found no P1 or P2. It exercised the step's bash on an empty diff and on ASCII, non-ASCII, space, quote, backslash, deleted and renamed paths. No case selects less than before.
+- **Pushed `lane-e/require-mutation-records` @ 1b482dd** (fast-forward from Lane D's 7296886). Replied on the PR and updated the body (candidate SHA, net LOC +27/−6).
+- E2a full run: 230/519 done at this point. The only survivors so far are the five in accepted-survivors.json (X11, X12, A04, A19, S08).
