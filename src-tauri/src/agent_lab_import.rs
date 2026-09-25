@@ -2512,12 +2512,14 @@ async fn post_lab_batch(
     tool: &str,
     xml: String,
 ) -> Result<(String, Evidence), ToolFailure> {
-    let _ = identity;
-    let (body, runtime_evidence) = server
+    let posted = server
         .runtime
         .post_lab_import(server.tally_config(), xml.clone())
-        .await
-        .map_err(|error| ToolFailure::from_runtime("lab_import_post_failed", error))?;
+        .await;
+    // Whatever the outcome, the book may have changed (#630).
+    server.drop_listing_snapshots(identity.company_guid());
+    let (body, runtime_evidence) =
+        posted.map_err(|error| ToolFailure::from_runtime("lab_import_post_failed", error))?;
     let evidence = evidence_from_runtime_read(runtime_evidence);
     persist_lab_exchange(server, tool, &xml, &body)
         .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
