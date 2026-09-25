@@ -42,6 +42,7 @@ use company::*;
 mod changes;
 #[path = "agent_ledgers.rs"]
 mod ledgers;
+use ledgers::{ListingKind, ListingSnapshot, ListingSnapshots};
 #[path = "agent_outstandings.rs"]
 mod outstandings;
 #[path = "agent_presence.rs"]
@@ -374,6 +375,9 @@ struct Server {
     settings: Settings,
     runtime: TallyRuntime,
     evidence: Arc<Mutex<EvidenceStore>>,
+    /// Ledger listings read once and served page by page (#630). In memory
+    /// only; see `agent_ledgers.rs`.
+    listings: Arc<Mutex<ListingSnapshots>>,
 }
 
 struct ToolOutcome {
@@ -797,6 +801,7 @@ impl Server {
             settings,
             runtime: TallyRuntime::default(),
             evidence: Arc::new(Mutex::new(EvidenceStore::default())),
+            listings: Arc::new(Mutex::new(ListingSnapshots::default())),
         }
     }
 

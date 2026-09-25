@@ -70,6 +70,21 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         period: TrialBalancePeriod,
     ) -> anyhow::Result<TrialBalanceRead> {
+        self.fetch_trial_balance_with_extent(config, identity, period)
+            .await
+            .map(|(read, _)| read)
+    }
+
+    /// As [`Self::fetch_trial_balance`], also returning the book extent the
+    /// read was pinned under: its opening and closing extents were equal, or
+    /// the read refused. A caller can tell later whether the book has moved
+    /// since (#630).
+    pub(crate) async fn fetch_trial_balance_with_extent(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        period: TrialBalancePeriod,
+    ) -> anyhow::Result<(TrialBalanceRead, CompanyBookExtent)> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -138,17 +153,20 @@ impl TallyRuntime {
                         evidence = evidence
                             .clone()
                             .combine(confirm_read_boundary(&client, profile).await?);
-                        Ok(TrialBalanceRead {
-                            company_guid: identity.company_guid().to_string(),
-                            company_name: identity.display_name().to_string(),
-                            from,
-                            to,
-                            currency,
-                            report,
-                            totals,
-                            read_at: chrono::Utc::now().to_rfc3339(),
-                            evidence: evidence.clone(),
-                        })
+                        Ok((
+                            TrialBalanceRead {
+                                company_guid: identity.company_guid().to_string(),
+                                company_name: identity.display_name().to_string(),
+                                from,
+                                to,
+                                currency,
+                                report,
+                                totals,
+                                read_at: chrono::Utc::now().to_rfc3339(),
+                                evidence: evidence.clone(),
+                            },
+                            extent,
+                        ))
                     }
                     .await;
                     result.map_err(|error| with_read_evidence(error, evidence))
