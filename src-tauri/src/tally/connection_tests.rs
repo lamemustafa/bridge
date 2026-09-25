@@ -1866,3 +1866,38 @@ fn the_compliance_budget_admits_up_to_its_estimate_and_refuses_one_ledger_more()
         other => panic!("expected a size refusal, got {other:?}"),
     }
 }
+
+/// The budget boundary itself, at figures that land exactly on it (#637): an
+/// estimate equal to the budget fits, one byte over does not, and a count that
+/// would overflow saturates and never fits.
+#[test]
+fn a_compliance_estimate_exactly_at_the_budget_fits_and_one_over_does_not() {
+    assert_eq!(
+        super::compliance_estimate(4, 250, 1_000),
+        super::ComplianceEstimate {
+            estimated_bytes: 1_000,
+            fits: true
+        }
+    );
+    assert_eq!(
+        super::compliance_estimate(5, 250, 1_000),
+        super::ComplianceEstimate {
+            estimated_bytes: 1_250,
+            fits: false
+        }
+    );
+    assert_eq!(
+        super::compliance_estimate(1_000, 1, 999),
+        super::ComplianceEstimate {
+            estimated_bytes: 1_000,
+            fits: false
+        }
+    );
+    assert_eq!(
+        super::compliance_estimate(u64::MAX, 2, u64::MAX - 1),
+        super::ComplianceEstimate {
+            estimated_bytes: u64::MAX,
+            fits: false
+        }
+    );
+}

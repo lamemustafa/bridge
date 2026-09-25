@@ -186,8 +186,36 @@ const COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED: u64 = 3_750;
 /// seen to work. To be replaced by a measurement on a synthetic large book.
 const COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED: u64 = 16_000_000;
 
-fn estimated_compliance_master_bytes(ledgers: u64) -> u64 {
-    ledgers.saturating_mul(COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED)
+/// A compliance master response estimate for a ledger count, and whether it
+/// fits the budget. An estimate exactly at the budget fits: the budget is the
+/// largest response Bridge will request, not the first it refuses. Takes its
+/// figures as arguments so the boundary is tested exactly, whatever the
+/// measured constants become.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComplianceEstimate {
+    estimated_bytes: u64,
+    fits: bool,
+}
+
+fn compliance_estimate(
+    ledgers: u64,
+    bytes_per_ledger: u64,
+    budget_bytes: u64,
+) -> ComplianceEstimate {
+    let estimated_bytes = ledgers.saturating_mul(bytes_per_ledger);
+    ComplianceEstimate {
+        estimated_bytes,
+        fits: estimated_bytes <= budget_bytes,
+    }
+}
+
+/// [`compliance_estimate`] at the two UNVERIFIED constants.
+fn compliance_estimate_unverified(ledgers: u64) -> ComplianceEstimate {
+    compliance_estimate(
+        ledgers,
+        COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED,
+        COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
+    )
 }
 
 /// How a compliance read is sized before its master request is sent (#637).
@@ -212,10 +240,7 @@ impl ComplianceReadSizing {
     /// not a worse one. An extent without the mark is counted.
     fn for_extent(extent: &CompanyBookExtent) -> Self {
         match extent.master_alter_id_high_water() {
-            Some(mark)
-                if estimated_compliance_master_bytes(mark.get())
-                    <= COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED =>
-            {
+            Some(mark) if compliance_estimate_unverified(mark.get()).fits => {
                 Self::BoundedByMasterMark
             }
             _ => Self::CountFirst,
@@ -230,11 +255,11 @@ fn admit_compliance_master_read(
     ledgers: usize,
 ) -> Result<(), PartyLedgerMasterSourceValidationError> {
     let ledgers = u64::try_from(ledgers).unwrap_or(u64::MAX);
-    let estimated_bytes = estimated_compliance_master_bytes(ledgers);
-    if estimated_bytes > COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED {
+    let estimate = compliance_estimate_unverified(ledgers);
+    if !estimate.fits {
         return Err(PartyLedgerMasterSourceValidationError::TooLarge {
             ledgers,
-            estimated_bytes,
+            estimated_bytes: estimate.estimated_bytes,
             budget_bytes: COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
         });
     }
