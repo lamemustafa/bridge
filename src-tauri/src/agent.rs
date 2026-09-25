@@ -550,6 +550,10 @@ fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
         {
             return Some(catalogue.safe_code());
         }
+        if let Some(amount) = cause.downcast_ref::<bridge_tally_protocol::NativeLedgerAmountError>()
+        {
+            return Some(amount.safe_code());
+        }
         cause
             .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
             .map(crate::tally::connection::PairedReadValidationError::safe_code)
@@ -581,6 +585,13 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              mark and Bridge has no \"before\" to attribute an import against. Record one \
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
+        ),
+        // A cause, reached through `ledger_export_invalid` (#675).
+        "foreign_currency_ledger_balance" => Some(
+            "A ledger in this company holds its opening balance in a foreign currency, which \
+             Tally writes as `<amount> @ <rate> = <base amount>` rather than a number. Bridge \
+             does not read those amounts yet (#551, #683), so this read is refused on purpose, \
+             not because the response was damaged. Retrying refuses again.",
         ),
         // A cause, reached through the shared `party_ledger_master_read_failed`.
         "ledger_masters_too_large" => Some(

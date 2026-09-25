@@ -148,6 +148,38 @@ impl GstDutyHeadObservation {
     }
 }
 
+/// A native ledger row's amount that Tally wrote as a foreign-currency display
+/// expression (`<amount> @ <rate> = <base amount>`) rather than a decimal
+/// (bridge#675). Bridge does not read those amounts (bridge#551, #683), so the
+/// row still refuses; this only names why, where an untyped parse error named
+/// nothing. Data-free and `Copy`, with a static [`Self::safe_code`], so a
+/// typed native-collection error can absorb it (bridge#676).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLedgerAmountError {
+    /// `OPENINGBALANCE` is a foreign-currency composite.
+    ForeignCurrencyOpening,
+}
+
+impl NativeLedgerAmountError {
+    pub const fn safe_code(self) -> &'static str {
+        match self {
+            Self::ForeignCurrencyOpening => "foreign_currency_ledger_balance",
+        }
+    }
+}
+
+impl std::fmt::Display for NativeLedgerAmountError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ForeignCurrencyOpening => {
+                "native ledger row carried a foreign-currency opening balance"
+            }
+        })
+    }
+}
+
+impl std::error::Error for NativeLedgerAmountError {}
+
 /// The exact GST duty-head vocabulary measured for ledger masters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -509,7 +541,19 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     // Every captured row carries this field. Its absence is
                     // unmeasured, so fail closed rather than silently turning
                     // a missing debtor/creditor balance into zero.
-                    bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone())?;
+                    bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone()).map_err(
+                        |error| {
+                            // Classified only to name the refusal: a composite
+                            // is refused exactly as any other non-decimal is.
+                            if crate::native_outstandings::is_foreign_currency_balance(
+                                &opening_balance,
+                            ) {
+                                anyhow::Error::new(NativeLedgerAmountError::ForeignCurrencyOpening)
+                            } else {
+                                anyhow::Error::from(error)
+                            }
+                        },
+                    )?;
                     ledger.opening_balance = Some(opening_balance);
                 }
                 b"BRIDGECOMPANYGUID" => {

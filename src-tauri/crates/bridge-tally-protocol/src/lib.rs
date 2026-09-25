@@ -70,7 +70,7 @@ pub use import_outcome::{
 pub use native_ledger_collection::{
     parse_native_ledger_source_records_with_evidence,
     parse_native_party_ledger_master_records_with_evidence, GstDutyHead, GstDutyHeadObservation,
-    PartyLedgerMasterFields, PartyLedgerMasterRecord,
+    NativeLedgerAmountError, PartyLedgerMasterFields, PartyLedgerMasterRecord,
 };
 pub use standard_ledger_catalog::{
     parse_standard_ledger_catalog, parse_standard_ledger_catalog_with_identities,
