@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "8c6246406c0daa45d605eca82b73991f47d82f1aadc707738208a885b50f2eb0"
+      "sha256": "de3126a04a748eb278098bc429a95335b65117b60e3cd93ec1627d8813b06051"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -47,19 +47,19 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
-      "sha256": "564080eab6fec223f3ce82a09c8b7253d258872914a873ed0450822c438d6e5c"
+      "sha256": "c85a36ec89bd564f900604da64032f341d0f5524be9021f5c137fc6e55926294"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "635feaa71e215d2cd917b3592aba6ddbe64827705d2dcd5e11728e8e58446b0f"
+      "sha256": "0d068acf87796ed5010477e3982d74f0ba7d6d8861c1b0dbe092f407c825578a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
-      "sha256": "82aa81d6d4a980899993350bc732c5f6345ef838866d3ceb4e8891356d954304"
+      "sha256": "83fde47de213881c89520985e95a3ddf34a7a01185bfae1715da12df190b2d86"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
-      "sha256": "d907469ee2d97e1df1ee955084e3bd191db4d8a28dba0f4730a20e3e39c41543"
+      "sha256": "3775f6b3d8cb04f97f6f8471b55a13a27928792f59a11e45710d0cfee1b6adcb"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "eab21d7f6adc8683201a9c32302bb080488e8c2b3fa9f2cc9e813744d282ccd7"
+  "manifest_sha256": "cd297d4e5ad0505fb17b5541c1a7fa9908025c6c681ebe165d4566cbd7eccb0b"
 }
