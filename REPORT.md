@@ -24,3 +24,12 @@ What was run (Linux, pinned 1.96.0, `--features rfd/gtk3`):
 | #666 post_queue_read_failed before the intent | 76a99f50842801572d98f3b0de99c33011365de8 | No P1. P2: a merge hazard with master's #641 arm and test (keep `post_catalogue_unreadable` first). P3: the gate forbids only `post_probe_xml(`. A mutation marking the POST's own error was killed by the e2e test. | https://github.com/lamemustafa/bridge/pull/666#issuecomment-5834950609 |
 | #672 listing snapshots | 7f11e4143f281ba68cb1d5edce43407295daec58 | No P1/P2. The extent pinning was verified for all three kinds. P3: the TB text calls a gateway delete's effect unmeasured, though §11c.5 records +2; a served page's top-level `read_at` is the call time. The PR is conflicting after #665. | https://github.com/lamemustafa/bridge/pull/672#issuecomment-5835019269 |
 | #688 merge-driver test on Git 2.43's upload-pack | bdb8e5369793ade09dbc6948ea76b33b8f2a595b | No P1/P2. Verified on Git 2.43. Both mutations killed: the fix removed, and `safe.directory=*`. P3: the over-trust control does not run on a Git that serves untrusted sources. | https://github.com/lamemustafa/bridge/pull/688#issuecomment-5835035500 |
+
+## 2026-09-25, delta reviews after the heads moved
+
+| PR | Head | Result | Comment |
+| --- | --- | --- | --- |
+| #682 | 72968866b2d715630ce5989f51c11229841a8768 | Master merge plus reseal only; `ci.yml` is byte-identical and its seal matches. The earlier P2 stands. | https://github.com/lamemustafa/bridge/pull/682#issuecomment-5835043500 |
+| #684 | 373b167f8ff1e6db25f87079c55cda496e96f94d | Master merge plus reseal only; the net diff hash is identical and all 280 pins match. The earlier P2/P3 stand. | https://github.com/lamemustafa/bridge/pull/684#issuecomment-5835048200 |
+
+Also: #665 merged (54eb3271) after this lane's review.
