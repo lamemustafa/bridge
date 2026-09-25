@@ -33,6 +33,9 @@
 //    edges alike: a dev- or build-dependency on reqwest in a crate outside
 //    the allow-list is refused too, since a test double or build script
 //    that can open a connection is still egress from a developer's machine.
+//    The sets are pinned exactly and the tree must be seen: a crate that
+//    drops out, a missing root line, a failed `cargo` or an unparseable line
+//    all fail, so "nothing found" cannot stand in for "nothing was read".
 //
 // 2. A source scan of the app crate (`src-tauri/src`): asserts that
 //    `reqwest::`, `hyper::`, and raw socket construction appear only in a
@@ -131,17 +134,30 @@ function directDependents(manifestPath, packageName) {
     ],
     { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true },
   );
+  // Both workspaces resolve both packages, so there is no "nothing to check"
+  // exit here: any failure, including "did not match any packages", means
+  // the tree was not read.
   if (result.error) {
-    // A workspace that has no dependency on `packageName` at all is not a
-    // failure of this gate -- it means that workspace has nothing to check.
-    // `cargo tree -p <name>` exits non-zero with "package ID specification
-    // ... did not match any packages" in that case.
-    if (/did not match any packages/.test(result.stderr ?? "")) return [];
-    throw new Error(`dependency tree for ${packageName} (${manifestPath}) failed: ${result.error}`);
+    throw new Error(`dependency tree for ${packageName} (${manifestPath}) could not run cargo: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    if (/did not match any packages/.test(result.stderr ?? "")) return [];
-    throw new Error(`dependency tree for ${packageName} (${manifestPath}) failed: ${result.stderr}`);
+    throw new Error(`dependency tree for ${packageName} (${manifestPath}) exited ${result.status}: ${result.stderr}`);
+  }
+  const lines = result.stdout.split(/\r?\n/).filter((line) => line !== "");
+  const parsed = lines.map((line) => {
+    const match = line.match(/^([A-Za-z0-9_.+-]+) v\S+(?: \((.+)\))?$/);
+    if (!match) {
+      throw new Error(`dependency tree for ${packageName} (${manifestPath}) printed an unparseable line: ${JSON.stringify(line)}`);
+    }
+    return { name: match[1], source: match[2] };
+  });
+  // `--invert` prints the package itself first. Without that line no tree
+  // was produced, and an empty dependent list would prove nothing.
+  if (parsed[0]?.name !== packageName) {
+    throw new Error(
+      `dependency tree for ${packageName} (${manifestPath}) did not start with ${packageName}; ` +
+        `got ${JSON.stringify(lines[0] ?? "")} (${lines.length} line(s))`,
+    );
   }
   // Only lines carrying a parenthesized on-disk path are first-party
   // (workspace or path) dependencies -- `cargo tree`'s `{p}` format appends
@@ -152,43 +168,51 @@ function directDependents(manifestPath, packageName) {
   // about: it cares which crates *we* wrote declare the dependency, not
   // reqwest's own internal transport plumbing.
   const names = new Set();
-  for (const line of result.stdout.split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_.+-]+) v\S+ \((.+)\)$/);
-    if (match && match[1] !== packageName && match[2].startsWith(root.slice(0, -1))) {
-      names.add(match[1]);
-    }
+  for (const { name, source } of parsed.slice(1)) {
+    if (source?.startsWith(root.slice(0, -1))) names.add(name);
   }
   return [...names].sort();
 }
 
+// The exact first-party crates with a direct dependency on each package, per
+// workspace, as `cargo tree` reports them today. The tools workspace reaches
+// reqwest only through the transport; hyper is reqwest's own transport, and
+// a first-party crate using it directly would build an HTTP client that
+// bypasses reqwest and bridge-tally-transport's loopback check entirely.
 const workspaces = [
-  { label: "src-tauri", manifestPath: "src-tauri/Cargo.toml" },
-  { label: "tools", manifestPath: "tools/Cargo.toml" },
+  {
+    label: "src-tauri",
+    manifestPath: "src-tauri/Cargo.toml",
+    expected: { reqwest: [APP_CRATE, TALLY_HTTP_TRANSPORT_CRATE], hyper: [] },
+  },
+  {
+    label: "tools",
+    manifestPath: "tools/Cargo.toml",
+    expected: { reqwest: [TALLY_HTTP_TRANSPORT_CRATE], hyper: [] },
+  },
 ];
 
 const egressViolations = [];
 
 for (const workspace of workspaces) {
-  const reqwestDependents = directDependents(workspace.manifestPath, "reqwest");
-  const allowedReqwestDependents = new Set([TALLY_HTTP_TRANSPORT_CRATE, APP_CRATE]);
-  const unexpectedReqwest = reqwestDependents.filter((name) => !allowedReqwestDependents.has(name));
-  if (unexpectedReqwest.length) {
-    egressViolations.push(
-      `${workspace.label}: crate(s) gained a direct reqwest dependency outside the pinned allow-list ` +
-        `(${[...allowedReqwestDependents].sort().join(", ")}): ${unexpectedReqwest.join(", ")}`,
-    );
-  }
-
-  // hyper is reqwest's own transport. No first-party crate should ever need
-  // it directly -- if one does, it is building an HTTP client that bypasses
-  // reqwest (and, for the Tally path, bypasses bridge-tally-transport's
-  // loopback check) entirely.
-  const hyperDependents = directDependents(workspace.manifestPath, "hyper");
-  if (hyperDependents.length) {
-    egressViolations.push(
-      `${workspace.label}: crate(s) gained a direct hyper dependency, bypassing reqwest and the ` +
-        `loopback-only Tally transport built on it: ${hyperDependents.join(", ")}`,
-    );
+  for (const [packageName, expectedNames] of Object.entries(workspace.expected)) {
+    const expected = [...expectedNames].sort();
+    const actual = directDependents(workspace.manifestPath, packageName);
+    const gained = actual.filter((name) => !expected.includes(name));
+    const lost = expected.filter((name) => !actual.includes(name));
+    if (gained.length) {
+      egressViolations.push(
+        `${workspace.label}: crate(s) gained a direct ${packageName} dependency outside the pinned set ` +
+          `(${expected.join(", ") || "none"}): ${gained.join(", ")}`,
+      );
+    }
+    if (lost.length) {
+      egressViolations.push(
+        `${workspace.label}: pinned crate(s) no longer show a direct ${packageName} dependency: ` +
+          `${lost.join(", ")}. Either the tree was not read in full or the dependency moved; narrow the ` +
+          "pinned set in scripts/check-tally-egress-boundary.mjs only after confirming which.",
+      );
+    }
   }
 }
 
