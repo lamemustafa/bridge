@@ -39,3 +39,25 @@ Tally returns, not on strings written to match a parser.
   - `Profit & Loss A/c`, in `TBALCLOSING`: `$ 0.00 @ I₹ /$  = I₹ 0.00`. Its rate slot is empty.
   The rates are derived (base total divided by the dollar component), not rates any voucher used.
 - **The `=` parts do not tie:** summed over all ten rows, they come to 34,500.
+
+## The compliance source's other reads, at the same moment (2026-09-25, 22:49-22:50 IST)
+
+The same host, taken the same way, with only synthetic books loaded. The company-extent collection
+was read before and after. Both responses are byte-identical and give the values above (`ALTVCHID` 18,
+`ALTMSTID` 216), so the book did not change between the compliance master above (22:01) and these
+reads. Together they are one moment of one book.
+
+- `company_extents_forex_live`: the extent collection (`CompanyBookExtentV2`), the "before" read. It
+  lists every loaded company, all of them synthetic lab books.
+- `balance_snapshot_forex_live`: the compliance source's balance snapshot
+  (`render_native_ledger_snapshot_request`), over `20250401`–`20261001`, the runtime's closing
+  boundary after `LASTVOUCHERDATE`. 10 ledgers, each with `CURRENCYNAME`.
+- `group_snapshot_forex_live`: the compliance source's group snapshot
+  (`render_native_group_snapshot_request`). 28 groups. Its `PARENTSTRUCTURE` values hold raw U+0003
+  separators, which a strict XML parser refuses.
+
+| file | bytes | sha256 |
+|---|---|---|
+| `company_extents_forex_live.utf16le.xml` | 6,586 | `4e6eeaccb3f2d6e149285151942a5d088b6894248c5e86bb2df47917266eaa83` |
+| `balance_snapshot_forex_live.utf16le.xml` | 15,768 | `55cfe08de04f5eec29eba85fcf7363e840af29c3992f1496c32538399404ab93` |
+| `group_snapshot_forex_live.utf16le.xml` | 54,280 | `35d78956890fc78f7b019d50d1a148d0c8c40da8bf339904e0aa94aad1bda0c2` |
