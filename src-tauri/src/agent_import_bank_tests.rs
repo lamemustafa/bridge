@@ -1317,6 +1317,7 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
         voucher.voucher_number = None;
         let line = ImportLedgerLine {
             ledger_identities: None,
+            ledger_twins: None,
             endpoint_origin: None,
             identity_scheme: None,
             amends_batch_id: None,

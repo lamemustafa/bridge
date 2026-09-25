@@ -7,6 +7,12 @@ const CONTROLS: &str = r"[\u0000-\u001F\u007F-\u009F]";
 // scalar patterns additionally refuse them anywhere in the value.
 const LINE_TERMINATORS: &str = r"[\u000A\u000D\u2028\u2029]";
 const RESERVED_MARKER: &str = r"\[[Bb][Rr][Ii][Dd][Gg][Ee]:";
+// A ledger name may end in CR and LF, as some books store one (bridge#626):
+// every other control character is refused, and so is a line break with text
+// after it. The server admits such a name only when a live ledger holds exactly
+// its bytes.
+const LEDGER_CONTROLS: &str = r"[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]";
+const INTERIOR_LINE_BREAK: &str = r"[\u000A\u000D][^\u000A\u000D]";
 // Non-control members of Unicode White_Space, matching Rust str::trim.
 const BLANK_LEDGER: &str = r"^[\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*$";
 
@@ -22,7 +28,8 @@ pub(in crate::agent) fn voucher_input_schema() -> Value {
         "properties":{
             "ledger":{
                 "type":"string", "minLength":1, "maxLength":MAX_MASTER_NAME_CHARS,
-                "not":{"anyOf":[{"pattern":CONTROLS},{"pattern":BLANK_LEDGER}]}
+                "not":{"anyOf":[{"pattern":LEDGER_CONTROLS},{"pattern":INTERIOR_LINE_BREAK},{"pattern":BLANK_LEDGER}]},
+                "description":"The ledger's exact live name. It may end in CR and LF only when the live ledger's stored name does, as validate_masters reports it in exact_live_spelling; no other control character is accepted."
             },
             "amount":{
                 "type":"string", "pattern":r"^[0-9]+\.[0-9]{2}$",

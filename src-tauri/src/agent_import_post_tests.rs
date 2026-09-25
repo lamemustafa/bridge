@@ -1384,3 +1384,17 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
         "{clear}"
     );
 }
+
+/// bridge#626 slice 1: a ledger name ending in CR LF can be built and imported
+/// from the file, but the native dialog cannot yet show it so an operator can
+/// tell it from its twin, so native posting refuses it.
+#[test]
+fn native_preview_refuses_a_ledger_name_ending_in_a_line_break() {
+    let (mut line, endpoint) = batch();
+    line.vouchers[0].entries[0].ledger.push_str("\r\n");
+    refresh_batch_sha256(&mut line);
+    assert_eq!(
+        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        "import_review_layout_text"
+    );
+}

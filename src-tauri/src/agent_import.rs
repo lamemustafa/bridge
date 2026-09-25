@@ -279,6 +279,85 @@ pub(super) struct ImportLedgerLine {
     /// existed: such a batch is refused for posting and must be rebuilt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ledger_identities: Option<Vec<BoundLedger>>,
+    /// Each named ledger with a live twin that differs from it only by a
+    /// trailing line break, as the build observed them (bridge#626). Absent
+    /// when there were none, and on every record built before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ledger_twins: Option<Vec<LedgerTwin>>,
+}
+
+/// A ledger a batch names, and the live ledgers whose stored names differ from
+/// its own only by a trailing run of CR and LF (bridge#626). Each binds by its
+/// exact bytes, so the build is not refused; they are named side by side, with
+/// their groups, because a reader of the names alone cannot tell them apart.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct LedgerTwin {
+    ledger: String,
+    parent: Option<String>,
+    twins: Vec<TwinLedger>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct TwinLedger {
+    name: String,
+    parent: Option<String>,
+}
+
+/// The named ledgers that have a live twin differing only by a trailing line
+/// break, in name order.
+fn line_break_twins<'a>(
+    named: &[String],
+    catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Vec<LedgerTwin> {
+    let mut by_base: BTreeMap<&str, Vec<(&str, Option<&str>)>> = BTreeMap::new();
+    for (name, parent) in catalogue {
+        by_base
+            .entry(without_trailing_line_break(name))
+            .or_default()
+            .push((name, parent));
+    }
+    named
+        .iter()
+        .filter_map(|ledger| {
+            let family = by_base.get(without_trailing_line_break(ledger))?;
+            let parent = family
+                .iter()
+                .find(|(name, _)| name == ledger)
+                .and_then(|(_, parent)| parent.map(str::to_string));
+            let twins = family
+                .iter()
+                .filter(|(name, _)| name != ledger)
+                .map(|(name, parent)| TwinLedger {
+                    name: (*name).to_string(),
+                    parent: parent.map(str::to_string),
+                })
+                .collect::<Vec<_>>();
+            (!twins.is_empty()).then(|| LedgerTwin {
+                ledger: ledger.clone(),
+                parent,
+                twins,
+            })
+        })
+        .collect()
+}
+
+const LEDGER_TWIN_WARNING: &str = "A ledger this batch names has a live twin whose stored name differs only by a trailing line break; see ledger_twins. Each binds by its exact bytes, so check in Tally that the group shown for the ledger named is the one intended before importing.";
+
+/// The `ledger_twins` field of a build result and of a verification.
+fn ledger_twins_json(twins: &[LedgerTwin]) -> Value {
+    json!(twins
+        .iter()
+        .map(|twin| json!({
+            "ledger": party_name(twin.ledger.clone()),
+            "parent": twin.parent,
+            "relation": "differs_only_by_trailing_line_break",
+            "twins": twin
+                .twins
+                .iter()
+                .map(|other| json!({"name": party_name(other.name.clone()), "parent": other.parent}))
+                .collect::<Vec<_>>(),
+        }))
+        .collect::<Vec<_>>())
 }
 
 /// One ledger name and the GUID it was bound to at build time.
@@ -429,15 +508,15 @@ impl Server {
         // catalogue, so verifying the company and reading its ledgers first
         // would spend two live round trips — and retain evidence of them — to
         // reach a failure that was decidable from the request alone.
-        let entities =
-            source_entities(&ledgers.into_iter().map(str::to_string).collect::<Vec<_>>())
+        let requested =
+            requested_masters(&ledgers.into_iter().map(str::to_string).collect::<Vec<_>>())
                 .map_err(ToolFailure::from)?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let (catalogue, evidence) = self
             .read_ledger_catalogue(&identity, &company.name)
             .await
             .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
-        let report = master_report(&entities, &catalogue)
+        let report = requested_master_report(&requested, &catalogue)
             // The catalogue read already succeeded, so its request/response
             // commitments belong in the failure too; attaching identity evidence
             // alone would omit a Tally read that actually happened.
@@ -562,6 +641,8 @@ impl Server {
                     guid: guid.to_string(),
                 })
                 .collect::<Vec<_>>();
+            let ledger_twins =
+                line_break_twins(&requested_ledger_names(&payload), ledger_masters.parents());
             // Only a payload carrying a cash/bank voucher reads the group
             // collection, so a Journal-only batch keeps the request sequence its
             // own qualification was measured on.
@@ -739,6 +820,7 @@ impl Server {
                 pre_import_mark: mark,
                 vouchers: payload.vouchers,
                 ledger_identities: Some(build_binding),
+                ledger_twins: (!ledger_twins.is_empty()).then_some(ledger_twins),
             };
             let imports = self.imports_dir()?;
             let path = imports.join(format!("{batch_id}.xml"));
@@ -781,6 +863,11 @@ impl Server {
                     voucher.voucher_type.bank_shape().is_some() && voucher.entries.len() > 2
                 }),
             );
+            if line.ledger_twins.is_some() {
+                if let Some(list) = warnings.as_array_mut() {
+                    list.push(json!(LEDGER_TWIN_WARNING));
+                }
+            }
             let next_step = match &amendment {
                 Some(_) => {
                     if let Some(list) = warnings.as_array_mut() {
@@ -809,6 +896,7 @@ impl Server {
                     // is asked to compare it and must be able to see it.
                     "endpoint_origin": line.endpoint_origin,
                     "observed_profile": opening_profile.observed_profile,
+                    "ledger_twins": line.ledger_twins.as_deref().map(ledger_twins_json),
                     "warnings": warnings,
                     "next_step": next_step
                 }}),
@@ -1105,6 +1193,11 @@ impl Server {
                 None => None,
             };
             let mut proof = proof;
+            // Repeated from the build, so a twin named there cannot be missed
+            // between the build and the import.
+            if let Some(twins) = line.ledger_twins.as_deref() {
+                proof["ledger_twins"] = ledger_twins_json(twins);
+            }
             if let Some(masters) = &masters_after_post {
                 proof["masters_after_post"] = masters.clone();
             }
@@ -1903,7 +1996,9 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         for entry in &voucher.entries {
             if entry.ledger.trim().is_empty()
                 || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
-                || entry.ledger.chars().any(char::is_control)
+                || without_trailing_line_break(&entry.ledger)
+                    .chars()
+                    .any(char::is_control)
                 || reads_back_as_other_text(&entry.ledger)
                 || !valid_2dp_amount(&entry.amount)
             {
@@ -2309,10 +2404,100 @@ fn masters_for_payload(
     payload: &ImportPayload,
     catalogue: &[String],
 ) -> Result<Vec<Value>, String> {
-    master_report(
-        &source_entities(&requested_ledger_names(payload))?,
+    requested_master_report(
+        &requested_masters(&requested_ledger_names(payload))?,
         catalogue,
     )
+}
+
+/// A ledger name as a caller requested it, parsed at the boundary (bridge#626).
+enum RequestedMaster {
+    /// Bound by the core's rules, which refuse every control character.
+    Named(SourceEntity),
+    /// Ends in CR and LF, as some books store a ledger name; the core refuses
+    /// that as input. Such a name is only ever bound byte for byte, to a live
+    /// ledger holding exactly these bytes: no fold, candidate or identifier can
+    /// select it, because the fold that would find it also finds its twin.
+    ExactOnly(String),
+}
+
+/// A name without its trailing run of CR and LF. Only a trailing run has been
+/// observed to import onto the stored ledger (bridge#626); a line break
+/// anywhere else stays refused.
+fn without_trailing_line_break(name: &str) -> &str {
+    name.trim_end_matches(['\r', '\n'])
+}
+
+/// Whether a live catalogue name can be sent back as an import's ledger name:
+/// either the core admits it, or it is the core-admitted name plus a trailing
+/// line break, which `requested_masters` admits as exact-only.
+fn live_spelling_importable(position: usize, name: &str) -> bool {
+    SourceEntity::new(position, without_trailing_line_break(name)).is_ok()
+}
+
+/// [`source_entities`], admitting a name that ends in a line break as
+/// [`RequestedMaster::ExactOnly`] when the rest of it passes the core's bounds.
+fn requested_masters(requested: &[String]) -> Result<Vec<RequestedMaster>, String> {
+    let mut named = 0_usize;
+    requested
+        .iter()
+        .map(|name| {
+            let base = without_trailing_line_break(name);
+            let entity = SourceEntity::new(named, base)
+                .map_err(|error| error.safe_reason_code().to_string())?;
+            if base.len() == name.len() {
+                named += 1;
+                Ok(RequestedMaster::Named(entity))
+            } else {
+                Ok(RequestedMaster::ExactOnly(name.clone()))
+            }
+        })
+        .collect()
+}
+
+/// [`master_report`] for requested names that may include exact-only ones,
+/// in the order they were requested. An exact-only name is `exact` when a live
+/// ledger holds exactly its bytes and `missing` otherwise, with no candidates.
+fn requested_master_report(
+    requested: &[RequestedMaster],
+    catalogue: &[String],
+) -> Result<Vec<Value>, String> {
+    let named = requested
+        .iter()
+        .filter_map(|master| match master {
+            RequestedMaster::Named(entity) => Some(entity.clone()),
+            RequestedMaster::ExactOnly(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let mut named_report = master_report(&named, catalogue)?.into_iter();
+    requested
+        .iter()
+        .map(|master| match master {
+            RequestedMaster::Named(_) => named_report
+                .next()
+                .ok_or_else(|| "master_report_incomplete".to_string()),
+            RequestedMaster::ExactOnly(name) => Ok(if catalogue.contains(name) {
+                json!({
+                    "requested": party_name(name.clone()),
+                    "match_state": "exact",
+                    "exact_live_spelling": party_name(name.clone()),
+                    "importable": true,
+                })
+            } else {
+                json!({
+                    "requested": party_name(name.clone()),
+                    "match_state": "missing",
+                    "reason": "master_binding_no_candidate",
+                    "listing": "none",
+                    "candidate_count": 0,
+                    "candidate_count_is_lower_bound": false,
+                    "candidates_truncated": false,
+                    "candidates": [],
+                    "unresolved_identity": [],
+                })
+            }),
+        })
+        .collect()
 }
 
 /// Parses requested names into source entities, which is where the core's own
@@ -2386,8 +2571,9 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             // collects into one Result and refuses on the first bad name.
             //
             // Ask the proposal constructor rather than restating its rule, so
-            // the two can never disagree about what is admissible.
-            let importable = SourceEntity::new(binding.position, catalog_name).is_ok();
+            // the two can never disagree about what is admissible. A trailing
+            // line break is the one exception it does not know (bridge#626).
+            let importable = live_spelling_importable(binding.position, catalog_name);
             json!({
                 "requested": requested,
                 "match_state": match_state,
@@ -2626,6 +2812,10 @@ pub(super) fn render_import_verification_in_span(
     format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{span_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
+/// Escapes text for the import file. CR and LF are written as character
+/// references: raw, an XML reader folds CR LF to LF and the file would name a
+/// ledger the book does not hold. Only a ledger name ending in a line break can
+/// carry either here (bridge#626); every other field refuses control text.
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -2633,6 +2823,8 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+        .replace('\r', "&#13;")
+        .replace('\n', "&#10;")
 }
 
 pub(super) fn local_evidence(label: &str) -> Evidence {
