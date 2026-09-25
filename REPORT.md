@@ -58,3 +58,14 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - E2A-24..35 added. **All 35 E2A mutations killed** (--full, sampled). 336 tests pass; clippy and fmt clean. Still 6 tests added.
 - **For Lane D (P2, can't check here):** the reader now refuses a row whose `row` is not its 0-based position, or whose doc/account differs from the document's, plus negative, two-sided or out-of-period rows. The real statement adapter (`tae.adapters.bank_documents`) isn't in this repo, so I can't confirm it writes rows that way. If it numbers rows from 1, the real-book parity run will refuse every statement. It fails closed, but please check on the first local run.
 - A final Sonnet and Opus pass on 0502d6a is running. Then freeze and run the full list.
+
+## 2026-09-25 15:35 UTC — E2a frozen at 6a1fad0; full mutation run started
+
+- Rounds 3–4 of review (fresh Sonnet and Opus each time) found P2 test gaps, now fixed:
+  - 657b8b2 pins run's own Re 1 tolerance and the split pools' 7-day bounds and order;
+  - b218c8e pins the reverse split's order and its retirement of the statement row.
+  The final Opus and Sonnet passes on b218c8e found **no P1 or P2**.
+- E2A mutations are now E2A-01..47, all killed (sampled with --full). 336 tests pass; clippy and fmt clean. 6 tests added in all. No golden or fixture touched.
+- Merged origin/master (54eb327; no crate or crate-input change) and **pushed `lane-e/e2a-bank-recon` @ 6a1fad0** (fast-forward from 7330fa8). This is the frozen head.
+- Full run started: `mutations.py --full --jobs 4`, about 519 mutations, estimated 70–80 min. I'll commit the records and open the draft PR when it finishes.
+- PR #682: Lane D pushed 7296886 (merge + reseal). The red "Required checks" is from the superseded run, whose jobs were cancelled by that push. The new run is in progress.
