@@ -213,7 +213,7 @@ fn journaled_outcome(
 fn assert_journaled_clean_create(directory: &std::path::Path) {
     let outcome = journaled_outcome(directory).expect("the POST answer was parsed and journaled");
     assert_eq!(outcome.counters().created, 1);
-    assert!(import_outcome_is_clean(Some(&outcome)));
+    assert!(import_outcome_is_clean(Some(&outcome), 1));
 }
 
 fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
@@ -1440,7 +1440,7 @@ async fn a_post_whose_response_cannot_be_journaled_still_reports_where_it_landed
 fn the_simulated_post_answer_parses_as_one_clean_create() {
     let outcome = parse_import_outcome(&created_one()).expect("the POST answer parses");
     assert_eq!(outcome.counters().created, 1);
-    assert!(import_outcome_is_clean(Some(&outcome)));
+    assert!(import_outcome_is_clean(Some(&outcome), 1));
 }
 
 /// A Journal Bridge posted live (bridge#582's lab qualification), as its

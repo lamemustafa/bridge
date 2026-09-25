@@ -354,7 +354,10 @@ fn any_intent_recording_a_remoteid_is_found_and_a_repeat_does_not_block_reads() 
 /// no later post, single or batch, can send one again.
 #[test]
 fn a_batch_intent_records_distinct_remoteids_that_the_journal_finds() {
-    let initial = batch("native-batch", "local journal test");
+    let mut initial = batch("native-batch", "local journal test");
+    let mut second = initial.vouchers[0].clone();
+    second.bridge_txn_id = "txn-2".into();
+    initial.vouchers.push(second);
     let ids = [Uuid::new_v4(), Uuid::new_v4()];
     let mut intent =
         serde_json::to_value(StatusRecord::dispatch_native(&initial, "c".repeat(64), ids[0]))
@@ -386,6 +389,11 @@ fn a_batch_intent_records_distinct_remoteids_that_the_journal_finds() {
         .collect::<Vec<_>>();
     for (field, value) in [
         ("native_remote_ids", json!([id(ids[0])])),
+        // Three ids for a batch of two vouchers.
+        (
+            "native_remote_ids",
+            json!([id(ids[0]), id(ids[1]), id(Uuid::new_v4())]),
+        ),
         ("native_remote_ids", json!([id(ids[0]), id(ids[0])])),
         ("native_remote_ids", json!(too_many)),
         ("native_remote_ids", json!([id(ids[0]), ids[1].simple().to_string()])),

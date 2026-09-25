@@ -7,8 +7,10 @@ use std::io::BufRead;
 // Bound individual records, not append-only journal history.
 pub(super) const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
 
-/// The most vouchers one native batch post may send (batch posting v2 design,
-/// measured at 50 on a synthetic book through the gateway).
+/// The most vouchers one native post may send, and so the most REMOTEIDs one
+/// dispatch intent may record: the writer refuses more and the reader admits
+/// no more. Imports of 50 were measured on the raw gateway (protocol reference
+/// §11c.5, PARTIAL); through Bridge's own post path it is not yet measured.
 pub(super) const MAX_BATCH_POST_VOUCHERS: usize = 50;
 
 #[derive(Serialize, Deserialize)]
@@ -310,7 +312,8 @@ fn scan_records(
     // Compact records must be checked even for unrelated batches. Retain only
     // the latest hash per distinct ID, not every historical voucher payload.
     // Memory therefore still grows with distinct IDs, not with status history.
-    let mut latest: BTreeMap<String, String> = BTreeMap::new();
+    // Each batch's latest hash, with its voucher count for its REMOTEIDs.
+    let mut latest: BTreeMap<String, (String, usize)> = BTreeMap::new();
     let mut dispatched: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut line = Vec::new();
     let mut ordinal = 0_usize;
@@ -322,7 +325,10 @@ fn scan_records(
         let record = if value.get("record_type").is_some() {
             let update: StatusRecord =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
-            if latest.get(&update.batch_id) != Some(&update.batch_sha256) {
+            let Some((batch_sha256, voucher_count)) = latest.get(&update.batch_id) else {
+                return Err("import_ledger_invalid".into());
+            };
+            if *batch_sha256 != update.batch_sha256 {
                 return Err("import_ledger_invalid".into());
             }
             if let Some(hash) = &update.native_request_sha256 {
@@ -340,12 +346,14 @@ fn scan_records(
                     return Err("import_ledger_invalid".into());
                 }
             }
-            // A batch's REMOTEIDs follow the same rule, and are distinct, at
-            // least two (one is `native_remote_id`) and at most the batch cap.
+            // A batch's REMOTEIDs follow the same rule, and are distinct, one
+            // per voucher of the batch, at least two (one is `native_remote_id`)
+            // and at most the batch cap.
             if let Some(remote_ids) = &update.native_remote_ids {
                 let distinct = remote_ids.iter().collect::<std::collections::BTreeSet<_>>();
                 if update.native_request_sha256.is_none()
                     || update.native_remote_id.is_some()
+                    || remote_ids.len() != *voucher_count
                     || !(2..=MAX_BATCH_POST_VOUCHERS).contains(&remote_ids.len())
                     || distinct.len() != remote_ids.len()
                     || !remote_ids.iter().all(|remote_id| is_canonical_remote_id(remote_id))
@@ -382,11 +390,14 @@ fn scan_records(
             let batch: ImportLedgerLine =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
             if dispatched.contains_key(&batch.batch_id)
-                && latest.get(&batch.batch_id) != Some(&batch.sha256)
+                && latest.get(&batch.batch_id).map(|(sha256, _)| sha256) != Some(&batch.sha256)
             {
                 return Err("import_ledger_invalid".into());
             }
-            latest.insert(batch.batch_id.clone(), batch.sha256.clone());
+            latest.insert(
+                batch.batch_id.clone(),
+                (batch.sha256.clone(), batch.vouchers.len()),
+            );
             Record::Batch(Box::new(batch))
         };
         visit(record, VerificationGeneration(ordinal));

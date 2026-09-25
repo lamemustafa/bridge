@@ -1177,6 +1177,11 @@ impl RemoteIds {
         if count == 0 {
             return Err("import_post_requires_one_voucher".into());
         }
+        // No more than the journal will admit on read, so an intent is never
+        // written that the next journal read would refuse.
+        if count > ledger::MAX_BATCH_POST_VOUCHERS {
+            return Err("import_post_batch_too_large".into());
+        }
         let mut ids = Vec::with_capacity(count);
         let mut repeats = 0;
         while ids.len() < count {
@@ -1226,9 +1231,8 @@ pub(super) fn native_post_request(
     }
     let xml = render_native_vouchers_xml(
         &company.name,
-        &line.vouchers,
         line.identity_batch_id(),
-        remote_ids.as_slice(),
+        line.vouchers.iter().zip(remote_ids.as_slice().iter().copied()),
     );
     let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
         &xml,

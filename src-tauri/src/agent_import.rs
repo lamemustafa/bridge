@@ -1458,7 +1458,8 @@ impl Server {
         }
     }
 
-    /// Whether the journal already records `remote_id` on a dispatch intent.
+    /// Whether the journal already records any of `remote_ids` on a dispatch
+    /// intent.
     pub(super) fn import_remote_ids_recorded_while_admitted(
         &self,
         remote_ids: &[Uuid],
@@ -2501,25 +2502,24 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
     render_import_envelope(company, &messages)
 }
 
-/// The native post's request. `remote_id` must be fresh for every attempt: a
-/// public file may already have been imported and edited, and reusing its
-/// client REMOTEID for a native Create can make Tally treat it as an upsert.
-/// The caller records `remote_id` with the dispatch intent before sending,
-/// because Tally deletes only by it and never exports it (bridge#579). The
-/// stable narration tag remains the batch attribution used by readback.
-fn render_native_vouchers_xml(
+/// The native post's request: each voucher paired with its own REMOTEID. The
+/// caller pairs them, after checking there is one id per voucher. Every id
+/// must be fresh for every attempt: a public file may already have been
+/// imported and edited, and reusing its client REMOTEID for a native Create
+/// can make Tally treat it as an upsert. The caller records the ids with the
+/// dispatch intent before sending, because Tally deletes only by them and
+/// never exports them (bridge#579). The stable narration tag remains the
+/// batch attribution used by readback.
+fn render_native_vouchers_xml<'a>(
     company: &str,
-    vouchers: &[ImportVoucher],
     batch_id: &str,
-    remote_ids: &[Uuid],
+    vouchers_with_remote_ids: impl Iterator<Item = (&'a ImportVoucher, Uuid)>,
 ) -> String {
-    let messages: String = vouchers
-        .iter()
-        .zip(remote_ids)
+    let messages: String = vouchers_with_remote_ids
         .map(|(voucher, remote_id)| {
             render_voucher_xml(
                 voucher,
-                *remote_id,
+                remote_id,
                 import_identity(batch_id, &voucher.bridge_txn_id),
             )
         })

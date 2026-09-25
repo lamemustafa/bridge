@@ -781,15 +781,13 @@ fn native_request_uses_a_private_remote_identity_but_preserves_batch_attribution
     let public = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
     let first = render_native_vouchers_xml(
         "Synthetic Accounts",
-        std::slice::from_ref(voucher),
         &line.batch_id,
-        &[Uuid::new_v4()],
+        std::iter::once((voucher, Uuid::new_v4())),
     );
     let second = render_native_vouchers_xml(
         "Synthetic Accounts",
-        std::slice::from_ref(voucher),
         &line.batch_id,
-        &[Uuid::new_v4()],
+        std::iter::once((voucher, Uuid::new_v4())),
     );
     let remote_id = |xml: &str| {
         let mut reader = quick_xml::Reader::from_str(xml);
@@ -1496,6 +1494,19 @@ fn remote_ids_are_minted_one_per_voucher_and_distinct() {
         RemoteIds::mint(0).err().as_deref(),
         Some("import_post_requires_one_voucher")
     );
+    // Never more than the journal admits on read.
+    assert_eq!(
+        RemoteIds::mint(ledger::MAX_BATCH_POST_VOUCHERS)
+            .map(|ids| ids.as_slice().len())
+            .ok(),
+        Some(ledger::MAX_BATCH_POST_VOUCHERS)
+    );
+    assert_eq!(
+        RemoteIds::mint(ledger::MAX_BATCH_POST_VOUCHERS + 1)
+            .err()
+            .as_deref(),
+        Some("import_post_batch_too_large")
+    );
 }
 
 /// The request carries every voucher, each with its own REMOTEID in batch
@@ -1593,6 +1604,27 @@ fn a_batch_is_clean_only_with_n_creates_and_n_verified() {
         payload["result"]["dispatch"]["state"].clone()
     };
     assert_eq!(verdict(2, 2), "posted_verified");
+    assert_eq!(verdict(1, 2), "reconciliation_required");
+    assert_eq!(verdict(2, 1), "reconciliation_required");
+    assert_eq!(verdict(3, 2), "reconciliation_required");
+}
+
+/// A reconciliation of an earlier batch attempt is clean only with N creates
+/// and N verified, as for the current dispatch.
+#[test]
+fn a_previous_batch_attempt_reconciles_only_with_n_creates_and_n_verified() {
+    let verdict = |created: u64, verified: u64| {
+        let mut payload =
+            json!({"result":{"counts":{"posted_verified":verified},"duplicates":[]}});
+        finalize_previous_attempt_reconciliation(
+            &mut payload,
+            Some(&dispatch_response("success", created, 0)),
+            None,
+            2,
+        );
+        payload["result"]["dispatch"]["state"].clone()
+    };
+    assert_eq!(verdict(2, 2), "previous_attempt_reconciled");
     assert_eq!(verdict(1, 2), "reconciliation_required");
     assert_eq!(verdict(2, 1), "reconciliation_required");
     assert_eq!(verdict(3, 2), "reconciliation_required");
