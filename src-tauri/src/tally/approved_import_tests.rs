@@ -32,18 +32,49 @@ fn import_name_scope_must_select_one_observed_company() {
 
 const NONCE: &str = "00000000-0000-4000-8000-000000000687";
 
-/// What the child wrote, and what it returned, for `input` and `dialog`.
+/// What the post child wrote, and what it returned, for `input` and `dialog`.
 fn child_answer(dialog: fn(&str) -> bool, input: &str) -> (bool, Vec<u8>) {
+    answer_as(POST_TOKEN_PREFIX, dialog, input)
+}
+
+fn answer_as(prefix: &str, dialog: fn(&str) -> bool, input: &str) -> (bool, Vec<u8>) {
     let mut output = Vec::new();
-    let approved = answer_with_token_over(POST_TOKEN_PREFIX, dialog, input.as_bytes(), &mut output);
+    let approved = answer_with_token(prefix, dialog, input.as_bytes(), &mut output);
     (approved, output)
 }
 
 #[test]
 fn a_declined_dialog_writes_no_token() {
-    let (approved, output) = child_answer(|_| false, &format!("{NONCE}\nPost one voucher"));
+    // The dialog records that it was shown, so the test cannot pass by the
+    // input being refused before the decline it is about.
+    static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let (approved, output) = child_answer(
+        |_| {
+            SHOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+            false
+        },
+        &format!("{NONCE}\nPost one voucher"),
+    );
+    assert!(
+        SHOWN.load(std::sync::atomic::Ordering::SeqCst),
+        "the dialog was shown"
+    );
     assert!(!approved);
     assert!(output.is_empty(), "{output:?}");
+}
+
+#[test]
+fn each_child_answers_with_the_prefix_it_is_given() {
+    let (approved, output) = answer_as(
+        REVIEW_TOKEN_PREFIX,
+        |_| true,
+        &format!("{NONCE}\nReview one voucher"),
+    );
+    assert!(approved);
+    assert_eq!(
+        output,
+        format!("bridge-review-acknowledged:{NONCE}\n").into_bytes()
+    );
 }
 
 #[test]

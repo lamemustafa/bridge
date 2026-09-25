@@ -654,25 +654,31 @@ fn dialog_token(prefix: &str, nonce: &str) -> String {
 /// It prints the token for the nonce it was given only when the person chose
 /// to post (#635); the parent trusts nothing else.
 pub fn run_confirmation() -> bool {
-    answer_with_token(POST_TOKEN_PREFIX, show_review)
+    answer_with_token(
+        POST_TOKEN_PREFIX,
+        show_review,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
 }
 
 /// Entry point for the review dialog's subprocess (#239), under the same rules.
 pub fn run_review_confirmation() -> bool {
-    answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)
+    answer_with_token(
+        REVIEW_TOKEN_PREFIX,
+        show_review_acknowledgement,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
 }
 
-/// Read the parent's nonce line and preview, show `dialog`, and print the
-/// token for that nonce only when it returns true.
-fn answer_with_token(prefix: &str, dialog: fn(&str) -> bool) -> bool {
-    answer_with_token_over(prefix, dialog, std::io::stdin(), std::io::stdout())
-}
-
-/// [`answer_with_token`] over any input and output. The parent's tests stand
-/// a script in for the child, so this is the only way a test reaches the one
-/// line that turns a click into an approval: a declined dialog writes
-/// nothing (#687).
-fn answer_with_token_over(
+/// Read the parent's nonce line and preview from `input`, show `dialog`, and
+/// write the token for that nonce to `output` only when it returns true. The
+/// entry points pass stdin, stdout and their own dialog. The parent's tests
+/// stand a script in for the child, so taking these as parameters is the only
+/// way a test reaches the one line that turns a click into an approval: a
+/// declined dialog writes nothing (#687).
+fn answer_with_token(
     prefix: &str,
     dialog: fn(&str) -> bool,
     input: impl Read,

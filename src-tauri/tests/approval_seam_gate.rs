@@ -387,28 +387,46 @@ fn each_dialog_mode_runs_its_own_dialog() {
     assert!(!dialog_mode_problems(&swapped).is_empty());
 }
 
+/// The post child's whole entry point: its token, its dialog, and the real
+/// stdin and stdout. A test calls `answer_with_token` with its own input,
+/// output and dialog, so only this pin covers what the entry point passes.
+const POST_ENTRY: &str = "pub fn run_confirmation() -> bool {
+    answer_with_token(
+        POST_TOKEN_PREFIX,
+        show_review,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
+}";
+
+/// The review child's whole entry point, as [`POST_ENTRY`].
+const REVIEW_ENTRY: &str = "pub fn run_review_confirmation() -> bool {
+    answer_with_token(
+        REVIEW_TOKEN_PREFIX,
+        show_review_acknowledgement,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
+}";
+
 /// Each dialog subprocess entry point answers with its own token, after its
-/// own dialog (#635). The parent approves a post only on the post token, so
-/// pairing that token with the review dialog would let "I reviewed it"
-/// approve a post, and no stub test could see it: a stub is a script, not
-/// this code. The pairing is pinned inside each entry point's body, so
-/// swapping the two bodies is caught too, and nothing else may reach the
-/// shared answer (#687).
+/// own dialog, from the real stdin to the real stdout (#635, #687). The
+/// parent approves a post only on the post token, so pairing that token with
+/// the review dialog would let "I reviewed it" approve a post, and passing a
+/// dialog other than the real one would approve with nobody asked. No stub
+/// test could see either: a stub is a script, not this code. Each entry
+/// point's whole body is pinned, so a swapped body is caught too, and nothing
+/// else in the file may call the shared answer. A call through a function
+/// pointer alias is outside what a text gate can see.
 fn dialog_token_problems(source: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    for pairing in [
-        "pub fn run_confirmation() -> bool {\n    answer_with_token(POST_TOKEN_PREFIX, show_review)\n}",
-        "pub fn run_review_confirmation() -> bool {\n    answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)\n}",
-    ] {
-        if source.matches(pairing).count() != 1 {
-            problems.push(format!("expected exactly one `{pairing}`"));
+    for entry in [POST_ENTRY, REVIEW_ENTRY] {
+        if source.matches(entry).count() != 1 {
+            problems.push(format!("expected exactly one `{entry}`"));
         }
     }
     if source.matches("answer_with_token(").count() != 3 {
-        problems.push("expected the two pairings and the definition only".into());
-    }
-    if source.matches("answer_with_token_over(").count() != 2 {
-        problems.push("expected answer_with_token and the definition only".into());
+        problems.push("expected the two entry points and the definition only".into());
     }
     problems
 }
@@ -417,34 +435,31 @@ fn dialog_token_problems(source: &str) -> Vec<String> {
 fn each_dialog_answers_with_its_own_token() {
     let source = read("src-tauri/src/tally/approved_import.rs");
     assert_eq!(dialog_token_problems(&source), Vec::<String>::new());
+    let post_as_review = POST_ENTRY.replace("POST_TOKEN_PREFIX", "REVIEW_TOKEN_PREFIX");
+    let review_as_post = REVIEW_ENTRY.replace("REVIEW_TOKEN_PREFIX", "POST_TOKEN_PREFIX");
+    let post_body = &POST_ENTRY[POST_ENTRY.find('{').unwrap()..];
+    let review_body = &REVIEW_ENTRY[REVIEW_ENTRY.find('{').unwrap()..];
+    let swapped = source
+        .replace(POST_ENTRY, "SWAP_POST")
+        .replace(REVIEW_ENTRY, "SWAP_REVIEW")
+        .replace(
+            "SWAP_POST",
+            &format!("pub fn run_confirmation() -> bool {review_body}"),
+        )
+        .replace(
+            "SWAP_REVIEW",
+            &format!("pub fn run_review_confirmation() -> bool {post_body}"),
+        );
     for broken in [
-        source.replace(
-            "answer_with_token(POST_TOKEN_PREFIX, show_review)",
-            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
-        ),
-        source.replace(
-            "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
-            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
-        ),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "show_review_acknowledgement,")),
+        source.replace(POST_ENTRY, &post_as_review),
+        source.replace(REVIEW_ENTRY, &review_as_post),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "|_| true,")),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("std::io::stdin()", "&b\"\"[..]")),
+        swapped,
         format!(
-            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true) }}\n"
+            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true, std::io::stdin(), std::io::stdout()) }}\n"
         ),
-        format!(
-            "{source}\nfn extra() -> bool {{ answer_with_token_over(POST_TOKEN_PREFIX, |_| true, std::io::stdin(), std::io::stdout()) }}\n"
-        ),
-        source
-            .replace(
-                "answer_with_token(POST_TOKEN_PREFIX, show_review)\n}",
-                "SWAP\n}",
-            )
-            .replace(
-                "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)\n}",
-                "answer_with_token(POST_TOKEN_PREFIX, show_review)\n}",
-            )
-            .replace(
-                "SWAP\n}",
-                "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)\n}",
-            ),
     ] {
         assert_ne!(broken, source);
         assert!(!dialog_token_problems(&broken).is_empty());
