@@ -24,6 +24,30 @@ fn request_binds_both_admitted_snapshot_boundaries_and_escapes_company() {
     assert!(!request.contains("CLOSINGBALANCE"));
 }
 
+/// The plain request is byte-for-byte the request sent before the currency
+/// variant existed, so a single-currency book's Trial Balance is unchanged
+/// (bridge#551). The variant differs only by `CURRENCYNAME` in its `FETCH`.
+#[test]
+fn the_currency_variant_differs_from_the_unchanged_request_only_by_currencyname() {
+    let period = NativeLedgerSnapshotPeriod::new(
+        DateBoundaryProfile::ModeAgnostic,
+        TallyDate::parse("20260601").unwrap(),
+        TallyDate::parse("20260731").unwrap(),
+    )
+    .unwrap();
+    let plain = render_native_trial_balance_request("A & B <Co>", &period);
+    assert_eq!(
+        plain,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>A &amp; B &lt;Co&gt;</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">20260601</SVFROMDATE><SVTODATE TYPE="Date">20260731</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, PARENT, TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#
+    );
+    let with_currency = render_native_trial_balance_request_with_currency("A & B <Co>", &period);
+    assert_eq!(
+        with_currency,
+        plain.replace("TBALCLOSING</FETCH>", "TBALCLOSING, CURRENCYNAME</FETCH>")
+    );
+    assert_ne!(with_currency, plain);
+}
+
 #[test]
 fn captured_trial_balance_preserves_empty_and_nonzero_openings() {
     let report = parse_native_trial_balance(KNOWN_LAB, COMPANY).unwrap();

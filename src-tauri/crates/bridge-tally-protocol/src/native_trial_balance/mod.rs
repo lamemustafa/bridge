@@ -67,8 +67,37 @@ pub fn render_native_trial_balance_request(
     company: &str,
     period: &NativeLedgerSnapshotPeriod,
 ) -> String {
+    render_trial_balance_collection(
+        company,
+        period,
+        "NAME, GUID, PARENT, TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING",
+    )
+}
+
+/// [`render_native_trial_balance_request`] with `CURRENCYNAME` appended to
+/// its `FETCH`, so each row names its ledger's currency and a foreign-currency
+/// ledger can be set aside by name (bridge#551). Sent only when the company
+/// defines several Currency masters, so a single-currency book's request is
+/// byte-for-byte unchanged. UNVERIFIED: that a Trial Balance row carries
+/// `CURRENCYNAME` at all waits on a live capture on a several-currency book.
+pub fn render_native_trial_balance_request_with_currency(
+    company: &str,
+    period: &NativeLedgerSnapshotPeriod,
+) -> String {
+    render_trial_balance_collection(
+        company,
+        period,
+        "NAME, GUID, PARENT, TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING, CURRENCYNAME",
+    )
+}
+
+fn render_trial_balance_collection(
+    company: &str,
+    period: &NativeLedgerSnapshotPeriod,
+    fetch: &str,
+) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, PARENT, TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
