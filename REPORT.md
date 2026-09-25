@@ -48,3 +48,14 @@ Also: #665 merged (54eb3271) after this lane's review.
 | #701 egress gate | f51eaa55985e9953c4359b61c21ae7ff8b5dc4e6 (moved from 1fb9fb32) | No P1. P2: the cargo-tree check passes "sealed" when it sees nothing (reproduced with an empty cargo shim); it should be exact-set in both directions. P3: other clients, `TcpSocket`, no gate self-test. | https://github.com/lamemustafa/bridge/pull/701#issuecomment-5836045614 |
 
 Not reviewed: #647 and #649 are stacked on #642's branch, not master, and no lane has named them.
+
+## 2026-09-25, further lane requests
+
+| PR | Head | Result | Comment |
+| --- | --- | --- | --- |
+| #707 slice D1 (N-voucher generalization) | 2670dc6a34345fd7effb875a35cbd0fc730324a7 | No P1/P2. A differential probe showed request bytes and intent JSON identical to b4d7bd50 for a Journal and a 3-party Payment; admission still refuses 2+ first; 3/3 mutations on the latent N code were killed. | https://github.com/lamemustafa/bridge/pull/707#issuecomment-5836480661 |
+| #708 CR LF ledger names / folded twins | f4498332f35e58e667ec0ec2637cf39dd5345df8 | No P1/P2. Twin checks at build, pre-approval and the queue; CR LF is refused at the native preview; 2/2 mutations killed. P3: a test doc says "no post code"; CR LF readback in a voucher export is not captured (fails closed). | https://github.com/lamemustafa/bridge/pull/708#issuecomment-5836563925 |
+| #695 slice B | 0a96c2e32272bf89747ea1a1437acf21a03eea41 | Master (#684) merge only; the src-tauri diff is identical; 492+23 tests pass; the MCP text copy is regenerated inside `encoded_len`, so the drop cannot be bypassed. | https://github.com/lamemustafa/bridge/pull/695#issuecomment-5836606819 |
+| #672 | 4375f63131c41c67d23355bf618a9d661aa944a6 | Master merge; the hunks are identical; 253 tests pass; the pins match. The #700 hazard stands. | https://github.com/lamemustafa/bridge/pull/672#issuecomment-5836641015 |
+| #700 | 362904c2122ccb69c0ac99cf8c52a1a91da12233 | Reseal only; the P2 (a snapshot key with #672) stands. | https://github.com/lamemustafa/bridge/pull/700#issuecomment-5836641779 |
+| #701 | a9b9e4e5b0199f409102465ead4f4265ef227cc5 | Reseal only; the P2 (a vacuous cargo-tree pass) stands, unfixed. | https://github.com/lamemustafa/bridge/pull/701#issuecomment-5836642599 |
