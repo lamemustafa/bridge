@@ -259,8 +259,8 @@ impl Server {
             if line.ledger_identities.is_none() {
                 return Err(BuildBindingRefusal::Unbound.code().to_string().into());
             }
-            // Tally has seen every REMOTEID the journal records, and resending
-            // one undoes a person's cancel or delete (protocol reference §9.3).
+            // Tally may have seen any REMOTEID the journal records, and resending
+            // one can undo a person's cancel or delete (protocol reference §9.3).
             // Refused before any Tally request; checked again as the intent is
             // written, under the exclusive lock.
             let remote_id = mint_remote_id();

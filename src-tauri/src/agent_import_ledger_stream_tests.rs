@@ -315,14 +315,17 @@ fn a_native_dispatch_intent_keeps_its_remoteid_and_nothing_else_may_carry_one() 
     assert_eq!(snapshot.native_remote_id, None);
 }
 
-/// Tally has seen every REMOTEID an intent records (protocol reference §9.3),
-/// so two intents may never carry the same one, whichever batches they are for.
+/// The journal answers whether any intent records a REMOTEID, whichever batch
+/// it belongs to. It does not refuse to read a journal that holds one twice:
+/// that would stop every batch's reads, and the post path already refuses to
+/// send a recorded REMOTEID as it writes the intent, under the exclusive lock.
 #[test]
-fn no_two_dispatch_intents_may_carry_the_same_remoteid() {
+fn any_intent_recording_a_remoteid_is_found_and_a_repeat_does_not_block_reads() {
     let (first, second) = (batch("first", "local"), batch("second", "local"));
     let (shared, other) = (Uuid::new_v4(), Uuid::new_v4());
     let mut bytes = record(&first);
     bytes.extend(record(&second));
+    assert!(!remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
     bytes.extend(record(&StatusRecord::dispatch_native(
         &first,
         "c".repeat(64),
@@ -331,28 +334,16 @@ fn no_two_dispatch_intents_may_carry_the_same_remoteid() {
     assert!(remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
     assert!(!remote_id_recorded(Cursor::new(bytes.clone()), other).unwrap());
 
-    let mut distinct = bytes.clone();
-    distinct.extend(record(&StatusRecord::dispatch_native(
-        &second,
-        "c".repeat(64),
-        other,
-    )));
-    assert!(
-        read_snapshot(Cursor::new(distinct), Some("second"))
-            .unwrap()
-            .unwrap()
-            .dispatched
-    );
-
     bytes.extend(record(&StatusRecord::dispatch_native(
         &second,
         "c".repeat(64),
         shared,
     )));
-    for result in [
-        read_snapshot(Cursor::new(bytes.clone()), None).err(),
-        remote_id_recorded(Cursor::new(bytes), other).err(),
-    ] {
-        assert_eq!(result.as_deref(), Some("import_ledger_remote_id_reused"));
-    }
+    assert!(remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
+    assert!(
+        read_snapshot(Cursor::new(bytes), Some("second"))
+            .unwrap()
+            .unwrap()
+            .dispatched
+    );
 }

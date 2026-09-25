@@ -307,10 +307,10 @@ same `REMOTEID` and a changed amount:
 | upsert with `ISOPTIONAL` Yes | `ALTERED=1`; optional, and the voucher number moved | `ALTERED=1`; still optional (the omitted flag is kept), renumbered again |
 | `ACTION="Delete"` by the `REMOTEID` | `DELETED=1` | `CREATED=1`; the voucher is **re-created** under a new GUID |
 
-So a `REMOTEID` Tally has seen is not safe to send again, even byte for byte: whatever a person did
-to that voucher since, cancel or delete included, the resend reverses it, and a delete leaves no
-voucher to show that the `REMOTEID` was ever used. A book check cannot stand in for a record of
-what was sent. Note also that a cancel reports `ALTERED`, not `CANCELLED`.
+So a resend with a changed payload reverses a person's cancel or delete, and a delete leaves no
+voucher to show that the `REMOTEID` was ever used: a book check cannot stand in for a record of
+what was sent. A byte-identical resend after a cancel or delete was **not measured**, so it may not
+be assumed safe either. Note also that a cancel reports `ALTERED`, not `CANCELLED`.
 
 ### 9.4 Master re-create is a silent Alter
 

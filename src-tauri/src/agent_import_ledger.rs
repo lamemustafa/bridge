@@ -264,7 +264,6 @@ fn scan_records(
     // Memory therefore still grows with distinct IDs, not with status history.
     let mut latest: BTreeMap<String, String> = BTreeMap::new();
     let mut dispatched: BTreeMap<String, Option<String>> = BTreeMap::new();
-    let mut remote_ids = std::collections::BTreeSet::new();
     let mut line = Vec::new();
     let mut ordinal = 0_usize;
     while read_record(&mut reader, &mut line)? {
@@ -295,12 +294,6 @@ fn scan_records(
                         .unwrap_or(true)
                 {
                     return Err("import_ledger_invalid".into());
-                }
-                // Tally has seen every REMOTEID an intent records, and a resend
-                // of one undoes a person's cancel or delete (protocol reference
-                // §9.3): no two intents may carry the same one.
-                if !remote_ids.insert(remote_id.clone()) {
-                    return Err("import_ledger_remote_id_reused".into());
                 }
             }
             if matches!(update.record_type, StatusKind::DispatchIntent)

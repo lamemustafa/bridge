@@ -450,6 +450,9 @@ approval. If dispatch has already begun, cancellation cannot undo Tally's
 work. A timeout, crash, malformed response or incomplete readback requires
 `verify_import` on the **same original batch**. Once dispatch intent exists,
 `post_import` only reconciles and never resends, including after process restart.
+Each post sends a fresh `REMOTEID`, and one that any recorded dispatch intent
+already carries is refused as `import_remote_id_reused` before any Tally request
+(protocol reference §9.3: a resend can undo a person's cancel or delete).
 If another process holds import admission, the call returns `import_admission_busy`
 without waiting for that process or scheduling a later post. Reconcile any
 recorded attempt before requesting another action. Confirmation requires all seven

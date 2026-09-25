@@ -402,20 +402,20 @@ async fn a_remoteid_the_journal_records_is_refused_before_any_tally_request() {
     assert_eq!(journal(directory.path()), before);
 }
 
-/// The same REMOTEID recorded by another process while the dialog is open is
-/// caught as the intent is written: no intent for this batch, and no POST.
-#[tokio::test]
-async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
+/// While the dialog is open, another process journals an intent carrying
+/// `injected`; this post mints `minted`. Returns the response, the requests
+/// Tally received, where the POST would be, and the batches with an intent.
+async fn race_an_intent_during_approval(
+    injected: Uuid,
+    minted: Uuid,
+) -> (Value, usize, usize, Vec<String>) {
     let mut plans = before_approval();
-    let mut after = after_approval(xml(created_one()));
-    after.pop();
-    let expected = plans.len() + after.len();
-    plans.extend(after);
+    let post_at = plans.len() + after_approval(xml(created_one())).len() - 1;
+    plans.extend(after_approval(xml(created_one())));
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch(&server);
-    let raced = Uuid::new_v4();
     let mut earlier = line.clone();
     earlier.batch_id = "bridge-00000000-0000-4000-8000-000000000585".into();
     let mut appended = serde_json::to_vec(&earlier).unwrap();
@@ -424,7 +424,7 @@ async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
         serde_json::to_vec(&ledger::StatusRecord::dispatch_native(
             &earlier,
             "c".repeat(64),
-            raced,
+            injected,
         ))
         .unwrap(),
     );
@@ -441,18 +441,11 @@ async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
     });
     let response = SCRIPTED_REMOTE_ID
         .scope(
-            raced,
+            minted,
             SCRIPTED_APPROVAL.scope(scripted, server.call_tool("post_import", args)),
         )
         .await;
-    let observed = sent(simulator);
-    // A refusal inside the queue still reads as an unknown outcome (#656),
-    // though nothing was sent: the journal and the request count show that.
-    assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
-        "{response}"
-    );
-    assert_eq!(observed.len(), expected, "{response}");
+    let observed = sent(simulator).len();
     let intents = String::from_utf8(journal(directory.path()))
         .unwrap()
         .lines()
@@ -460,7 +453,39 @@ async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
         .filter(|record| record["record_type"] == "dispatch_intent")
         .map(|record| record["batch_id"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(intents, [earlier.batch_id.clone()]);
+    (response, observed, post_at, intents)
+}
+
+/// The same REMOTEID recorded by another process while the dialog is open is
+/// caught as the intent is written: no intent for this batch, and no POST. The
+/// control, an injected intent with another REMOTEID, posts: so the match is
+/// what stopped the first.
+#[tokio::test]
+async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
+    let raced = Uuid::new_v4();
+    let (response, observed, post_at, intents) = race_an_intent_during_approval(raced, raced).await;
+    // A refusal inside the queue still reads as an unknown outcome (#656),
+    // though nothing was sent: the journal and the request count show that.
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
+        "{response}"
+    );
+    assert_eq!(observed, post_at, "{response}");
+    assert_eq!(intents, ["bridge-00000000-0000-4000-8000-000000000585"]);
+
+    let (response, observed, post_at, intents) =
+        race_an_intent_during_approval(Uuid::new_v4(), raced).await;
+    assert!(
+        observed > post_at,
+        "the control's POST was sent: {response}"
+    );
+    assert_eq!(
+        intents,
+        [
+            "bridge-00000000-0000-4000-8000-000000000585",
+            "bridge-00000000-0000-4000-8000-000000000583"
+        ]
+    );
 }
 
 /// Approved, the post sends exactly the request its dispatch intent recorded:
