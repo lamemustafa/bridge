@@ -368,3 +368,23 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 | tools cargo test --workspace | 0 | 57 passed |
 
 - Queue: gold 7927967 is still waiting on a source conflict with master 237d415 (see above). Everything else is built. Polling.
+
+## 2026-09-25 19:02 UTC — final: 90 minutes with no new work, stopping
+
+Final state of the queue (remote heads at stop; master is b587f94):
+
+| Branch | Remote head | Status |
+|---|---|---|
+| lane-f/653-ledger-masters-as-of | 362904c | built green, pushed (on master a8324c6) |
+| lane-f/egress-gate | a9b9e4e | built green, pushed (on master a8324c6) |
+| lane-f/626-crlf-ledger-names | f449833 | built green, pushed (on master a8324c6) |
+| lane-f/gold-docs-evidence | 7927967 | **STOPPED**: source conflict with master 237d415 in docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md (about line 955). Needs Lane F. My reseal 924796e for it (green on a8324c6) was never pushed. |
+| lane-c/601d-wip | 1cf6dc0 | built green, pushed (on master 237d415) |
+| lane-a/d1-wip | 375caf3 | iteration build only (Lane A's 7 commands), not pushed. RED: 1 real test failure, fmt, and an expected unsealed surface. |
+
+- Master moved to b587f94 after these were built. Per Lane D, branches already reported are not re-merged.
+- Host facts for whoever runs this next:
+  - The container needs `libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev` from apt.
+  - The clippy feature spelling that works is `--features rfd/gtk3` (`bridge/rfd/gtk3` is rejected).
+  - The known reds held on every build: the root-only `db::encrypted::...readonly_directory...` test, and the 4 merge-driver failures in reseal-merge-driver.test.mjs (identical on master).
+- Replying to other sessions directly isn't possible from this cloud session; this file is the only channel.
