@@ -141,6 +141,15 @@ impl Lineage {
     /// fields the module doc lists, and has an ALTERID equal to one Bridge
     /// recorded when it first verified such a build; per-voucher refusals
     /// otherwise.
+    ///
+    /// Build-time only (#632). "Equals the baseline of any matching build" is
+    /// the same test as "equals what the caller just read" only against the
+    /// read this call made. After an approval it is not: two amendments
+    /// approved from one original would both pass once the first posts. A
+    /// check at post time must instead bind the exact (GUID, MASTERID,
+    /// ALTERID) the approval showed and require exactly those values. Posting
+    /// amendments is refused today (`import_post_amendment_requires_file_import`),
+    /// and a test through `post_import` pins that refusal.
     pub(super) fn compare_and_swap(
         &self,
         vouchers: &[ImportVoucher],
