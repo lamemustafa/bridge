@@ -80,6 +80,7 @@ pub(super) fn render_agent_movement_vouchers_in_span(
         to,
         &span.map(AlterIdSpan::filter).unwrap_or_default(),
         AGENT_MOVEMENT_FETCH,
+        "",
     )
 }
 
@@ -92,7 +93,7 @@ pub(super) fn render_agent_vouchers(
     let alter_filter = alter_id
         .map(|value| format!(" AND $AlterID > {value}"))
         .unwrap_or_default();
-    render_windowed_vouchers(company, from, to, &alter_filter, AGENT_VOUCHER_FETCH)
+    render_windowed_vouchers(company, from, to, &alter_filter, AGENT_VOUCHER_FETCH, "")
 }
 
 /// [`render_agent_vouchers`], optionally narrowed to an AlterID span. `None`
@@ -110,6 +111,27 @@ pub(super) fn render_agent_vouchers_in_span(
         to,
         &span.map(AlterIdSpan::filter).unwrap_or_default(),
         AGENT_VOUCHER_FETCH,
+        "",
+    )
+}
+
+/// [`render_agent_vouchers_in_span`] with each row's voucher type resolved by
+/// Tally in the same response: its GUID, its own reserved name and one
+/// `$$Is<Class>` answer per measured class (bridge#625). Sent only by a
+/// `vouchers` call that filters by type, so every other read is unchanged.
+pub(super) fn render_agent_class_vouchers_in_span(
+    company: &str,
+    from: &str,
+    to: &str,
+    span: Option<AlterIdSpan>,
+) -> Result<String, String> {
+    render_windowed_vouchers(
+        company,
+        from,
+        to,
+        &span.map(AlterIdSpan::filter).unwrap_or_default(),
+        AGENT_VOUCHER_FETCH,
+        &voucher_type_class_computes(),
     )
 }
 
@@ -143,11 +165,12 @@ fn render_windowed_vouchers(
     to: &str,
     alter_filter: &str,
     fetch: &str,
+    computes: &str,
 ) -> Result<String, String> {
     let company = ValidatedCompanyName::new(company.to_string())
         .map_err(|_| "company_name_invalid".to_string())?;
     Ok(format!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>{fetch}</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>{fetch}</FETCH>{computes}<FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
         xml_escape(company.as_str())
     ))
 }
@@ -172,7 +195,7 @@ pub(super) fn render_agent_lab_inventory_vouchers(
     from: &str,
     to: &str,
 ) -> Result<String, String> {
-    render_windowed_vouchers(company, from, to, "", AGENT_LAB_INVENTORY_VOUCHER_FETCH)
+    render_windowed_vouchers(company, from, to, "", AGENT_LAB_INVENTORY_VOUCHER_FETCH, "")
 }
 
 pub(super) fn render_agent_changed_vouchers(
@@ -267,6 +290,16 @@ impl ReadRequest {
     pub(super) fn unrendered_for_test(xml: String) -> Self {
         Self(xml)
     }
+}
+
+/// The book's voucher-type masters, as the sync connector reads them: names
+/// and GUIDs only, no period (bridge#664).
+pub(super) fn voucher_type_catalogue_read(company: &str) -> ReadRequest {
+    ReadRequest(
+        bridge_tally_protocol::native_outstandings::render_native_voucher_type_export_request(
+            company,
+        ),
+    )
 }
 
 pub(super) fn company_high_water_read(company: &str) -> ReadRequest {
@@ -396,6 +429,7 @@ mod sealed_read_tests {
             super::super::voucher_window::VoucherReadShape::ImportVerification,
             super::super::voucher_window::VoucherReadShape::Movement,
             super::super::voucher_window::VoucherReadShape::EntryWildcard,
+            super::super::voucher_window::VoucherReadShape::ClassEntryWildcard,
         ] {
             for part_span in [None, span] {
                 reads.push(

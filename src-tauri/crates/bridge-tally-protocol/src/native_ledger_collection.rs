@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use quick_xml::{events::Event, name::QName, Reader};
 use serde::{Deserialize, Serialize};
 
+use crate::gst_registration::{GstRegistrationHistory, RawGstRegistrationEntry};
 use crate::{
     attr_value, configured_reader, native_ledger_guid_has_company_prefix,
     normalized_standard_company_guid, path_eq, pop_expected_path, read_identifier_text,
@@ -40,6 +41,11 @@ pub struct PartyLedgerMasterFields {
     /// Tally's ledger `GSTDUTYHEAD`, classified only against the measured
     /// vocabulary while retaining the source spelling for every returned head.
     pub gst_duty_head: GstDutyHeadObservation,
+    /// The dated GST registration history (`LEDGSTREGDETAILS.LIST`), which can
+    /// hold a GSTIN the flat `PARTYGSTIN` does not (bridge#624). Not observed
+    /// when the response carries no such element.
+    #[serde(default)]
+    pub gst_registrations: GstRegistrationHistory,
 }
 
 /// The GST duty-head classification observed on one ledger master.
@@ -432,6 +438,9 @@ fn parse_native_ledger_collection_row_with_master_fields(
     let mut master_fields = PartyLedgerMasterFields::default();
     let mut master_fields_seen = HashSet::new();
     let mut gst_duty_head = PartyLedgerMasterFieldObservation::NotObserved;
+    // `None` until the response carries the element: absent is "not read",
+    // never an empty history.
+    let mut gst_registrations: Option<Vec<RawGstRegistrationEntry>> = None;
     loop {
         match reader.read_event()? {
             Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
@@ -617,12 +626,23 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     &mut master_fields_seen,
                     &mut gst_duty_head,
                 )?,
+                b"LEDGSTREGDETAILS.LIST" if retain_master_fields => {
+                    let entry = read_gst_registration_entry(reader, &child)?;
+                    gst_registrations.get_or_insert_with(Vec::new).push(entry);
+                }
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
                     reader.read_to_end(QName(&child_name).to_owned())?;
                 }
             },
             Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"LEDGSTREGDETAILS.LIST" => {
+                    if retain_master_fields {
+                        gst_registrations
+                            .get_or_insert_with(Vec::new)
+                            .push(RawGstRegistrationEntry::default());
+                    }
+                }
                 b"PARENT" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
                     if std::mem::replace(&mut parent_seen, true) {
@@ -771,6 +791,9 @@ fn parse_native_ledger_collection_row_with_master_fields(
     }
     master_fields.gst_duty_head =
         GstDutyHeadObservation::from_observations(&master_fields.tax_type, &gst_duty_head);
+    if let Some(raw) = gst_registrations {
+        master_fields.gst_registrations = GstRegistrationHistory::from_raw(raw);
+    }
     Ok(ParsedNativeLedgerCollectionRow {
         ledger,
         fields: master_fields,
@@ -778,6 +801,59 @@ fn parse_native_ledger_collection_row_with_master_fields(
         alter_id,
         response_company_guid,
     })
+}
+
+/// One `LEDGSTREGDETAILS.LIST` element: its date, GSTIN and registration type.
+/// Other children are consumed and not kept.
+fn read_gst_registration_entry(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<RawGstRegistrationEntry> {
+    let list_name = element.name().as_ref().to_vec();
+    let mut entry = RawGstRegistrationEntry::default();
+    // Which fields were seen, empty or not: a second sighting is a repeat
+    // even when the first carried no text.
+    let mut seen = [false; 3];
+    let field_index = |name: &[u8]| match name.to_ascii_uppercase().as_slice() {
+        b"APPLICABLEFROM" => Some(0),
+        b"GSTIN" => Some(1),
+        b"GSTREGISTRATIONTYPE" => Some(2),
+        _ => None,
+    };
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => match field_index(child.name().as_ref()) {
+                Some(index) => {
+                    let value = read_optional_text(reader, child.name())?;
+                    if std::mem::replace(&mut seen[index], true) {
+                        // A defect of this ledger's history, not of the read.
+                        entry.repeated_field = true;
+                    } else {
+                        *[
+                            &mut entry.applicable_from,
+                            &mut entry.gstin,
+                            &mut entry.registration_type,
+                        ][index] = value;
+                    }
+                }
+                None => {
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => {
+                if let Some(index) = field_index(child.name().as_ref()) {
+                    if std::mem::replace(&mut seen[index], true) {
+                        entry.repeated_field = true;
+                    }
+                }
+            }
+            Event::End(end) if end.name().as_ref() == list_name.as_slice() => break,
+            Event::Eof => anyhow::bail!("native ledger registration entry was not closed"),
+            _ => {}
+        }
+    }
+    Ok(entry)
 }
 
 struct ParsedNativeLedgerCollectionRow {
