@@ -115,3 +115,14 @@ Setup, as root on this host: `mount -t tmpfs -o noexec,nosuid,size=6g` on a scra
 For #527's remaining item this is real noexec-host evidence: it fails without the explicit root and passes with it. The confound is that the suite as a whole cannot be green on Git 2.43, for the reasons in step 1.4 items 3 and 4, so "passes" here means "no failures beyond the Git 2.43 baseline". A clean run on Git ≥ 2.44 plus noexec has not been performed. The mount and the scratch directories were removed afterwards.
 
 Next: decide whether a code fix is in scope for items 3 and 4 in a separate branch.
+
+## Fri Sep 25 14:52:37 UTC 2026 — #527 fix: draft PR #688
+
+- Branch: `claude/merge-driver-upload-pack-trust`, commit `1cc5b65`, based on `a51ae783`. The branch name was already `claude/`-prefixed, so no substitution was needed. Draft PR: https://github.com/lamemustafa/bridge/pull/688
+- Fixes step 1.4 item 4 only. The captured-source fetch repeats exactly the caller's `safe.directory` entries on `--upload-pack`, shell-quoted. Two tests are added: a wrong-trust fetch control, and a quoting test on a path containing a space and a single quote.
+- On Git 2.43.0: 20 tests, 17 pass, 3 fail. The 3 failures are the item 3 merge-driver group only. Three inverse mutations (dropping `--upload-pack`, trusting `*`, dropping the quoting) each fail the intended test. The Sonnet review found nothing blocking.
+- Supporting evidence from CI: the `Workflow consistency` job on master `a51ae783` ran Git 2.55.0 and passed. This is only partial attribution evidence, because the runner also differs in uid and image. I could not get a newer Git here: GitHub archive, kernel.org and the git-core PPA were each refused by the proxy with 403.
+- **Not fixed, needs an owner decision:** item 3, where Git 2.43 passes `%S/%X/%Y` unexpanded. The options are a documented minimum Git version, and/or making the driver name the cause instead of "could not read it at both refs". Either would change the driver or the docs, not only the harness.
+- I have subscribed to PR #688 activity.
+
+Queue item 3: stopping here and waiting for Lane D.
