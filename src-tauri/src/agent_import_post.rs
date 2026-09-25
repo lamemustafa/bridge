@@ -259,6 +259,18 @@ impl Server {
             if line.ledger_identities.is_none() {
                 return Err(BuildBindingRefusal::Unbound.code().to_string().into());
             }
+            // Tally may have seen any REMOTEID the journal records, and resending
+            // one can undo a person's cancel or delete (protocol reference §9.3).
+            // Refused before any Tally request; checked again as the intent is
+            // written, under the exclusive lock.
+            let remote_id = mint_remote_id();
+            let recorded = {
+                let _lock = self.lock_import_admission_shared()?;
+                self.import_remote_id_recorded_while_admitted(remote_id)?
+            };
+            if recorded {
+                return Err("import_remote_id_reused".to_string().into());
+            }
             let preview = admit_fresh_saved_voucher(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
@@ -274,7 +286,7 @@ impl Server {
             };
             let voucher_date = bridge_tally_core::TallyDate::parse(line.vouchers[0].date.clone())
                 .map_err(|_| "voucher_date_invalid".to_string())?;
-            let native = native_post_request(&line, Uuid::new_v4())?;
+            let native = native_post_request(&line, remote_id)?;
             let xml = native.xml.clone();
             let verification_request = crate::tally::agent_read_request::AgentReadRequest::parse(
                 render_import_verification_read(
@@ -417,6 +429,9 @@ impl Server {
                             .ok_or_else(|| "import_batch_not_found".to_string())?;
                         if current.dispatched {
                             return Err("import_already_attempted".into());
+                        }
+                        if self.import_remote_id_recorded_while_admitted(native.remote_id)? {
+                            return Err("import_remote_id_reused".into());
                         }
                         if current.batch.sha256 != line.sha256
                             || current.batch.endpoint_origin != line.endpoint_origin
@@ -1108,6 +1123,22 @@ fn name_refused_currencies(payload: &mut Value, currencies: &[String]) {
              into multi-currency books yet. Nothing was posted."
         ));
     }
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Test-only: the REMOTEID a post mints, so a test can make it one the
+    /// journal already records.
+    pub(super) static SCRIPTED_REMOTE_ID: Uuid;
+}
+
+/// A fresh random REMOTEID for one native post.
+fn mint_remote_id() -> Uuid {
+    #[cfg(test)]
+    if let Ok(scripted) = SCRIPTED_REMOTE_ID.try_with(|id| *id) {
+        return scripted;
+    }
+    Uuid::new_v4()
 }
 
 /// One native post: the request bytes, their wire digest, and the fresh

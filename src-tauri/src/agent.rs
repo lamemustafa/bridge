@@ -75,6 +75,9 @@ use read_profiles::*;
 #[path = "agent_voucher_window.rs"]
 mod voucher_window;
 use voucher_window::*;
+#[path = "agent_voucher_type_class.rs"]
+mod voucher_type_class;
+use voucher_type_class::*;
 #[path = "agent_movement_math.rs"]
 mod movement_math;
 use movement_math::*;
@@ -397,10 +400,53 @@ struct ToolFailure {
     /// What each request of a window read cost up to its failure (#595), when
     /// the failure came out of one. Data-free.
     window_timings: Option<Box<WindowReadTimings>>,
+    /// The count and estimate a read was refused on before it was sent (#637).
+    /// Numbers only; boxed to keep the refusal small on every other path.
+    read_size: Option<Box<ReadSize>>,
     /// Set when no response reached Tally-protocol parsing (#629). The refusal
     /// then names the configured endpoint, so a wrong or reset port is visible
     /// instead of reading as a Tally data problem.
     unanswered: Option<Unanswered>,
+    /// The voucher types a type-filter refusal is about, so a caller can pick
+    /// one (bridge#625, bridge#664). Boxed to keep the refusal small on every
+    /// other path.
+    candidates: Option<Box<Candidates>>,
+}
+
+/// The types a refusal offers instead, and the name the caller asked for when
+/// that name matched none (bridge#664).
+#[derive(Debug)]
+struct Candidates {
+    requested: Option<String>,
+    items: Vec<Value>,
+}
+
+/// A compliance read refused on its size before the master request was sent:
+/// the counted ledgers, the estimated response and the budget it exceeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReadSize {
+    master_alter_id: u64,
+    estimated_bytes: u64,
+    budget_bytes: u64,
+}
+
+fn read_size_refusal(error: &anyhow::Error) -> Option<ReadSize> {
+    error.chain().find_map(|cause| {
+        match cause
+            .downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()?
+        {
+            crate::tally::connection::PartyLedgerMasterSourceValidationError::TooLarge {
+                master_alter_id,
+                estimated_bytes,
+                budget_bytes,
+            } => Some(ReadSize {
+                master_alter_id: *master_alter_id,
+                estimated_bytes: *estimated_bytes,
+                budget_bytes: *budget_bytes,
+            }),
+            _ => None,
+        }
+    })
 }
 
 /// Why a refused request produced no response Bridge could read, as a typed,
@@ -474,7 +520,9 @@ impl From<String> for ToolFailure {
             cause: None,
             counts: None,
             window_timings: None,
+            read_size: None,
             unanswered: None,
+            candidates: None,
         }
     }
 }
@@ -533,6 +581,17 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              mark and Bridge has no \"before\" to attribute an import against. Record one \
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
+        ),
+        // A cause, reached through the shared `party_ledger_master_read_failed`.
+        "ledger_masters_too_large" => Some(
+            "The company's master-alteration mark (`size.master_alter_id`) puts the estimated \
+             compliance response over Bridge's budget, so no ledger request was sent: a read \
+             of that size has left Tally's gateway unable to answer (#637). The mark is an \
+             UPPER BOUND on ledgers, since stock items, units and every other master raise it \
+             too, so a company with fewer ledgers may be refused. Call ledger_masters with \
+             fields=basic, which returns names, parents and opening balances without the \
+             compliance fields. Retrying this call refuses again. A `group` filter does not \
+             narrow the request, and a precise ledger count is pending (#668).",
         ),
         // Narration, reference and voucher number share this code for several
         // unrelated text failures (empty, over the schema's character cap, a
@@ -708,7 +767,9 @@ impl ToolFailure {
             cause,
             counts: None,
             window_timings: None,
+            read_size: read_size_refusal(&error).map(Box::new),
             unanswered: unanswered_cause(&error),
+            candidates: None,
         }
     }
 
@@ -817,7 +878,9 @@ impl Server {
                 cause,
                 counts,
                 window_timings,
+                read_size,
                 unanswered,
+                candidates,
             }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
@@ -842,7 +905,12 @@ impl Server {
                 // these ~250 extra bytes could cost the caller the one thing it
                 // most needs, leaving it worse off than before this field existed.
                 // Guidance is a convenience; the refusal code is not.
-                if let Some(remediation) = refusal_remediation(&code) {
+                // A shared operation code can still have a cause with its own
+                // next step (#637), so the cause is consulted when the code has
+                // none.
+                if let Some(remediation) =
+                    refusal_remediation(&code).or_else(|| cause.and_then(refusal_remediation))
+                {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["remediation"] = json!(remediation);
                     }
@@ -862,6 +930,15 @@ impl Server {
                         error["cause"] = json!(cause);
                     }
                 }
+                if let Some(size) = read_size {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["size"] = json!({
+                            "master_alter_id": size.master_alter_id,
+                            "estimated_bytes": size.estimated_bytes,
+                            "budget_bytes": size.budget_bytes,
+                        });
+                    }
+                }
                 // #629: the endpoint that was tried, so a wrong or reset port
                 // is visible. Only in the refusal payload, never in evidence,
                 // and under the same budget rule as the cause.
@@ -870,6 +947,21 @@ impl Server {
                 {
                     if let Ok(endpoint) = endpoint_origin(&self.settings.endpoint) {
                         error["endpoint"] = json!(endpoint);
+                    }
+                }
+                // The list grows with the window, so it is kept only within a
+                // quarter of the response budget, like `window` below: the
+                // refusal code must survive the byte cap.
+                if let Some(candidates) = candidates {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        if let Some(requested) = &candidates.requested {
+                            error["requested"] = json!(requested);
+                        }
+                        let fields =
+                            candidate_fields(&candidates.items, self.settings.max_bytes / 4);
+                        for (key, value) in fields {
+                            error[key] = value;
+                        }
                     }
                 }
                 if let Some(counts) = counts {
@@ -1462,6 +1554,25 @@ fn add_decimal(left: &str, right: &str) -> Result<String, String> {
     left.checked_add(&right)
         .map(|value| value.as_str().to_string())
         .map_err(|_| "voucher_amount_invalid".to_string())
+}
+
+/// A refusal's `candidates`: the longest prefix whose serialised size fits
+/// `budget`, the full count, and whether any were left out.
+fn candidate_fields(candidates: &[Value], budget: usize) -> [(&'static str, Value); 3] {
+    let mut used = 0;
+    let kept = candidates
+        .iter()
+        .take_while(|candidate| {
+            used += candidate.to_string().len();
+            used <= budget
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    [
+        ("candidates_total", json!(candidates.len())),
+        ("candidates_truncated", json!(kept.len() < candidates.len())),
+        ("candidates", json!(kept)),
+    ]
 }
 
 fn redact_tool_response(tool: &str, value: Value, redaction: Redaction) -> Value {

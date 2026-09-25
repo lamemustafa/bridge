@@ -863,6 +863,107 @@ mod through_the_tool {
         plans
     }
 
+    // -- #637: the compliance read is sized before its master request -------
+
+    /// The captured extents with only this company's master mark (`ALTMSTID`)
+    /// changed. The same text serves every extent read of the call, so the
+    /// brackets stay equal unless a test changes the closing one.
+    fn extent_with_master_mark(mark: u64) -> String {
+        let extent = include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        );
+        let at = extent.find(GUID).expect("the captured company's extent");
+        let start = extent[..at].rfind("<COMPANY ").unwrap();
+        let end = at + extent[at..].find("</COMPANY>").unwrap();
+        let from = "<ALTMSTID TYPE=\"Number\"> 219</ALTMSTID>";
+        assert_eq!(extent[start..end].matches(from).count(), 1);
+        format!(
+            "{}{}{}",
+            &extent[..start],
+            extent[start..end].replace(
+                from,
+                &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")
+            ),
+            &extent[end..]
+        )
+    }
+
+    /// The compliance sequence on a book whose master mark is `mark`, with the
+    /// source reads in the order given. `closing` is the source's closing
+    /// extent; `None` ends the replay after the reads, for a refusal that sends
+    /// nothing more.
+    fn marked_compliance_plans(
+        mark: u64,
+        reads: Vec<String>,
+        closing: Option<String>,
+    ) -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(extent_with_master_mark(mark));
+        let currency = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )));
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, extent.clone());
+        pair(&mut plans, currency);
+        pair(&mut plans, extent.clone());
+        plans.push(company.clone());
+        plans.extend([status(), company.clone(), company.clone()]);
+        pair(&mut plans, extent);
+        for source in reads {
+            pair(&mut plans, xml(source));
+        }
+        if let Some(closing) = closing {
+            pair(&mut plans, xml(closing));
+            plans.extend([company.clone(), status(), company]);
+        }
+        plans
+    }
+
+    /// A master mark whose estimate is over the budget refuses right after the
+    /// source's opening extent: no ledger, balance or group request is sent,
+    /// and the refusal names the mark as an upper bound, not a ledger count.
+    #[tokio::test]
+    async fn a_book_whose_master_mark_is_over_the_bound_is_refused_before_any_ledger_read() {
+        let plans = marked_compliance_plans(5_000, Vec::new(), None);
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        assert_eq!(requests, total, "nothing is sent after the opening extent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert_eq!(error["cause"], "ledger_masters_too_large");
+        assert_eq!(
+            error["size"],
+            json!({"master_alter_id": 5_000, "estimated_bytes": 18_750_000, "budget_bytes": 16_000_000})
+        );
+        let remediation = error["remediation"].as_str().unwrap();
+        assert!(remediation.contains("UPPER BOUND"), "{error}");
+        assert!(remediation.contains("fields=basic"), "{error}");
+    }
+
+    /// A mark exactly at the bound is admitted and read as it was before #637:
+    /// the same three reads in the same order, and the same rows.
+    #[tokio::test]
+    async fn a_book_whose_master_mark_is_at_the_bound_reads_as_before() {
+        let mark = 16_000_000 / 3_750;
+        let plans = marked_compliance_plans(
+            mark,
+            vec![masters(), balances(), groups()],
+            Some(extent_with_master_mark(mark)),
+        );
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        assert_eq!(requests, total);
+        let (unsized_response, _) = call(
+            compliance_plans(masters(), balances()),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        assert_eq!(items(&response), items(&unsized_response));
+    }
+
     /// The whole successful `fields=basic` sequence: identity, then the runtime's boundary
     /// probe, the extent-bracketed BOOKSFROM-pinned ledger export and the closing checks.
     fn basic_plans() -> Vec<ScenarioPlan> {
@@ -1311,7 +1412,7 @@ mod through_the_tool {
             plans.push(xml(companies()));
             pair(&mut plans, xml(extent_with_master_mark(mark)));
             plans.push(xml(
-                gone.replace(GUID, "00000000-0000-0000-0000-000000000000"),
+                gone.replace(GUID, "00000000-0000-0000-0000-000000000000")
             ));
             let total = plans.len();
             let one = OneServer::spawn(plans);

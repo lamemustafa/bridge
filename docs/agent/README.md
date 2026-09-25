@@ -88,6 +88,12 @@ A read whose two paired halves differ, because the book changed while Bridge was
 carries `native_report_pair_changed`. A voucher-window part that is not admitted
 (`voucher_window_part_not_admitted`) names why, and a census disagreement also carries
 `counts`, the rows the part `returned` against the rows the census `counted`.
+A compliance ledger read (`ledger_masters fields=compliance`) that its company's master-alteration
+mark cannot bound within Bridge's response budget is refused before any ledger request (#637). The
+refusal has cause `ledger_masters_too_large` and a `size` object: `master_alter_id`,
+`estimated_bytes` and `budget_bytes`. The mark is an upper bound on ledgers, since every master
+raises it, so a company with fewer ledgers may be refused. `fields=basic` still reads it, and a
+precise count is pending (#668).
 When Bridge got no response it could read, the `cause` names why and the error also carries
 `endpoint`, the configured origin that was tried (#629). The causes are:
 - `endpoint_invalid`: the configured endpoint failed validation. The `endpoint` field then appears only
@@ -105,7 +111,7 @@ failed read without `endpoint` either received a response whose body then failed
 parse or pass Bridge's checks, or hit a local limit or fault that does not involve the endpoint. A
 withdrawn call is `request_cancelled`.
 
-Like `remediation`, `cause`, `counts` and `endpoint` are omitted when `BRIDGE_AGENT_MAX_BYTES` is below
+Like `remediation`, `cause`, `counts`, `size` and `endpoint` are omitted when `BRIDGE_AGENT_MAX_BYTES` is below
 4,096, so that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
 After `write_all` and `flush` succeed, it appends a `stdio_write_completed` record
@@ -444,6 +450,9 @@ approval. If dispatch has already begun, cancellation cannot undo Tally's
 work. A timeout, crash, malformed response or incomplete readback requires
 `verify_import` on the **same original batch**. Once dispatch intent exists,
 `post_import` only reconciles and never resends, including after process restart.
+Each post sends a fresh `REMOTEID`, and one that any recorded dispatch intent
+already carries is refused as `import_remote_id_reused` before any Tally request
+(protocol reference §9.3: a resend can undo a person's cancel or delete).
 If another process holds import admission, the call returns `import_admission_busy`
 without waiting for that process or scheduling a later post. Reconcile any
 recorded attempt before requesting another action. Confirmation requires all seven

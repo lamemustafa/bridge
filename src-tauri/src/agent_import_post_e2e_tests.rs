@@ -1,6 +1,7 @@
 //! bridge#583: the native post driven end to end through the `post_import`
 //! tool call against the protocol simulator, the approval answered by the
 //! test-only seam (`approved_import::test_seam`). No real Tally is involved.
+use super::SCRIPTED_REMOTE_ID;
 use super::*;
 use crate::tally::approved_import::test_seam::{ScriptedApproval, SCRIPTED_APPROVAL};
 use bridge_tally_transport::TallyEndpointConfig;
@@ -356,6 +357,137 @@ async fn an_unscripted_approval_declines_and_nothing_is_sent_or_journaled() {
     );
 }
 
+/// Another batch, already dispatched with `remote_id`, in the journal.
+fn journal_an_earlier_intent(server: &Server, line: &ImportLedgerLine, remote_id: Uuid) {
+    let mut earlier = line.clone();
+    earlier.batch_id = "bridge-00000000-0000-4000-8000-000000000584".into();
+    server.append_import_ledger(&earlier).unwrap();
+    let _lock = server.lock_import_admission().unwrap();
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
+            &earlier,
+            "c".repeat(64),
+            remote_id,
+        ))
+        .unwrap();
+}
+
+/// A REMOTEID the journal already records is never sent again, since a resend
+/// undoes a person's cancel or delete (protocol reference §9.3). The post is
+/// refused from the journal alone: no Tally request, nothing appended.
+#[tokio::test]
+async fn a_remoteid_the_journal_records_is_refused_before_any_tally_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch(&server);
+    let reused = Uuid::new_v4();
+    journal_an_earlier_intent(&server, &line, reused);
+    let before = journal(directory.path());
+    let response = SCRIPTED_REMOTE_ID
+        .scope(
+            reused,
+            SCRIPTED_APPROVAL.scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            ),
+        )
+        .await;
+    let observed = sent(simulator);
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "import_remote_id_reused",
+        "{response}"
+    );
+    assert_eq!(observed.len(), 0);
+    assert_eq!(journal(directory.path()), before);
+}
+
+/// While the dialog is open, another process journals an intent carrying
+/// `injected`; this post mints `minted`. Returns the response, the requests
+/// Tally received, where the POST would be, and the batches with an intent.
+async fn race_an_intent_during_approval(
+    injected: Uuid,
+    minted: Uuid,
+) -> (Value, usize, usize, Vec<String>) {
+    let mut plans = before_approval();
+    let post_at = plans.len() + after_approval(xml(created_one())).len() - 1;
+    plans.extend(after_approval(xml(created_one())));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch(&server);
+    let mut earlier = line.clone();
+    earlier.batch_id = "bridge-00000000-0000-4000-8000-000000000585".into();
+    let mut appended = serde_json::to_vec(&earlier).unwrap();
+    appended.push(b'\n');
+    appended.extend(
+        serde_json::to_vec(&ledger::StatusRecord::dispatch_native(
+            &earlier,
+            "c".repeat(64),
+            injected,
+        ))
+        .unwrap(),
+    );
+    appended.push(b'\n');
+    let path = directory.path().join("agent-import-ledger.jsonl");
+    let scripted = ScriptedApproval::approving_after(move || {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&appended)
+            .unwrap();
+    });
+    let response = SCRIPTED_REMOTE_ID
+        .scope(
+            minted,
+            SCRIPTED_APPROVAL.scope(scripted, server.call_tool("post_import", args)),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    let intents = String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .lines()
+        .map(|record| serde_json::from_str::<Value>(record).unwrap())
+        .filter(|record| record["record_type"] == "dispatch_intent")
+        .map(|record| record["batch_id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    (response, observed, post_at, intents)
+}
+
+/// The same REMOTEID recorded by another process while the dialog is open is
+/// caught as the intent is written: no intent for this batch, and no POST. The
+/// control, an injected intent with another REMOTEID, posts: so the match is
+/// what stopped the first.
+#[tokio::test]
+async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
+    let raced = Uuid::new_v4();
+    let (response, observed, post_at, intents) = race_an_intent_during_approval(raced, raced).await;
+    // A refusal inside the queue still reads as an unknown outcome (#656),
+    // though nothing was sent: the journal and the request count show that.
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
+        "{response}"
+    );
+    assert_eq!(observed, post_at, "{response}");
+    assert_eq!(intents, ["bridge-00000000-0000-4000-8000-000000000585"]);
+
+    let (response, observed, post_at, intents) =
+        race_an_intent_during_approval(Uuid::new_v4(), raced).await;
+    assert!(
+        observed > post_at,
+        "the control's POST was sent: {response}"
+    );
+    assert_eq!(
+        intents,
+        [
+            "bridge-00000000-0000-4000-8000-000000000585",
+            "bridge-00000000-0000-4000-8000-000000000583"
+        ]
+    );
+}
+
 /// Approved, the post sends exactly the request its dispatch intent recorded:
 /// the POST's body hashes to the journal's `native_request_sha256`, and the
 /// code's own renderer, given the journal's `native_remote_id`, produces those
@@ -412,6 +544,61 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
         scripted.previews(),
         [admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap()]
     );
+}
+
+/// #632: an amendment is never posted natively, and this refusal is what
+/// keeps the amendment compare-and-swap a build-time check. That check admits
+/// a voucher whose ALTERID equals the verified baseline of *any* build in its
+/// lineage, which is sound only against the read it has just made. If this
+/// test ever has to change because amendments are posted, the post-time check
+/// must bind the exact (GUID, MASTERID, ALTERID) the approval showed, never
+/// reuse that match (see #632 for the design). Refused through the tool, under
+/// an approving script: no Tally request, no approval asked, no attempt.
+#[tokio::test]
+async fn post_import_refuses_an_amendment_before_any_read_or_approval() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (original, _) = saved_batch(&server);
+    let mut amendment = original.clone();
+    amendment.batch_id = "bridge-00000000-0000-4000-8000-000000000632".into();
+    amendment.amends_batch_id = Some(original.batch_id.clone());
+    amendment.vouchers[0].entries[0].amount = "13.50".into();
+    amendment.vouchers[0].entries[1].amount = "13.50".into();
+    let rendered = render_import_xml(
+        "WR2 Unicode Lab",
+        &amendment.vouchers,
+        amendment.identity_batch_id(),
+    );
+    amendment.sha256 = sha256_hex(rendered.as_bytes());
+    server.append_import_ledger(&amendment).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", amendment.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            scripted.clone(),
+            server.call_tool(
+                "post_import",
+                json!({"company_guid":GUID,"batch_id":amendment.batch_id}),
+            ),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_post_amendment_requires_file_import",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(observed.is_empty(), "no Tally request: {response}");
+    assert!(scripted.previews().is_empty(), "no approval asked");
 }
 
 /// Declined, the post sends nothing past the pre-approval reads and journals
