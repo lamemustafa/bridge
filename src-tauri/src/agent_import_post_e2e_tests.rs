@@ -1,6 +1,7 @@
 //! bridge#583: the native post driven end to end through the `post_import`
 //! tool call against the protocol simulator, the approval answered by the
 //! test-only seam (`approved_import::test_seam`). No real Tally is involved.
+use super::SCRIPTED_REMOTE_ID;
 use super::*;
 use crate::tally::approved_import::test_seam::{ScriptedApproval, SCRIPTED_APPROVAL};
 use bridge_tally_transport::TallyEndpointConfig;
@@ -354,6 +355,112 @@ async fn an_unscripted_approval_declines_and_nothing_is_sent_or_journaled() {
         appended_kinds(&before, &journal(directory.path())),
         ["verification_status"]
     );
+}
+
+/// Another batch, already dispatched with `remote_id`, in the journal.
+fn journal_an_earlier_intent(server: &Server, line: &ImportLedgerLine, remote_id: Uuid) {
+    let mut earlier = line.clone();
+    earlier.batch_id = "bridge-00000000-0000-4000-8000-000000000584".into();
+    server.append_import_ledger(&earlier).unwrap();
+    let _lock = server.lock_import_admission().unwrap();
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
+            &earlier,
+            "c".repeat(64),
+            remote_id,
+        ))
+        .unwrap();
+}
+
+/// A REMOTEID the journal already records is never sent again, since a resend
+/// undoes a person's cancel or delete (protocol reference §9.3). The post is
+/// refused from the journal alone: no Tally request, nothing appended.
+#[tokio::test]
+async fn a_remoteid_the_journal_records_is_refused_before_any_tally_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch(&server);
+    let reused = Uuid::new_v4();
+    journal_an_earlier_intent(&server, &line, reused);
+    let before = journal(directory.path());
+    let response = SCRIPTED_REMOTE_ID
+        .scope(
+            reused,
+            SCRIPTED_APPROVAL.scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            ),
+        )
+        .await;
+    let observed = sent(simulator);
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "import_remote_id_reused",
+        "{response}"
+    );
+    assert_eq!(observed.len(), 0);
+    assert_eq!(journal(directory.path()), before);
+}
+
+/// The same REMOTEID recorded by another process while the dialog is open is
+/// caught as the intent is written: no intent for this batch, and no POST.
+#[tokio::test]
+async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch(&server);
+    let raced = Uuid::new_v4();
+    let mut earlier = line.clone();
+    earlier.batch_id = "bridge-00000000-0000-4000-8000-000000000585".into();
+    let mut appended = serde_json::to_vec(&earlier).unwrap();
+    appended.push(b'\n');
+    appended.extend(
+        serde_json::to_vec(&ledger::StatusRecord::dispatch_native(
+            &earlier,
+            "c".repeat(64),
+            raced,
+        ))
+        .unwrap(),
+    );
+    appended.push(b'\n');
+    let path = directory.path().join("agent-import-ledger.jsonl");
+    let scripted = ScriptedApproval::approving_after(move || {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&appended)
+            .unwrap();
+    });
+    let response = SCRIPTED_REMOTE_ID
+        .scope(
+            raced,
+            SCRIPTED_APPROVAL.scope(scripted, server.call_tool("post_import", args)),
+        )
+        .await;
+    let observed = sent(simulator);
+    // A refusal inside the queue still reads as an unknown outcome (#656),
+    // though nothing was sent: the journal and the request count show that.
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
+        "{response}"
+    );
+    assert_eq!(observed.len(), expected, "{response}");
+    let intents = String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .lines()
+        .map(|record| serde_json::from_str::<Value>(record).unwrap())
+        .filter(|record| record["record_type"] == "dispatch_intent")
+        .map(|record| record["batch_id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(intents, [earlier.batch_id.clone()]);
 }
 
 /// Approved, the post sends exactly the request its dispatch intent recorded:
