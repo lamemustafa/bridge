@@ -189,6 +189,24 @@ fn agent_voucher_profile_uses_literal_filters_and_redaction_never_reveals_party(
     .is_err());
 }
 
+/// Any redaction drops Tally's LINEERROR text, wherever it sits, and keeps
+/// the count; with none it is shown.
+#[test]
+fn any_redaction_drops_tally_line_error_text_but_keeps_the_count() {
+    let result = json!({"dispatch":{"response":{"outcome":{
+        "counters":{"line_error_count":2},
+        "tally_line_errors":[{"text":"Ledger 'Synthetic' does not exist!","truncated":false}],
+        "tally_line_errors_omitted":1
+    }}}});
+    for redaction in [Redaction::MaskParties, Redaction::DropNarration] {
+        let outcome = &redact_value(result.clone(), redaction)["dispatch"]["response"]["outcome"];
+        assert!(outcome.get("tally_line_errors").is_none(), "{outcome}");
+        assert!(outcome.get("tally_line_errors_omitted").is_none(), "{outcome}");
+        assert_eq!(outcome["counters"]["line_error_count"], 2);
+    }
+    assert_eq!(redact_value(result.clone(), Redaction::None), result);
+}
+
 #[test]
 fn voucher_company_name_is_validated_and_xml_escaped_without_a_tdl_literal() {
     let request = render_agent_vouchers("Bridge, + खर्चा", "20260901", "20260902", None)

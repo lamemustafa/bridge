@@ -65,7 +65,8 @@ pub mod xml_read_profiles;
 pub use import_outcome::{
     parse_import_evidence, parse_import_outcome, parse_import_result, ParsedImportEvidence,
     TallyImportApplicationStatus, TallyImportCounterPresence, TallyImportOutcome,
-    TallyImportResult, TallyLineError, MAX_TALLY_LINE_ERRORS, MAX_TALLY_LINE_ERROR_CHARS,
+    TallyImportResult, TallyLineError, MAX_TALLY_LINE_ERRORS, MAX_TALLY_LINE_ERROR_BYTES,
+    MAX_TALLY_LINE_ERROR_CHARS,
 };
 pub use native_ledger_collection::{
     parse_native_ledger_source_records_with_evidence,

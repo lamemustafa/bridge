@@ -2,7 +2,8 @@ use bridge_tally_protocol::{
     decode_tally_xml_response_bytes_limited, parse_import_evidence, parse_import_outcome,
     parse_import_result, parse_ledger_write_readback_with_evidence, ExpectedTallyTextEncoding,
     TallyImportApplicationStatus, TallyImportCounterPresence, TallyImportOutcome,
-    TallyImportResult, MAX_TALLY_LINE_ERRORS, MAX_TALLY_LINE_ERROR_CHARS,
+    TallyImportResult, MAX_TALLY_LINE_ERRORS, MAX_TALLY_LINE_ERROR_BYTES,
+    MAX_TALLY_LINE_ERROR_CHARS,
 };
 
 const LIVE_EDUCATION_W1_LEDGER: &str =
@@ -362,16 +363,22 @@ fn captured(bytes: &[u8]) -> String {
     .text
 }
 
-fn response_with_line_errors(texts: &[&str]) -> String {
+fn with_line_errors(texts: &[&str]) -> TallyImportOutcome {
     let line_errors: String = texts
         .iter()
         .map(|text| format!("<LINEERROR>{text}</LINEERROR>"))
         .collect();
-    format!("<RESPONSE>{line_errors}<CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>{}</EXCEPTIONS></RESPONSE>", texts.len())
+    parse_import_outcome(&format!(
+        "<RESPONSE>{line_errors}<CREATED>0</CREATED><ALTERED>0</ALTERED>\
+         <DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS>\
+         <CANCELLED>0</CANCELLED><EXCEPTIONS>{}</EXCEPTIONS></RESPONSE>",
+        texts.len()
+    ))
+    .expect("synthetic line-error response")
 }
 
-/// The captured partial commit keeps Tally's text verbatim, unescaped, and
-/// still counts as not clean for any intended create count.
+/// The captured partial commit keeps Tally's text, unescaped, and still
+/// counts as not clean for any intended create count.
 #[test]
 fn a_captured_partial_commit_keeps_tallys_line_error_text() {
     let outcome = parse_import_outcome(&captured(PARTIAL_COMMIT_LIVE)).expect("captured response");
@@ -386,28 +393,19 @@ fn a_captured_partial_commit_keeps_tallys_line_error_text() {
         "Ledger 'Lane A No Such Ledger' does not exist!"
     );
     assert!(!line_errors[0].truncated());
+    assert_eq!(outcome.tally_line_errors_omitted(), 0);
     assert!(!outcome.counters().is_clean_success_for(50, 0, 0));
     assert!(!outcome.counters().is_clean_success_for(49, 0, 0));
 }
 
-/// The text never reaches a verdict: two responses that differ only in their
-/// LINEERROR text give equal counters, and a clean-for check reads counters.
+/// Each text is clipped to 512 characters on a character boundary, at most
+/// 64 are kept, and every clip or omission is explicit.
 #[test]
-fn line_error_text_does_not_change_the_counters() {
-    let one = parse_import_outcome(&response_with_line_errors(&["first wording"])).unwrap();
-    let other = parse_import_outcome(&response_with_line_errors(&["other wording"])).unwrap();
-    assert_ne!(one.tally_line_errors(), other.tally_line_errors());
-    assert_eq!(one.counters(), other.counters());
-}
-
-/// At most 64 texts are kept, each at most 512 characters cut on a character
-/// boundary and marked; the full count stays in the counters.
-#[test]
-fn line_error_text_is_bounded_and_every_clip_is_marked() {
+fn line_error_text_is_bounded_per_entry_and_in_count() {
     let long = "\u{20b9}".repeat(MAX_TALLY_LINE_ERROR_CHARS + 1);
-    let mut texts = vec![long.as_str(); 1];
+    let mut texts = vec![long.as_str()];
     texts.extend(std::iter::repeat_n("short", MAX_TALLY_LINE_ERRORS));
-    let outcome = parse_import_outcome(&response_with_line_errors(&texts)).unwrap();
+    let outcome = with_line_errors(&texts);
     assert_eq!(
         outcome.counters().line_error_count,
         (MAX_TALLY_LINE_ERRORS + 1) as u64
@@ -418,42 +416,112 @@ fn line_error_text_is_bounded_and_every_clip_is_marked() {
     assert!(kept[0].truncated());
     assert_eq!(kept[1].text(), "short");
     assert!(!kept[1].truncated());
+    assert_eq!(outcome.tally_line_errors_omitted(), 1);
     let exact = "a".repeat(MAX_TALLY_LINE_ERROR_CHARS);
-    let fits = parse_import_outcome(&response_with_line_errors(&[exact.as_str()])).unwrap();
+    let fits = with_line_errors(&[exact.as_str()]);
     assert!(!fits.tally_line_errors()[0].truncated());
 }
 
-/// A record without the field (written before it was kept) reads as no text,
-/// and an outcome with no LINEERROR records exactly as before: no new key.
+/// The kept text never exceeds 4,096 bytes as JSON escapes it, counting a
+/// quote or a backslash as two bytes, and the entries it cannot hold are
+/// counted.
+#[test]
+fn line_error_text_is_bounded_in_escaped_bytes() {
+    let backslashes = "\\".repeat(MAX_TALLY_LINE_ERROR_CHARS);
+    let outcome = with_line_errors(&[backslashes.as_str(); 5]);
+    assert_eq!(outcome.tally_line_errors().len(), 4, "a backslash escapes to two bytes");
+    let quotes = "&quot;".repeat(MAX_TALLY_LINE_ERROR_CHARS);
+    let outcome = with_line_errors(&[quotes.as_str(); 10]);
+    let kept = outcome.tally_line_errors();
+    assert_eq!(kept.len(), 4, "four texts of 1,024 escaped bytes fill 4,096");
+    assert_eq!(outcome.tally_line_errors_omitted(), 6);
+    assert_eq!(serde_json::to_value(&outcome).unwrap()["tally_line_errors_omitted"], 6);
+    let escaped = serde_json::to_string(kept).unwrap();
+    assert!(escaped.len() <= MAX_TALLY_LINE_ERROR_BYTES + 64 * kept.len(), "{}", escaped.len());
+}
+
+/// Control, format, separator, private-use and unassigned characters are
+/// replaced, so the text cannot reorder, hide or break what a person reads,
+/// nor grow six-fold when escaped. U+0600 is format but not ignorable, and
+/// U+115F ignorable but not format, so each check is needed on its own.
+#[test]
+fn control_and_format_characters_are_replaced() {
+    let outcome = with_line_errors(&[
+        "a&#1;b\u{202e}c\u{200b}d\u{2066}e\u{0600}f\u{115f}g\u{2028}h\u{2029}i\u{e000}j\u{0378}k",
+    ]);
+    assert_eq!(
+        outcome.tally_line_errors()[0].text(),
+        "a\u{fffd}b\u{fffd}c\u{fffd}d\u{fffd}e\u{fffd}f\u{fffd}g\u{fffd}h\u{fffd}i\u{fffd}j\u{fffd}k"
+    );
+}
+
+/// An empty LINEERROR is kept as an empty text, so the kept list stays in
+/// step with the elements Tally sent.
+#[test]
+fn an_empty_line_error_is_kept_as_empty_text() {
+    let outcome = with_line_errors(&["", "second"]);
+    let texts: Vec<_> = outcome.tally_line_errors().iter().map(|e| e.text()).collect();
+    assert_eq!(texts, ["", "second"]);
+}
+
+/// Two responses that differ only in their text give equal counters.
+#[test]
+fn line_error_text_does_not_change_the_counters() {
+    let one = with_line_errors(&["first wording"]);
+    let other = with_line_errors(&["other wording"]);
+    assert_ne!(one.tally_line_errors(), other.tally_line_errors());
+    assert_eq!(one.counters(), other.counters());
+}
+
+/// A record without the field reads as no text, and an outcome with no
+/// LINEERROR records exactly as before: neither new key appears.
 #[test]
 fn line_error_text_is_absent_from_old_and_clean_records() {
     let clean = parse_import_outcome("<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>").unwrap();
     let stored = serde_json::to_value(&clean).unwrap();
     assert!(stored.get("tally_line_errors").is_none(), "{stored}");
+    assert!(stored.get("tally_line_errors_omitted").is_none(), "{stored}");
     let reread: TallyImportOutcome = serde_json::from_value(stored).unwrap();
-    assert!(reread.tally_line_errors().is_empty());
     assert_eq!(reread, clean);
+    // A record written before the text was kept counts its LINEERROR as
+    // omitted.
+    let mut old = serde_json::to_value(with_line_errors(&["x"])).unwrap();
+    old.as_object_mut().unwrap().remove("tally_line_errors");
+    let reread: TallyImportOutcome = serde_json::from_value(old).unwrap();
+    assert!(reread.tally_line_errors().is_empty());
+    assert_eq!(reread.tally_line_errors_omitted(), 1);
 }
 
-/// A stored record is clipped again on read, and a clip made on read is
-/// marked, so an over-long or over-many record never passes as verbatim.
+/// A stored record is bounded again on read: an over-long text is clipped
+/// and marked, the list never exceeds the record's own count, and a
+/// malformed list reads as none kept instead of failing the record.
 #[test]
-fn a_stored_record_is_clipped_again_on_read_and_marked() {
-    let rejected = parse_import_outcome(&response_with_line_errors(&["x"])).unwrap();
-    let mut stored = serde_json::to_value(&rejected).unwrap();
+fn a_stored_record_is_bounded_again_on_read_and_never_fails_over_text() {
+    let stored = serde_json::to_value(with_line_errors(&["x", "y"])).unwrap();
+    let reread = |line_errors: serde_json::Value| {
+        let mut record = stored.clone();
+        record["tally_line_errors"] = line_errors;
+        serde_json::from_value::<TallyImportOutcome>(record).expect("display text never fails a record")
+    };
     let long = "y".repeat(MAX_TALLY_LINE_ERROR_CHARS + 7);
-    stored["tally_line_errors"] = serde_json::Value::Array(
-        std::iter::once(serde_json::json!({"text": long, "truncated": false}))
-            .chain(std::iter::repeat_n(
-                serde_json::json!({"text": "z", "truncated": false}),
-                MAX_TALLY_LINE_ERRORS + 3,
-            ))
-            .collect(),
-    );
-    let reread: TallyImportOutcome = serde_json::from_value(stored).unwrap();
-    let kept = reread.tally_line_errors();
-    assert_eq!(kept.len(), MAX_TALLY_LINE_ERRORS);
+    let clipped = reread(serde_json::json!([
+        {"text": long, "truncated": false},
+        {"text": "z\u{202e}", "truncated": false},
+        {"text": "beyond the count", "truncated": false}
+    ]));
+    let kept = clipped.tally_line_errors();
+    assert_eq!(kept.len(), 2, "never more than line_error_count");
     assert_eq!(kept[0].text().chars().count(), MAX_TALLY_LINE_ERROR_CHARS);
     assert!(kept[0].truncated());
+    assert_eq!(kept[1].text(), "z\u{fffd}");
     assert!(!kept[1].truncated());
+    for malformed in [
+        serde_json::Value::Null,
+        serde_json::json!("text"),
+        serde_json::json!([{"no_text": 1}]),
+    ] {
+        let reread = reread(malformed);
+        assert!(reread.tally_line_errors().is_empty());
+        assert_eq!(reread.tally_line_errors_omitted(), 2);
+    }
 }

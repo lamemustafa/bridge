@@ -907,10 +907,12 @@ impl Server {
 
     /// The parts of a page that are never cut must fit on their own: the byte
     /// cap may shorten only the verified rows, so otherwise the refusal is
-    /// typed here rather than lost as a generic oversize.
+    /// typed here rather than lost as a generic oversize. Tally's LINEERROR
+    /// text is not essential: the cap drops it first, so it is not counted.
     fn admit_verification_page(&self, page: &Value) -> Result<(), ToolFailure> {
         let mut essential = page.clone();
         essential["items"] = json!([]);
+        super::drop_tally_line_error_text(&mut essential);
         if essential.to_string().len() > self.settings.max_bytes {
             return Err("verification_too_large_to_report".to_string().into());
         }

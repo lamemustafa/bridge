@@ -103,6 +103,36 @@ fn retain_page_width(response: &mut Value, shape: PageShape, width: usize) -> Re
 // discarded row. Each candidate retains at least one row on every active axis.
 // The caller measures the actual outer envelope, including duplicated text and
 // the wire newline, so escaping and final framing remain part of the byte cap.
+/// Removes every `tally_line_errors` list below `value`, adding its length
+/// to the sibling `tally_line_errors_omitted`, and says whether any was
+/// there. Tally's LINEERROR text is for reading only, so a result over its
+/// cap loses it before anything else, and it is never why a result is paged
+/// or refused. A value without the key is left untouched.
+pub(super) fn drop_tally_line_error_text(value: &mut Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            let mut dropped = false;
+            if let Some(removed) = fields.remove("tally_line_errors") {
+                let omitted = fields
+                    .get("tally_line_errors_omitted")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    .saturating_add(removed.as_array().map_or(0, Vec::len) as u64);
+                fields.insert("tally_line_errors_omitted".into(), json!(omitted));
+                dropped = true;
+            }
+            for field in fields.values_mut() {
+                dropped |= drop_tally_line_error_text(field);
+            }
+            dropped
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .fold(false, |dropped, item| drop_tally_line_error_text(item) || dropped),
+        _ => false,
+    }
+}
+
 fn fit_response(
     response: &mut Value,
     structured_path: &str,
@@ -111,6 +141,15 @@ fn fit_response(
 ) -> Result<bool, String> {
     if encoded_len(response) <= max_bytes {
         return Ok(false);
+    }
+    // Tally's LINEERROR text goes first, and only when present: a result it
+    // alone pushed over the cap comes back whole, without the text.
+    let mut without_text = response.clone();
+    if drop_tally_line_error_text(&mut without_text) {
+        *response = without_text;
+        if encoded_len(response) <= max_bytes {
+            return Ok(false);
+        }
     }
     let (shape, width) = response
         .pointer(structured_path)

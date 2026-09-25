@@ -226,3 +226,69 @@ fn offset_row_pages_still_advance_after_byte_trimming() {
         assert!(page.to_string().len() <= 500);
     }
 }
+
+fn post_result_with_line_errors(texts: usize) -> Value {
+    json!({"jsonrpc":"2.0","id":1,"result":{
+        "content":[{"type":"text","text":""}], "isError":false,
+        "structuredContent":{"result":{"dispatch":{"state":"reconciliation_required",
+            "response":{"outcome":{
+                "counters":{"line_error_count":texts + 1},
+                "tally_line_errors":(0..texts)
+                    .map(|_| json!({"text":"x".repeat(400),"truncated":false}))
+                    .collect::<Vec<_>>(),
+                "tally_line_errors_omitted":1
+            }}}}}
+    }})
+}
+
+/// Tally's LINEERROR text is cut first: a result that is over its cap only
+/// because of the text comes back whole without it, the omission counted,
+/// and is never refused. The same result without the text is unchanged.
+#[test]
+fn line_error_text_is_cut_before_a_result_is_refused() {
+    let mut framed = post_result_with_line_errors(4);
+    let mut bare = framed.clone();
+    assert!(drop_tally_line_error_text(&mut bare));
+    let cap = {
+        let mut sized = bare.clone();
+        set_mcp_content_json(&mut sized["result"]);
+        sized.to_string().len() + 1
+    };
+    enforce_jsonrpc_response_byte_cap(&mut framed, cap).expect("fits without the text");
+    let outcome = &framed["result"]["structuredContent"]["result"]["dispatch"]["response"]["outcome"];
+    assert!(outcome.get("tally_line_errors").is_none(), "{outcome}");
+    assert_eq!(outcome["tally_line_errors_omitted"], 5);
+    assert_eq!(
+        framed["result"]["structuredContent"],
+        bare["result"]["structuredContent"]
+    );
+    // Under a cap the result cannot meet even without the text, it is refused
+    // exactly as a result that never had any.
+    let mut still_too_large = post_result_with_line_errors(4);
+    assert_eq!(
+        enforce_jsonrpc_response_byte_cap(&mut still_too_large, 200).unwrap_err(),
+        "agent_response_too_large"
+    );
+}
+
+/// The new step acts only where the key is present: a value without it is
+/// left byte-identical and reported as untouched, so every other tool's
+/// result goes through the cap exactly as before.
+#[test]
+fn a_result_without_line_error_text_is_untouched_by_the_text_step() {
+    for value in [
+        json!({"result":{"items":[{"id":1}],"tally_line_errors_omitted":3,"line_errors":["kept"]}}),
+        json!([{"outcome":{"line_error_count":1}}, "tally_line_errors", 7]),
+        json!("tally_line_errors"),
+    ] {
+        let before = value.to_string();
+        let mut after = value.clone();
+        assert!(!drop_tally_line_error_text(&mut after));
+        assert_eq!(after.to_string(), before);
+    }
+    // And a paged result without it is paged with no trace of the step.
+    let mut response = json!({"result":{"offset":0,"items":
+        (0..10_000).map(|id| json!({"id":id,"padding":"x".repeat(64)})).collect::<Vec<_>>()}});
+    assert!(fit_response(&mut response, "", 512, |value| value.to_string().len()).unwrap());
+    assert!(response["result"].get("tally_line_errors_omitted").is_none());
+}

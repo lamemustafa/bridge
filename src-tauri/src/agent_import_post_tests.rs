@@ -574,10 +574,11 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
 
 /// Tally's LINEERROR text rides in the response for a person to read and
 /// changes no verdict: each finalizer gives the same state, response state
-/// and error with the text as without it, for a clean response and for the
-/// captured partial commit.
+/// and error with the text as without it, for the captured partial commit
+/// and for a hostile response past every bound. A clean response cannot carry
+/// text at all, because a record never keeps more texts than its count.
 #[test]
-fn line_error_text_changes_no_dispatch_verdict() {
+fn line_error_text_changes_no_dispatch_verdict_and_stays_small() {
     let bytes = include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/import_line_error_partial_commit_live.utf16le.xml"
     );
@@ -589,15 +590,23 @@ fn line_error_text_changes_no_dispatch_verdict() {
     )
     .expect("captured BOM-less UTF-16LE import response")
     .text;
-    let partial = ledger::DispatchResponse {
-        outcome: Some(bridge_tally_protocol::parse_import_outcome(&xml).unwrap()),
+    let with_outcome = |xml: &str| ledger::DispatchResponse {
+        outcome: Some(bridge_tally_protocol::parse_import_outcome(xml).unwrap()),
         ..dispatch_response("success", 0, 0)
     };
-    let mut clean_with_text = serde_json::to_value(dispatch_response("success", 1, 0)).unwrap();
-    clean_with_text["outcome"]["tally_line_errors"] =
-        json!([{"text": "synthetic wording", "truncated": false}]);
-    let clean_with_text: ledger::DispatchResponse =
-        serde_json::from_value(clean_with_text).unwrap();
+    let partial = with_outcome(&xml);
+    // A hostile response: more entries than are kept, each longer than is
+    // kept, all of it control characters. Each becomes a three-byte U+FFFD,
+    // never a six-byte JSON escape, and the total stays within 4,096 bytes.
+    // That the text can never cause a refusal is pinned where the cap is
+    // enforced (agent_response_tests.rs).
+    let hostile_line_errors =
+        format!("<LINEERROR>{}&quot;</LINEERROR>", "&#1;".repeat(600)).repeat(100);
+    let hostile = with_outcome(&format!(
+        "<RESPONSE>{hostile_line_errors}<CREATED>1</CREATED><ALTERED>0</ALTERED>\
+         <DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED>\
+         <EXCEPTIONS>100</EXCEPTIONS></RESPONSE>"
+    ));
     let without_text = |response: &ledger::DispatchResponse| {
         let mut saved = serde_json::to_value(response).unwrap();
         saved["outcome"]
@@ -610,32 +619,36 @@ fn line_error_text_changes_no_dispatch_verdict() {
         |payload, response| finalize_current_dispatch(payload, response, None);
     let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) =
         |payload, response| finalize_previous_attempt_reconciliation(payload, response, None);
-    for (response, expected_current, expected_previous) in [
-        (&partial, "reconciliation_required", "reconciliation_required"),
-        (&clean_with_text, "posted_verified", "previous_attempt_reconciled"),
-    ] {
-        assert!(!response.outcome.as_ref().unwrap().tally_line_errors().is_empty());
+    for response in [&partial, &hostile] {
+        let kept = response.outcome.as_ref().unwrap().tally_line_errors();
+        assert!(!kept.is_empty());
         let stripped = without_text(response);
         assert!(stripped.outcome.as_ref().unwrap().tally_line_errors().is_empty());
-        for (finalize, expected) in [(current, expected_current), (previous, expected_previous)] {
+        for finalize in [current, previous] {
             let verdict = |response: &ledger::DispatchResponse| {
                 let mut payload =
                     json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
                 finalize(&mut payload, Some(response));
-                (
-                    payload["result"]["dispatch"]["state"].clone(),
-                    payload["result"]["dispatch"]["response_state"].clone(),
-                    payload["result"]["error"].clone(),
-                    payload["result"]["dispatch"]["response"]["outcome"]["tally_line_errors"]
-                        .clone(),
-                )
+                payload
             };
-            let (state, response_state, error, shown) = verdict(response);
-            let (bare_state, bare_response_state, bare_error, _) = verdict(&stripped);
-            assert_eq!((&state, &response_state, &error), (&bare_state, &bare_response_state, &bare_error));
-            assert_eq!(state, expected);
-            // The text is shown to the caller, verbatim.
-            assert_eq!(shown, serde_json::to_value(response.outcome.as_ref().unwrap().tally_line_errors()).unwrap());
+            let shown = verdict(response);
+            let bare = verdict(&stripped);
+            for key in ["state", "response_state"] {
+                assert_eq!(shown["result"]["dispatch"][key], bare["result"]["dispatch"][key]);
+            }
+            assert_eq!(shown["result"]["error"], bare["result"]["error"]);
+            assert_eq!(
+                shown["result"]["dispatch"]["state"],
+                "reconciliation_required"
+            );
+            // The text is shown to the caller as kept, and the whole dispatch
+            // report stays far under the default 200,000-byte response cap.
+            assert_eq!(
+                shown["result"]["dispatch"]["response"]["outcome"]["tally_line_errors"],
+                serde_json::to_value(kept).unwrap()
+            );
+            let size = shown["result"]["dispatch"].to_string().len();
+            assert!(size < 8 * 1024, "{size}");
         }
     }
 }

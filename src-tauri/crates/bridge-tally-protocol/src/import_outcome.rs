@@ -68,48 +68,67 @@ pub enum TallyImportApplicationStatus {
 pub const MAX_TALLY_LINE_ERRORS: usize = 64;
 /// At most this many characters of one `LINEERROR`'s text are kept.
 pub const MAX_TALLY_LINE_ERROR_CHARS: usize = 512;
+/// At most this many bytes of kept text, as JSON escapes it, in one
+/// outcome. This only keeps the text small: what stops it ever changing a
+/// refusal is that the agent drops it first when a result is over its cap.
+pub const MAX_TALLY_LINE_ERROR_BYTES: usize = 4_096;
 
-/// Tally's own text from one `LINEERROR`, trimmed of surrounding whitespace
-/// and clipped to `MAX_TALLY_LINE_ERROR_CHARS` on a character boundary, for a
-/// person to read. It names no voucher and is untrustworthy as a cause
-/// (IMPLEMENTATION_GUIDE, import success), so Bridge never decides on it.
-/// A record read back is clipped again, and a clip is always marked.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(from = "StoredTallyLineError")]
+/// Tally's own text from one `LINEERROR`, for a person to read. It is trimmed
+/// of surrounding whitespace, every character that could hide, reorder or
+/// break what a person reads (Unicode Cc, Cf, Zl, Zp, Co, Cn and
+/// Default_Ignorable_Code_Point) is replaced by U+FFFD, and it is
+/// clipped to `MAX_TALLY_LINE_ERROR_CHARS` on a character boundary, with
+/// `truncated` marking a clip. The text is untrusted, names no voucher and is
+/// unreliable as a cause (IMPLEMENTATION_GUIDE, import success), so Bridge
+/// never decides on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TallyLineError {
     text: String,
     truncated: bool,
 }
 
-#[derive(Deserialize)]
-struct StoredTallyLineError {
-    text: String,
-    #[serde(default)]
-    truncated: bool,
-}
-
-impl From<StoredTallyLineError> for TallyLineError {
-    fn from(stored: StoredTallyLineError) -> Self {
-        let clipped = Self::clipped(&stored.text);
-        Self {
-            truncated: stored.truncated || clipped.truncated,
-            text: clipped.text,
-        }
-    }
-}
-
 impl TallyLineError {
-    fn clipped(text: &str) -> Self {
-        match text.char_indices().nth(MAX_TALLY_LINE_ERROR_CHARS) {
-            Some((cut, _)) => Self {
-                text: text[..cut].to_owned(),
-                truncated: true,
-            },
-            None => Self {
-                text: text.to_owned(),
-                truncated: false,
-            },
-        }
+    fn bounded(text: &str, already_truncated: bool) -> Self {
+        use icu_properties::{
+            props::{DefaultIgnorableCodePoint, GeneralCategory},
+            CodePointMapData, CodePointSetData,
+        };
+        let ignorable = CodePointSetData::new::<DefaultIgnorableCodePoint>();
+        let category = CodePointMapData::<GeneralCategory>::new();
+        let mut characters = text.chars().map(|character| {
+            if character.is_control()
+                || ignorable.contains(character)
+                || matches!(
+                    category.get(character),
+                    GeneralCategory::Format
+                        | GeneralCategory::LineSeparator
+                        | GeneralCategory::ParagraphSeparator
+                        | GeneralCategory::PrivateUse
+                        | GeneralCategory::Unassigned
+                )
+            {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                character
+            }
+        });
+        let text = characters
+            .by_ref()
+            .take(MAX_TALLY_LINE_ERROR_CHARS)
+            .collect();
+        let truncated = already_truncated || characters.next().is_some();
+        Self { text, truncated }
+    }
+
+    /// The bytes this text takes once JSON escapes it. Controls are already
+    /// replaced, so only a quote or a backslash grows.
+    fn escaped_len(&self) -> usize {
+        self.text.len()
+            + self
+                .text
+                .chars()
+                .filter(|character| matches!(character, '"' | '\\'))
+                .count()
     }
 
     pub fn text(&self) -> &str {
@@ -121,29 +140,100 @@ impl TallyLineError {
     }
 }
 
-fn clipped_line_errors<'de, D>(deserializer: D) -> Result<Vec<TallyLineError>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let mut line_errors = Vec::<TallyLineError>::deserialize(deserializer)?;
-    line_errors.truncate(MAX_TALLY_LINE_ERRORS);
-    Ok(line_errors)
+/// The texts kept, in document order, and how many `LINEERROR`s kept none:
+/// those past `line_error_count`, `MAX_TALLY_LINE_ERRORS` or
+/// `MAX_TALLY_LINE_ERROR_BYTES`.
+fn bounded_line_errors(
+    line_errors: impl IntoIterator<Item = TallyLineError>,
+    line_error_count: u64,
+) -> (Vec<TallyLineError>, u64) {
+    let limit = usize::try_from(line_error_count)
+        .unwrap_or(usize::MAX)
+        .min(MAX_TALLY_LINE_ERRORS);
+    let mut kept = Vec::new();
+    let mut bytes = 0_usize;
+    for line_error in line_errors.into_iter().take(limit) {
+        bytes = bytes.saturating_add(line_error.escaped_len());
+        if bytes > MAX_TALLY_LINE_ERROR_BYTES {
+            break;
+        }
+        kept.push(line_error);
+    }
+    let omitted = line_error_count.saturating_sub(kept.len() as u64);
+    (kept, omitted)
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(from = "StoredTallyImportOutcome")]
 pub struct TallyImportOutcome {
     application_status: TallyImportApplicationStatus,
     counters: TallyImportResult,
     exceptions_were_reported: bool,
-    /// The first `MAX_TALLY_LINE_ERRORS` `LINEERROR`s, in document order.
-    /// Absent from records written before it was kept, and skipped when
-    /// empty, so a response without one records exactly as before.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "clipped_line_errors"
-    )]
+    /// The `LINEERROR` texts kept, in document order. Skipped when empty, so
+    /// a response without a `LINEERROR` records exactly as before.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     tally_line_errors: Vec<TallyLineError>,
+    /// How many `LINEERROR`s kept no text, so a short list is explicit.
+    #[serde(skip_serializing_if = "is_zero")]
+    tally_line_errors_omitted: u64,
+}
+
+/// A saved outcome as read back. Its text is bounded again on the way in, so
+/// a record can never show more than a fresh parse would keep, and display
+/// text never fails a record: a malformed list reads as none kept.
+#[derive(Deserialize)]
+struct StoredTallyImportOutcome {
+    application_status: TallyImportApplicationStatus,
+    counters: TallyImportResult,
+    exceptions_were_reported: bool,
+    #[serde(default, deserialize_with = "stored_line_errors")]
+    tally_line_errors: Vec<StoredTallyLineError>,
+}
+
+#[derive(Deserialize)]
+struct StoredTallyLineError {
+    text: String,
+    #[serde(default)]
+    truncated: bool,
+}
+
+fn stored_line_errors<'de, D>(deserializer: D) -> Result<Vec<StoredTallyLineError>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Stored {
+        Readable(Vec<StoredTallyLineError>),
+        Unreadable(serde::de::IgnoredAny),
+    }
+    Ok(match Stored::deserialize(deserializer)? {
+        Stored::Readable(line_errors) => line_errors,
+        Stored::Unreadable(_) => Vec::new(),
+    })
+}
+
+impl From<StoredTallyImportOutcome> for TallyImportOutcome {
+    fn from(stored: StoredTallyImportOutcome) -> Self {
+        let (tally_line_errors, tally_line_errors_omitted) = bounded_line_errors(
+            stored
+                .tally_line_errors
+                .into_iter()
+                .map(|line_error| TallyLineError::bounded(&line_error.text, line_error.truncated)),
+            stored.counters.line_error_count,
+        );
+        Self {
+            application_status: stored.application_status,
+            counters: stored.counters,
+            exceptions_were_reported: stored.exceptions_were_reported,
+            tally_line_errors,
+            tally_line_errors_omitted,
+        }
+    }
 }
 
 impl TallyImportOutcome {
@@ -164,6 +254,11 @@ impl TallyImportOutcome {
     /// Tally's `LINEERROR` text, for a person to read. Never a verdict input.
     pub fn tally_line_errors(&self) -> &[TallyLineError] {
         &self.tally_line_errors
+    }
+
+    /// How many `LINEERROR`s kept no text.
+    pub fn tally_line_errors_omitted(&self) -> u64 {
+        self.tally_line_errors_omitted
     }
 
     pub fn into_counters(self) -> TallyImportResult {
@@ -361,8 +456,10 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
                             let text = read_optional_text(&mut reader, element.name())?;
                             line_error_count = line_error_count.saturating_add(1);
                             if tally_line_errors.len() < MAX_TALLY_LINE_ERRORS {
-                                tally_line_errors
-                                    .push(TallyLineError::clipped(text.as_deref().unwrap_or("")));
+                                tally_line_errors.push(TallyLineError::bounded(
+                                    text.as_deref().unwrap_or(""),
+                                    false,
+                                ));
                             }
                             true
                         }
@@ -511,11 +608,14 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
             exceptions: exceptions.is_some(),
         },
     };
+    let (tally_line_errors, tally_line_errors_omitted) =
+        bounded_line_errors(tally_line_errors, counters.line_error_count);
     Ok(TallyImportOutcome {
         application_status,
         counters,
         exceptions_were_reported,
         tally_line_errors,
+        tally_line_errors_omitted,
     })
 }
 
