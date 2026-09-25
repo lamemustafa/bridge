@@ -396,6 +396,9 @@ struct ToolFailure {
     /// What each request of a window read cost up to its failure (#595), when
     /// the failure came out of one. Data-free.
     window_timings: Option<Box<WindowReadTimings>>,
+    /// The count and estimate a read was refused on before it was sent (#637).
+    /// Numbers only; boxed to keep the refusal small on every other path.
+    read_size: Option<Box<ReadSize>>,
     /// Set when no response reached Tally-protocol parsing (#629). The refusal
     /// then names the configured endpoint, so a wrong or reset port is visible
     /// instead of reading as a Tally data problem.
@@ -404,6 +407,34 @@ struct ToolFailure {
     /// one (bridge#625). Type names and GUIDs from the read window, never
     /// the whole book.
     candidates: Option<Vec<Value>>,
+}
+
+/// A compliance read refused on its size before the master request was sent:
+/// the counted ledgers, the estimated response and the budget it exceeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReadSize {
+    master_alter_id: u64,
+    estimated_bytes: u64,
+    budget_bytes: u64,
+}
+
+fn read_size_refusal(error: &anyhow::Error) -> Option<ReadSize> {
+    error.chain().find_map(|cause| {
+        match cause
+            .downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()?
+        {
+            crate::tally::connection::PartyLedgerMasterSourceValidationError::TooLarge {
+                master_alter_id,
+                estimated_bytes,
+                budget_bytes,
+            } => Some(ReadSize {
+                master_alter_id: *master_alter_id,
+                estimated_bytes: *estimated_bytes,
+                budget_bytes: *budget_bytes,
+            }),
+            _ => None,
+        }
+    })
 }
 
 /// Why a refused request produced no response Bridge could read, as a typed,
@@ -477,6 +508,7 @@ impl From<String> for ToolFailure {
             cause: None,
             counts: None,
             window_timings: None,
+            read_size: None,
             unanswered: None,
             candidates: None,
         }
@@ -537,6 +569,17 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              mark and Bridge has no \"before\" to attribute an import against. Record one \
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
+        ),
+        // A cause, reached through the shared `party_ledger_master_read_failed`.
+        "ledger_masters_too_large" => Some(
+            "The company's master-alteration mark (`size.master_alter_id`) puts the estimated \
+             compliance response over Bridge's budget, so no ledger request was sent: a read \
+             of that size has left Tally's gateway unable to answer (#637). The mark is an \
+             UPPER BOUND on ledgers, since stock items, units and every other master raise it \
+             too, so a company with fewer ledgers may be refused. Call ledger_masters with \
+             fields=basic, which returns names, parents and opening balances without the \
+             compliance fields. Retrying this call refuses again. A `group` filter does not \
+             narrow the request, and a precise ledger count is pending (#668).",
         ),
         // Narration, reference and voucher number share this code for several
         // unrelated text failures (empty, over the schema's character cap, a
@@ -712,6 +755,7 @@ impl ToolFailure {
             cause,
             counts: None,
             window_timings: None,
+            read_size: read_size_refusal(&error).map(Box::new),
             unanswered: unanswered_cause(&error),
             candidates: None,
         }
@@ -821,6 +865,7 @@ impl Server {
                 cause,
                 counts,
                 window_timings,
+                read_size,
                 unanswered,
                 candidates,
             }) => {
@@ -847,7 +892,12 @@ impl Server {
                 // these ~250 extra bytes could cost the caller the one thing it
                 // most needs, leaving it worse off than before this field existed.
                 // Guidance is a convenience; the refusal code is not.
-                if let Some(remediation) = refusal_remediation(&code) {
+                // A shared operation code can still have a cause with its own
+                // next step (#637), so the cause is consulted when the code has
+                // none.
+                if let Some(remediation) =
+                    refusal_remediation(&code).or_else(|| cause.and_then(refusal_remediation))
+                {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["remediation"] = json!(remediation);
                     }
@@ -865,6 +915,15 @@ impl Server {
                 if let Some(cause) = cause {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["cause"] = json!(cause);
+                    }
+                }
+                if let Some(size) = read_size {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["size"] = json!({
+                            "master_alter_id": size.master_alter_id,
+                            "estimated_bytes": size.estimated_bytes,
+                            "budget_bytes": size.budget_bytes,
+                        });
                     }
                 }
                 // #629: the endpoint that was tried, so a wrong or reset port

@@ -515,6 +515,13 @@ impl Server {
                     )
                 }) {
                     "post_masters_unconfirmed"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::CatalogueUnreadable(_))
+                    )
+                }) {
+                    "post_catalogue_unreadable"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -923,7 +930,7 @@ fn recheck_import_admission(
     })?;
     if !ledger_binding
         .matches(catalogue, company_name, company_guid)
-        .map_err(|error| anyhow::Error::new(error).context("ledger_export_invalid"))?
+        .map_err(ApprovedImportAdmissionError::CatalogueUnreadable)?
     {
         return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
     }
@@ -937,7 +944,7 @@ fn recheck_import_admission(
         (true, Some(groups)) => {
             let parents =
                 parse_standard_ledger_catalog_response(catalogue, company_name, company_guid)
-                    .map_err(|error| anyhow::Error::new(error).context("ledger_export_invalid"))?;
+                    .map_err(ApprovedImportAdmissionError::CatalogueUnreadable)?;
             let groups = parse_native_group_snapshot(groups, company_guid)
                 .map_err(|_| anyhow::Error::msg("group_export_invalid"))?;
             let payload = ImportPayload {

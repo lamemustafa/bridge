@@ -201,6 +201,9 @@ base revision.
 <a id="96-actioncancel-by-remoteid-creates-a-new-voucher--it-does-not-cancel--trap"></a>
 
 [9.6 `ACTION="Cancel"` by `REMOTEID` creates a new voucher — it does not cancel — **TRAP**](./TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md#96-actioncancel-by-remoteid-creates-a-new-voucher--it-does-not-cancel--trap)
+<a id="914-a-remoteid-upsert-re-states-the-voucher-cancel-optional-delete-and-recreate"></a>
+
+[9.14 A `REMOTEID` upsert re-states the voucher: cancel, optional, delete and recreate](./TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md#914-a-remoteid-upsert-re-states-the-voucher-cancel-optional-delete-and-recreate)
 <a id="12-a-modal-error-dialog-in-tallys-ui-blocks-the-gateway-until-a-human-clicks-ok--p0-operationally"></a>
 
 [1.2 A modal error dialog in Tally's UI blocks the gateway until a human clicks OK — **P0 operationally**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#12-a-modal-error-dialog-in-tallys-ui-blocks-the-gateway-until-a-human-clicks-ok--p0-operationally)
