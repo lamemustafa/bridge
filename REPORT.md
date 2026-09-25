@@ -200,3 +200,9 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 
 - #713 (E2b): every check green on ab80466, including the required mutation-records check. Waiting on Lane D (real books, merge).
 - The container restarted again at about 20:25 UTC. E3a shard 1 had been pushed (146/146 killed). Shards 2–4 are rerunning on the frozen head 5beb691.
+
+## 2026-09-25 20:48 UTC — #713 held by Lane D
+
+- #713 real-book parity is byte-identical on clients A, B and C (Lane D). #713 was then **held** by Lane D. The h15 behaviour (a mixed cash-and-bank voucher raising a 31(bc) cash finding for the party's whole amount) is to be fixed in the reference engine first. #713 then takes new goldens, plus a `limits` line and a figure definition naming the cash-line amount, followed by a fresh review.
+- I can't produce goldens here. **E2b is blocked on Lane D's reference change and goldens.** When they arrive (pushed to `lane-e/e2b-hvr`, or as a message), I'll port the code change, redo the E2b mutation records on the new tree, and re-stack E3a and E4.
+- Meanwhile: E3a's full run continues. Its records will be made on E3a's current tree (5beb691), so they'll need redoing only if the E2b change alters files E3a carries, which a golden or `high_value_register.rs` change will. E3a's PR stays unopened (one port PR at a time).
