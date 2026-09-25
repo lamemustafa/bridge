@@ -86,7 +86,23 @@ impl StatusRecord {
         batch: &ImportLedgerLine,
         request: &super::post::NativePostRequest,
     ) -> Self {
-        Self::dispatch_native(batch, request.request_sha256.clone(), request.remote_id)
+        match request.remote_ids.as_slice() {
+            // One voucher keeps the single-id shape, so a journal written by
+            // a one-voucher post stays readable by an older binary.
+            [remote_id] => {
+                Self::dispatch_native(batch, request.request_sha256.clone(), *remote_id)
+            }
+            remote_ids => Self {
+                native_remote_id: None,
+                native_remote_ids: Some(
+                    remote_ids
+                        .iter()
+                        .map(|remote_id| remote_id.hyphenated().to_string())
+                        .collect(),
+                ),
+                ..Self::dispatch_native(batch, request.request_sha256.clone(), Uuid::nil())
+            },
+        }
     }
 
     pub(super) fn response(batch: &ImportLedgerLine, response: DispatchResponse) -> Self {
@@ -263,20 +279,25 @@ fn is_canonical_remote_id(remote_id: &str) -> bool {
         .is_ok_and(|id| !id.is_nil() && id.hyphenated().to_string() == remote_id)
 }
 
-/// Whether any dispatch intent in the journal already records `remote_id`,
-/// as a single post's REMOTEID or as one of a batch's.
+/// Whether any dispatch intent in the journal already records any of
+/// `remote_ids`, as a single post's REMOTEID or as one of a batch's.
 /// The whole journal is admitted on the way, as for every other read.
-pub(super) fn remote_id_recorded(reader: impl BufRead, remote_id: Uuid) -> Result<bool, String> {
-    let wanted = remote_id.hyphenated().to_string();
+pub(super) fn remote_ids_recorded(
+    reader: impl BufRead,
+    remote_ids: &[Uuid],
+) -> Result<bool, String> {
+    let wanted = remote_ids
+        .iter()
+        .map(|remote_id| remote_id.hyphenated().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
     let mut recorded = false;
     scan_records(reader, |record, _| {
         if let Record::Status(update) = record {
-            recorded |= update.native_remote_id.as_deref() == Some(wanted.as_str())
-                || update
-                    .native_remote_ids
-                    .iter()
-                    .flatten()
-                    .any(|recorded_id| *recorded_id == wanted);
+            recorded |= update
+                .native_remote_id
+                .iter()
+                .chain(update.native_remote_ids.iter().flatten())
+                .any(|recorded_id| wanted.contains(recorded_id));
         }
     })?;
     Ok(recorded)

@@ -1131,12 +1131,14 @@ impl Server {
                         &mut payload,
                         dispatch_response.as_ref(),
                         masters_after_post.as_ref(),
+                        line.vouchers.len(),
                     );
                 } else {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,
                         dispatch_response.as_ref(),
                         masters_after_post.as_ref(),
+                        line.vouchers.len(),
                     );
                 }
             }
@@ -1457,12 +1459,12 @@ impl Server {
     }
 
     /// Whether the journal already records `remote_id` on a dispatch intent.
-    pub(super) fn import_remote_id_recorded_while_admitted(
+    pub(super) fn import_remote_ids_recorded_while_admitted(
         &self,
-        remote_id: Uuid,
+        remote_ids: &[Uuid],
     ) -> Result<bool, String> {
         match self.import_journal_while_admitted()? {
-            Some(reader) => ledger::remote_id_recorded(reader, remote_id),
+            Some(reader) => ledger::remote_ids_recorded(reader, remote_ids),
             None => Ok(false),
         }
     }
@@ -2505,17 +2507,23 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
 /// The caller records `remote_id` with the dispatch intent before sending,
 /// because Tally deletes only by it and never exports it (bridge#579). The
 /// stable narration tag remains the batch attribution used by readback.
-fn render_native_voucher_xml(
+fn render_native_vouchers_xml(
     company: &str,
-    voucher: &ImportVoucher,
+    vouchers: &[ImportVoucher],
     batch_id: &str,
-    remote_id: Uuid,
+    remote_ids: &[Uuid],
 ) -> String {
-    let messages = render_voucher_xml(
-        voucher,
-        remote_id,
-        import_identity(batch_id, &voucher.bridge_txn_id),
-    );
+    let messages: String = vouchers
+        .iter()
+        .zip(remote_ids)
+        .map(|(voucher, remote_id)| {
+            render_voucher_xml(
+                voucher,
+                *remote_id,
+                import_identity(batch_id, &voucher.bridge_txn_id),
+            )
+        })
+        .collect();
     render_import_envelope(company, &messages)
 }
 

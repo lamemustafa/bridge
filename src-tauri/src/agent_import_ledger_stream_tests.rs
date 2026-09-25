@@ -325,21 +325,21 @@ fn any_intent_recording_a_remoteid_is_found_and_a_repeat_does_not_block_reads() 
     let (shared, other) = (Uuid::new_v4(), Uuid::new_v4());
     let mut bytes = record(&first);
     bytes.extend(record(&second));
-    assert!(!remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
+    assert!(!remote_ids_recorded(Cursor::new(bytes.clone()), &[shared]).unwrap());
     bytes.extend(record(&StatusRecord::dispatch_native(
         &first,
         "c".repeat(64),
         shared,
     )));
-    assert!(remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
-    assert!(!remote_id_recorded(Cursor::new(bytes.clone()), other).unwrap());
+    assert!(remote_ids_recorded(Cursor::new(bytes.clone()), &[shared]).unwrap());
+    assert!(!remote_ids_recorded(Cursor::new(bytes.clone()), &[other]).unwrap());
 
     bytes.extend(record(&StatusRecord::dispatch_native(
         &second,
         "c".repeat(64),
         shared,
     )));
-    assert!(remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
+    assert!(remote_ids_recorded(Cursor::new(bytes.clone()), &[shared]).unwrap());
     assert!(
         read_snapshot(Cursor::new(bytes), Some("second"))
             .unwrap()
@@ -376,9 +376,9 @@ fn a_batch_intent_records_distinct_remoteids_that_the_journal_finds() {
         .unwrap()
         .dispatched);
     for id in ids {
-        assert!(remote_id_recorded(Cursor::new(bytes.clone()), id).unwrap());
+        assert!(remote_ids_recorded(Cursor::new(bytes.clone()), &[id]).unwrap());
     }
-    assert!(!remote_id_recorded(Cursor::new(bytes), Uuid::new_v4()).unwrap());
+    assert!(!remote_ids_recorded(Cursor::new(bytes), &[Uuid::new_v4()]).unwrap());
 
     let id = |uuid: Uuid| json!(uuid.hyphenated().to_string());
     let too_many = (0..=MAX_BATCH_POST_VOUCHERS)
