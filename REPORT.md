@@ -185,3 +185,13 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - the pre-existing `paise("+-1.00")` reads as positive;
   - the pre-existing `number_match_end` is quadratic (40k commas take 1.6 s);
   - M06/B05 is a duplicate mutation, from before this branch.
+
+## 2026-09-25 20:04 UTC — #710 merged; E2b draft PR #713
+
+- #710 was merged (squash, 72a1eb7). Master's crate tree is byte-identical to E2a head d263950.
+- E2b: merged origin/master into `lane-e/e2b-hvr`. The squash made 12 crate files conflict. I resolved them by restoring the crate directory from the branch's own head 0f04441, which is exact because master's crate equals E2a's.
+  - HEAD's crate tree equals 0f04441's (c4a9908c). The 6 non-crate master files are carried byte-for-byte.
+  - `--verify` against master: 549/549 proven. A Sonnet check found none.
+- **Pushed `lane-e/e2b-hvr` @ ab80466.** **Draft PR https://github.com/lamemustafa/bridge/pull/713** "E2b: port high_value_register", with "Real books: pending (local, Lane D)".
+- **Note for the stack:** because the ports are squash-merged, each later branch (E3a, E4) will conflict the same way when master takes its predecessor. I resolve it the same way, after checking that master's crate tree equals the predecessor's head.
+- E3a full run in progress on `cloud/lane-e-e3a-shards`.
