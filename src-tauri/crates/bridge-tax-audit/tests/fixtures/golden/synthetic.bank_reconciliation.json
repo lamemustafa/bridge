@@ -1,0 +1,512 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "bank_reconciliation",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "86f3c00203e0594a",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded), ledger 'Lakeview Bank Current A/c', window 2025-04-01 to 2025-05-31 only -- the calendar span this statement covers. No other month is reconciled here.",
+  "figures": [
+    {
+      "id": "bank_reconciliation.bank_statement_account_ref",
+      "value": "XXXXXX0001",
+      "unit": "text",
+      "definition_sha256_16": "1bb43b9344204c28",
+      "definition_text": "Masked account number, as extracted.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.bank_statement_source_sha256",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "unit": "text",
+      "definition_sha256_16": "c21f557ca25a5ebf",
+      "definition_text": "sha256 of the raw bank-statement document bytes.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_closing_paise",
+      "value": 24300000,
+      "unit": "paise",
+      "definition_sha256_16": "089e2a0f0fe94653",
+      "definition_text": "books_opening_paise plus every books row in the window (below).",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_bank_only_charge_or_interest_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "be8a209df14ee035",
+      "definition_text": "Unmatched books rows classified 'bank_only_charge_or_interest'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_bank_only_charge_or_interest_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "244bfda8e1f573df",
+      "definition_text": "Sum of books amount, reason 'bank_only_charge_or_interest'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_cheque_issued_not_presented_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "06f552556b90d50b",
+      "definition_text": "Unmatched books rows classified 'cheque_issued_not_presented'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_cheque_issued_not_presented_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ffc9a418b8d6b15f",
+      "definition_text": "Sum of books amount, reason 'cheque_issued_not_presented'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_deposit_not_credited_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "e8ec9b81c9745f07",
+      "definition_text": "Unmatched books rows classified 'deposit_not_credited'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_deposit_not_credited_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "15175001608e80e0",
+      "definition_text": "Sum of books amount, reason 'deposit_not_credited'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_not_found_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "d5f11ec30ef12942",
+      "definition_text": "Unmatched books rows classified 'not_found'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_not_found_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "5e678128bb337f0a",
+      "definition_text": "Sum of books amount, reason 'not_found'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_split_settlement_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "362880a4bba9e274",
+      "definition_text": "Unmatched books rows classified 'split_settlement'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000003",
+          "label": "Payment P/1 on 2025-05-02"
+        }
+      ]
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_split_settlement_paise",
+      "value": -2500000,
+      "unit": "paise",
+      "definition_sha256_16": "75416455695fa619",
+      "definition_text": "Sum of books amount, reason 'split_settlement'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "daabf39b650e30f1",
+      "definition_text": "Unmatched books rows classified 'unclassified'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_only_reason_unclassified_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ecf005d4f9402e71",
+      "definition_text": "Sum of books amount, reason 'unclassified'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_opening_paise",
+      "value": 15000000,
+      "unit": "paise",
+      "definition_sha256_16": "15c2c28f0ba739e8",
+      "definition_text": "TB opening plus every population line on 'Lakeview Bank Current A/c' dated before 2025-04-01.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.books_rows_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "86f3c00203e0594a",
+      "definition_text": "Books population (optional, cancelled and post-dated vouchers excluded), ledger 'Lakeview Bank Current A/c', window 2025-04-01 to 2025-05-31 only -- the calendar span this statement covers. No other month is reconciled here.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.category_books_only_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "b9c9f0ec2aff53a7",
+      "definition_text": "Books rows with no statement counterpart.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.category_matched_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "00a2ede23c6056db",
+      "definition_text": "Books rows matched to a statement row within Re 1 and 7 day(s).",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.category_statement_only_count",
+      "value": 4,
+      "unit": "count",
+      "definition_sha256_16": "da86acb278c96e4b",
+      "definition_text": "Statement rows with no books counterpart.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.closing_tie_diff_paise",
+      "value": 4223,
+      "unit": "paise",
+      "definition_sha256_16": "2c97b3d3fc5e3609",
+      "definition_text": "books_closing_paise minus statement_closing_paise; reported even when zero.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.match_pair_80f64e71",
+      "value": "matched",
+      "unit": "text",
+      "definition_sha256_16": "bc26caaf21a02e56",
+      "definition_text": "Books row (tag 80f64e71) matched to statement row #0.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "bank:2026-27:statement#0",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000002",
+          "label": "Receipt R/1 on 2025-04-18"
+        }
+      ]
+    },
+    {
+      "id": "bank_reconciliation.months_covered",
+      "value": "2025-04-01..2025-05-31",
+      "unit": "text",
+      "definition_sha256_16": "86f3c00203e0594a",
+      "definition_text": "Books population (optional, cancelled and post-dated vouchers excluded), ledger 'Lakeview Bank Current A/c', window 2025-04-01 to 2025-05-31 only -- the calendar span this statement covers. No other month is reconciled here.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.months_not_reconciled_note",
+      "value": "Any FY month outside the window above has no bank statement in this engagement and is not reconciled.",
+      "unit": "text",
+      "definition_sha256_16": "e4a7b6919fe37a57",
+      "definition_text": "Scope statement.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.opening_tie_diff_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "9678c036812ef2f3",
+      "definition_text": "books_opening_paise minus statement_opening_paise; reported even when zero.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_closing_paise",
+      "value": 24295777,
+      "unit": "paise",
+      "definition_sha256_16": "e2f70d04f1d4f970",
+      "definition_text": "The statement's own declared closing balance.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_bank_only_charge_or_interest_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "9f81979727d4c293",
+      "definition_text": "Unmatched statement rows classified 'bank_only_charge_or_interest'.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "bank:2026-27:statement#3",
+          "label": "SERVICE CHARGES MAY"
+        }
+      ]
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_bank_only_charge_or_interest_paise",
+      "value": -5000,
+      "unit": "paise",
+      "definition_sha256_16": "f328a743de2b1161",
+      "definition_text": "Sum of statement amount, reason 'bank_only_charge_or_interest'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_cheque_issued_not_presented_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "29df9df98ef88111",
+      "definition_text": "Unmatched statement rows classified 'cheque_issued_not_presented'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_cheque_issued_not_presented_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "81c1b52b53311543",
+      "definition_text": "Sum of statement amount, reason 'cheque_issued_not_presented'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_deposit_not_credited_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "347c2c0bd89ae72b",
+      "definition_text": "Unmatched statement rows classified 'deposit_not_credited'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_deposit_not_credited_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "d766e7c2a5bb8916",
+      "definition_text": "Sum of statement amount, reason 'deposit_not_credited'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_not_found_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "571017b095f0cccf",
+      "definition_text": "Unmatched statement rows classified 'not_found'.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "bank:2026-27:statement#4",
+          "label": "UNIDENTIFIED CREDIT"
+        }
+      ]
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_not_found_paise",
+      "value": 777,
+      "unit": "paise",
+      "definition_sha256_16": "0b779c5b7c066752",
+      "definition_text": "Sum of statement amount, reason 'not_found'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_split_settlement_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "fc0c5e1eb8fd4db9",
+      "definition_text": "Unmatched statement rows classified 'split_settlement'.",
+      "evidence": [
+        {
+          "kind": "document_row",
+          "id": "bank:2026-27:statement#1",
+          "label": "CHQ 000101 PART"
+        },
+        {
+          "kind": "document_row",
+          "id": "bank:2026-27:statement#2",
+          "label": "CHQ 000102 PART"
+        }
+      ]
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_split_settlement_paise",
+      "value": -2500000,
+      "unit": "paise",
+      "definition_sha256_16": "c1dd1a8376780d5c",
+      "definition_text": "Sum of statement amount, reason 'split_settlement'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c7aec6453cc949ca",
+      "definition_text": "Unmatched statement rows classified 'unclassified'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_only_reason_unclassified_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ec4b88240ab5bcf9",
+      "definition_text": "Sum of statement amount, reason 'unclassified'.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_opening_paise",
+      "value": 15000000,
+      "unit": "paise",
+      "definition_sha256_16": "24c3cdb7f378da4b",
+      "definition_text": "The statement's own declared opening balance.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.statement_rows_count",
+      "value": 5,
+      "unit": "count",
+      "definition_sha256_16": "05879f26b4e6d21a",
+      "definition_text": "Statement transaction rows in this window.",
+      "evidence": []
+    },
+    {
+      "id": "bank_reconciliation.unclassified_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "be2f29d611f63052",
+      "definition_text": "books_only + statement_only rows with no reason from the closed set (BANK-3: must be 0).",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "bank_reconciliation/not_found",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "books_not_found_count",
+          "figure_id": "bank_reconciliation.books_only_reason_not_found_count"
+        },
+        {
+          "name": "statement_not_found_count",
+          "figure_id": "bank_reconciliation.statement_only_reason_not_found_count"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "e020d913a6196f24",
+      "title_text": "A books or statement bank entry in this window has no counterpart and no structural (timing, charge or part-settlement) explanation",
+      "limits_sha256_16": "ce463bca52cd2877",
+      "limits_text": [
+        "cheque_issued_not_presented/deposit_not_credited are the standard timing explanations for the OTHER unmatched rows, not proof either actually cleared later; only a subsequent statement would confirm that."
+      ],
+      "ask_client_sha256_16": "c8aa595429936916",
+      "ask_client_text": [
+        "For each not_found row, the underlying voucher or bank advice."
+      ]
+    },
+    {
+      "id": "bank_reconciliation/opening_closing_tie",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "books_closing_paise",
+          "figure_id": "bank_reconciliation.books_closing_paise"
+        },
+        {
+          "name": "books_opening_paise",
+          "figure_id": "bank_reconciliation.books_opening_paise"
+        },
+        {
+          "name": "statement_closing_paise",
+          "figure_id": "bank_reconciliation.statement_closing_paise"
+        },
+        {
+          "name": "statement_opening_paise",
+          "figure_id": "bank_reconciliation.statement_opening_paise"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "d2c51687edbb86b0",
+      "title_text": "The books balance on the bank ledger does not tie to the statement's own declared opening or closing balance for this window",
+      "limits_sha256_16": "53f9c496857c38ab",
+      "limits_text": [
+        "A tie failure here can also mean the ledger name or statement window supplied to this test is wrong, not necessarily a books error."
+      ],
+      "ask_client_sha256_16": "1291fda117ffd0ed",
+      "ask_client_text": [
+        "Confirm the opening/closing balance shown on the bank's own statement for this exact window."
+      ]
+    },
+    {
+      "id": "bank_reconciliation/split_settlement",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "books_part_settlement_count",
+          "figure_id": "bank_reconciliation.books_only_reason_split_settlement_count"
+        },
+        {
+          "name": "statement_part_settlement_count",
+          "figure_id": "bank_reconciliation.statement_only_reason_split_settlement_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000003",
+          "label": "Payment P/1 on 2025-05-02"
+        }
+      ],
+      "title_sha256_16": "2ca4ca9d18f8e305",
+      "title_text": "A single bank entry on one side settles as several entries on the other, within the matching window",
+      "limits_sha256_16": "577841f28f1b2bed",
+      "limits_text": [
+        "A sum match within the window is consistent with, not proof of, a genuine settlement paid in several parts; an unrelated coincidence of amounts cannot be ruled out from the statement alone."
+      ],
+      "ask_client_sha256_16": "e3b0c44298fc1c14",
+      "ask_client_text": []
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "bank_reconciliation.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

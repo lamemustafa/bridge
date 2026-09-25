@@ -334,6 +334,28 @@ book (read-only there). The request strings were the branch's own at `cf618c00`.
 | Paired reads | every Tally request is sent twice, back to back (the repeated-source read), so wire traffic is about twice the data |
 | End to end after the #520 rectify (census spans of 8,192; a build of the tree committed as `986c1d77`) | inventory-heavy book, mark ~250,000: one-day `vouchers` complete in 34.3 s (31 census spans, 2 data parts); one-month `ledger_movement` complete in 104.7 s (31 census spans, 5 data parts of at most 6.6 MB, and the replay closed against the first read's marks). Every request under 16 MiB and 2 s |
 
+**`ALTVCHID` on a multi-voucher import, and on screen edits — PARTIAL, 2026-09-24.** Measured on a
+licensed TallyPrime 7.1 Silver lab, on a synthetic company, one run of each. The requests were lab
+scripts that posted Bridge's voucher shape straight to the gateway, **not** Bridge's post path. The
+captures are not committed.
+
+| Change | Counters | `ALTVCHID` |
+| --- | --- | --- |
+| One import of 50 new Journals | CREATED 50 | +50 (6 → 56) |
+| One import of 200 | CREATED 200 | +200 (→ 256) |
+| One import of 500 | CREATED 500 | +500 (→ 756) |
+| The same 50 posted again with the same `REMOTEID`s | CREATED 0, ALTERED 50 | +50 (→ 806) |
+| 50, one of them naming a ledger that does not exist | CREATED 49, EXCEPTIONS 1 | +49 (→ 855) |
+| 50 of mixed type: 13 Journal, 13 Payment, 12 Receipt, 12 Contra | CREATED 50 | +50 (→ 905) |
+| Three edits by hand on Tally's screen to one voucher: its amount, the field the screen labels Reference, its narration | none (no import) | +1 each (3 → 4 → 5 → 6) |
+
+In these runs the mark moved by exactly the number of vouchers created or altered, including a
+partial commit, and each screen edit moved it by one. This does not establish:
+
+- the step through Bridge's own post path, which a batch post must measure before it gates on it;
+- that nothing else can move the mark within the same interval;
+- a multi-user book with edits made while an import runs.
+
 ## 11d. Education refuses Bridge's report-family TDL with a blocking dialog — **VERIFIED live for `ledgers_v1`, 2026-09-22; the rest inferred**
 
 On a TallyPrime 7.1 instance in Education mode, `ledgers_v1`'s custom report raised a modal
@@ -930,3 +952,6 @@ How Bridge resolves the two-digit years is a design choice, documented at
 | 2026-09-18 | Added §11c: the pre-flight volume bound for windowed voucher reads, with the bytes-per-voucher measurements behind it (a whole-year 35.0 KB mean on an inventory-heavy book, understated by a one-day probe; half-month windows at 98.4% of the cap). The measurements are VERIFIED; the date-first census and the AlterID-narrowed parts the rule sends are UNVERIFIED live. |
 | 2026-09-21 | §11c after the bridge#520 rectify: every census is bounded before it is sent (one date census when the mark fits one, otherwise AlterID spans of 8,192 sized against the whole cap; a mark needing more than 256 spans is refused as `voucher_window_book_too_large`); parts are admitted against the census and their union; the read allowance is spent at dispatch; a divided read is bracketed on `ALTVCHID` and `ALTMSTID`; a replay carries and closes against the first read's witness; the pre-post check refuses a window the bound would divide. Added §11c.5, the first live evidence (licensed 7.1 Silver lab): census and span shapes, `ALTVCHID` as a count bound and on every voucher change, a ledger rename moving only `ALTMSTID`, and end-to-end timings. |
 | 2026-09-23 | Added §12a.10: two opening bills in a licensed TallyPrime 7.1 Bills Receivable capture are dated and due the day before the book's `BOOKSFROM`, so `BOOKSFROM` does not bound a Bills row's dates (bridge#612). Earlier dates, a due date before its bill, and bills dated after the as-of date are not measured. |
+| 2026-09-25 | §11c.5: added the `ALTVCHID` step on multi-voucher gateway imports and on screen edits (PARTIAL: one run each, lab scripts, not Bridge's post path), the basis of `post_import`'s reported `target_voucher_step`. |
+| 2026-09-25 | §9.13: a scoped correction recording two licensed TallyPrime 7.1 Gold field runs of Bridge-built Payment, Receipt and Contra files sent over the gateway by a script, with `verify_import` returning `posted_verified` (VERIFIED on one book; PARTIAL on a second, where larger reads failed, bridge#485). §3.1 and §5.3's import-verification note now cite it. Native `post_import` on Gold is still not observed. |
+| 2026-09-26 | §9.14: "an upsert omitting `REFERENCE` kept the stored value" moves from PARTIAL to VERIFIED for a gateway-written `REFERENCE` on licensed 7.1 Silver, on a second independent run through Bridge's own amendment file (bridge#239). A `REFERENCE` typed in Tally's screens remains unmeasured. |

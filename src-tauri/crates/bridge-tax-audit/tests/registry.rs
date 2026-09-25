@@ -28,6 +28,14 @@ fn caller(id: &str) -> CallerData {
                 registry::turnover_inputs_from_json(&json("synthetic-turnover-inputs.json"))
                     .unwrap();
         }
+        "bank_reconciliation" => {
+            c.bank_statement = Some(
+                bridge_tax_audit::documents::bank_statement_from_json(&json(
+                    "synthetic-bank-statement.json",
+                ))
+                .unwrap(),
+            );
+        }
         "tds_tcs_26as" | "twentysixas_receipts" => {
             c.traces = bridge_tax_audit::documents::traces_documents_from_json(&json(
                 "synthetic-traces-documents.json",
