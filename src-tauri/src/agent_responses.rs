@@ -99,10 +99,6 @@ fn retain_page_width(response: &mut Value, shape: PageShape, width: usize) -> Re
     Ok(())
 }
 
-// Measure O(log n) prefix candidates instead of serializing once for each
-// discarded row. Each candidate retains at least one row on every active axis.
-// The caller measures the actual outer envelope, including duplicated text and
-// the wire newline, so escaping and final framing remain part of the byte cap.
 /// Removes every `tally_line_errors` list below `value`, adding its length
 /// to the sibling `tally_line_errors_omitted`, and says whether any was
 /// there. Tally's LINEERROR text is for reading only, so a result over its
@@ -133,6 +129,10 @@ pub(super) fn drop_tally_line_error_text(value: &mut Value) -> bool {
     }
 }
 
+// Measure O(log n) prefix candidates instead of serializing once for each
+// discarded row. Each candidate retains at least one row on every active axis.
+// The caller measures the actual outer envelope, including duplicated text and
+// the wire newline, so escaping and final framing remain part of the byte cap.
 fn fit_response(
     response: &mut Value,
     structured_path: &str,

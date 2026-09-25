@@ -2330,6 +2330,13 @@ fn line_error_text_does_not_count_against_a_pages_never_cut_part() {
     assert!(server_with(fits_without_text - 1)
         .admit_verification_page(&page)
         .is_err());
+    // The final cap agrees: at the admitted size the page comes back whole,
+    // without its text, rather than refused.
+    let (capped, rows_cut, _) =
+        super::super::enforce_response_byte_cap(page.clone(), fits_without_text)
+            .expect("the page fits once its text is dropped");
+    assert!(!rows_cut);
+    assert_eq!(capped, bare);
 }
 
 #[tokio::test]

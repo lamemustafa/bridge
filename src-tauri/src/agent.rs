@@ -1604,7 +1604,8 @@ fn redact_value(mut value: Value, redaction: Redaction) -> Value {
                 values.remove("narration");
             }
             // Tally's LINEERROR text is free text that can echo any name, and
-            // no marker says which, so any redaction drops it; the count stays.
+            // no marker says which, so any redaction drops it and its omitted
+            // count; counters.line_error_count stays.
             if redaction != Redaction::None {
                 values.remove("tally_line_errors");
                 values.remove("tally_line_errors_omitted");
