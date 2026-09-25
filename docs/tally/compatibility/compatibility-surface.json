@@ -55,7 +55,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
-      "sha256": "dba22e7b0483cacd325597a4298b9a7b9ff7bcb0430255ad886541f80c2850ba"
+      "sha256": "83fde47de213881c89520985e95a3ddf34a7a01185bfae1715da12df190b2d86"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "372f17fc1fa506af3357a6ad9c841d087e0985ebe6bd8595bc5567ab247e7d9e"
+      "sha256": "f07d82c7a762661294c111c60793ad6c871898fa6c628191af2d37e9777f5e1b"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "db858962bbfc29be580093e9bd2179d7350b73356d219f4c663373e0e9e4d581"
+      "sha256": "0580204cb62cac56b193c79321164558cba0ea5c8170945e12053ffd98a3e8cf"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -531,7 +531,7 @@
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
-      "sha256": "cd16594daefedc8b4d069a317fc4bb6034e154890248c391c46e4ed8871654eb"
+      "sha256": "80cc6e3105ce036c81ea475dbf4c8367c881d914bd9cbed59bc6d04f3ad0d48d"
     },
     {
       "path": "src-tauri/src/agent_read_validation.rs",
@@ -567,7 +567,7 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_type_class.rs",
-      "sha256": "34f477311dcaf41953fe9605d6b7437f2b5eb27986ce01e37cb4f563dfce666f"
+      "sha256": "96a6a18b0b88f81ce8de990e83e0da2904566c1d7695de464ac174a9552da3cb"
     },
     {
       "path": "src-tauri/src/agent_voucher_window.rs",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
-      "sha256": "75e179a87d5320e68cffb446a6bab26ad9d7a1ee4fc80cc304c764d2f93b75b8"
+      "sha256": "9522c09aabae6ff2b2f8bbfa09bdad458349e595a1cdae7fb44296e5539fea4b"
     },
     {
       "path": "src-tauri/src/axal.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "9c3212d1655660fc28564f49266c58b2f19e87bebbb192af8c7def0aefe6a344"
+  "manifest_sha256": "b02500ee8883dd6ac3e634f4ac10a33c2fd7079e24f6e90679dace6587f69986"
 }
