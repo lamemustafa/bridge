@@ -90,3 +90,11 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - PR #682 was merged by Lane D. Afterwards an independent verification comment confirmed the -z fix. Its P3 (the ci.yml comment names only non-ASCII bytes) is not pushed, because it's a wording-only change.
 - The container restarted again at about 16:55 UTC. Shards 1–3 of the E2a full run had already finished and been pushed to `cloud/lane-e-e2a-shards`: 130/130, 130/130 and 130/130 pass, with X11 and S08 as their accepted survivors. Shard 4 was lost mid-run and has been restarted.
 - If shard 4 also can't finish here, then **E2a is frozen at 6a1fad0 and needs a branch run** for the last shard (or a nightly dispatch on `lane-e/e2a-bank-recon`). Shards 1–3 are on the scratch branch.
+
+## 2026-09-25 17:55 UTC — E2a done: records committed, draft PR #710
+
+- Shard 4 finished (129/129). The whole list on the frozen head 6a1fad0: **519 run, 514 killed, 5 accepted survivors** (X11, X12, A04, A19, S08). No timeouts. All 47 E2A mutations killed. Shards took 12–15 min each.
+- Records commit b96afe8 (only `parity/mutation-results.json`), then a master merge b163010 (nothing under the crate or its inputs). `--verify --changed-since origin/master`: 519 selected, 519 proven on crate tree 60079575465d99cc. Tests 336 pass; clippy and fmt clean. A fresh Sonnet pre-push review found none.
+- **Pushed `lane-e/e2a-bank-recon` @ b163010**, fast-forward.
+- **Draft PR https://github.com/lamemustafa/bridge/pull/710** "E2a: port bank_reconciliation". It has "Real books: pending (local, Lane D)", the failing-first names, the mutation numbers and the P3 list. The two items for Lane D (the adapter row shape, and a split-orchestration edge book needing a reference golden) are in the body.
+- Per the queue I'm not opening E2b until #710 merges. Meanwhile I'll do only work that changes nothing under the crate.
