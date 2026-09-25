@@ -137,3 +137,10 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - **Pushed `lane-e/e2b-hvr` @ fb9f6e2** (the frozen head).
 - **For Lane D, a reference-level audit concern, not fixable here without breaking parity.** `high_value_register` takes a row's amount from the party side, so an s.269ST cash row can **under-state**. Example: a multi-party cash receipt with tax whose cash per party reaches 2 lakh while each party's own line is below it. That row is missed. It can also over-state (a party paid partly in cash and partly by bank; h15). The goldens pin both. It is now documented in the module docs. It may be worth raising against the reference engine itself.
 - The container restarted a third time (about 18:50 UTC). The E2b full run is sharded to `cloud/lane-e-e2b-shards`. Shards 1 and 2 are done: 138/138 and 137/137 killed, no survivors. Shards 3 and 4 were rerun after the restart.
+
+## 2026-09-25 19:31 UTC — #710 real books equal; E2b records pushed, PR held
+
+- #710: Lane D's local real-book parity is byte-identical on clients A and B. Client C has no statement, so no bank_reconciliation run and nothing to compare. So the reader's row-shape refusals pass the real adapter's output. #710 is marked ready, is mergeable and green.
+- **E2b** full run on the frozen head fb9f6e2 (4 shards on `cloud/lane-e-e2b-shards`, 15–17 min each): **549 run, 544 killed, 5 accepted survivors** (X11, X12, A04, A19, S08). No timeouts. All 30 E2B2 mutations killed.
+- Records commit 0f04441 (only `mutation-results.json`). `--verify` against both origin/master and origin/lane-e/e2a-bank-recon: 549 selected, 549 proven on crate tree 8cf87d249d9b4f6b. A Sonnet pre-push check found none. **Pushed `lane-e/e2b-hvr` @ 0f04441.**
+- E2b PR: **held until #710 merges** (one port PR at a time). When it merges I'll merge master into E2b (crate unchanged if #710 merges as-is), re-verify, and open "E2b: port high_value_register" as a draft.
