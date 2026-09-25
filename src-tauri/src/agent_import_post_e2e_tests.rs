@@ -501,12 +501,20 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch(&server);
+    let company_guid = args["company_guid"].as_str().unwrap().to_string();
     let scripted = ScriptedApproval::approving();
     let response = SCRIPTED_APPROVAL
         .scope(scripted.clone(), server.call_tool("post_import", args))
         .await;
     let observed = sent(simulator);
     assert!(observed.len() > post_at, "{response}");
+    // The post drops every ledger listing snapshot of its company (#630).
+    let dropped = server.listings.lock().unwrap().dropped_companies().to_vec();
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert!(
+        dropped[0].eq_ignore_ascii_case(&company_guid),
+        "{dropped:?}"
+    );
 
     let intent = dispatch_intent(directory.path());
     assert_journaled_clean_create(directory.path());
@@ -1253,6 +1261,26 @@ async fn located_after_response(post_response: String, marks_after: String) -> V
 async fn only_the_target_moving_is_reported_as_the_landing() {
     let located = located_after(company_marks(11, 50, "WR2 Unicode Lab")).await;
     assert_eq!(located["state"], "target_only", "{located}");
+    // The captured answer reports one create, and the target's mark moved by one.
+    assert_eq!(
+        located["target_voucher_step"],
+        json!({"before": 10, "after": 11, "step": 1, "reported_created": 1, "matches_created": true}),
+        "{located}"
+    );
+}
+
+/// A step larger than Tally's CREATED means the post altered or cancelled
+/// vouchers itself, or another voucher in the target changed around it
+/// (protocol reference §11c.5). It is reported in `post_location`.
+#[tokio::test]
+async fn a_target_step_beyond_the_create_is_reported() {
+    let located = located_after(company_marks(12, 50, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "target_only", "{located}");
+    assert_eq!(located["target_voucher_step"]["step"], 2, "{located}");
+    assert_eq!(
+        located["target_voucher_step"]["matches_created"], false,
+        "{located}"
+    );
 }
 
 #[tokio::test]
@@ -1474,11 +1502,23 @@ fn saved_captured_line(server: &Server) -> ImportLedgerLine {
 /// location snapshot, then the readback finds the post's own voucher. This is
 /// the only simulator test that reaches `posted_verified`; the others stop at
 /// the POST, so their final result is the readback failing for want of plans.
+/// The verdict is the readback's: a target step of two, which does not match
+/// the one create, is reported and changes nothing.
 #[tokio::test]
 async fn a_native_post_reads_back_as_posted_verified() {
+    for (mark_after, step, matches_created) in [(11, 1, true), (12, 2, false)] {
+        native_post_reads_back_as_posted_verified(mark_after, step, matches_created).await;
+    }
+}
+
+async fn native_post_reads_back_as_posted_verified(
+    mark_after: u64,
+    step: u64,
+    matches_created: bool,
+) {
     let mut plans = before_approval();
     plans.extend(after_approval(xml(created_one())));
-    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    plans.push(xml(company_marks(mark_after, 50, "WR2 Unicode Lab")));
     // The readback: the same verification read the pre-post check made, now
     // serving the captured voucher.
     plans.extend(probe());
@@ -1506,6 +1546,15 @@ async fn a_native_post_reads_back_as_posted_verified() {
         result["post_location"]["state"], "target_only",
         "{response}"
     );
+    assert_eq!(
+        result["post_location"]["target_voucher_step"]["step"], step,
+        "{response}"
+    );
+    assert_eq!(
+        result["post_location"]["target_voucher_step"]["matches_created"], matches_created,
+        "{response}"
+    );
+    assert!(result.get("error").is_none(), "{response}");
     assert_journaled_clean_create(directory.path());
 }
 
