@@ -296,6 +296,22 @@ The same reasoning rules out identifying the original by its date, amount or led
 destructive selector that hit a similar voucher passes that comparison too. Use the identity Tally
 assigned.
 
+**A resend after a person's change undoes that change** — **PARTIAL 2026-09-25; licensed TallyPrime
+7.1 Silver, one synthetic book, gateway, one run of each, captures not committed.** Three Journals
+were created with client `REMOTEID`s, then each was changed and resent with `ACTION="Create"`, the
+same `REMOTEID` and a changed amount:
+
+| Change before the resend | The change's own response | The resend's response and effect |
+| --- | --- | --- |
+| `ACTION="Cancel"` | `ALTERED=1`, `CANCELLED=0`; the voucher shows `ISCANCELLED` Yes, entries removed | `ALTERED=1`; the voucher is **un-cancelled** with its entries restored |
+| upsert with `ISOPTIONAL` Yes | `ALTERED=1`; optional, and the voucher number moved | `ALTERED=1`; still optional (the omitted flag is kept), renumbered again |
+| `ACTION="Delete"` by the `REMOTEID` | `DELETED=1` | `CREATED=1`; the voucher is **re-created** under a new GUID |
+
+So a resend with a changed payload reverses a person's cancel or delete, and a delete leaves no
+voucher to show that the `REMOTEID` was ever used: a book check cannot stand in for a record of
+what was sent. A byte-identical resend after a cancel or delete was **not measured**, so it may not
+be assumed safe either. Note also that a cancel reports `ALTERED`, not `CANCELLED`.
+
 ### 9.4 Master re-create is a silent Alter
 
 **VERIFIED.** Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0,
