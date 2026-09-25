@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Locks in the README's central privacy promise (README.md:57-59):
+// Locks in the README's central privacy promise (README.md, 'What it does not do'):
 //
 //   "Your Tally data is never uploaded. Bridge reads it over a local
 //   connection and hands it to the assistant you are talking to; nothing in
 //   the Tally path sends it to a server of ours."
 //
 // and the separation promise for the upload-capable parts of the app
-// (README.md:64-67):
+// (README.md, 'One part of the app does upload'):
 //
 //   "Bridge also contains a document feature that uploads files you choose
 //   to ComplyEaze cloud storage, and an AXAL sign-in. Those are separate and
@@ -29,7 +29,10 @@
 //    (`bridge`, the app crate, which legitimately needs it for
 //    axal.rs/documents.rs -- see the note above APP_CRATE: both ship in the
 //    extension binary too, not only in the desktop app) does with that
-//    dependency inside its own files.
+//    dependency inside its own files. It follows normal, build and dev
+//    edges alike: a dev- or build-dependency on reqwest in a crate outside
+//    the allow-list is refused too, since a test double or build script
+//    that can open a connection is still egress from a developer's machine.
 //
 // 2. A source scan of the app crate (`src-tauri/src`): asserts that
 //    `reqwest::`, `hyper::`, and raw socket construction appear only in a
@@ -85,8 +88,9 @@ const TALLY_HTTP_TRANSPORT_CRATE = "bridge-tally-transport";
 
 // `bridge` is the app crate. It legitimately depends on reqwest directly for
 // two things that are NOT the Tally path: axal.rs (AXAL sign-in / cloud
-// storage) and documents.rs (the document upload feature). README.md:64-70
-// names both explicitly as the parts of the app that DO upload.
+// storage) and documents.rs (the document upload feature). The README section
+// 'One part of the app does upload' names both explicitly as the parts of the
+// app that DO upload.
 //
 // Do not read "app crate" as "Tauri only". Both modules are declared
 // unconditionally in lib.rs, with no cfg(feature) gate; src/bin/bridge_mcp.rs
@@ -119,7 +123,7 @@ function directDependents(manifestPath, packageName) {
       "--depth",
       "1",
       "--edges",
-      "normal",
+      "normal,build,dev",
       "--prefix",
       "none",
       "--format",
@@ -198,8 +202,9 @@ for (const workspace of workspaces) {
 // silently in either direction -- same shape as
 // admission_and_egress_files_stay_pinned.rs's pin check.
 const APP_CRATE_HTTP_ALLOW_LIST = new Set([
-  // AXAL sign-in and document upload: the two features README.md:64-70 names
-  // as the parts of the app that DO upload, on purpose, user-initiated.
+  // AXAL sign-in and document upload: the two features the README section
+  // 'One part of the app does upload' names as the parts of the app that DO
+  // upload, on purpose, user-initiated.
   "src-tauri/src/axal.rs",
   "src-tauri/src/documents.rs",
   // The Tally HTTP transport wrapper: reqwest is used here, but only to
@@ -252,8 +257,8 @@ if (unlistedCallSites.length) {
     "src-tauri/src: found an outbound HTTP client or raw socket construction outside the pinned " +
       `allow-list (${[...APP_CRATE_HTTP_ALLOW_LIST].sort().join(", ")}): ${unlistedCallSites.join(", ")}. ` +
       'This falsifies the README promise "nothing in the Tally path sends it to a server of ours" ' +
-      "(README.md:57-59) unless the new call site is one of the app's already-documented upload " +
-      "features (README.md:64-70). If it is, add it to APP_CRATE_HTTP_ALLOW_LIST in " +
+      "(README.md, 'What it does not do') unless the new call site is one of the app's already-documented upload " +
+      "features (README.md, 'One part of the app does upload'). If it is, add it to APP_CRATE_HTTP_ALLOW_LIST in " +
       "scripts/check-tally-egress-boundary.mjs with a reviewed reason; if it is not, it does not belong.",
   );
 }
@@ -269,7 +274,7 @@ if (egressViolations.length) {
   throw new Error(
     "Tally-path egress boundary violated -- this protects the README promise " +
       '"Your Tally data is never uploaded ... nothing in the Tally path sends it to a server of ours" ' +
-      "(README.md:57-59):\n" +
+      "(README.md, 'What it does not do'):\n" +
       egressViolations.map((violation) => `- ${violation}`).join("\n"),
   );
 }
