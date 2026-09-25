@@ -164,3 +164,24 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - **XML names looked up: 12 distinct.** STOCKITEM, @NAME, GUID, PARENT, BASEUNITS, OPENINGBALANCE, OPENINGVALUE, CLOSINGBALANCE, CLOSINGVALUE, CLOSINGRATE, COMPANY, ISINTEGRATED.
   - The quantity and rate parsers are pre-existing (master) and match a numeric pattern, not literals.
 - The review round (Sonnet + Opus) on 02027c7 is running.
+
+## 2026-09-25 20:00 UTC — E3a reviewed, frozen at 5beb691, full run started
+
+- **Opus round 1 on E3a:** no P1. Paise arithmetic is checked throughout; f64 quantities never reach a paise figure; no panics; the reader fails closed on nearly everything. The fixable P2s were wrong implementations that passed every test while moving a paise figure (all fixed in bd9b3dd):
+  - a repeated Stock Summary name keeping its first row instead of its last;
+  - nameless summary rows kept;
+  - the quantity-field check reading every voucher instead of the population.
+  Pinned in bd9b3dd, E3A-33 and E3A-34; both killed. The module docs overclaimed the value-only exclusion; fixed in bd9b3dd and 5beb691 (docs).
+- **Sonnet:** no P1 or P2. It confirmed `book.rs` changes are additive only, with no other module's figure moved; 3 tests added.
+- **Round 2 (Sonnet and Opus):** no P1 or P2 beyond the doc precision fixed in 5beb691.
+- **Pushed `lane-e/e3a-stock` @ 5beb691** (the frozen head). The sharded full run is on `cloud/lane-e-e3a-shards`.
+- **For Lane D (design, reference-level, not changed):**
+  - `[stock].opening_date` and `closing_date` are never checked against the engagement period, and not for opening ≤ closing either. A closing_date of 2025-12-31 gives `gap_closing_paise` against the full-year TB movement, without refusal. Requiring them to equal the period bounds would be a divergence that could refuse real configs (for example, an opening as of 31 March). It needs a decision from real configs.
+  - Unverified live: an opening Stock Summary taken "as of" the period start may already include 1 April movements, which the walk then adds again. This question is about the reference's design.
+- **P3s:**
+  - `(-)5 Nos` reads as +5;
+  - `N/A` reads as None;
+  - item names are matched case-sensitively;
+  - the pre-existing `paise("+-1.00")` reads as positive;
+  - the pre-existing `number_match_end` is quadratic (40k commas take 1.6 s);
+  - M06/B05 is a duplicate mutation, from before this branch.
