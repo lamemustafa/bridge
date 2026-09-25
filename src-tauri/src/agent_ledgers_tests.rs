@@ -1866,52 +1866,64 @@ mod through_the_tool {
         ] {
             pair(&mut plans, source);
         }
+        pair(&mut plans, extent.clone());
+        plans.extend([companies.clone(), status(), companies.clone()]);
+        // A second page is served from the first page's snapshot: identity,
+        // then the bracketed extent pair only.
+        pair(&mut plans, companies.clone());
+        plans.push(companies.clone());
         pair(&mut plans, extent);
-        plans.extend([companies.clone(), status(), companies]);
+        plans.push(companies);
         let total = plans.len();
-        let (response, requests) =
-            call(plans, json!({"company_guid":forex,"fields":"compliance"})).await;
-        assert_eq!(requests, total);
-        let result = &response["structuredContent"]["result"];
-        let names = items(&response)
-            .iter()
-            .map(|row| row["name"].as_str().unwrap().to_string())
-            .collect::<Vec<_>>();
+        let one = OneServer::spawn(plans);
+        let page = |offset: usize| json!({"company_guid":forex,"fields":"compliance","limit":2,"offset":offset});
+        let first = one.call(page(0)).await;
+        let second = one.call(page(2)).await;
+        assert_eq!(one.requests(), total);
         let dollar = ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"];
+        let mut names = Vec::new();
+        for response in [&first, &second] {
+            let result = &response["structuredContent"]["result"];
+            names.extend(
+                items(response)
+                    .iter()
+                    .map(|row| row["name"].as_str().unwrap().to_string()),
+            );
+            assert_eq!(result["total"], 4);
+            assert_eq!(result["ledgers_scope"], "base_currency_ledgers_only");
+            // Rupee ledgers a dollar entry touched carry composite balances:
+            // set aside by name, never read.
+            let mixed = &result["base_currency_ledgers_mixed_excluded"];
+            assert_eq!(mixed["count"], 3);
+            assert_eq!(mixed["reason"], "mixed_currency_movement");
+            assert_eq!(
+                mixed["ledgers"],
+                json!(["FX Party 01", "FX Sales", "Profit & Loss A/c"])
+            );
+            let excluded = &result["foreign_currency_ledgers_excluded"];
+            assert_eq!(excluded["count"], 3);
+            let mut listed = excluded["ledgers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|ledger| {
+                    assert_eq!(ledger["currency"], "$");
+                    ledger["ledger"].as_str().unwrap().to_string()
+                })
+                .collect::<Vec<_>>();
+            listed.sort();
+            assert_eq!(listed, dollar);
+            // The composite opening on a dollar ledger is never read or shown.
+            assert!(!response.to_string().contains(" @ "), "{response}");
+        }
         assert_eq!(
             names,
             ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]
         );
-        assert!(
-            names.iter().all(|name| !dollar.contains(&name.as_str())),
-            "{names:?}"
-        );
-        assert_eq!(result["total"], 4);
-        // Rupee ledgers a dollar entry touched carry composite balances: set
-        // aside by name, never read.
-        let mixed = &result["base_currency_ledgers_mixed_excluded"];
-        assert_eq!(mixed["count"], 3);
-        assert_eq!(mixed["reason"], "mixed_currency_movement");
         assert_eq!(
-            mixed["ledgers"],
-            json!(["FX Party 01", "FX Sales", "Profit & Loss A/c"])
+            second["structuredContent"]["result"]["snapshot"]["reused"],
+            true
         );
-        assert_eq!(result["ledgers_scope"], "base_currency_ledgers_only");
-        let excluded = &result["foreign_currency_ledgers_excluded"];
-        assert_eq!(excluded["count"], 3);
-        let mut listed = excluded["ledgers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|ledger| {
-                assert_eq!(ledger["currency"], "$");
-                ledger["ledger"].as_str().unwrap().to_string()
-            })
-            .collect::<Vec<_>>();
-        listed.sort();
-        assert_eq!(listed, dollar);
-        // The composite opening on a dollar ledger is never read or shown.
-        assert!(!response.to_string().contains(" @ "), "{response}");
     }
 
     #[tokio::test]
