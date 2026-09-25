@@ -237,7 +237,7 @@ fn each_readback_guard_refuses_on_its_own_even_under_posted_verified() {
     let marked = || row_json(2, &format!("Paid [BRIDGE:{tag}]"));
     let admit = |row: Value| {
         let row: ReadVoucher = serde_json::from_value(row).unwrap();
-        admit_review(imports.path(), &line, &payload, &[row]).map(|_| ())
+        admit_review(imports.path(), &line, &payload, &[row], DoubtKind::Masters).map(|_| ())
     };
     assert_eq!(admit(marked()), Ok(()), "the control is admitted");
     for (pointer, value) in [
@@ -269,4 +269,319 @@ fn a_long_ledger_name_and_a_marked_narration_fit_the_review() {
     assert!(preview.contains(&format!("  \"{ledger}\"")), "{preview}");
     assert!(preview.contains("INV 2026-27/0045 AUG\""), "{preview}");
     assert!(!preview.contains("[BRIDGE:"), "{preview}");
+}
+
+/// A posted batch of `count` Journals, T1..Tn, as `post_import` saves one.
+fn posted_batch(count: usize) -> ImportLedgerLine {
+    let mut line = posted_line();
+    let first = line.vouchers[0].clone();
+    line.vouchers = (1..=count)
+        .map(|index| {
+            let mut voucher = first.clone();
+            voucher.bridge_txn_id = format!("T{index}");
+            voucher
+        })
+        .collect();
+    line.txn_ids = (1..=count).map(|index| format!("T{index}")).collect();
+    line
+}
+
+/// The batch's vouchers as read back, each carrying its own marker.
+fn batch_rows(line: &ImportLedgerLine) -> Vec<ReadVoucher> {
+    line.vouchers
+        .iter()
+        .enumerate()
+        .map(|(index, voucher)| {
+            let tag = line.attribution_tag(voucher);
+            let mut row = row_json(2, &format!("Paid [BRIDGE:{tag}]"));
+            row["guid"] = json!(format!("g-{index}"));
+            row["master_id"] = json!(format!("{}", 5 + index));
+            row["alter_id"] = json!(10 + index as u64);
+            serde_json::from_value(row).unwrap()
+        })
+        .collect()
+}
+
+const STEP_DOUBT: &[u8] = br#"{"state":"unmatched","target_voucher_step":{"before":10,"after":14,"step":4,"reported_created":3,"matches_created":false}}"#;
+const MASTERS_DOUBT: &[u8] = br#"{"state":"posted_under_changed_masters","ledgers":["Cash"]}"#;
+
+fn verified(count: usize) -> Value {
+    json!({"result":{
+        "dispatch":{"response_state":"response_clean"},
+        "counts":{"posted_verified":count},"duplicates":[]
+    }})
+}
+
+/// Which doubt a review is for: the named one, if the batch can hold it; the
+/// one observed; never a guess between two.
+#[test]
+fn a_review_names_its_doubt_and_two_doubts_need_a_name() {
+    use MastersRecord::{Doubt, NoDoubt, Pending};
+    let doubt = || Doubt {
+        raw: b"{}".to_vec(),
+    };
+    let both = [
+        (DoubtKind::Masters, doubt()),
+        (DoubtKind::BatchStep, doubt()),
+    ];
+    assert_eq!(select_doubt(None, &both), Err("ack_doubt_ambiguous"));
+    assert_eq!(
+        select_doubt(Some(DoubtKind::BatchStep), &both),
+        Ok(DoubtKind::BatchStep)
+    );
+    let step_only = [
+        (DoubtKind::Masters, NoDoubt),
+        (DoubtKind::BatchStep, doubt()),
+    ];
+    assert_eq!(select_doubt(None, &step_only), Ok(DoubtKind::BatchStep));
+    // A single post can hold no step doubt.
+    let single = [(DoubtKind::Masters, doubt())];
+    assert_eq!(select_doubt(None, &single), Ok(DoubtKind::Masters));
+    assert_eq!(
+        select_doubt(Some(DoubtKind::BatchStep), &single),
+        Err("ack_no_observed_doubt")
+    );
+    // None observed: the kind whose record says why is the one refused.
+    let pending = [
+        (DoubtKind::Masters, NoDoubt),
+        (DoubtKind::BatchStep, Pending),
+    ];
+    assert_eq!(select_doubt(None, &pending), Ok(DoubtKind::BatchStep));
+    let none = [
+        (DoubtKind::Masters, NoDoubt),
+        (DoubtKind::BatchStep, NoDoubt),
+    ];
+    assert_eq!(select_doubt(None, &none), Ok(DoubtKind::Masters));
+}
+
+/// A batch review binds every voucher in batch order, and is refused unless
+/// every one reads back verified: a partial read is reconciled first.
+#[test]
+fn a_batch_review_binds_every_voucher_and_refuses_a_partial_read() {
+    let imports = tempfile::tempdir().unwrap();
+    let line = posted_batch(3);
+    let rows = batch_rows(&line);
+    fs::write(
+        super::batch_step_doubt_path(imports.path(), BATCH),
+        STEP_DOUBT,
+    )
+    .unwrap();
+    let shown = admit_review(
+        imports.path(),
+        &line,
+        &verified(3),
+        &rows,
+        DoubtKind::BatchStep,
+    )
+    .unwrap();
+    assert_eq!(shown.doubt_raw, STEP_DOUBT);
+    assert_eq!(
+        shown
+            .vouchers
+            .iter()
+            .map(|voucher| (voucher.bridge_txn_id.as_str(), voucher.alter_id))
+            .collect::<Vec<_>>(),
+        [("T1", 10), ("T2", 11), ("T3", 12)]
+    );
+    let refused = |payload: &Value, rows: &[ReadVoucher], kind| {
+        admit_review(imports.path(), &line, payload, rows, kind).err()
+    };
+    assert_eq!(
+        refused(&verified(2), &rows, DoubtKind::BatchStep).as_deref(),
+        Some("ack_readback_not_matched")
+    );
+    assert_eq!(
+        refused(&verified(3), &rows[..2], DoubtKind::BatchStep).as_deref(),
+        Some("ack_readback_not_matched")
+    );
+    // No masters doubt is recorded, so a masters review has nothing to cover.
+    assert_eq!(
+        refused(&verified(3), &rows, DoubtKind::Masters).as_deref(),
+        Some("ack_no_observed_doubt")
+    );
+}
+
+/// The batch dialog shows the doubt and the vouchers as read, in totals, and
+/// is refused rather than cut when it does not fit.
+#[test]
+fn the_batch_review_summarizes_the_doubt_and_the_vouchers_as_read() {
+    let line = posted_batch(3);
+    let rows = batch_rows(&line);
+    let rows = rows.iter().collect::<Vec<_>>();
+    let step: Value = serde_json::from_slice(STEP_DOUBT).unwrap();
+    let preview = batch_review_preview(&line, DoubtKind::BatchStep, "Books", &step, &rows).unwrap();
+    for shown in [
+        "Record that you reviewed 3 vouchers in \"Books\"",
+        "its voucher mark moved by 4 (from 10 to 14); Tally reported creating 3.",
+        "Not shown here: narrations, voucher numbers and types.",
+        "Dates: 20260907 to 20260907  ALTERIDs: 10 to 12",
+        "Dr -3  Cr 0  3 entries  \"Ledger 0\"",
+        &format!("Batch: {BATCH}"),
+        "I reviewed these 3 vouchers in Tally.",
+        "reconciliation_required",
+    ] {
+        assert!(preview.contains(shown), "{shown}: {preview}");
+    }
+    let masters: Value = serde_json::from_slice(MASTERS_DOUBT).unwrap();
+    let preview =
+        batch_review_preview(&line, DoubtKind::Masters, "Books", &masters, &rows).unwrap();
+    assert!(
+        preview.contains("these ledgers no longer resolve"),
+        "{preview}"
+    );
+    assert!(preview.contains("  \"Cash\""), "{preview}");
+    // Too many ledgers for one dialog.
+    let wide = (0..40)
+        .map(|index| {
+            let mut row = row_json(1, "wide");
+            row["amounts"][0]["ledger"] = json!(format!("Wide ledger {index}"));
+            serde_json::from_value::<ReadVoucher>(row).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let wide = wide.iter().collect::<Vec<_>>();
+    assert_eq!(
+        batch_review_preview(&line, DoubtKind::BatchStep, "Books", &step, &wide)
+            .err()
+            .as_deref(),
+        Some("ack_review_too_large")
+    );
+}
+
+/// A step doubt is shown in its own words for each way it arises: a mark
+/// never read, a mark that went backwards, and an answer that did not parse
+/// are never shown as a count.
+#[test]
+fn each_kind_of_step_doubt_is_shown_in_its_own_words() {
+    let line = posted_batch(2);
+    let rows = batch_rows(&line);
+    let rows = rows.iter().collect::<Vec<_>>();
+    for (step, said, never) in [
+        (
+            Value::Null,
+            "changed this company's vouchers:\nBridge could not read its voucher mark after posting.\n",
+            "Tally reported",
+        ),
+        (
+            json!({"before":14,"after":10,"step":null,"reported_created":2}),
+            "its voucher mark went backwards (from 14 to 10); Tally reported creating 2.",
+            "moved by",
+        ),
+        (
+            json!({"before":10,"after":13,"step":3,"reported_created":null}),
+            "its voucher mark moved by 3 (from 10 to 13); Tally's answer could not be read.",
+            "reported creating",
+        ),
+    ] {
+        let doubt = json!({"state":"unmatched","target_voucher_step":step});
+        let preview =
+            batch_review_preview(&line, DoubtKind::BatchStep, "Books", &doubt, &rows).unwrap();
+        assert!(preview.contains(said), "{said}: {preview}");
+        assert!(!preview.contains(never), "{never}: {preview}");
+    }
+}
+
+/// A batch's reviews are reported per doubt. A review covers only the doubt it
+/// names, and turns stale, naming the voucher, when any one of its vouchers
+/// changes.
+#[test]
+fn a_batch_review_covers_only_its_own_doubt_and_names_a_changed_voucher() {
+    let imports = tempfile::tempdir().unwrap();
+    let line = posted_batch(2);
+    let rows = batch_rows(&line);
+    fs::write(masters_doubt_path(imports.path(), BATCH), MASTERS_DOUBT).unwrap();
+    fs::write(
+        super::batch_step_doubt_path(imports.path(), BATCH),
+        STEP_DOUBT,
+    )
+    .unwrap();
+    let shown = admit_review(
+        imports.path(),
+        &line,
+        &verified(2),
+        &rows,
+        DoubtKind::Masters,
+    )
+    .unwrap();
+    let record = BatchAckRecord {
+        version: BATCH_RECORD_VERSION,
+        batch_id: BATCH.into(),
+        company_guid: line.company_guid.clone(),
+        doubt: "masters".into(),
+        doubt_sha256: sha256_hex(MASTERS_DOUBT),
+        vouchers: shown.vouchers,
+        voucher_fingerprint_fields: FINGERPRINT_FIELDS.into(),
+        shown: json!([]),
+        reviewed_at: "2026-09-26T00:00:00.000Z".into(),
+        local_account_label: None,
+    };
+    fs::write(
+        DoubtKind::Masters.ack_path(imports.path(), BATCH),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    let review = operator_review(imports.path(), &line, &rows).unwrap();
+    assert_eq!(review["masters"]["state"], "current", "{review}");
+    assert_eq!(review["batch_step"]["state"], "absent", "{review}");
+    // A masters review does not cover the step doubt, even filed under it.
+    fs::copy(
+        DoubtKind::Masters.ack_path(imports.path(), BATCH),
+        DoubtKind::BatchStep.ack_path(imports.path(), BATCH),
+    )
+    .unwrap();
+    let review = operator_review(imports.path(), &line, &rows).unwrap();
+    assert_eq!(review["batch_step"]["state"], "stale", "{review}");
+    assert_eq!(review["batch_step"]["covers_doubt"], false, "{review}");
+    // Even bound to the step doubt's own bytes, a record that names another
+    // doubt does not cover it.
+    let mut misnamed = serde_json::from_slice::<BatchAckRecord>(
+        &fs::read(DoubtKind::Masters.ack_path(imports.path(), BATCH)).unwrap(),
+    )
+    .unwrap();
+    misnamed.doubt_sha256 = sha256_hex(STEP_DOUBT);
+    fs::write(
+        DoubtKind::BatchStep.ack_path(imports.path(), BATCH),
+        serde_json::to_vec(&misnamed).unwrap(),
+    )
+    .unwrap();
+    let review = operator_review(imports.path(), &line, &rows).unwrap();
+    assert_eq!(review["batch_step"]["covers_doubt"], false, "{review}");
+    misnamed.doubt = "batch_step".into();
+    fs::write(
+        DoubtKind::BatchStep.ack_path(imports.path(), BATCH),
+        serde_json::to_vec(&misnamed).unwrap(),
+    )
+    .unwrap();
+    let review = operator_review(imports.path(), &line, &rows).unwrap();
+    assert_eq!(review["batch_step"]["state"], "current", "{review}");
+    // A record for the same vouchers in another order covers nothing.
+    misnamed.vouchers.reverse();
+    fs::write(
+        DoubtKind::BatchStep.ack_path(imports.path(), BATCH),
+        serde_json::to_vec(&misnamed).unwrap(),
+    )
+    .unwrap();
+    let review = operator_review(imports.path(), &line, &rows).unwrap();
+    assert_eq!(review["batch_step"]["covers_doubt"], false, "{review}");
+    misnamed.vouchers.reverse();
+    fs::write(
+        DoubtKind::BatchStep.ack_path(imports.path(), BATCH),
+        serde_json::to_vec(&misnamed).unwrap(),
+    )
+    .unwrap();
+    // One voucher altered: the masters review is stale and names it.
+    let mut edited = rows.clone();
+    edited[1].alter_id = Some(99);
+    let review = operator_review(imports.path(), &line, &edited).unwrap();
+    assert_eq!(review["masters"]["state"], "stale", "{review}");
+    assert_eq!(
+        review["masters"]["changed_vouchers"],
+        json!(["T2"]),
+        "{review}"
+    );
+    // A review whose doubt file has gone is stale, not silently absent.
+    fs::remove_file(super::batch_step_doubt_path(imports.path(), BATCH)).unwrap();
+    let review = operator_review(imports.path(), &line, &rows).unwrap();
+    assert_eq!(review["batch_step"]["state"], "stale", "{review}");
+    assert_eq!(review["batch_step"]["covers_doubt"], false, "{review}");
+    assert_eq!(review["masters"]["state"], "current", "{review}");
 }

@@ -653,14 +653,10 @@ async fn a_review_reads_absent_before_a_record_and_stale_without_its_doubt() {
     );
 }
 
-/// A batch of more than one voucher was not posted by `post_import`, which
-/// posts one; it is refused before any request.
-#[tokio::test]
-async fn a_batch_of_several_vouchers_is_refused_before_any_request() {
-    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let server = server_at(simulator.address(), directory.path());
-    let mut line = saved_captured_line(&server);
+/// A two-voucher batch whose dispatch intent is journaled, as `post_import`
+/// leaves one just before its POST.
+fn dispatched_batch(server: &Server) -> ImportLedgerLine {
+    let mut line = saved_captured_line(server);
     let mut second = line.vouchers[0].clone();
     second.bridge_txn_id = "BRIDGE_MCP_LIVE_20260906_A2".into();
     line.vouchers.push(second);
@@ -680,6 +676,18 @@ async fn a_batch_of_several_vouchers_is_refused_before_any_request() {
             ))
             .unwrap();
     }
+    line
+}
+
+/// A batch of several vouchers with no doubt recorded is refused before any
+/// request: there is nothing to review. (Before batch reviews, slice D2b,
+/// any batch was refused here as `ack_batch_not_posted`.)
+#[tokio::test]
+async fn a_batch_of_several_vouchers_with_no_doubt_is_refused_before_any_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let line = dispatched_batch(&server);
     let response = acknowledge(
         &server,
         json!({"company_guid":GUID,"batch_id":line.batch_id}),
@@ -687,7 +695,31 @@ async fn a_batch_of_several_vouchers_is_refused_before_any_request() {
     )
     .await;
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"], "ack_batch_not_posted",
+        response["structuredContent"]["result"]["error"]["code"], "ack_no_observed_doubt",
+        "{response}"
+    );
+    assert!(sent(simulator).is_empty());
+}
+
+/// A batch whose step verdict is still pending is refused before any request:
+/// only a post records that verdict, so no read could finish it.
+#[tokio::test]
+async fn a_batch_step_review_left_pending_is_refused_before_any_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let line = dispatched_batch(&server);
+    server
+        .record_post_checks_pending(&line.batch_id, true)
+        .unwrap();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":GUID,"batch_id":line.batch_id,"doubt":"batch_step"}),
+        ScriptedApproval::approving(),
+    )
+    .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_check_pending",
         "{response}"
     );
     assert!(sent(simulator).is_empty());

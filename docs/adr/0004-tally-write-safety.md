@@ -535,8 +535,12 @@ or a verdict never recorded, reads `reconciliation_required` with `batch_step_un
 multi-user book a person's edit during the post trips it; that is accepted, and loud.
 
 **Limits.**
-- A doubted batch has no review record yet: `acknowledge_post_review` refuses a batch, until
-  slice D2b binds a review to every voucher and to the doubt it covers.
+- A doubted batch keeps its verdict. `acknowledge_post_review` records that a person reviewed
+  it, as for one voucher: from a summary of every voucher as read back, for one named doubt
+  (`masters` or `batch_step`), binding that doubt's bytes and every voucher's GUID, MASTERID,
+  ALTERID and fingerprint, in batch order. A review covers only the doubt it names; an edit to
+  any voucher makes it stale, naming the voucher. It is refused unless all N read back. It
+  changes no verdict.
 - The N-voucher step is PARTIAL on raw-gateway lab scripts (protocol reference §11c.5).
   Through Bridge's own post path it is UNVERIFIED until the lab proof (slice D3).
 - The desktop stays single-voucher `JournalOnly`.
@@ -548,4 +552,7 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
 - **Back to a build older than D1.** That build refuses a journal holding a batch's dispatch
   intent (`deny_unknown_fields`), so every import and verification stops, loudly, until a newer
   build is back.
+- **Back to a build before batch reviews (slice D2b).** That build reads a batch's
+  `masters_ack.json` (version 2) as unreadable, and ignores `batch_step_ack.json`. Both are
+  display-only, so no verdict changes.
 - Do not edit the journal or the check records by hand to get around any of these.
