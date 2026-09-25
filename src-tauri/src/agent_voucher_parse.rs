@@ -361,6 +361,14 @@ fn parse_voucher_rows(
                         identities.admit(row.get("GUID").map(String::as_str), master_id)?;
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": parse_optional_tally_alter_id(row.get("ALTERID").map(String::as_str))?, "master_id": row.get("MASTERID"), "amounts": amounts});
+                        // Present only when the read asked Tally to resolve the
+                        // row's voucher type (bridge#625).
+                        if let Some(resolved) = resolve_row_voucher_type(&row, company_guid)? {
+                            parsed["voucher_type_guid"] = json!(resolved.guid);
+                            parsed["voucher_type_reserved_name"] = json!(resolved.reserved_name);
+                            parsed["voucher_class"] =
+                                json!(resolved.class.map(ReservedVoucherClass::name));
+                        }
                         if require_change_identity {
                             parsed["remote_id"] = json!(row.get("REMOTEID"));
                         }
@@ -497,7 +505,9 @@ fn claim_voucher_scalar(
     entry: Option<&mut BTreeMap<String, String>>,
     allocation: Option<&mut BTreeMap<String, String>>,
 ) -> Result<(), String> {
-    let row = if scope.row("VOUCHER") && is_voucher_scalar(field) {
+    let row = if scope.row("VOUCHER")
+        && (is_voucher_scalar(field) || is_voucher_type_class_scalar(field))
+    {
         current
     } else if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") && is_voucher_entry_scalar(field) {
         entry

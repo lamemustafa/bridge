@@ -1,0 +1,12 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver response to the class-resolving vouchers request (render_agent_class_vouchers_in_span, unnarrowed) from the disposable BRIDGE READS LAB book, window 20250701..20250731, after its reserved Purchase voucher type was renamed to PURCHASE A/C, a child type Purchase Local was created under it, and a user type named Purchase was created under Attendance (bridge#625)",
+  "observed_date": "2026-09-24",
+  "fixture_bytes": 105064,
+  "fixture_sha256": "10dd877ffe83d61d91fbb1f7ff8f719c0a4197fdb4269b4004e0e69dd2ebc1cc",
+  "request_utf8_sha256": "913a6a68694dd09c2955dbc0e694e40072435b69fe7788e180f1df1bafe39279",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 3,
+  "transformation": "none; byte-identical to the response file",
+  "provenance_limit": "Three purchase vouchers: two under the renamed reserved type and one under its child. Every row carries all ten class elements once. The user type named Purchase has no voucher in this window, so a row of another class that carries a reserved display name is not established here, and nor is any class other than Purchase at row level. The voucher types were renamed and created by gateway import, not in Tally's screens.",
+  "sensitivity_review": "Disposable synthetic lab book; company name is not in the file; synthetic ledger and party names; no customer data or credentials."
+}
