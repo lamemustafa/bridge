@@ -2263,6 +2263,37 @@ fn persisted_dispatch_response(created: u64, altered: u64) -> ledger::DispatchRe
     }
 }
 
+#[test]
+fn a_page_splits_verified_from_unverified_rows_and_pages_only_the_verified() {
+    let row = |id: &str, status: &str| json!({"bridge_txn_id": id, "status": status});
+    let proof = json!({
+        "batch_id": "bridge-page-test",
+        "counts": {"posted_verified": 3, "not_found": 1},
+        "vouchers": [
+            row("a", "posted_verified"),
+            row("b", "not_found"),
+            row("c", "posted_verified"),
+            row("d", "posted_verified"),
+        ],
+        "duplicates": [],
+    });
+    let page = verification_response_page(&proof, "f".repeat(64).as_str(), 1);
+    assert!(page.get("vouchers").is_none());
+    assert_eq!(page["unverified_vouchers"], json!([row("b", "not_found")]));
+    assert_eq!(page["verified_total"], 3);
+    assert_eq!(page["offset"], 1);
+    assert_eq!(
+        page["items"],
+        json!([row("c", "posted_verified"), row("d", "posted_verified")]),
+        "from the offset, verified rows only"
+    );
+    assert_eq!(page["counts"], proof["counts"]);
+    assert_eq!(
+        page["proof"],
+        json!({"batch_id": "bridge-page-test", "sha256": "f".repeat(64)})
+    );
+}
+
 #[tokio::test]
 async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_again() {
     // bridge#627: a whole-batch response outgrew the agent byte cap.
@@ -2324,6 +2355,10 @@ async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_
         rows.len() - verified
     );
     assert_eq!(page["verification_status"], proof["verification_status"]);
+    assert!(
+        page["verification_status"].is_string(),
+        "the proof records the status the page repeats"
+    );
     let requests = simulator.received();
 
     // A later page comes from the proof alone: same status, no Tally request.
