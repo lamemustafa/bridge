@@ -256,3 +256,21 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 - agent_import_post.rs: 436, 826, 966, 1232
 - agent_import_post_e2e_tests.rs: 523
 - agent_import_post_tests.rs: 690, 768, 1454, 1488, 1534, 1553, 1566, 1573, 1593, 1614
+
+## 2026-09-25 16:59 UTC — lane-f/egress-gate: built a9b9e4e: green
+
+- Head f51eaa5 (Lane F's merge of master a8324c6, with the JSONs on master's side). 0 behind. Reseal → **a9b9e4e** (.github/workflows/ci.yml and package.json rehashed); `--verify` current.
+- Sonnet review of a9b9e4e: no findings. All 280 pins match their bytes; pin list, claims and bridge_commit_sha are unchanged; a8324c6 is an ancestor.
+- As an extra check, `check-tally-egress-boundary.mjs` exits 0 ("sealed … 4 pinned files").
+- Pushed as a fast-forward: `lane-f/egress-gate` f51eaa5..a9b9e4e.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1335 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
