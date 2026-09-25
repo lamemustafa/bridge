@@ -542,10 +542,10 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
 - The desktop stays single-voucher `JournalOnly`.
 
 **Rollback.**
-- Reverting to slice D1's build keeps a posted batch `reconciliation_required`
-  (`batch_step_unconfirmed`), because D1 requires a matched step verdict and never records one.
-- Reverting further, to before D1, leaves a batch unverifiable: that build expects one voucher,
-  so its readback count never matches.
-- A build older than D1 refuses a journal holding a batch's dispatch intent
-  (`deny_unknown_fields`) loudly, never by skipping it.
+- **Back to slice D1's build.** D1 never records a step verdict. A batch whose step this build
+  recorded as matched stays clean there. Any other batch reads `reconciliation_required`
+  (`batch_step_unconfirmed`), and so does one whose verdict D1's own pending re-check drops.
+- **Back to a build older than D1.** That build refuses a journal holding a batch's dispatch
+  intent (`deny_unknown_fields`), so every import and verification stops, loudly, until a newer
+  build is back.
 - Do not edit the journal or the check records by hand to get around any of these.

@@ -2851,14 +2851,13 @@ fn read_verified_baseline_for(
     voucher_count: usize,
 ) -> Option<amend::VerifiedBaseline> {
     // A batch in doubt about its ledgers, or whose check is still pending
-    // (#239), is no baseline, whenever its baseline was written.
-    if post::post_doubt(
-        read_masters_check(imports, batch_id).as_ref(),
-        voucher_count,
-    )
-    .is_some()
-    {
-        return None;
+    // (#239), is no baseline, whenever its baseline was written. Only a
+    // native post has these records, so a build imported by file has none
+    // and no doubt; a native batch's step must have matched as well.
+    if let Some(check) = read_masters_check(imports, batch_id) {
+        if post::post_doubt(Some(&check), voucher_count).is_some() {
+            return None;
+        }
     }
     let mut file =
         super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
