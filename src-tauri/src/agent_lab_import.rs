@@ -9,9 +9,8 @@
 //! tool call, matching the plan's "admits target before every batch"
 //! requirement.
 //!
-//! Input is the book model documented in
-//! `brain/50-projects/audit-sprint-2026-09-14/specs/book_schema.md`, built by
-//! `SP/code/book/build_book.py`. This module never reads a snapshot itself.
+//! Input is the book model its producer documents, outside this repository.
+//! This module never reads a snapshot itself.
 //!
 //! **What is reused, and what is not, and why:**
 //! - [`bridge_tally_protocol::parse_import_outcome`] parses every
@@ -111,8 +110,8 @@ fn amounts_equal(a: &str, b: &str) -> bool {
 
 /// Whether `value` is numerically zero (or blank/unparseable, which a master
 /// renderer treats the same as zero -- nothing to report). Used to gate
-/// `OPENINGBALANCE`/`OPENINGVALUE`: the proven-good capture
-/// (`babul-masters-complete.xml`) only ever emits an opening amount element
+/// `OPENINGBALANCE`/`OPENINGVALUE`: the proven-good capture, a masters
+/// import file, only ever emits an opening amount element
 /// when it is non-zero -- a zero-balance ledger's `<LEDGER>` carries no
 /// `OPENINGBALANCE` at all.
 fn is_zero_amount(value: &str) -> bool {
@@ -606,7 +605,7 @@ fn render_ledger_alter_xml(name: &str, fields: &[(&'static str, String)]) -> Str
     // No `xmlns:UDF`: this partial Alter carries only plain writable fields
     // (currently `OPENINGBALANCE`), never a `UDF:`-namespaced element, so the
     // namespace declaration has nothing to bind to -- see module doc / proven
-    // shape (`babul-masters-complete.xml`) for the same convention on Create.
+    // shape of the captured masters import file for the same convention on Create.
     format!(
         "<TALLYMESSAGE><LEDGER NAME=\"{name}\" ACTION=\"Alter\">{body}</LEDGER></TALLYMESSAGE>",
         name = xml_escape(name)
@@ -628,8 +627,8 @@ fn render_import_envelope(company: &str, report_name: &str, messages: &str) -> S
 // No renderer below declares `xmlns:UDF="TallyUDF"`: none of them emit a
 // `UDF:`-namespaced element (that would require a genuine User Defined
 // Field, which this book model never carries), so the earlier blanket
-// declaration bound to nothing. The proven-good capture
-// (`babul-masters-complete.xml`) confirms an ordinary ledger Create carries
+// declaration bound to nothing. The proven-good capture, a masters import
+// file, confirms an ordinary ledger Create carries
 // no such attribute at all -- only one incidental `TALLYMESSAGE` in that
 // capture (for a UDF-bearing ledger the source system emitted) has it.
 
@@ -2146,9 +2145,10 @@ fn lab_marker_id(source_guid: &str) -> Uuid {
 /// `voucher_number` alone is not durable: TallyPrime silently reassigns it
 /// to its own per-voucher-type sequential series on Create, in **receipt**
 /// order, not the value supplied
-/// (`brain/10-domains/11-tally/tally-rewrites-what-you-import.md` #6,
-/// reproduced on both Education and licensed builds). The 2026-09-14
-/// rehearsal hit exactly this: batch 1 posted two same-date groups
+/// (protocol reference §9.8 records the supplied number being discarded
+/// under automatic numbering; the reassignment was reproduced on both
+/// Education and licensed builds in runs not recorded in this repository).
+/// The 2026-09-14 rehearsal hit exactly this: batch 1 posted two same-date groups
 /// (Payment 20250518 #98-106, Contra 20250609 #9-11) whose supplied
 /// numbers were NOT in ascending numeric order in the request (a separate,
 /// now-fixed bug -- the batch sort compared `voucher_number` as a string,
