@@ -89,6 +89,15 @@ test("an empty tree from a cargo that exits 0 fails closed", { skip }, () => {
   assert.deepEqual(result.calls, ["src-tauri.reqwest"]);
 });
 
+// hyper's pinned set is empty, so the pinned-set comparison cannot tell an
+// empty read from a clean one; only the root-line check refuses this.
+test("an empty hyper tree fails closed although its pinned set is empty", { skip }, () => {
+  const { "tools.hyper": _omitted, ...rest } = TODAY;
+  const result = runGate(rest);
+  assertRefused(result, 'dependency tree for hyper (tools/Cargo.toml) did not start with hyper; got "" (0 line(s))');
+  assert.deepEqual(result.calls, ["src-tauri.reqwest", "src-tauri.hyper", "tools.reqwest", "tools.hyper"]);
+});
+
 test("a tree with only its root line reports every pinned crate as lost", { skip }, () => {
   const result = runGate({ ...TODAY, "src-tauri.reqwest": ["reqwest v0.13.5"] });
   assertRefused(result, "src-tauri: pinned crate(s) no longer show a direct reqwest dependency: bridge, bridge-tally-transport.");
