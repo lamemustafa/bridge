@@ -310,3 +310,8 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 | tools cargo test --workspace | 0 | 57 passed |
 
 - The lane-f queue is done on master a8324c6: 653 362904c, egress a9b9e4e, 626 f449833 and gold 924796e are all green and pushed. Next: lane-c/601d-wip.
+
+## 2026-09-25 17:14 UTC — CORRECTION: gold-docs-evidence 924796e was NOT pushed
+
+- The entry above says "Pushed … 7927967..924796e". That is wrong. My pre-push check (origin/master must be an ancestor) failed because master had moved to 237d415, so the push never ran. `lane-f/gold-docs-evidence` is still at 7927967 on the remote. The gate results above are real, but for 924796e on master a8324c6.
+- Redoing gold from step 1 on master 237d415.
