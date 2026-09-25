@@ -1610,12 +1610,14 @@ fn absence_is_required_for_every_voucher() {
 /// readback verified all N; one short on either side is not clean.
 #[test]
 fn a_batch_is_clean_only_with_n_creates_and_n_verified() {
+    // A batch's masters check found nothing and its step matched.
+    let matched = json!({"state":"unchanged","batch_step":{"state":"matched"}});
     let verdict = |created: u64, verified: u64| {
         let mut payload = json!({"result":{"counts":{"posted_verified":verified},"duplicates":[]}});
         finalize_current_dispatch(
             &mut payload,
             Some(&dispatch_response("success", created, 0)),
-            None,
+            Some(&matched),
             2,
         );
         payload["result"]["dispatch"]["state"].clone()
@@ -1624,18 +1626,33 @@ fn a_batch_is_clean_only_with_n_creates_and_n_verified() {
     assert_eq!(verdict(1, 2), "reconciliation_required");
     assert_eq!(verdict(2, 1), "reconciliation_required");
     assert_eq!(verdict(3, 2), "reconciliation_required");
+    // With no step verdict recorded, even N creates and N verified is not clean.
+    let mut payload = json!({"result":{"counts":{"posted_verified":2},"duplicates":[]}});
+    finalize_current_dispatch(
+        &mut payload,
+        Some(&dispatch_response("success", 2, 0)),
+        Some(&json!({"state":"unchanged"})),
+        2,
+    );
+    assert_eq!(
+        payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
+    assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
 }
 
 /// A reconciliation of an earlier batch attempt is clean only with N creates
 /// and N verified, as for the current dispatch.
 #[test]
 fn a_previous_batch_attempt_reconciles_only_with_n_creates_and_n_verified() {
+    // A batch's masters check found nothing and its step matched.
+    let matched = json!({"state":"unchanged","batch_step":{"state":"matched"}});
     let verdict = |created: u64, verified: u64| {
         let mut payload = json!({"result":{"counts":{"posted_verified":verified},"duplicates":[]}});
         finalize_previous_attempt_reconciliation(
             &mut payload,
             Some(&dispatch_response("success", created, 0)),
-            None,
+            Some(&matched),
             2,
         );
         payload["result"]["dispatch"]["state"].clone()
@@ -1644,4 +1661,17 @@ fn a_previous_batch_attempt_reconciles_only_with_n_creates_and_n_verified() {
     assert_eq!(verdict(1, 2), "reconciliation_required");
     assert_eq!(verdict(2, 1), "reconciliation_required");
     assert_eq!(verdict(3, 2), "reconciliation_required");
+    // With no step verdict recorded, even N creates and N verified is not clean.
+    let mut payload = json!({"result":{"counts":{"posted_verified":2},"duplicates":[]}});
+    finalize_previous_attempt_reconciliation(
+        &mut payload,
+        Some(&dispatch_response("success", 2, 0)),
+        Some(&json!({"state":"unchanged"})),
+        2,
+    );
+    assert_eq!(
+        payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
+    assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
 }

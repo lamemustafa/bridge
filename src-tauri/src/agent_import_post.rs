@@ -832,7 +832,7 @@ pub(super) fn finalize_previous_attempt_reconciliation(
         && persisted_response_is_clean(response, voucher_count);
     // A doubt recorded when this batch was posted outlives the readback, which
     // compares by name and cannot clear it (#239).
-    let doubt = masters_doubt(masters_after_post);
+    let doubt = post_doubt(masters_after_post, voucher_count);
     let reconciled = name_verified && doubt.is_none();
     payload["result"]["dispatch"] = json!({
         "state": if reconciled { "previous_attempt_reconciled" } else { "reconciliation_required" },
@@ -856,7 +856,11 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     let masters = masters_after_post?;
     let state = masters["state"].as_str().unwrap_or_default();
     if state == "unchanged" || (state == "not_checked" && masters["reason"] == "masters_unmoved") {
-        return None;
+        // Clean on the masters; a batch's recorded step verdict may still
+        // doubt, independently.
+        return masters
+            .get("batch_step")
+            .and_then(|step| batch_step_doubt(Some(step)));
     }
     const REVIEW: &str = "Review the voucher in Tally and correct it there if it went to the wrong ledger. It is already posted, so do not rebuild this event.";
     Some(if state == "posted_under_changed_masters" {
@@ -884,6 +888,35 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     })
 }
 
+/// A batch's step doubt: its target's voucher mark did not move by exactly
+/// Tally's CREATED, or that was never recorded (pending, unreadable or
+/// absent). Nothing in the step says which voucher, so the review is of the
+/// whole batch.
+fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
+    if step.is_some_and(|step| step["state"] == "matched") {
+        return None;
+    }
+    Some((
+        "batch_step_unconfirmed",
+        "Tally reported creating the batch, but this company's voucher mark did not move by exactly that many, so another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
+    ))
+}
+
+/// Every doubt across the post: the masters check, and for a batch its step,
+/// which must be recorded as matched.
+fn post_doubt(
+    masters_after_post: Option<&Value>,
+    voucher_count: usize,
+) -> Option<(&'static str, String)> {
+    masters_doubt(masters_after_post).or_else(|| {
+        (voucher_count > 1)
+            .then(|| {
+                batch_step_doubt(masters_after_post.and_then(|masters| masters.get("batch_step")))
+            })
+            .flatten()
+    })
+}
+
 pub(super) fn finalize_current_dispatch(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
@@ -892,7 +925,7 @@ pub(super) fn finalize_current_dispatch(
 ) {
     let verified = verification_status(&payload["result"], voucher_count) == "posted_verified";
     let clean = persisted_response_is_clean(response, voucher_count);
-    let masters_doubt = masters_doubt(masters_after_post);
+    let masters_doubt = post_doubt(masters_after_post, voucher_count);
     payload["result"]["dispatch"] = json!({
         "state": if clean && verified && masters_doubt.is_none() { "posted_verified" } else { "reconciliation_required" },
         "counters":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.counters())),
