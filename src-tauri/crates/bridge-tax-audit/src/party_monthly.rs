@@ -681,18 +681,18 @@ pub fn check_invariants(book: &Book, period: &Window, result: &TestResult) -> Re
             let others: i128 = rows
                 .iter()
                 .filter(|(h, _)| **h != total)
-                .map(|(_, r)| cell(r, *col))
+                .map(|(_, r)| cell(r, col))
                 .sum();
-            if others != cell(&rows[&total], *col) {
+            if others != cell(&rows[&total], col) {
                 out.push(format!(
                     "PWM-1: the {block} rows sum to {others}p in {col} but the total row has {}p",
-                    cell(&rows[&total], *col)
+                    cell(&rows[&total], col)
                 ));
             }
         }
         if fy {
             for row in rows.values() {
-                let months: i128 = names.iter().map(|m| cell(row, *m)).sum();
+                let months: i128 = names.iter().map(|m| cell(row, m)).sum();
                 if months != cell(row, "year") {
                     out.push(format!(
                         "PWM-2: a {block} row's months sum to {months}p but its year is {}p",
@@ -761,7 +761,7 @@ pub fn check_invariants(book: &Book, period: &Window, result: &TestResult) -> Re
             let mut msgs = Vec::new();
             for col in &checked {
                 let (p, e) = (
-                    cell(published, *col),
+                    cell(published, col),
                     expected.get(*col).copied().unwrap_or(0),
                 );
                 if p != e {
@@ -852,7 +852,7 @@ pub fn check_invariants(book: &Book, period: &Window, result: &TestResult) -> Re
                 let mut acc = BTreeMap::new();
                 for row in &unnamed {
                     for col in &checked {
-                        *acc.entry((*col).to_string()).or_insert(0) += cell(row, *col);
+                        *acc.entry((*col).to_string()).or_insert(0) += cell(row, col);
                     }
                 }
                 acc

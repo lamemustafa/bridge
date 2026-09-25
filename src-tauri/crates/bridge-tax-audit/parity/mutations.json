@@ -4836,7 +4836,7 @@
   "by": "author",
   "what": "PWM-1 ignores rows that do not sum to the total",
   "file": "src/party_monthly.rs",
-  "from": "if others != cell(&rows[&total], *col) {",
+  "from": "if others != cell(&rows[&total], col) {",
   "to": "if false {"
  },
  {
