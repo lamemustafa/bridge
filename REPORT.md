@@ -98,3 +98,32 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - **Pushed `lane-e/e2a-bank-recon` @ b163010**, fast-forward.
 - **Draft PR https://github.com/lamemustafa/bridge/pull/710** "E2a: port bank_reconciliation". It has "Real books: pending (local, Lane D)", the failing-first names, the mutation numbers and the P3 list. The two items for Lane D (the adapter row shape, and a split-orchestration edge book needing a reference golden) are in the body.
 - Per the queue I'm not opening E2b until #710 merges. Meanwhile I'll do only work that changes nothing under the crate.
+
+## 2026-09-25 18:13 UTC — #710 green; E2b re-stacked, compiled and reviewed (no PR yet)
+
+- #710 (E2a): every check green on b163010, including the now-required "Tax-audit mutation records". Waiting on Lane D.
+- **E2b**: merged the E2a head b163010 into `lane-e/e2b-hvr` (273a7fa). The one conflict was `parity/mutations.json`, resolved as the union: E2a's E2A-01..47 (including its redefinitions) plus E2b's E2B2-01..29.
+  - This is E2b's **first build**. 340 tests pass.
+  - clippy `-D warnings` refused the lakh/crore digit grouping in `high_value_register.rs` (`inconsistent_digit_grouping`). Rewritten as plain groups with rupee comments, values unchanged (a1ebadf). Pushed a1ebadf.
+- **Failing first:** at 1884864, 5 tests fail:
+  - `high_value_register::tests::{config_values_are_typed_or_refused, the_recipient_type_follows_pack_py}`
+  - `edge_books::{a_journal_on_one_ledger_is_refused_not_panicked, every_edge_book_matches_the_reference}`
+  - `registry::every_registered_test_matches_its_synthetic_golden`
+
+  At port commit c1bf117 all pass (338).
+- **Mutations:** E2B2-01..29 sampled with --full; 28 killed. E2B2-03 (Contra walked) survived: no fixture's Contra has a party line.
+- **Reviews, round 1:**
+  - Sonnet: gates pass; loans_interest is unchanged by the shared [loans] reader; fixtures are synthetic and balanced; 4 tests added. P2: no direct test that an unknown ledger in `counterparty_type_by_ledger` is refused.
+  - Opus: no P1; overflow checked everywhere; no panic. P2: `s194n_terms` accepted a blank term, and every debit then counted. P2, inherited from the reference: a cash row carries the party-side amount, so a party paid partly in cash and partly by bank is a cash row for the whole amount. That over-states, never under-states, and the golden pins it (h15).
+- **Fixed in b09ef7c:**
+  - blank-term refusal (E2B2-30);
+  - Contra unit test (5 tests added in total, all small);
+  - the binding assertion;
+  - the over-statement written into the module docs as a parity limit.
+  E2B2-03 and E2B2-30 are now killed; all 30 E2B2 are killed. 341 tests pass; clippy and fmt clean.
+- **P3s noted, not changed:**
+  - a paise overflow is reported as `AuditError::Config` (crate-wide pattern);
+  - an unknown counterparty type string is kept silently;
+  - the CA threshold and the s.269ST limit are both 2 lakh and the threshold is never configurable today, so swapping them is untested;
+  - a zero-amount party line is untested.
+- Next: round-2 check on b09ef7c, then the E2b full mutation run (its crate tree doesn't change when #710 merges unchanged). I'll open the E2b PR only after #710 merges.
