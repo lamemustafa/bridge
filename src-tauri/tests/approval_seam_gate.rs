@@ -468,27 +468,99 @@ fn each_dialog_answers_with_its_own_token() {
     }
 }
 
-/// Where a click becomes the answer (#687). Each native dialog answers true
-/// only on its own positive button, and each parent's entry point runs the
-/// real dialog subprocess. Flip one comparison, relabel the post button
-/// "Cancel", or make `confirm` return `Ok(())`, and the dialog approves with
-/// nobody choosing to. No test can open a real window, so this text pins it.
-const DIALOG_ANSWER_PINS: [(&str, usize); 9] = [
+/// Where a click becomes the answer (#687). No test can open a real window,
+/// so the four native dialog functions, and the two parent functions that
+/// run them, are pinned here verbatim, with the button labels. This pins the
+/// text, not the platform's behaviour. Any edit to these functions must also
+/// change this gate. That includes flipping a comparison, relabelling the
+/// post button "Cancel", changing the default button, discarding the result
+/// and returning `true`, or making `confirm` return `Ok(())`.
+const REVIEW_ACK_DIALOG: &str = r#"#[cfg(not(windows))]
+fn show_review_acknowledgement(preview: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("Bridge — record that you reviewed one voucher")
+        .set_description(preview)
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Cancel".into(),
+            REVIEW_BUTTON.into(),
+        ))
+        .show()
+        == rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())
+}"#;
+
+const REVIEW_ACK_DIALOG_WINDOWS: &str = r#"#[cfg(windows)]
+fn show_review_acknowledgement(preview: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
+    };
+    let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Bridge — record that you reviewed this voucher?"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: as for `show_review`: both buffers are NUL-terminated and live
+    // for the synchronous dialog, and no parent HWND is borrowed.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
+        ) == IDYES
+    }
+}"#;
+
+const POST_DIALOG: &str = r#"#[cfg(not(windows))]
+fn show_review(preview: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("Bridge — approve one voucher")
+        .set_description(preview)
+        .set_level(rfd::MessageLevel::Warning)
+        // The Cancel label supplies the native Escape action. Posting requires
+        // the explicitly matched positive button; Return may leave this dialog open.
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Cancel".into(),
+            POST_LABEL.into(),
+        ))
+        .show()
+        == rfd::MessageDialogResult::Custom(POST_LABEL.into())
+}"#;
+
+const POST_DIALOG_WINDOWS: &str = r#"#[cfg(windows)]
+fn show_review(preview: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
+    };
+    // rfd without common-controls-v6 discards custom labels. Use the existing
+    // Win32 dependency so No is the default and Escape/close remain Cancel.
+    let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Bridge — post this voucher?"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: Both buffers are NUL-terminated and live for the synchronous dialog;
+    // no parent HWND is borrowed. No application state is exposed to callbacks.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
+        ) == IDYES
+    }
+}"#;
+
+const DIALOG_ANSWER_PINS: [(&str, usize); 10] = [
     ("const POST_LABEL: &str = \"Post voucher\";", 1),
     (
         "pub(crate) const REVIEW_BUTTON: &str = \"I reviewed it\";",
         1,
     ),
-    ("== rfd::MessageDialogResult::Custom(POST_LABEL.into())", 1),
-    (
-        "== rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())",
-        1,
-    ),
-    (
-        "MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
-        ) == IDYES",
-        2,
-    ),
+    (POST_DIALOG, 1),
+    (POST_DIALOG_WINDOWS, 1),
+    (REVIEW_ACK_DIALOG, 1),
+    (REVIEW_ACK_DIALOG_WINDOWS, 1),
     (
         "async fn confirm(preview: &str) -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|_| \"import_approval_unavailable\")?;
@@ -518,6 +590,31 @@ fn dialog_answer_problems(source: &str) -> Vec<String> {
         }
     }
     problems
+}
+
+/// A dialog function rewritten to compute its comparison and then return
+/// `true` whatever the person chose.
+fn discard_answer(dialog: &str) -> String {
+    let discarded = if dialog.contains("rfd::MessageDialog::new()") {
+        dialog.replacen(
+            "    rfd::MessageDialog::new()",
+            "    let _ = rfd::MessageDialog::new()",
+            1,
+        )
+    } else {
+        dialog.replacen("        MessageBoxW(", "        let _ = MessageBoxW(", 1)
+    };
+    let discarded = if discarded.ends_with(")\n}") || discarded.ends_with("))\n}") {
+        format!("{};\n    true\n}}", discarded.trim_end_matches("\n}"))
+    } else {
+        discarded.replacen(
+            ") == IDYES\n    }\n}",
+            ") == IDYES;\n        true\n    }\n}",
+            1,
+        )
+    };
+    assert_ne!(discarded, dialog);
+    discarded
 }
 
 #[test]
@@ -561,6 +658,18 @@ fn each_dialog_answers_only_on_its_positive_button() {
         source.replacen(
             "Ok(answer) if answer.token_matched => Ok(()),",
             "Ok(_) => Ok(()),",
+            1,
+        ),
+        // rfd post dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
+        // Windows post dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(POST_DIALOG_WINDOWS, &discard_answer(POST_DIALOG_WINDOWS), 1),
+        // rfd review dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(REVIEW_ACK_DIALOG, &discard_answer(REVIEW_ACK_DIALOG), 1),
+        // Windows review dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(
+            REVIEW_ACK_DIALOG_WINDOWS,
+            &discard_answer(REVIEW_ACK_DIALOG_WINDOWS),
             1,
         ),
     ] {
