@@ -136,3 +136,20 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
 | tools cargo test --workspace | 0 | 57 passed |
 
 - Queue now: 626 is still RED at c808bd7 and waits for a new head. Idle-polling every 10 minutes.
+
+## 2026-09-25 16:34 UTC — lane-f/gold-docs-evidence: built 1cde915: green
+
+- New head 1cde915 (969b259 + 1cde915 on top of d91b2d4: README.md and docs/agent/README.md only, neither pinned). 0 behind master 54eb327, so no merge. `scripts/reseal.sh` produced no change and `--verify` reports current, so there is **no reseal commit and nothing to push**. The head stays 1cde915. No Sonnet review, since there is no commit of mine to review.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1335 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- Queue widened per Lane D to `lane-a/*` and `lane-c/*` (lane-a first). None exist yet. 626 is still RED at c808bd7. Back to polling.
