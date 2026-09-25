@@ -325,25 +325,112 @@ fn any_intent_recording_a_remoteid_is_found_and_a_repeat_does_not_block_reads() 
     let (shared, other) = (Uuid::new_v4(), Uuid::new_v4());
     let mut bytes = record(&first);
     bytes.extend(record(&second));
-    assert!(!remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
+    assert!(!remote_ids_recorded(Cursor::new(bytes.clone()), &[shared]).unwrap());
     bytes.extend(record(&StatusRecord::dispatch_native(
         &first,
         "c".repeat(64),
         shared,
     )));
-    assert!(remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
-    assert!(!remote_id_recorded(Cursor::new(bytes.clone()), other).unwrap());
+    assert!(remote_ids_recorded(Cursor::new(bytes.clone()), &[shared]).unwrap());
+    assert!(!remote_ids_recorded(Cursor::new(bytes.clone()), &[other]).unwrap());
 
     bytes.extend(record(&StatusRecord::dispatch_native(
         &second,
         "c".repeat(64),
         shared,
     )));
-    assert!(remote_id_recorded(Cursor::new(bytes.clone()), shared).unwrap());
+    assert!(remote_ids_recorded(Cursor::new(bytes.clone()), &[shared]).unwrap());
     assert!(
         read_snapshot(Cursor::new(bytes), Some("second"))
             .unwrap()
             .unwrap()
             .dispatched
+    );
+}
+
+/// A batch's dispatch intent records one REMOTEID per voucher: at least two,
+/// at most the batch cap, distinct, canonical, beside the request hash and
+/// never beside a single post's REMOTEID. The journal finds each of them, so
+/// no later post, single or batch, can send one again.
+#[test]
+fn a_batch_intent_records_distinct_remoteids_that_the_journal_finds() {
+    let mut initial = batch("native-batch", "local journal test");
+    let mut second = initial.vouchers[0].clone();
+    second.bridge_txn_id = "txn-2".into();
+    initial.vouchers.push(second);
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let mut intent = serde_json::to_value(StatusRecord::dispatch_native(
+        &initial,
+        "c".repeat(64),
+        ids[0],
+    ))
+    .unwrap();
+    intent.as_object_mut().unwrap().remove("native_remote_id");
+    intent["native_remote_ids"] = json!(ids
+        .iter()
+        .map(|id| id.hyphenated().to_string())
+        .collect::<Vec<_>>());
+    let journal = |intent: &Value| {
+        let mut bytes = record(&initial);
+        bytes.extend(serde_json::to_vec(intent).unwrap());
+        bytes.push(b'\n');
+        bytes
+    };
+    let bytes = journal(&intent);
+    assert!(
+        read_snapshot(Cursor::new(bytes.clone()), Some("native-batch"))
+            .unwrap()
+            .unwrap()
+            .dispatched
+    );
+    for id in ids {
+        assert!(remote_ids_recorded(Cursor::new(bytes.clone()), &[id]).unwrap());
+    }
+    assert!(!remote_ids_recorded(Cursor::new(bytes), &[Uuid::new_v4()]).unwrap());
+
+    let id = |uuid: Uuid| json!(uuid.hyphenated().to_string());
+    let too_many = (0..=MAX_BATCH_POST_VOUCHERS)
+        .map(|_| id(Uuid::new_v4()))
+        .collect::<Vec<_>>();
+    for (field, value) in [
+        ("native_remote_ids", json!([id(ids[0])])),
+        // Three ids for a batch of two vouchers.
+        (
+            "native_remote_ids",
+            json!([id(ids[0]), id(ids[1]), id(Uuid::new_v4())]),
+        ),
+        ("native_remote_ids", json!([id(ids[0]), id(ids[0])])),
+        ("native_remote_ids", json!(too_many)),
+        (
+            "native_remote_ids",
+            json!([id(ids[0]), ids[1].simple().to_string()]),
+        ),
+        ("native_remote_ids", json!([id(ids[0]), id(Uuid::nil())])),
+        ("native_remote_id", id(Uuid::new_v4())),
+        ("native_request_sha256", Value::Null),
+    ] {
+        let mut changed = intent.clone();
+        if value.is_null() {
+            changed.as_object_mut().unwrap().remove(field);
+        } else {
+            changed[field] = value;
+        }
+        assert_eq!(
+            read_snapshot(Cursor::new(journal(&changed)), None)
+                .err()
+                .as_deref(),
+            Some("import_ledger_invalid"),
+            "{changed}"
+        );
+    }
+    // Only a dispatch intent may carry them.
+    let mut status = serde_json::to_value(StatusRecord::from(&initial)).unwrap();
+    status["native_request_sha256"] = json!("c".repeat(64));
+    status["native_remote_ids"] = intent["native_remote_ids"].clone();
+    assert_eq!(
+        read_snapshot(Cursor::new(journal(&status)), None)
+            .err()
+            .as_deref(),
+        Some("import_ledger_invalid")
     );
 }
