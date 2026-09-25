@@ -33,3 +33,13 @@ What was run (Linux, pinned 1.96.0, `--features rfd/gtk3`):
 | #684 | 373b167f8ff1e6db25f87079c55cda496e96f94d | Master merge plus reseal only; the net diff hash is identical and all 280 pins match. The earlier P2/P3 stand. | https://github.com/lamemustafa/bridge/pull/684#issuecomment-5835048200 |
 
 Also: #665 merged (54eb3271) after this lane's review.
+
+## 2026-09-25, heads messaged by lanes directly
+
+| PR | Head | Result | Comment |
+| --- | --- | --- | --- |
+| #695 slice B LINEERROR text | b4d7bd5041975835c7a57c85ec57f7f091d3c947 | No P1/P2. No verdict reads the text; reading back is idempotent; a Format mutation was killed. The PR is dirty against master. | https://github.com/lamemustafa/bridge/pull/695#issuecomment-5835866526 |
+| #684 slice C | 70cdda00af34ef6f88f0acd48647fdae12efa28b | The P2 and P3 are resolved (step-2 posted_verified test); 168 tests pass; 280 pins match. | https://github.com/lamemustafa/bridge/pull/684#issuecomment-5835899884 |
+| #682 | merged as a8324c66 | Merged with the `-z` fix (ci.yml:69-70): the P2 is resolved. No comment posted on the merged PR. | n/a |
+| #700 ledger_masters as_of | 591f40182b37dac00ed891146fb8b3873a5c0ca5 | No P1. P2: a merge hazard with #672 (the snapshot must be keyed by as_of). P3: the impossible-date test asserts no typed code. | https://github.com/lamemustafa/bridge/pull/700#issuecomment-5835935942 |
+| #704 dialog decline test (#687) | a7945232790b2a5966ef4dca5a75097b41f9e1ef | No P1/P2. The #687 mutation was killed; a clean exit without the token is now unavailable. P3: a crash still reads as a decline. | https://github.com/lamemustafa/bridge/pull/704#issuecomment-5835982687 |
