@@ -115,10 +115,15 @@ pub fn charge_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     raw.as_array()
         .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} is not a list")))?
         .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} holds a non-string")))
+        .map(|v| match v.as_str() {
+            // An empty term is in every narration, so it would make every row a charge.
+            Some("") => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds an empty term"
+            ))),
+            Some(s) => Ok(s.to_string()),
+            None => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a non-string"
+            ))),
         })
         .collect()
 }
@@ -276,6 +281,15 @@ pub fn run(
         .collect();
     let (start, end) = (&statement.start, &statement.end);
     let stmt = &statement.rows;
+    // The opening is the TB opening plus earlier lines of this year's book, so it is a balance
+    // only for a window inside that year.
+    if start < &period.from || end > &period.to {
+        return Err(AuditError::Config(format!(
+            "{TEST_ID}: the statement window {} to {} is not inside the engagement year",
+            iso(start),
+            iso(end)
+        )));
+    }
 
     r.population_note = format!(
         "Books population (optional, cancelled and post-dated vouchers excluded), ledger \
@@ -899,10 +913,22 @@ mod tests {
             vec![(0, 0)],
             "an equal gap goes to the lower statement index"
         );
+        // Books rows go in (date, GUID) order, and a statement row is taken once.
+        let book = |guid: &str| BookRow {
+            guid: guid.to_string(),
+            label: guid.to_string(),
+            date: TallyDate::parse("20260310").unwrap(),
+            amount_paise: 10_000,
+        };
+        let competing = [book("gB"), book("gA")];
+        assert_eq!(
+            match_rows(&competing, &[row("20260310", 10_000)], TOL_PAISE, 7).unwrap(),
+            vec![(1, 0)]
+        );
     }
 
     #[test]
-    fn the_opening_stops_before_the_first_day_and_the_window_starts_on_it() {
+    fn the_window_holds_its_first_and_last_days_and_lies_inside_the_year() {
         use crate::book::{LedgerLine, TbRow, Voucher, VoucherStatus};
         let voucher = |guid: &str, date: &str, amount_paise: i64| Voucher {
             guid: guid.to_string(),
@@ -930,14 +956,16 @@ mod tests {
             vouchers: vec![
                 voucher("v1", "20260228", 20_000),
                 voucher("v2", "20260301", 5_000),
+                voucher("v3", "20260331", 1_000),
+                voucher("v4", "20260401", 1_000),
             ],
             tb: BTreeMap::from([(
                 "Bank".to_string(),
                 TbRow {
                     opening_paise: 100_000,
-                    debit_paise: 25_000,
+                    debit_paise: 27_000,
                     credit_paise: 0,
-                    closing_paise: 125_000,
+                    closing_paise: 127_000,
                 },
             )]),
         };
@@ -949,6 +977,38 @@ mod tests {
         );
         let rows = books_rows(&book, "Bank", &start, &end).unwrap();
         let guids: Vec<&str> = rows.iter().map(|r| r.guid.as_str()).collect();
-        assert_eq!(guids, ["v2"]);
+        assert_eq!(guids, ["v2", "v3"]);
+
+        let year = Window {
+            from: TallyDate::parse("20250401").unwrap(),
+            to: TallyDate::parse("20260331").unwrap(),
+        };
+        let statement = |start: &str, end: &str| BankStatementDoc {
+            doc_id: "bank:unit".to_string(),
+            source_sha256: String::new(),
+            account_ref: "XXXXXX0001".to_string(),
+            bank: "Invented Bank".to_string(),
+            start: TallyDate::parse(start).unwrap(),
+            end: TallyDate::parse(end).unwrap(),
+            opening_balance_paise: 0,
+            closing_balance_paise: 0,
+            rows: Vec::new(),
+        };
+        let rules = Rules::vendored().unwrap();
+        let terms = BTreeSet::new();
+        let run_on = |s: &BankStatementDoc| run(&book, &rules, &year, s, "Bank", &terms, 7);
+        assert!(run_on(&statement("20260301", "20260331")).is_ok());
+        for (start, end) in [("20260301", "20260401"), ("20250331", "20250430")] {
+            let err = run_on(&statement(start, end)).unwrap_err();
+            assert!(
+                format!("{err}").contains("not inside the engagement year"),
+                "{err}"
+            );
+        }
+        let empty = toml::Value::Array(vec![toml::Value::String(String::new())]);
+        assert!(
+            charge_terms(Some(&empty)).is_err(),
+            "an empty term matches every narration"
+        );
     }
 }

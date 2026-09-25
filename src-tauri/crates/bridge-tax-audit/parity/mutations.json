@@ -3892,7 +3892,63 @@
   "by": "author",
   "what": "a statement balance of null read as zero",
   "file": "src/documents.rs",
-  "from": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => None,",
-  "to": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => Some(0),"
+  "from": "                    Some(Value::Null) => None,",
+  "to": "                    Some(Value::Null) => Some(0),"
+ },
+ {
+  "id": "E2A-16",
+  "by": "reviewer-opus",
+  "what": "the window's last day is left out of the books rows",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if !(start <= &v.date && &v.date <= end) {",
+  "to": "if !(start <= &v.date && &v.date < end) {"
+ },
+ {
+  "id": "E2A-17",
+  "by": "reviewer-opus",
+  "what": "a statement row can be matched to several books rows",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            used.insert(si);\n",
+  "to": "            used.remove(&si);\n"
+ },
+ {
+  "id": "E2A-18",
+  "by": "reviewer-opus",
+  "what": "books rows ordered by date alone, not (date, GUID)",
+  "file": "src/bank_reconciliation.rs",
+  "from": "order.sort_by(|&a, &b| (&rows[a].date, &rows[a].guid).cmp(&(&rows[b].date, &rows[b].guid)));",
+  "to": "order.sort_by(|&a, &b| rows[a].date.cmp(&rows[b].date));"
+ },
+ {
+  "id": "E2A-19",
+  "by": "reviewer-opus",
+  "what": "a statement window outside the engagement year is run",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if start < &period.from || end > &period.to {",
+  "to": "if false && (start < &period.from || end > &period.to) {"
+ },
+ {
+  "id": "E2A-20",
+  "by": "reviewer-opus",
+  "what": "a negative statement amount is read",
+  "file": "src/documents.rs",
+  "from": "if row.debit_paise < 0 || row.credit_paise < 0 {",
+  "to": "if false && (row.debit_paise < 0 || row.credit_paise < 0) {"
+ },
+ {
+  "id": "E2A-21",
+  "by": "reviewer-opus",
+  "what": "a statement row dated outside its period is read",
+  "file": "src/documents.rs",
+  "from": "if row.txn_date < start || row.txn_date > end {",
+  "to": "if false && (row.txn_date < start || row.txn_date > end) {"
+ },
+ {
+  "id": "E2A-22",
+  "by": "reviewer-opus",
+  "what": "a statement row that is both a debit and a credit is read",
+  "file": "src/documents.rs",
+  "from": "if row.debit_paise != 0 && row.credit_paise != 0 {",
+  "to": "if false && (row.debit_paise != 0 && row.credit_paise != 0) {"
  }
 ]
