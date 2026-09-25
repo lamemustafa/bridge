@@ -233,7 +233,7 @@ fn bank_statement(v: &Value) -> Result<BankStatementDoc> {
                 debit_paise: int(r, "debit_paise", "rows")?,
                 credit_paise: int(r, "credit_paise", "rows")?,
                 balance_paise: match r.get("balance_paise") {
-                    None => return Err(bad("rows.balance_paise is missing")),
+                    None => return Err(bad(&format!("rows[{i}].balance_paise is missing"))),
                     Some(Value::Null) => None,
                     Some(_) => Some(int(r, "balance_paise", "rows")?),
                 },
@@ -361,11 +361,25 @@ mod tests {
             ("credit_paise", json!(-1)),
             ("debit_paise", json!(1)),
             ("txn_date", json!("2026-04-01")),
+            ("txn_date", json!("2026-02-28")),
         ] {
             let mut broken = doc.clone();
             broken["rows"][0][field] = value;
             assert!(bank_statement_from_json(&broken).is_err(), "{field}");
         }
+        let mut broken = doc.clone();
+        broken["rows"][1]["debit_paise"] = json!(-1);
+        assert!(
+            bank_statement_from_json(&broken).is_err(),
+            "a negative debit"
+        );
+        let mut one_day = doc.clone();
+        one_day["period"] = json!({"start": "2026-03-02", "end": "2026-03-02"});
+        one_day["rows"] = json!([row]);
+        assert!(
+            bank_statement_from_json(&one_day).is_ok(),
+            "a one-day statement"
+        );
         let mut broken = doc.clone();
         broken["rows"][0]
             .as_object_mut()
