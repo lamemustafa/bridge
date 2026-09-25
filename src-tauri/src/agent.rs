@@ -1624,6 +1624,13 @@ fn redact_value(mut value: Value, redaction: Redaction) -> Value {
             if redaction == Redaction::DropNarration {
                 values.remove("narration");
             }
+            // Tally's LINEERROR text is free text that can echo any name, and
+            // no marker says which, so any redaction drops it and its omitted
+            // count; counters.line_error_count stays.
+            if redaction != Redaction::None {
+                values.remove("tally_line_errors");
+                values.remove("tally_line_errors_omitted");
+            }
             for value in values.values_mut() {
                 *value = redact_value(std::mem::take(value), redaction);
             }
