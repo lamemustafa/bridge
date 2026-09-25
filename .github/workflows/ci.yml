@@ -687,6 +687,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/prune-package-compiler-cache.mjs --apply
 
+  tax-audit-mutations:
+    name: Tax-audit mutation records
+    # No build: this checks the committed results file, never re-runs a mutation.
+    # parity/mutations.py's docstring states the guarantee it enforces.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test the mutation runner
+        run: python3 -m unittest discover -s src-tauri/crates/bridge-tax-audit/parity -p 'test_mutations.py'
+      # The nightly run writes the ids it found failing into its open tracking issue.
+      - name: Read any open nightly mutation issue
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh issue list --repo "$GITHUB_REPOSITORY" --label mutation-nightly --state open --limit 100 \
+            --json number,body --jq '.[] | "<!-- mutation-nightly-issue \(.number) -->\n\(.body)\n"' \
+            > "$RUNNER_TEMP/nightly-issues.txt"
+      # Every mutation applies exactly once, no record outlives its mutation, and every
+      # mutation this change selects has a killed record made on exactly this merged
+      # crate tree. While a nightly issue is open, a crate change must also re-prove
+      # every mutation it lists as failing, so the fix merges and nothing else does.
+      - name: Check the change's mutations are proven on this tree
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          python3 src-tauri/crates/bridge-tax-audit/parity/mutations.py --verify
+          --changed-since "$BASE_SHA" --nightly-issues "$RUNNER_TEMP/nightly-issues.txt"
+
   required-checks:
     name: Required checks
     # Always runs so it can report a single, stable required status for branch
