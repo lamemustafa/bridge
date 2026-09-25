@@ -314,9 +314,12 @@ fn captured_composites(capture: &str) -> Vec<String> {
 /// rupee rows are read.
 #[test]
 fn a_several_currency_trial_balance_reads_only_its_plain_base_rows() {
-    let scoped =
-        parse_native_trial_balance_with_currency(&forex_with_currency(), FOREX_COMPANY, &forex_base())
-            .unwrap();
+    let scoped = parse_native_trial_balance_with_currency(
+        &forex_with_currency(),
+        FOREX_COMPANY,
+        &forex_base(),
+    )
+    .unwrap();
     let foreign = scoped
         .foreign_currency_ledgers
         .iter()
@@ -341,7 +344,10 @@ fn a_several_currency_trial_balance_reads_only_its_plain_base_rows() {
         .iter()
         .map(|row| row.name.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(read, ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]);
+    assert_eq!(
+        read,
+        ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]
+    );
 }
 
 /// No value is ever read from a composite: every row that is read holds only
@@ -353,16 +359,25 @@ fn no_trial_balance_value_is_read_from_a_composite() {
     let composites = captured_composites(&capture);
     assert_eq!(composites.len(), 11, "{composites:?}");
     for composite in &composites {
-        assert!(super::scalar::is_currency_composite(composite), "{composite}");
+        assert!(
+            super::scalar::is_currency_composite(composite),
+            "{composite}"
+        );
     }
     let scoped =
         parse_native_trial_balance_with_currency(&capture, FOREX_COMPANY, &forex_base()).unwrap();
+    let composite_rows = capture
+        .split("<LEDGER NAME=\"")
+        .skip(1)
+        .filter(|row| {
+            let body = &row[..row.find("</LEDGER>").unwrap()];
+            composites.iter().any(|value| body.contains(value.as_str()))
+        })
+        .map(|row| row[..row.find('"').unwrap()].replace("&amp;", "&"))
+        .collect::<Vec<_>>();
+    assert_eq!(composite_rows.len(), 5, "{composite_rows:?}");
     for row in &scoped.report.rows {
-        for amount in [&row.opening, &row.debit, &row.credit, &row.closing] {
-            if let NativeTrialBalanceAmount::Present(value) = amount {
-                assert!(!value.to_string().contains('@'), "{row:?}");
-            }
-        }
+        assert!(!composite_rows.contains(&row.name), "{row:?}");
     }
     // Control: the single-currency parser still refuses this response.
     assert_eq!(
@@ -411,6 +426,23 @@ fn a_row_without_its_currency_is_refused() {
         parse_native_trial_balance_with_currency(&missing, FOREX_COMPANY, &forex_base()),
         Err(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_currency_missing"
+        ))
+    );
+}
+
+/// A row set aside still binds to the selected company: a foreign row whose
+/// GUID names another company refuses the whole read.
+#[test]
+fn a_set_aside_row_still_binds_to_the_company() {
+    let capture = forex_with_currency();
+    let foreign_row = capture.find("<LEDGER NAME=\"BRIDGE FX DEBTOR A\"").unwrap();
+    let guid_at = foreign_row + capture[foreign_row..].find(FOREX_COMPANY).unwrap();
+    let mut other = capture.clone();
+    other.replace_range(guid_at..guid_at + 8, "00000000");
+    assert_eq!(
+        parse_native_trial_balance_with_currency(&other, FOREX_COMPANY, &forex_base()),
+        Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_company_guid_mismatch"
         ))
     );
 }

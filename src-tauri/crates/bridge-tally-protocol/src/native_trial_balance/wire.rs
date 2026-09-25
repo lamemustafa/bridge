@@ -24,7 +24,7 @@ pub fn parse_native_trial_balance(
 ) -> Result<NativeTrialBalance, NativeTrialBalanceError> {
     let rows = parse_envelope(xml, expected_company_guid, false)?
         .into_iter()
-        .map(|row| admit_plain_row(row, expected_company_guid))
+        .map(admit_plain_row)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(NativeTrialBalance { rows })
 }
@@ -46,9 +46,12 @@ pub fn parse_native_trial_balance_with_currency(
     let raw = parse_envelope(xml, expected_company_guid, true)?;
     let mut named = Vec::with_capacity(raw.len());
     for row in &raw {
-        let currency = row.currency.as_deref().ok_or(NativeTrialBalanceError::InvalidResponse(
-            "trial_balance_currency_missing",
-        ))?;
+        let currency = row
+            .currency
+            .as_deref()
+            .ok_or(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_currency_missing",
+            ))?;
         named.push((row.name.as_str(), Some(currency)));
     }
     let classified = classify_ledger_currencies(base, named)
@@ -64,11 +67,15 @@ pub fn parse_native_trial_balance_with_currency(
         if foreign.contains(row.name.as_str()) {
             continue;
         }
-        if row.amounts().iter().any(|value| is_currency_composite(value)) {
+        if row
+            .amounts()
+            .iter()
+            .any(|value| is_currency_composite(value))
+        {
             mixed.push(row.name);
             continue;
         }
-        rows.push(admit_plain_row(row, expected_company_guid)?);
+        rows.push(admit_plain_row(row)?);
     }
     Ok(CurrencyScopedTrialBalance {
         report: NativeTrialBalance { rows },
@@ -164,6 +171,14 @@ fn parse_envelope(
                     && name == b"LEDGER"
                 {
                     let row = parse_row(&mut reader, &element, with_currency)?;
+                    // Every row binds to the selected company, whether it is
+                    // read or set aside.
+                    if !native_ledger_guid_has_company_prefix(&row.guid, expected_company_guid) {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_company_guid_mismatch",
+                        ));
+                    }
+                    validate_guid_suffix(&row.guid, expected_company_guid)?;
                     if !identities.insert(row.guid.to_ascii_lowercase()) {
                         return Err(NativeTrialBalanceError::InvalidResponse(
                             "trial_balance_duplicate_guid",
@@ -326,9 +341,11 @@ fn parse_row(
                 b"PARENT" => {
                     set_once(&mut parent, String::new(), "trial_balance_duplicate_parent")?
                 }
-                b"CURRENCYNAME" if with_currency => {
-                    set_once(&mut currency, String::new(), "trial_balance_duplicate_currency")?
-                }
+                b"CURRENCYNAME" if with_currency => set_once(
+                    &mut currency,
+                    String::new(),
+                    "trial_balance_duplicate_currency",
+                )?,
                 b"TBALOPENING" => set_once(
                     &mut opening,
                     amount_text(&child, String::new())?,
@@ -382,17 +399,10 @@ fn parse_row(
     })
 }
 
-/// A row's identity and amounts, admitted exactly as the single-currency read
-/// always has: company-prefixed GUID, typed amounts, polarity and equation.
-fn admit_plain_row(
-    row: RawRow,
-    expected_company_guid: &str,
-) -> Result<NativeTrialBalanceRow, NativeTrialBalanceError> {
-    if !native_ledger_guid_has_company_prefix(&row.guid, expected_company_guid) {
-        return Err(NativeTrialBalanceError::InvalidResponse(
-            "trial_balance_company_guid_mismatch",
-        ));
-    }
+/// A row's amounts, admitted exactly as the single-currency read always has:
+/// typed amounts, polarity and equation. Its GUID was bound to the company as
+/// it was read.
+fn admit_plain_row(row: RawRow) -> Result<NativeTrialBalanceRow, NativeTrialBalanceError> {
     let row = NativeTrialBalanceRow {
         name: row.name,
         guid: row.guid,
@@ -405,7 +415,6 @@ fn admit_plain_row(
         credit: parse_amount_text(row.credit)?,
         closing: parse_amount_text(row.closing)?,
     };
-    validate_guid_suffix(&row.guid, expected_company_guid)?;
     validate_observed_movement_polarity(&row)?;
     validate_observed_row_equation(&row)?;
     Ok(row)

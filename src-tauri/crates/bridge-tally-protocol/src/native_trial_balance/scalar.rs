@@ -78,9 +78,9 @@ fn is_rate(text: &str) -> bool {
 
 fn is_symbol(text: &str) -> bool {
     !text.is_empty()
-        && text
-            .chars()
-            .all(|c| !c.is_whitespace() && !c.is_ascii_digit() && !matches!(c, '-' | '@' | '=' | '/'))
+        && text.chars().all(|c| {
+            !c.is_whitespace() && !c.is_ascii_digit() && !matches!(c, '-' | '@' | '=' | '/')
+        })
 }
 
 fn is_ascii_decimal(text: &str) -> bool {
