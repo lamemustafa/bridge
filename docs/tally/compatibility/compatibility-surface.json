@@ -311,7 +311,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/mod.rs",
-      "sha256": "6f9f68cbba4efa52e37959176c68d7a77c6f2ea897da42c95f037293358fece1"
+      "sha256": "fa0b9e40e9f59701e97cd2a14d969920678a3fd708628416d306e4147d656478"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/scalar.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "d64a30eb62c00a38ccb9f3bb156af29f21b9624fa7ad8823ef5253c8784255cc"
+  "manifest_sha256": "337ae3f032213d17c696cfe8c59a2bbc37fd293058e7f2c646056243ba4b5a57"
 }
