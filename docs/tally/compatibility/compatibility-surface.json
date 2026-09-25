@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "8c6246406c0daa45d605eca82b73991f47d82f1aadc707738208a885b50f2eb0"
+      "sha256": "4ab9c954f6685b9903561dd481b993093d45112a7d1e15e8de385129e6b17bf0"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -103,7 +103,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "665d269c5512f5ce434221cc0b83c98d767b06415d72eebc6d5c224836b8b8f8"
+      "sha256": "a91ac35c2bef17c40a11d928b38a555192227b64c85b98ac265e07b07b8f2525"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "ec2e67ac24dc28316e11533127806ca00eabf07117ab2afd04026af318901620"
+  "manifest_sha256": "3f1c2bbefd481e9df1dfe6607e069c3d1ec3c8b5d3306892e1fbdc454ba77d29"
 }
