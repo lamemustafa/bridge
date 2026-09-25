@@ -53,12 +53,15 @@ What Bridge does today:
 - **The MCP binary already has one native-dialog path, and it is narrower than it looks.**
   `bridge_mcp`'s own `main` checks for a `--confirm-journal` argument before starting Tokio and,
   if present, calls `agent::run_confirmation()` instead of serving stdio
-  (`src-tauri/src/bin/bridge_mcp.rs`, `src-tauri/src/lib.rs:79-84`). That path exists because
-  posting one approved Journal spawns the same executable as a child process with that flag and
-  waits on it (`src-tauri/src/tally/approved_import.rs:101-133`, whose doc comment says "Runs
-  before Tokio starts, because macOS dialogs require the main thread", `:135-136`, PR #236). The
-  child shows a fixed approve/cancel `rfd::MessageDialog` over a bounded text preview
-  (`approved_import.rs:137-166`) — on Windows it
+  (`src-tauri/src/bin/bridge_mcp.rs`, `run_journal_confirmation_child_from_args` in
+  `src-tauri/src/lib.rs`). That path exists because posting one approved voucher spawns the same
+  executable as a child process with that flag (PR #236; today `nonce_bound_dialog` in
+  `src-tauri/src/tally/approved_import.rs`). Since #635 the parent does not take the
+  child's exit status as the answer. It sends a fresh nonce on stdin and approves only when the child
+  prints exactly the post token for that nonce and exits cleanly. `run_confirmation`'s doc comment
+  says it "Runs before Tokio starts, because macOS dialogs require the main thread". The child
+  shows a fixed approve/cancel `rfd::MessageDialog` over a bounded text preview (`show_review`) —
+  on Windows it
   is a raw `MessageBoxW`, not `rfd`, for the same reason given in that file's own comment. This is
   a real precedent for showing *some* native prompt from a process `bridge_mcp` controls, but it is
   not a general file dialog: every `rfd::FileDialog` call site on master — the save/open/folder

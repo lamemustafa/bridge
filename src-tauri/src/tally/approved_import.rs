@@ -647,26 +647,37 @@ pub fn run_review_confirmation() -> bool {
 /// Read the parent's nonce line and preview, show `dialog`, and print the
 /// token for that nonce only when it returns true.
 fn answer_with_token(prefix: &str, dialog: fn(&str) -> bool) -> bool {
-    let mut input = String::new();
-    if std::io::stdin()
+    answer_with_token_over(prefix, dialog, std::io::stdin(), std::io::stdout())
+}
+
+/// [`answer_with_token`] over any input and output. The parent's tests stand
+/// a script in for the child, so this is the only way a test reaches the one
+/// line that turns a click into an approval: a declined dialog writes
+/// nothing (#687).
+fn answer_with_token_over(
+    prefix: &str,
+    dialog: fn(&str) -> bool,
+    input: impl Read,
+    mut output: impl std::io::Write,
+) -> bool {
+    let mut text = String::new();
+    if input
         .take(MAX_PREVIEW_BYTES as u64 + 64)
-        .read_to_string(&mut input)
+        .read_to_string(&mut text)
         .is_err()
     {
         return false;
     }
-    let Some((nonce, preview)) = dialog_input(&input) else {
+    let Some((nonce, preview)) = dialog_input(&text) else {
         return false;
     };
     if !dialog(preview) {
         return false;
     }
-    use std::io::Write as _;
-    let mut stdout = std::io::stdout();
-    stdout
+    output
         .write_all(dialog_token(prefix, nonce).as_bytes())
         .is_ok()
-        && stdout.flush().is_ok()
+        && output.flush().is_ok()
 }
 
 /// The nonce line and the preview, when the input has the shape the parent

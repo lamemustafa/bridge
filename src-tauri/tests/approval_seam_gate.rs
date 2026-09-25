@@ -387,15 +387,18 @@ fn each_dialog_mode_runs_its_own_dialog() {
     assert!(!dialog_mode_problems(&swapped).is_empty());
 }
 
-/// Each dialog subprocess answers with its own token, after its own dialog
-/// (#635). The parent approves a post only on the post token, so pairing that
-/// token with the review dialog would let "I reviewed it" approve a post, and
-/// no stub test could see it: a stub is a script, not this code.
+/// Each dialog subprocess entry point answers with its own token, after its
+/// own dialog (#635). The parent approves a post only on the post token, so
+/// pairing that token with the review dialog would let "I reviewed it"
+/// approve a post, and no stub test could see it: a stub is a script, not
+/// this code. The pairing is pinned inside each entry point's body, so
+/// swapping the two bodies is caught too, and nothing else may reach the
+/// shared answer (#687).
 fn dialog_token_problems(source: &str) -> Vec<String> {
     let mut problems = Vec::new();
     for pairing in [
-        "answer_with_token(POST_TOKEN_PREFIX, show_review)",
-        "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
+        "pub fn run_confirmation() -> bool {\n    answer_with_token(POST_TOKEN_PREFIX, show_review)\n}",
+        "pub fn run_review_confirmation() -> bool {\n    answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)\n}",
     ] {
         if source.matches(pairing).count() != 1 {
             problems.push(format!("expected exactly one `{pairing}`"));
@@ -403,6 +406,9 @@ fn dialog_token_problems(source: &str) -> Vec<String> {
     }
     if source.matches("answer_with_token(").count() != 3 {
         problems.push("expected the two pairings and the definition only".into());
+    }
+    if source.matches("answer_with_token_over(").count() != 2 {
+        problems.push("expected answer_with_token and the definition only".into());
     }
     problems
 }
@@ -423,6 +429,22 @@ fn each_dialog_answers_with_its_own_token() {
         format!(
             "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true) }}\n"
         ),
+        format!(
+            "{source}\nfn extra() -> bool {{ answer_with_token_over(POST_TOKEN_PREFIX, |_| true, std::io::stdin(), std::io::stdout()) }}\n"
+        ),
+        source
+            .replace(
+                "answer_with_token(POST_TOKEN_PREFIX, show_review)\n}",
+                "SWAP\n}",
+            )
+            .replace(
+                "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)\n}",
+                "answer_with_token(POST_TOKEN_PREFIX, show_review)\n}",
+            )
+            .replace(
+                "SWAP\n}",
+                "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)\n}",
+            ),
     ] {
         assert_ne!(broken, source);
         assert!(!dialog_token_problems(&broken).is_empty());
