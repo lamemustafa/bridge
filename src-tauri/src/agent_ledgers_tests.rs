@@ -1104,18 +1104,22 @@ mod through_the_tool {
             json!({"company_guid":GUID,"as_of":"20260331"}),
             json!({"company_guid":GUID,"fields":"basic","as_of":"20260331"}),
         ] {
-            let (response, requests) = call(Vec::new(), args.clone()).await;
+            let (response, requests) = call_refused_before_any_request(args.clone()).await;
             assert_eq!(requests, 0, "{args}");
             let error = refusal(&response);
-            assert_eq!(error["code"], "ledger_masters_as_of_requires_compliance", "{args}");
-            assert!(error["remediation"].as_str().is_some_and(|text| text.contains("fields=compliance")));
+            assert_eq!(
+                error["code"], "ledger_masters_as_of_requires_compliance",
+                "{args}"
+            );
+            assert!(error["remediation"]
+                .as_str()
+                .is_some_and(|text| text.contains("fields=compliance")));
         }
     }
 
     #[tokio::test]
     async fn an_impossible_as_of_date_is_refused_before_any_request() {
-        let (response, requests) = call(
-            Vec::new(),
+        let (response, requests) = call_refused_before_any_request(
             json!({"company_guid":GUID,"fields":"compliance","as_of":"20260231"}),
         )
         .await;
@@ -1125,6 +1129,36 @@ mod through_the_tool {
 
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
         call_with_max_bytes(plans, args, 200_000).await
+    }
+
+    /// A call that should be refused before it sends anything. The simulator
+    /// needs at least one plan, so it holds one it serves only if a request is
+    /// sent; the requests Bridge actually sent are counted after a cancel,
+    /// whose wake-up connection carries no method.
+    async fn call_refused_before_any_request(args: Value) -> (Value, usize) {
+        let simulator = SequenceSimulator::spawn(vec![status()]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let response = server.call_tool("ledger_masters", args).await;
+        simulator.cancel();
+        let requests = simulator
+            .finish()
+            .unwrap()
+            .into_iter()
+            .filter(|request| !request.method.is_empty())
+            .count();
+        (response, requests)
     }
 
     async fn call_with_max_bytes(
