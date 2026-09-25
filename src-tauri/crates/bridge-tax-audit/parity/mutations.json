@@ -4382,5 +4382,13 @@
   "file": "src/binding.rs",
   "from": "&[\"roles\", \"counterparty_type_by_ledger\"],",
   "to": "&[\"roles\", \"counterparty_types\"],"
+ },
+ {
+  "id": "E2B2-30",
+  "by": "reviewer-opus",
+  "what": "a blank s.194N narration term is accepted",
+  "file": "src/high_value_register.rs",
+  "from": "Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(",
+  "to": "Some(s) if s.is_empty() => Err(AuditError::Config(format!("
  }
 ]

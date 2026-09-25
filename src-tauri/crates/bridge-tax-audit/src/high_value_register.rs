@@ -16,6 +16,11 @@
 //!   limb (c) is one fixed question the books cannot answer.
 //! * s.194N reports the statement window's narration-matched cash withdrawals, informational, and
 //!   states which threshold applies only when the recipient type is known.
+//! * A row's amount is the party side of the voucher, not its money line, as the reference
+//!   computes it. A voucher settling one party partly in cash and partly by bank (or against a
+//!   discount) is a cash row, and a bank row, for the whole party amount: s.269ST rows can
+//!   over-state, never under-state, and their findings ask for the document. Parity, kept because
+//!   the goldens pin it (`hvr_paths`' mixed cash-and-bank payment is one such row).
 //!
 //! The reference reads `[high_value_register].ca_threshold_paise` and `[s194n]` when the rules
 //! carry them and its own defaults otherwise. The vendored rules excerpt carries neither table, so
@@ -124,10 +129,15 @@ pub fn s194n_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     raw.as_array()
         .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} is not a list")))?
         .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} holds a non-string")))
+        .map(|v| match v.as_str() {
+            // A blank term is in every narration, or nearly (a space), so every debit would count.
+            Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a blank term"
+            ))),
+            Some(s) => Ok(s.to_string()),
+            None => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a non-string"
+            ))),
         })
         .collect()
 }
@@ -998,8 +1008,69 @@ mod tests {
         for v in [
             toml::Value::from("ATW-"),
             toml::Value::Array(vec![1.into()]),
+            toml::Value::Array(vec!["".into()]),
+            toml::Value::Array(vec![" ".into()]),
         ] {
             assert!(s194n_terms(Some(&v)).is_err(), "{v}");
         }
+    }
+
+    #[test]
+    fn a_contra_voucher_is_never_a_row() {
+        use crate::book::{LedgerLine, VoucherStatus};
+        // A Contra carrying a party line, which Tally allows in an imported book; the same lines
+        // as a Receipt are a row.
+        let voucher = |guid: &str, base_type: &str| Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse("20250601").unwrap(),
+            base_type: base_type.to_string(),
+            status: VoucherStatus::Regular,
+            lines: vec![
+                LedgerLine {
+                    ledger: "Cash".to_string(),
+                    amount_paise: 25_000_000,
+                },
+                LedgerLine {
+                    ledger: "Customer A".to_string(),
+                    amount_paise: -25_000_000,
+                },
+            ],
+            ..Default::default()
+        };
+        let book = Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            vouchers: Vec::new(),
+            tb: BTreeMap::new(),
+        };
+        let (cash, none, no_types) = (
+            BTreeSet::from(["Cash".to_string()]),
+            BTreeSet::new(),
+            BTreeMap::new(),
+        );
+        let x = Exclusions {
+            from_party_groups: &[],
+            entirely_groups: &[],
+            round_off_ledgers: &none,
+            counterparty_types: &no_types,
+        };
+        let parties = |v: &Voucher| -> Vec<String> {
+            let rows = mode_rows(
+                &[v],
+                &book,
+                &cash,
+                &none,
+                Direction::Receipt,
+                |v| v.date.clone(),
+                &x,
+            );
+            rows.unwrap().into_keys().map(|(_, party)| party).collect()
+        };
+        assert!(parties(&voucher("c1", "Contra")).is_empty());
+        assert_eq!(parties(&voucher("r1", "Receipt")), ["Customer A"]);
     }
 }

@@ -1167,6 +1167,12 @@ mod tests {
         assert!(format!("{err}").contains("roles.bank_reconciliation_ledger"));
         let e = engagement("bank_reconciliation_ledger = 5\n");
         assert_eq!(e.bind(&b).unwrap_err().code(), Some(BIND_ID_MALFORMED));
+
+        let e =
+            engagement("counterparty_type_by_ledger = { \"Gov Co\" = \"government_company\" }\n");
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("roles.counterparty_type_by_ledger"));
     }
 
     #[test]
