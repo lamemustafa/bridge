@@ -578,6 +578,11 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
         ),
+        "ledger_masters_as_of_requires_compliance" => Some(
+            "`as_of` selects the date `party_gstin` is read as of, which only \
+             fields=compliance returns. Pass fields=compliance, or drop `as_of`: a basic \
+             read's opening balance is dated by `opening_balance_as_of`, not by `as_of`.",
+        ),
         // A cause, reached through the shared `party_ledger_master_read_failed`.
         "ledger_masters_too_large" => Some(
             "The company's master-alteration mark (`size.master_alter_id`) puts the estimated \

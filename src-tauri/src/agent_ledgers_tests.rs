@@ -1075,6 +1075,54 @@ mod through_the_tool {
         }
     }
 
+    /// bridge#653: `as_of` sets the date every row's `party_gstin` is read as
+    /// of, in either spelling. Which entry is in force on a date is pinned over
+    /// the live registration-history capture by
+    /// `a_gstin_held_only_in_the_dated_registration_history_is_reported_in_force`.
+    #[tokio::test]
+    async fn compliance_rows_read_their_gstin_as_of_the_date_given() {
+        for as_of in ["20260331", "2026-03-31"] {
+            let (response, _) = call(
+                compliance_plans(masters(), balances()),
+                json!({"company_guid":GUID,"fields":"compliance","as_of":as_of}),
+            )
+            .await;
+            let rows = items(&response);
+            assert!(!rows.is_empty());
+            for row in rows {
+                assert_eq!(row["party_gstin_as_of"], "20260331", "{row}");
+                assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+            }
+        }
+    }
+
+    /// `as_of` selects only the GSTIN, so a basic read refuses it before any
+    /// request rather than returning rows a caller could take as dated by it.
+    #[tokio::test]
+    async fn as_of_without_compliance_fields_is_refused_before_any_request() {
+        for args in [
+            json!({"company_guid":GUID,"as_of":"20260331"}),
+            json!({"company_guid":GUID,"fields":"basic","as_of":"20260331"}),
+        ] {
+            let (response, requests) = call(Vec::new(), args.clone()).await;
+            assert_eq!(requests, 0, "{args}");
+            let error = refusal(&response);
+            assert_eq!(error["code"], "ledger_masters_as_of_requires_compliance", "{args}");
+            assert!(error["remediation"].as_str().is_some_and(|text| text.contains("fields=compliance")));
+        }
+    }
+
+    #[tokio::test]
+    async fn an_impossible_as_of_date_is_refused_before_any_request() {
+        let (response, requests) = call(
+            Vec::new(),
+            json!({"company_guid":GUID,"fields":"compliance","as_of":"20260231"}),
+        )
+        .await;
+        assert_eq!(requests, 0);
+        assert!(refusal(&response)["code"].as_str().is_some(), "{response}");
+    }
+
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
         call_with_max_bytes(plans, args, 200_000).await
     }
