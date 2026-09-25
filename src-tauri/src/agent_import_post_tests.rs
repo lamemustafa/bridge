@@ -1977,7 +1977,10 @@ fn an_unreadable_batch_record_keeps_the_step_pending_and_blocks_the_baseline() {
     server.record_post_checks_pending("batch-a", true).unwrap();
     fs::write(imports.join("batch-a.masters_check.json"), b"not json").unwrap();
     let recorded = server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
-    assert_eq!(recorded["batch_step"]["state"], "check_pending", "{recorded}");
+    assert_eq!(
+        recorded["batch_step"]["state"], "check_pending",
+        "{recorded}"
+    );
     assert!(post_doubt(Some(&recorded), 2).is_some());
 
     let baseline = serde_json::to_vec(&super::super::amend::VerifiedBaseline::default()).unwrap();

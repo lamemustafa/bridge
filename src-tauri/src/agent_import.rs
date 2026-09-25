@@ -2852,7 +2852,12 @@ fn read_verified_baseline_for(
 ) -> Option<amend::VerifiedBaseline> {
     // A batch in doubt about its ledgers, or whose check is still pending
     // (#239), is no baseline, whenever its baseline was written.
-    if post::post_doubt(read_masters_check(imports, batch_id).as_ref(), voucher_count).is_some() {
+    if post::post_doubt(
+        read_masters_check(imports, batch_id).as_ref(),
+        voucher_count,
+    )
+    .is_some()
+    {
         return None;
     }
     let mut file =

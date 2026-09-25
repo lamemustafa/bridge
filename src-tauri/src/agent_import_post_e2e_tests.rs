@@ -590,7 +590,10 @@ async fn a_batch_post_records_its_step_verdict_before_anything_else_can_fail() {
     .unwrap();
     assert_eq!(doubt["state"], "unmatched", "{response}");
     assert_eq!(doubt["target_voucher_step"]["step"], 2, "{doubt}");
-    assert_eq!(doubt["target_voucher_step"]["reported_created"], 1, "{doubt}");
+    assert_eq!(
+        doubt["target_voucher_step"]["reported_created"], 1,
+        "{doubt}"
+    );
     assert_eq!(
         super::super::read_masters_check(&imports, &line.batch_id).unwrap()["batch_step"]["state"],
         "unmatched"
