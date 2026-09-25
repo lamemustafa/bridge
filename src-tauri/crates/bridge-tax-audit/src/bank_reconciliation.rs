@@ -8,11 +8,12 @@
 //!
 //! Books side: one row per population voucher touching the bank ledger, summed over that voucher's
 //! lines on the ledger (never per line), dated within the statement's window; a voucher netting
-//! to zero there is no row. Matching pairs each
-//! books row, in (date, GUID) order, with the nearest-date unmatched statement row that agrees in
-//! amount within `TOL_PAISE` and lies within `match_max_days`. What stays unmatched is tried as a
-//! split settlement (2 to 4 rows on the other side summing to it); then a statement row is a
-//! charge by its narration terms or else not found, and a books row a timing difference by sign.
+//! to zero there is no row. Matching pairs each books row, in (date, GUID) order, with the
+//! nearest-date unmatched statement row that agrees in amount within `TOL_PAISE` and lies within
+//! `match_max_days`. What stays unmatched is tried as a split settlement (2 to 4 rows on the
+//! other side, each within `match_max_days`, summing to it within `TOL_PAISE`; a pool over
+//! `MAX_SPLIT_POOL` is not searched); then a statement row is a charge by its narration terms or
+//! else not found, and a books row a timing difference by sign.
 //!
 //! Python's orders are kept where they decide a result:
 //! * the reference iterates `set`s of small list indices, which CPython yields in ascending order
@@ -1090,6 +1091,22 @@ mod tests {
             ["r0", "r1", "v0"]
         );
         assert_eq!(reason("statement", REASON_NOT_FOUND), ["far", "r2", "v1"]);
+
+        // The reverse pool in index order: t0 takes a + b, where date order would take c + b
+        // (Re 1 off); and a reverse split's statement row is spent, so its charge term is moot.
+        let r = run_march(
+            vec![
+                voucher("a", "20260312", -6_000),
+                voucher("b", "20260311", -4_000),
+                voucher("c", "20260309", -5_900),
+            ],
+            vec![stmt_row(0, "20260310", -10_000, "t0 FEE")],
+        );
+        let reason = |side: &str, why: &str| reasons(&r, side, why);
+        assert_eq!(reason("books", REASON_SPLIT_SETTLEMENT), ["a", "b"]);
+        assert_eq!(reason("books", REASON_CHEQUE_NOT_PRESENTED), ["c"]);
+        assert_eq!(reason("statement", REASON_SPLIT_SETTLEMENT), ["t0 FEE"]);
+        assert!(reason("statement", REASON_BANK_ONLY_CHARGE).is_empty());
 
         for blank in ["", " "] {
             let raw = toml::Value::Array(vec![toml::Value::String(blank.to_string())]);

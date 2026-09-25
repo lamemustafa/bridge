@@ -4134,5 +4134,21 @@
   "file": "src/bank_reconciliation.rs",
   "from": "order.sort_by(|&a, &b| (&rows[a].txn_date, a).cmp(&(&rows[b].txn_date, b)));",
   "to": "order.sort_by(|&a, &b| (&rows[a].txn_date, std::cmp::Reverse(a)).cmp(&(&rows[b].txn_date, std::cmp::Reverse(b))));"
+ },
+ {
+  "id": "E2A-46",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool is searched in date order, not index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        for &bi in &remaining_books {",
+  "to": "        for bi in books_order(&book_rows, remaining_books.iter().copied()) {"
+ },
+ {
+  "id": "E2A-47",
+  "by": "reviewer-opus",
+  "what": "a reverse split leaves its statement row to the later passes",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            split_groups_rev.push(si);\n            remaining_stmt.remove(&si);",
+  "to": "            split_groups_rev.push(si);"
  }
 ]
