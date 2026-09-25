@@ -1428,7 +1428,10 @@ mod through_the_tool {
             .collect::<Vec<_>>();
         let dollar = ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"];
         assert_eq!(names.len(), 7, "{names:?}");
-        assert!(names.iter().all(|name| !dollar.contains(&name.as_str())), "{names:?}");
+        assert!(
+            names.iter().all(|name| !dollar.contains(&name.as_str())),
+            "{names:?}"
+        );
         assert_eq!(result["total"], 7);
         assert_eq!(result["ledgers_scope"], "base_currency_ledgers_only");
         let excluded = &result["foreign_currency_ledgers_excluded"];
