@@ -349,3 +349,22 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 | node --test scripts/*.test.mjs | 1 | 287 tests, 279 pass, 4 fail (known merge-driver pair only), 4 skipped |
 | live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
 | tools cargo test --workspace | 0 | 57 passed |
+
+## 2026-09-25 17:29 UTC — lane-c/601d-wip: built 1cf6dc0: green
+
+- New head ce594d1 ("WIP 601d: build fixes, and currency-refusal tests on a case that still refuses (#551)"). It fixes the E0432 and the fmt reds reported for 7543f8a. Merged origin/master 237d415 --no-ff → 608a241 (no conflicts; docs/adr/0004, agent_catalog.rs and approved_import.rs auto-merged). Reseal → **1cf6dc0** (29 pins rehashed); `--verify` current.
+- Sonnet review of 608a241 + 1cf6dc0: no findings. The merge's content lines are the exact union both ways (only index and offset lines differ, on the 3 auto-merged files); there are no conflict markers; all 280 pins match their bytes; no pin was dropped from either side; claims and bridge_commit_sha are unchanged.
+- Pushed as a fast-forward: `lane-c/601d-wip` ce594d1..1cf6dc0.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1343 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 287 tests, 279 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- Queue: gold 7927967 is still waiting on a source conflict with master 237d415 (see above). Everything else is built. Polling.
