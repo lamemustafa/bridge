@@ -593,6 +593,53 @@ async fn post_import_refuses_an_amendment_before_any_read_or_approval() {
     assert!(scripted.previews().is_empty(), "no approval asked");
 }
 
+/// bridge#626: before approval, the post reads the catalogue again and refuses
+/// a named ledger that now folds equal to another live ledger, which Tally's
+/// import lookup could take for it. Refused through the tool, under an
+/// approving script: no approval asked, no request after that catalogue read,
+/// no intent journaled. The twin is a test-local rewrite of the capture (an
+/// unrelated ledger renamed `Cash` plus CR LF), no evidence of Tally behaviour.
+#[tokio::test]
+async fn a_folded_twin_refuses_the_post_before_any_approval() {
+    let captured = catalogue();
+    assert_eq!(
+        captured.matches("Bridge Nested Debtor WR4").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = captured.replace("Bridge Nested Debtor WR4", "Cash&#13;&#10;");
+    let mut plans = Vec::new();
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(twinned));
+    let expected = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "ledger_has_folded_twin",
+        "{response}"
+    );
+    assert_ne!(result["attempt_recorded"], json!(true), "{response}");
+    assert_eq!(observed.len(), expected, "nothing after the catalogue read");
+    assert!(scripted.previews().is_empty(), "no approval asked");
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
+}
+
 /// Declined, the post sends nothing past the pre-approval reads and journals
 /// no intent; the approval was asked once.
 #[tokio::test]
