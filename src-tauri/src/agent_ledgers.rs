@@ -615,7 +615,7 @@ impl Server {
                         let gstin = party_gstin_on(
                             record.ledger.party_gstin.returned_text(),
                             &record.fields.gst_registrations,
-                            &gstin_as_of,
+                            gstin_as_of,
                         );
                         let mut row = json!({
                             "name": party_name(record.ledger.name),
@@ -628,7 +628,7 @@ impl Server {
                             "ancestry": ancestry_json(&chain),
                         });
                         if let Value::Object(fields) = &mut row {
-                            fields.extend(party_gstin_fields(gstin, &gstin_as_of));
+                            fields.extend(party_gstin_fields(gstin, gstin_as_of));
                         }
                         row
                     })
