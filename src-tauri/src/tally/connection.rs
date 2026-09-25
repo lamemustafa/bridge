@@ -136,14 +136,21 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
         #[source]
         source: anyhow::Error,
     },
-    /// The counted book's estimated master response exceeds the budget, so
-    /// the master request was not sent (#637). Numbers only.
+    /// The company's master-alteration mark, an upper bound on its ledgers,
+    /// puts the estimated master response over the budget, so no ledger
+    /// request was sent (#637). Numbers only.
     #[error("Tally compliance master read is estimated beyond Bridge's response budget")]
     TooLarge {
-        ledgers: u64,
+        master_alter_id: u64,
         estimated_bytes: u64,
         budget_bytes: u64,
     },
+    /// The opening extent carried no master-alteration mark, so the compliance
+    /// read could not be sized and was not sent (#637).
+    #[error(
+        "Tally company extent omitted the master-alteration mark the compliance read is sized by"
+    )]
+    MasterMarkMissing,
 }
 
 impl PartyLedgerMasterSourceValidationError {
@@ -167,26 +174,32 @@ impl PartyLedgerMasterSourceValidationError {
             Self::GroupCompanyIdentityUnverified => "group_company_identity_unverified",
             Self::MasterResponseInvalid { .. } => "master_response_invalid",
             Self::TooLarge { .. } => "ledger_masters_too_large",
+            Self::MasterMarkMissing => "company_master_mark_missing",
         }
     }
 }
 
 /// Bytes one ledger is estimated to add to the compliance master response
 /// (#637). UNVERIFIED: the only observation is a field session on a book of
-/// about 9,500 ledgers (2026-09-24) that read about 35.6 MB in total before the
-/// read was refused, about 3.75 KB per ledger. This attributes the whole total
-/// to the master response, which overstates it. To be replaced by a
-/// measurement on a synthetic large book.
+/// about 9,500 ledgers (2026-09-24) that read about 35.6 MB over about 44 s
+/// before it was abandoned. That exceeds both the 32 MiB response cap and the
+/// 20 s request deadline, so it spans more than one request, most likely both
+/// halves of the paired master read. Attributing the whole 35.6 MB to one
+/// master response (about 3.75 KB per ledger) overstates it, probably about
+/// twofold, and the budget's margin rests on that overstatement. To be
+/// replaced by a measurement on a synthetic large book (#668).
 const COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED: u64 = 3_750;
 
 /// The largest estimated compliance master response Bridge will request
-/// (#637). UNVERIFIED: about what one 20 s request leg carried at the roughly
-/// 0.8 MB/s seen on that book (35.6 MB in about 44 s). A basic ledger read of
-/// about 22 MB completed on the same book in 7-11 s, so this is below what was
-/// seen to work. To be replaced by a measurement on a synthetic large book.
+/// (#637). UNVERIFIED: 0.8 MB/s is that book's 35.6 MB over about 44 s,
+/// averaged over more than one request, so 16 MB is about one 20 s request at
+/// that average, right at the deadline. A basic ledger read of about 22 MB
+/// completed on the same book in 7-11 s. To be replaced by a measurement on a
+/// synthetic large book (#668).
 const COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED: u64 = 16_000_000;
 
-/// A compliance master response estimate for a ledger count, and whether it
+/// A compliance master response estimate for a ledger count, or an upper
+/// bound on one, and whether it
 /// fits the budget. An estimate exactly at the budget fits: the budget is the
 /// largest response Bridge will request, not the first it refuses. Takes its
 /// figures as arguments so the boundary is tested exactly, whatever the
@@ -197,12 +210,8 @@ struct ComplianceEstimate {
     fits: bool,
 }
 
-fn compliance_estimate(
-    ledgers: u64,
-    bytes_per_ledger: u64,
-    budget_bytes: u64,
-) -> ComplianceEstimate {
-    let estimated_bytes = ledgers.saturating_mul(bytes_per_ledger);
+fn compliance_estimate(count: u64, bytes_per_ledger: u64, budget_bytes: u64) -> ComplianceEstimate {
+    let estimated_bytes = count.saturating_mul(bytes_per_ledger);
     ComplianceEstimate {
         estimated_bytes,
         fits: estimated_bytes <= budget_bytes,
@@ -210,77 +219,43 @@ fn compliance_estimate(
 }
 
 /// [`compliance_estimate`] at the two UNVERIFIED constants.
-fn compliance_estimate_unverified(ledgers: u64) -> ComplianceEstimate {
+fn compliance_estimate_unverified(count: u64) -> ComplianceEstimate {
     compliance_estimate(
-        ledgers,
+        count,
         COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED,
         COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
     )
 }
 
-/// How a compliance read is sized before its master request is sent (#637).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ComplianceReadSizing {
-    /// The company's master alteration mark alone keeps the estimate within
-    /// budget, so the three reads are sent exactly as before #637.
-    BoundedByMasterMark,
-    /// The balance snapshot is read first, and its parsed rows are counted
-    /// before the master request may be sent.
-    CountFirst,
-}
-
-impl ComplianceReadSizing {
-    /// `ALTMSTID` bounds the ledger count on the assumption that every ledger
-    /// holds its own `ALTERID`, no greater than the company's `ALTMSTID`;
-    /// deletions only loosen the bound. PARTIAL: it held on every captured
-    /// company with both an extent and a ledger capture (8 companies, 6-88
-    /// ledgers against `ALTMSTID` 213-328, not all captured at the same
-    /// moment), which is not a proof. If it is ever false, this path sends the
-    /// read as it was sent before #637, so the failure is today's behaviour,
-    /// not a worse one. An extent without the mark is counted.
-    fn for_extent(extent: &CompanyBookExtent) -> Self {
-        match extent.master_alter_id_high_water() {
-            Some(mark) if compliance_estimate_unverified(mark.get()).fits => {
-                Self::BoundedByMasterMark
-            }
-            _ => Self::CountFirst,
-        }
-    }
-}
-
-/// Refuses a counted book whose estimated master response exceeds the budget,
-/// before the master request is sent. `ledgers` is the balance snapshot's
-/// parsed row count.
+/// Refuses a compliance read before any ledger request is sent when the
+/// company's master-alteration mark (`ALTMSTID`, from the opening extent)
+/// cannot bound the master response within the budget (#637), or is absent.
+///
+/// The mark is an UPPER BOUND on ledgers, not a count: every master of every
+/// type (stock items, units, groups and the rest) raises it, and so does every
+/// alteration. It bounds the ledger count on the assumption that every ledger
+/// holds its own distinct `ALTERID`, no greater than the mark; deletions only
+/// loosen it. PARTIAL: that held on every captured company with both an extent
+/// and a ledger capture (8 small lab companies, 6-88 ledgers against marks of
+/// 213-328, not captured at the same moment), which is not a proof. So a book
+/// with fewer ledgers than the bound may be refused; a precise count that
+/// computes no balances waits on a measurement (#668). If the assumption is
+/// ever false, a book this admits is read as it was before #637.
 fn admit_compliance_master_read(
-    ledgers: usize,
+    master_alter_id: Option<u64>,
 ) -> Result<(), PartyLedgerMasterSourceValidationError> {
-    let ledgers = u64::try_from(ledgers).unwrap_or(u64::MAX);
-    let estimate = compliance_estimate_unverified(ledgers);
+    let Some(master_alter_id) = master_alter_id else {
+        return Err(PartyLedgerMasterSourceValidationError::MasterMarkMissing);
+    };
+    let estimate = compliance_estimate_unverified(master_alter_id);
     if !estimate.fits {
         return Err(PartyLedgerMasterSourceValidationError::TooLarge {
-            ledgers,
+            master_alter_id,
             estimated_bytes: estimate.estimated_bytes,
             budget_bytes: COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
         });
     }
     Ok(())
-}
-
-/// One parsed compliance master pair and its accepted response commitment.
-struct PartyMasterRead {
-    records: bridge_tally_protocol::ParsedExport<
-        bridge_tally_protocol::ParsedSourceRecord<bridge_tally_protocol::PartyLedgerMasterRecord>,
-    >,
-    response_bytes: usize,
-    response_sha256: String,
-}
-
-/// One parsed compliance balance snapshot pair and its accepted response
-/// commitment.
-struct PartyBalanceRead {
-    snapshot: Vec<bridge_tally_protocol::native_outstandings::LedgerSnapshotEntry>,
-    response_bytes: usize,
-    response_sha256: String,
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -1323,6 +1298,12 @@ impl TallyClient {
         let mut evidence = RuntimeReadEvidence::empty();
         let result = async {
             let opening_extent = self.fetch_company_book_extent(identity).await?;
+            // Sized before any ledger request is sent (#637).
+            admit_compliance_master_read(
+                opening_extent
+                    .master_alter_id_high_water()
+                    .map(|mark| mark.get()),
+            )?;
             let currency = currency_assertion.require_opening_extent(&opening_extent)?;
             let master_period = NativeLedgerExportPeriod::new(
                 boundary_profile,
@@ -1347,42 +1328,39 @@ impl TallyClient {
             ];
             let request_sha256 = party_ledger_request_commitment(&requests);
             let [master_request, balance_request, group_request] = requests;
-            // On a book the master mark cannot bound, the balance snapshot (one
-            // of the three reads, and smaller per ledger than the master on the
-            // captured books) is read first so its parsed rows can size the
-            // master read, which is refused before it is sent when the estimate
-            // exceeds the budget (#637). The extent bracket and the pairing of
-            // each read do not depend on this order.
-            let counted_balances = match ComplianceReadSizing::for_extent(&opening_extent) {
-                ComplianceReadSizing::BoundedByMasterMark => None,
-                ComplianceReadSizing::CountFirst => {
-                    let balances = self
-                        .read_party_balance_snapshot(&balance_request, identity, &mut evidence)
-                        .await?;
-                    admit_compliance_master_read(balances.snapshot.len())?;
-                    Some(balances)
-                }
-            };
-            let master = self
-                .read_party_master_records(&master_request, identity, &mut evidence)
+            let master_pair = self
+                .fetch_native_report_paired(master_request.clone())
                 .await?;
-            let balances = match counted_balances {
-                Some(balances) => balances,
-                None => {
-                    self.read_party_balance_snapshot(&balance_request, identity, &mut evidence)
-                        .await?
-                }
-            };
-            let PartyBalanceRead {
-                snapshot: balances,
-                response_bytes: balance_response_bytes,
-                response_sha256: balance_response_sha256,
-            } = balances;
-            let PartyMasterRead {
-                records: master,
-                response_bytes: master_response_bytes,
-                response_sha256: master_response_sha256,
-            } = master;
+            let (master_body, master_response_bytes, master_response_sha256) =
+                master_pair.require_stable(PairedReadValidationError::PartyLedgerMaster)?;
+            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                &master_request,
+                master_response_sha256.clone(),
+                master_response_bytes,
+            ));
+            let master = parse_native_party_ledger_master_records_with_evidence(
+                &master_body,
+                identity.company_guid(),
+            )
+            .map_err(party_ledger_master_master_snapshot_error)?;
+            if !master.evidence.duplicate_identities.is_empty() {
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+                ));
+            }
+            let balance_pair = self
+                .fetch_native_report_paired(balance_request.clone())
+                .await?;
+            let (balance_body, balance_response_bytes, balance_response_sha256) =
+                balance_pair.require_stable(PairedReadValidationError::PartyLedgerBalance)?;
+            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                &balance_request,
+                balance_response_sha256.clone(),
+                balance_response_bytes,
+            ));
+            let balances =
+                parse_native_ledger_snapshot_for_company(&balance_body, identity.company_guid())
+                    .map_err(party_ledger_master_balance_snapshot_error)?;
             let group_pair = self
                 .fetch_native_report_paired(group_request.clone())
                 .await?;
@@ -1492,60 +1470,6 @@ impl TallyClient {
         }
         .await;
         result.map_err(|error| crate::tally::runtime::with_read_evidence(error, evidence))
-    }
-
-    /// The compliance master pair, parsed and refused on a repeated identity.
-    async fn read_party_master_records(
-        &self,
-        request: &str,
-        identity: &VerifiedCompanyIdentity,
-        evidence: &mut RuntimeReadEvidence,
-    ) -> anyhow::Result<PartyMasterRead> {
-        let pair = self.fetch_native_report_paired(request.to_string()).await?;
-        let (body, response_bytes, response_sha256) =
-            pair.require_stable(PairedReadValidationError::PartyLedgerMaster)?;
-        *evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
-            request,
-            response_sha256.clone(),
-            response_bytes,
-        ));
-        let records =
-            parse_native_party_ledger_master_records_with_evidence(&body, identity.company_guid())
-                .map_err(party_ledger_master_master_snapshot_error)?;
-        if !records.evidence.duplicate_identities.is_empty() {
-            return Err(anyhow::Error::new(
-                PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
-            ));
-        }
-        Ok(PartyMasterRead {
-            records,
-            response_bytes,
-            response_sha256,
-        })
-    }
-
-    /// The compliance balance snapshot pair, parsed for the selected company.
-    async fn read_party_balance_snapshot(
-        &self,
-        request: &str,
-        identity: &VerifiedCompanyIdentity,
-        evidence: &mut RuntimeReadEvidence,
-    ) -> anyhow::Result<PartyBalanceRead> {
-        let pair = self.fetch_native_report_paired(request.to_string()).await?;
-        let (body, response_bytes, response_sha256) =
-            pair.require_stable(PairedReadValidationError::PartyLedgerBalance)?;
-        *evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
-            request,
-            response_sha256.clone(),
-            response_bytes,
-        ));
-        let snapshot = parse_native_ledger_snapshot_for_company(&body, identity.company_guid())
-            .map_err(party_ledger_master_balance_snapshot_error)?;
-        Ok(PartyBalanceRead {
-            snapshot,
-            response_bytes,
-            response_sha256,
-        })
     }
 
     /// Reads the documented standard ledger collection as an explicitly limited

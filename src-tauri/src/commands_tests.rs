@@ -737,7 +737,7 @@ fn a_size_refused_party_master_export_names_the_size_not_a_validation_failure() 
     use crate::tally::runtime::{with_read_evidence, RuntimeReadEvidence};
     let too_large = party_ledger_master_runtime_command_error(with_read_evidence(
         anyhow::Error::new(Validation::TooLarge {
-            ledgers: 9_500,
+            master_alter_id: 9_500,
             estimated_bytes: 35_625_000,
             budget_bytes: 16_000_000,
         }),

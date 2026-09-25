@@ -406,7 +406,7 @@ struct ToolFailure {
 /// the counted ledgers, the estimated response and the budget it exceeded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReadSize {
-    ledgers: u64,
+    master_alter_id: u64,
     estimated_bytes: u64,
     budget_bytes: u64,
 }
@@ -417,11 +417,11 @@ fn read_size_refusal(error: &anyhow::Error) -> Option<ReadSize> {
             .downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()?
         {
             crate::tally::connection::PartyLedgerMasterSourceValidationError::TooLarge {
-                ledgers,
+                master_alter_id,
                 estimated_bytes,
                 budget_bytes,
             } => Some(ReadSize {
-                ledgers: *ledgers,
+                master_alter_id: *master_alter_id,
                 estimated_bytes: *estimated_bytes,
                 budget_bytes: *budget_bytes,
             }),
@@ -562,20 +562,22 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
         ),
+        // A cause, reached through the shared `party_ledger_master_read_failed`.
+        "ledger_masters_too_large" => Some(
+            "The company's master-alteration mark (`size.master_alter_id`) puts the estimated \
+             compliance response over Bridge's budget, so no ledger request was sent: a read \
+             of that size has left Tally's gateway unable to answer (#637). The mark is an \
+             UPPER BOUND on ledgers, since stock items, units and every other master raise it \
+             too, so a company with fewer ledgers may be refused. Call ledger_masters with \
+             fields=basic, which returns names, parents and opening balances without the \
+             compliance fields. Retrying this call refuses again. A `group` filter does not \
+             narrow the request, and a precise ledger count is pending (#668).",
+        ),
         // Narration, reference and voucher number share this code for several
         // unrelated text failures (empty, over the schema's character cap, a
         // control character); the least discoverable of them is specific to
         // the voucher number, so it is named here rather than left for a
         // caller to reverse-engineer.
-        // A cause, reached through the shared `party_ledger_master_read_failed`.
-        "ledger_masters_too_large" => Some(
-            "This company has more ledgers than Bridge will ask Tally to return with compliance \
-             fields in one request, because a read of that size has left Tally's gateway unable \
-             to answer (#637). `size` gives the counted ledgers and the estimate. Call \
-             ledger_masters with fields=basic, which returns names, parents and opening balances \
-             in a lighter request. A compliance read narrowed by group or by master range is not \
-             available yet; a `group` filter does not narrow the request.",
-        ),
         "voucher_text_invalid" => Some(
             "The voucher number is empty, longer than the schema allows, holds a control \
              character, or — the one cause that is not visible by inspection — begins a \
@@ -908,7 +910,7 @@ impl Server {
                 if let Some(size) = read_size {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["size"] = json!({
-                            "ledgers": size.ledgers,
+                            "master_alter_id": size.master_alter_id,
                             "estimated_bytes": size.estimated_bytes,
                             "budget_bytes": size.budget_bytes,
                         });

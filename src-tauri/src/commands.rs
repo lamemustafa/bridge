@@ -317,10 +317,10 @@ fn party_ledger_master_runtime_command_error(error: anyhow::Error) -> TallyComma
         return tally_command_error(
             "ledger_masters_too_large",
             "Response size",
-            "Bridge withheld the party/ledger master: this company has more ledgers than Bridge will ask Tally to return with compliance fields in one request, because a read of that size has left Tally unable to answer. Bridge counted the ledgers from their balances and did not request the compliance fields.",
+            "Bridge withheld the party/ledger master: this company's master-alteration mark puts the compliance read over the size Bridge will request, because a read of that size has left Tally unable to answer. The mark is an upper bound on ledgers (stock items, units and every other master count too), so a company with fewer ledgers may be refused. No ledger was requested.",
             "after_change",
             false,
-            "Do not retry the unchanged export. A narrower compliance read (by group or by master range) is not available yet.",
+            "Do not retry the unchanged export: it refuses again. A precise ledger count is pending (bridge#668).",
         );
     }
     let mut mapped = tally_runtime_command_error(error);
