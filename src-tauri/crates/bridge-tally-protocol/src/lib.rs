@@ -895,6 +895,72 @@ pub fn parse_ledger_source_records_with_evidence(
     parse_ledger_source_records_for_schema(xml, BRIDGE_LEDGER_EXPORT_SCHEMA)
 }
 
+/// Why a native voucher-type, group or voucher collection was refused. The
+/// class is decided where the parser fails, so a caller can say why without
+/// reading parser text (bridge#676). A repeated identity across rows is not
+/// here: it is kept as `duplicate_identities` evidence, not refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeCollectionError {
+    /// The XML did not parse, or its envelope, nesting or `COLLECTION` was
+    /// not the documented shape: Tally or the transport, not one master.
+    MalformedResponse,
+    /// `STATUS` was absent or not `1`.
+    NotSuccess,
+    /// One row was refused: empty, missing an identity or a required field,
+    /// repeating a field, or carrying content the row grammar does not admit.
+    RowUnusable,
+    /// No row carried the requested company's GUID prefix.
+    CompanyIdentityMismatch,
+    /// A count passed its bound.
+    BoundsViolation,
+}
+
+impl std::fmt::Display for NativeCollectionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MalformedResponse => "native collection response was malformed",
+            Self::NotSuccess => "native collection did not report success",
+            Self::RowUnusable => "native collection held a row it could not use",
+            Self::CompanyIdentityMismatch => {
+                "native collection did not bind to the requested company"
+            }
+            Self::BoundsViolation => "native collection exceeded a safety bound",
+        })
+    }
+}
+
+impl std::error::Error for NativeCollectionError {}
+
+impl NativeCollectionError {
+    /// A stable, data-free name for the failure, for a refusal's `cause`
+    /// (bridge#676). None of these names a row or the collection's object,
+    /// which the refusal's own code already names.
+    pub const fn safe_code(self) -> &'static str {
+        match self {
+            Self::MalformedResponse => "native_collection_malformed_response",
+            Self::NotSuccess => "native_collection_not_success",
+            Self::RowUnusable => "native_collection_row_unusable",
+            Self::CompanyIdentityMismatch => "native_collection_identity_mismatch",
+            Self::BoundsViolation => "native_collection_bounds_exceeded",
+        }
+    }
+
+    /// A row parser reports through `anyhow`. An XML, escape or encoding
+    /// error inside the row is the response's syntax, not the row's content;
+    /// anything else the row parser refuses is the row.
+    fn from_row(error: &anyhow::Error) -> Self {
+        if error.chain().any(|cause| {
+            cause.is::<quick_xml::Error>()
+                || cause.is::<quick_xml::escape::EscapeError>()
+                || cause.is::<quick_xml::encoding::EncodingError>()
+        }) {
+            Self::MalformedResponse
+        } else {
+            Self::RowUnusable
+        }
+    }
+}
+
 /// Parses a native `List of VoucherTypes` collection. Like native ledgers,
 /// the collection has no envelope company context, so at least one row must
 /// bind through its observed master GUID prefix. Foreign rows are retained as
@@ -902,7 +968,7 @@ pub fn parse_ledger_source_records_with_evidence(
 pub fn parse_native_voucher_type_source_records_with_evidence(
     xml: &str,
     expected_company_guid: &str,
-) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
+) -> Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>, NativeCollectionError> {
     parse_native_collection_with_identity_evidence(
         xml,
         expected_company_guid,
@@ -919,7 +985,7 @@ pub fn parse_native_voucher_type_source_records_with_evidence(
 pub fn parse_native_group_source_records_with_evidence(
     xml: &str,
     expected_company_guid: &str,
-) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
+) -> Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>, NativeCollectionError> {
     parse_native_collection_with_identity_evidence(
         xml,
         expected_company_guid,
@@ -937,7 +1003,7 @@ pub fn parse_native_group_source_records_with_evidence(
 pub fn parse_native_voucher_source_records_with_evidence(
     xml: &str,
     expected_company_guid: &str,
-) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyVoucher>>> {
+) -> Result<ParsedExport<ParsedSourceRecord<TallyVoucher>>, NativeCollectionError> {
     let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
     let mut reader = configured_reader(sanitized.as_str());
     let mut path = Vec::<Vec<u8>>::new();
@@ -950,16 +1016,17 @@ pub fn parse_native_voucher_source_records_with_evidence(
 
     loop {
         let record_start = reader.buffer_position() as usize;
-        match reader.read_event()? {
+        match reader
+            .read_event()
+            .map_err(|_| NativeCollectionError::MalformedResponse)?
+        {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
                 if path.is_empty() && name != b"ENVELOPE" {
-                    anyhow::bail!("native voucher collection root was not ENVELOPE");
+                    return Err(NativeCollectionError::MalformedResponse);
                 }
                 if path_eq(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
-                    if status_seen || read_required_text(&mut reader, element.name())? != "1" {
-                        anyhow::bail!("native voucher collection did not report success");
-                    }
+                    native_collection_status(&mut reader, &element, status_seen)?;
                     status_seen = true;
                     continue;
                 }
@@ -970,31 +1037,29 @@ pub fn parse_native_voucher_source_records_with_evidence(
                     && name == b"VOUCHER"
                 {
                     let (record, identities_for_row, alter_id) =
-                        parse_native_voucher_collection_row(&mut reader, &element, &sanitized)?;
+                        parse_native_voucher_collection_row(&mut reader, &element, &sanitized)
+                            .map_err(|error| NativeCollectionError::from_row(&error))?;
                     let guid = identities_for_row
                         .guid
                         .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("native voucher row omitted GUID"))?;
+                        .ok_or(NativeCollectionError::RowUnusable)?;
                     let remote_id = identities_for_row
                         .remote_id
                         .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("native voucher row omitted REMOTEID"))?;
+                        .ok_or(NativeCollectionError::RowUnusable)?;
                     if native_ledger_guid_has_company_prefix(guid, expected_company_guid)
                         && native_ledger_guid_has_company_prefix(remote_id, expected_company_guid)
                     {
                         company_guid_prefix_match_count = company_guid_prefix_match_count
                             .checked_add(1)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("native voucher prefix count overflow")
-                            })?;
+                            .ok_or(NativeCollectionError::BoundsViolation)?;
                     } else {
                         company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
                             .checked_add(1)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("native voucher prefix count overflow")
-                            })?;
+                            .ok_or(NativeCollectionError::BoundsViolation)?;
                     }
-                    record_identities_from_values("VOUCHER", &identities_for_row, &mut identities)?;
+                    record_identities_from_values("VOUCHER", &identities_for_row, &mut identities)
+                        .map_err(|_| NativeCollectionError::BoundsViolation)?;
                     let record_end = reader.buffer_position() as usize;
                     records.push(ParsedSourceRecord {
                         record,
@@ -1006,7 +1071,8 @@ pub fn parse_native_voucher_source_records_with_evidence(
                             &sanitized,
                             record_start,
                             record_end,
-                        )?,
+                        )
+                        .map_err(|_| NativeCollectionError::MalformedResponse)?,
                     });
                     continue;
                 }
@@ -1019,16 +1085,16 @@ pub fn parse_native_voucher_source_records_with_evidence(
                 } else if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"VOUCHER"
                 {
-                    anyhow::bail!("native voucher collection contained an empty voucher row");
+                    return Err(NativeCollectionError::RowUnusable);
                 }
             }
-            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())
+                .map_err(|_| NativeCollectionError::MalformedResponse)?,
             Event::Eof => break,
             _ => {}
         }
     }
     native_collection_export(
-        "voucher",
         NativeCollectionState {
             path,
             status_seen,
@@ -1052,7 +1118,7 @@ fn parse_native_collection_with_identity_evidence<T>(
         &quick_xml::events::BytesStart<'_>,
     ) -> anyhow::Result<(T, ParsedSourceIdentities, Option<String>)>,
     allow_empty_without_row_identity: bool,
-) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
+) -> Result<ParsedExport<ParsedSourceRecord<T>>, NativeCollectionError> {
     let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
     let mut reader = configured_reader(sanitized.as_str());
     let mut path = Vec::<Vec<u8>>::new();
@@ -1065,16 +1131,17 @@ fn parse_native_collection_with_identity_evidence<T>(
 
     loop {
         let record_start = reader.buffer_position() as usize;
-        match reader.read_event()? {
+        match reader
+            .read_event()
+            .map_err(|_| NativeCollectionError::MalformedResponse)?
+        {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
                 if path.is_empty() && name != b"ENVELOPE" {
-                    anyhow::bail!("native {object_type} collection root was not ENVELOPE");
+                    return Err(NativeCollectionError::MalformedResponse);
                 }
                 if path_eq(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
-                    if status_seen || read_required_text(&mut reader, element.name())? != "1" {
-                        anyhow::bail!("native {object_type} collection did not report success");
-                    }
+                    native_collection_status(&mut reader, &element, status_seen)?;
                     status_seen = true;
                     continue;
                 }
@@ -1084,29 +1151,28 @@ fn parse_native_collection_with_identity_evidence<T>(
                 if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name.as_slice().eq_ignore_ascii_case(element_name)
                 {
-                    let (record, identities_for_row, alter_id) = parse_row(&mut reader, &element)?;
+                    let (record, identities_for_row, alter_id) =
+                        parse_row(&mut reader, &element)
+                            .map_err(|error| NativeCollectionError::from_row(&error))?;
                     let guid = identities_for_row
                         .guid
                         .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("native {object_type} row omitted GUID"))?;
+                        .ok_or(NativeCollectionError::RowUnusable)?;
                     if native_ledger_guid_has_company_prefix(guid, expected_company_guid) {
                         company_guid_prefix_match_count = company_guid_prefix_match_count
                             .checked_add(1)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("native {object_type} prefix count overflow")
-                            })?;
+                            .ok_or(NativeCollectionError::BoundsViolation)?;
                     } else {
                         company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
                             .checked_add(1)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("native {object_type} prefix count overflow")
-                            })?;
+                            .ok_or(NativeCollectionError::BoundsViolation)?;
                     }
                     record_identities_from_values(
                         object_type,
                         &identities_for_row,
                         &mut identities,
-                    )?;
+                    )
+                    .map_err(|_| NativeCollectionError::BoundsViolation)?;
                     let record_end = reader.buffer_position() as usize;
                     records.push(ParsedSourceRecord {
                         record,
@@ -1118,7 +1184,8 @@ fn parse_native_collection_with_identity_evidence<T>(
                             &sanitized,
                             record_start,
                             record_end,
-                        )?,
+                        )
+                        .map_err(|_| NativeCollectionError::MalformedResponse)?,
                     });
                     continue;
                 }
@@ -1131,16 +1198,16 @@ fn parse_native_collection_with_identity_evidence<T>(
                 } else if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name.as_slice().eq_ignore_ascii_case(element_name)
                 {
-                    anyhow::bail!("native {object_type} collection contained an empty row");
+                    return Err(NativeCollectionError::RowUnusable);
                 }
             }
-            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())
+                .map_err(|_| NativeCollectionError::MalformedResponse)?,
             Event::Eof => break,
             _ => {}
         }
     }
     native_collection_export(
-        object_type,
         NativeCollectionState {
             path,
             status_seen,
@@ -1164,24 +1231,41 @@ struct NativeCollectionState<T> {
     company_guid_prefix_mismatch_count: u64,
 }
 
+/// The collection's one `STATUS`, which must read `1`. A second `STATUS` or
+/// one whose text cannot be read is the response's shape, not Tally's answer.
+fn native_collection_status(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    status_seen: bool,
+) -> Result<(), NativeCollectionError> {
+    if status_seen {
+        return Err(NativeCollectionError::MalformedResponse);
+    }
+    let status = read_required_text(reader, element.name())
+        .map_err(|_| NativeCollectionError::MalformedResponse)?;
+    if status != "1" {
+        return Err(NativeCollectionError::NotSuccess);
+    }
+    Ok(())
+}
+
 fn native_collection_export<T>(
-    object_type: &str,
     state: NativeCollectionState<T>,
     allow_empty_without_row_identity: bool,
-) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
+) -> Result<ParsedExport<ParsedSourceRecord<T>>, NativeCollectionError> {
     if !state.path.is_empty() {
-        anyhow::bail!("native {object_type} collection ended before its root closed");
+        return Err(NativeCollectionError::MalformedResponse);
     }
     if !state.status_seen {
-        anyhow::bail!("native {object_type} collection did not report success");
+        return Err(NativeCollectionError::NotSuccess);
     }
     if !state.collection_seen {
-        anyhow::bail!("native {object_type} collection omitted BODY/DATA/COLLECTION");
+        return Err(NativeCollectionError::MalformedResponse);
     }
     if state.company_guid_prefix_match_count == 0
         && (!allow_empty_without_row_identity || !state.records.is_empty())
     {
-        anyhow::bail!("native {object_type} collection did not bind to the requested company");
+        return Err(NativeCollectionError::CompanyIdentityMismatch);
     }
     let mut duplicate_identities = state
         .identities
@@ -1193,9 +1277,8 @@ fn native_collection_export<T>(
         })
         .collect::<Vec<_>>();
     duplicate_identities.sort_by(|left, right| left.identity_sha256.cmp(&right.identity_sha256));
-    let source_record_count = u64::try_from(state.records.len()).map_err(|_| {
-        anyhow::anyhow!("native {object_type} collection exceeded supported record count")
-    })?;
+    let source_record_count =
+        u64::try_from(state.records.len()).map_err(|_| NativeCollectionError::BoundsViolation)?;
     Ok(ParsedExport {
         records: state.records,
         evidence: ExportEvidence {
