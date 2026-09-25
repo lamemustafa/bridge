@@ -252,7 +252,11 @@ fn captured_composite_opening() -> String {
             text.contains(" @ ").then(|| text.to_string())
         })
         .collect::<Vec<_>>();
-    assert_eq!(openings.len(), 1, "the capture carries exactly one composite opening");
+    assert_eq!(
+        openings.len(),
+        1,
+        "the capture carries exactly one composite opening"
+    );
     openings.into_iter().next().unwrap()
 }
 
@@ -287,7 +291,9 @@ fn a_foreign_currency_opening_refuses_with_its_typed_cause() {
 
     // Control: the same composite cut short before its base amount is not a
     // composite. It still refuses, untyped, as before.
-    let cut = &composite[..composite.find(" = ").expect("captured composite has a base")];
+    let cut = &composite[..composite
+        .find(" = ")
+        .expect("captured composite has a base")];
     let truncated = wr2.replace(
         row,
         &format!("<OPENINGBALANCE TYPE=\"Amount\">{cut}</OPENINGBALANCE>"),
@@ -297,7 +303,10 @@ fn a_foreign_currency_opening_refuses_with_its_typed_cause() {
         "61c6de69-1748-461c-ad3f-162cb949df9f",
     )
     .expect_err("a truncated composite is still refused");
-    assert!(error.downcast_ref::<NativeLedgerAmountError>().is_none(), "{error:#}");
+    assert!(
+        error.downcast_ref::<NativeLedgerAmountError>().is_none(),
+        "{error:#}"
+    );
 }
 
 /// `build_core_window` treats an explicitly empty parent as a root marker.

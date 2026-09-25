@@ -1384,7 +1384,10 @@ mod through_the_tool {
         assert_eq!(source.matches(row).count(), 1);
         let foreign = source.replace(
             row,
-            &format!("<OPENINGBALANCE TYPE=\"Amount\">{}</OPENINGBALANCE>", composite[0]),
+            &format!(
+                "<OPENINGBALANCE TYPE=\"Amount\">{}</OPENINGBALANCE>",
+                composite[0]
+            ),
         );
         let mut plans = basic_plans_reading(foreign, None);
         plans.truncate(plans.len() - 7);
