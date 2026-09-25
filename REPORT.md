@@ -224,3 +224,35 @@ The non-test lib target reported no errors under clippy; only the lib-test targe
 - agent_import_post.rs: 436, 826, 966
 - agent_import_post_e2e_tests.rs: 523
 - agent_import_post_tests.rs: 690, 768, 1456, 1490, 1523, 1542, 1555, 1562, 1582
+
+## 2026-09-25 16:53 UTC — lane-a/d1-wip: built 375caf3: RED (iteration build for Lane A, WIP)
+
+- Same seven commands, on 375caf3 detached (a fast-forward from ddfcdc2). No merge, reseal or push; the branch is unchanged. Steps 2 and 3 without a feature still stop on the host's `rfd` backend panic, so 2b and 3b add `--features rfd/gtk3`.
+- **Both E0061 compile errors are gone.** Clippy with gtk3 is clean (0 errors, 0 warnings).
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | cargo fmt --all -- --check | 1 | 22 diff hunks (list below) |
+| 2 / 3 | clippy / lib test, no feature | 101 / 101 | rfd build script: no Linux backend (host only) |
+| 2b | clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | clean |
+| 3b | cargo test -p bridge --lib --features rfd/gtk3 | 101 | 1352 passed, **2 failed** (1 real + known root-only db::encrypted), 6 ignored |
+| 4 | cargo test -p bridge-tally-protocol | 0 | all pass |
+| 5 | tools cargo test --workspace | 101 | 23 passed, 1 failed (surface not resealed, as before) |
+| 6 | node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only) |
+| 7 | scripts/reseal.sh --verify | 1 | expected FAIL: stale pins agent_import.rs, agent_import_ledger.rs, agent_import_post.rs, tally/approved_import.rs |
+
+**REAL test failure (3b):** `agent::agent_import::post::e2e_tests::ack_tests::a_batch_of_several_vouchers_is_refused_before_any_request`
+```
+panicked at src/agent_import_ack_tests.rs:668:88:
+called `Result::unwrap()` on an `Err` value: "import_post_remote_ids_mismatch"
+```
+Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap()`. The test pushes a second voucher (so 2 vouchers and 2 txn_ids) but passes one remote id, and the new "id count checked against the batch" rule refuses that before the test reaches its assertion.
+
+**Tools (5):** `tests::real_tree_has_complete_migration_and_report_surface_coverage` panicked at `bridge-tally-compatibility/src/lib_tests.rs:909:46`: `Invalid { code: "surface_file_changed" }`. This follows from step 7.
+
+**fmt hunks (1), file:line.** Plain `cargo fmt` fixes them:
+- agent_import_ledger.rs: 91, 356
+- agent_import_ledger_stream_tests.rs: 359, 374, 396, 408, 418
+- agent_import_post.rs: 436, 826, 966, 1232
+- agent_import_post_e2e_tests.rs: 523
+- agent_import_post_tests.rs: 690, 768, 1454, 1488, 1534, 1553, 1566, 1573, 1593, 1614
