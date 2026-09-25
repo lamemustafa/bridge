@@ -61,6 +61,9 @@ pub(super) enum VoucherReadShape {
     Movement,
     /// `render_agent_vouchers`: the `ALLLEDGERENTRIES.*` entry wildcard.
     EntryWildcard,
+    /// `render_agent_class_vouchers_in_span`: the entry wildcard plus each
+    /// row's voucher type resolved by Tally (bridge#625).
+    ClassEntryWildcard,
 }
 
 impl VoucherReadShape {
@@ -76,7 +79,10 @@ impl VoucherReadShape {
     pub(super) const fn default_wire_bytes_per_voucher(self) -> u64 {
         match self {
             Self::ImportVerification | Self::Movement => 96 * 1024,
-            Self::EntryWildcard => 384 * 1024,
+            // The class COMPUTEs add about 1.2 KB of UTF-16 per voucher
+            // (ten elements at ~120 bytes, measured one at a time on 7.1),
+            // well inside the margin above the 256 KB measured.
+            Self::EntryWildcard | Self::ClassEntryWildcard => 384 * 1024,
         }
     }
 
@@ -93,7 +99,9 @@ impl VoucherReadShape {
     const fn day_not_readable_code(self) -> &'static str {
         match self {
             Self::ImportVerification => "verification_window_day_not_readable",
-            Self::Movement | Self::EntryWildcard => "voucher_window_day_not_readable",
+            Self::Movement | Self::EntryWildcard | Self::ClassEntryWildcard => {
+                "voucher_window_day_not_readable"
+            }
         }
     }
 
@@ -121,6 +129,9 @@ impl VoucherReadShape {
             (Self::EntryWildcard, None) => render_agent_vouchers(company, from, to, None),
             (Self::EntryWildcard, Some(_)) => {
                 render_agent_vouchers_in_span(company, from, to, span)
+            }
+            (Self::ClassEntryWildcard, _) => {
+                render_agent_class_vouchers_in_span(company, from, to, span)
             }
         }
     }

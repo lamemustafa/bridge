@@ -242,6 +242,19 @@ pub(super) fn find_batch_id_by_sha256(
     }
 }
 
+/// Whether any dispatch intent in the journal already records `remote_id`.
+/// The whole journal is admitted on the way, as for every other read.
+pub(super) fn remote_id_recorded(reader: impl BufRead, remote_id: Uuid) -> Result<bool, String> {
+    let wanted = remote_id.hyphenated().to_string();
+    let mut recorded = false;
+    scan_records(reader, |record, _| {
+        if let Record::Status(update) = record {
+            recorded |= update.native_remote_id.as_deref() == Some(wanted.as_str());
+        }
+    })?;
+    Ok(recorded)
+}
+
 fn scan_records(
     mut reader: impl BufRead,
     mut visit: impl FnMut(Record, VerificationGeneration),

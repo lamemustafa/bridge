@@ -16,6 +16,12 @@
 //!   limb (c) is one fixed question the books cannot answer.
 //! * s.194N reports the statement window's narration-matched cash withdrawals, informational, and
 //!   states which threshold applies only when the recipient type is known.
+//! * A row's amount is the party side of the voucher, not its money line, as the reference
+//!   computes it (parity, pinned by the goldens). A voucher settling one party partly in cash and
+//!   partly by bank (or against a discount) is a cash row, and a bank row, for the whole party
+//!   amount (`hvr_paths`' h15). A voucher naming two or more parties gives each only its own line,
+//!   and its tax, round-off and Sales/Purchase lines go to no party (`hvr_paths`' h11). So an
+//!   s.269ST row can over-state, or under-state, the cash one party moved.
 //!
 //! The reference reads `[high_value_register].ca_threshold_paise` and `[s194n]` when the rules
 //! carry them and its own defaults otherwise. The vendored rules excerpt carries neither table, so
@@ -80,10 +86,10 @@ impl Recipient {
 }
 
 /// The reference's fallback defaults, equal to its rules tables' numbers.
-pub const DEFAULT_CA_THRESHOLD_PAISE: i64 = 2_00_000_00;
-pub const DEFAULT_S194N_THRESHOLD_PAISE: i64 = 1_00_00_000_00;
-pub const DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE: i64 = 3_00_00_000_00;
-pub const DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE: i64 = 20_00_000_00;
+pub const DEFAULT_CA_THRESHOLD_PAISE: i64 = 20_000_000; // Rs 2 lakh
+pub const DEFAULT_S194N_THRESHOLD_PAISE: i64 = 1_000_000_000; // Rs 1 crore
+pub const DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE: i64 = 3_000_000_000; // Rs 3 crore
+pub const DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE: i64 = 200_000_000; // Rs 20 lakh
 
 fn prefix_chars(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
@@ -115,7 +121,8 @@ fn fig(
 ///
 /// Divergence, deliberate, and not parity (as `bank_reconciliation::charge_terms`): the reference
 /// passes the value to `frozenset(...)` unchecked, so a single string becomes the set of its
-/// characters. Here a non-list, and a list holding a non-string, refuse.
+/// characters. Here a non-list, a list holding a non-string, and a blank term (in every narration,
+/// so every debit would count) refuse.
 pub fn s194n_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());
@@ -124,10 +131,15 @@ pub fn s194n_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     raw.as_array()
         .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} is not a list")))?
         .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} holds a non-string")))
+        .map(|v| match v.as_str() {
+            // A blank term is in every narration, or nearly (a space), so every debit would count.
+            Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a blank term"
+            ))),
+            Some(s) => Ok(s.to_string()),
+            None => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a non-string"
+            ))),
         })
         .collect()
 }
@@ -408,7 +420,7 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
     let no_types: BTreeMap<String, String> = BTreeMap::new();
 
     #[allow(clippy::cast_precision_loss)] // Python's float division, formatted with :g
-    let lakh = py_format_g(threshold as f64 / 1_00_000_00.0);
+    let lakh = py_format_g(threshold as f64 / 10_000_000.0); // paise per lakh
     r.population_note = format!(
         "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded \
          throughout. Vouching threshold set by the CA: ₹{lakh} lakh. Every row states its own mode \
@@ -938,10 +950,10 @@ mod tests {
     fn the_defaults_are_the_reference_tables_numbers() {
         // The reference's rules/ay2026-27.toml at 1038dc05: [high_value_register].ca_threshold_paise
         // and [s194n]'s three thresholds; run() prefers those tables, and they equal its defaults.
-        assert_eq!(DEFAULT_CA_THRESHOLD_PAISE, 2_00_000_00);
-        assert_eq!(DEFAULT_S194N_THRESHOLD_PAISE, 1_00_00_000_00);
-        assert_eq!(DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE, 3_00_00_000_00);
-        assert_eq!(DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE, 20_00_000_00);
+        assert_eq!(DEFAULT_CA_THRESHOLD_PAISE, 20_000_000);
+        assert_eq!(DEFAULT_S194N_THRESHOLD_PAISE, 1_000_000_000);
+        assert_eq!(DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE, 3_000_000_000);
+        assert_eq!(DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE, 200_000_000);
     }
 
     #[test]
@@ -998,8 +1010,69 @@ mod tests {
         for v in [
             toml::Value::from("ATW-"),
             toml::Value::Array(vec![1.into()]),
+            toml::Value::Array(vec!["".into()]),
+            toml::Value::Array(vec![" ".into()]),
         ] {
             assert!(s194n_terms(Some(&v)).is_err(), "{v}");
         }
+    }
+
+    #[test]
+    fn a_contra_voucher_is_never_a_row() {
+        use crate::book::{LedgerLine, VoucherStatus};
+        // A Contra carrying a party line, which Tally allows in an imported book; the same lines
+        // as a Receipt are a row.
+        let voucher = |guid: &str, base_type: &str| Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse("20250601").unwrap(),
+            base_type: base_type.to_string(),
+            status: VoucherStatus::Regular,
+            lines: vec![
+                LedgerLine {
+                    ledger: "Cash".to_string(),
+                    amount_paise: 25_000_000,
+                },
+                LedgerLine {
+                    ledger: "Customer A".to_string(),
+                    amount_paise: -25_000_000,
+                },
+            ],
+            ..Default::default()
+        };
+        let book = Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            vouchers: Vec::new(),
+            tb: BTreeMap::new(),
+        };
+        let (cash, none, no_types) = (
+            BTreeSet::from(["Cash".to_string()]),
+            BTreeSet::new(),
+            BTreeMap::new(),
+        );
+        let x = Exclusions {
+            from_party_groups: &[],
+            entirely_groups: &[],
+            round_off_ledgers: &none,
+            counterparty_types: &no_types,
+        };
+        let parties = |v: &Voucher| -> Vec<String> {
+            let rows = mode_rows(
+                &[v],
+                &book,
+                &cash,
+                &none,
+                Direction::Receipt,
+                |v| v.date.clone(),
+                &x,
+            );
+            rows.unwrap().into_keys().map(|(_, party)| party).collect()
+        };
+        assert!(parties(&voucher("c1", "Contra")).is_empty());
+        assert_eq!(parties(&voucher("r1", "Receipt")), ["Customer A"]);
     }
 }

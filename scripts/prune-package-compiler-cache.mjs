@@ -25,7 +25,14 @@ export function obsoleteCaches(caches) {
     group.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id).slice(2));
 }
 
-export async function pruneCaches({ env = process.env, fetcher = fetch, apply = false } = {}) {
+// The cache list is not a snapshot: a cache saved or evicted while it is paged moves total_count or
+// the pages, so one listing can come back incomplete. It is listed again, a bounded number of times,
+// before refusing; nothing is ever deleted from an incomplete listing.
+const INVENTORY_ATTEMPTS = 3;
+const INVENTORY_RETRY_MS = 10_000;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function pruneCaches({ env = process.env, fetcher = fetch, apply = false, sleep = wait } = {}) {
   if (env.GITHUB_REF !== "refs/heads/master" ||
       !["push", "workflow_dispatch"].includes(env.GITHUB_EVENT_NAME)) {
     throw new TypeError("Cache retention requires a master push or manual run");
@@ -52,15 +59,27 @@ export async function pruneCaches({ env = process.env, fetcher = fetch, apply = 
       if (!Number.isSafeInteger(result.total_count) || result.total_count < 0 || result.total_count > 1000 ||
           !Array.isArray(result.actions_caches)) throw new TypeError("Invalid or excessive cache inventory");
       caches.push(...result.actions_caches);
+      // A page that shifted under a concurrent save or eviction can repeat a cache: incomplete too.
+      if (new Set(caches.map((cache) => cache?.id)).size !== caches.length) break;
       if (caches.length === result.total_count) return caches;
       if (caches.length > result.total_count || result.actions_caches.length === 0) break;
     }
-    throw new TypeError("Cache inventory is incomplete");
+    throw Object.assign(new TypeError("Cache inventory is incomplete"), { code: "inventory_incomplete" });
   }
-  const obsolete = obsoleteCaches(await inventory());
+  async function consistentInventory() {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await inventory();
+      } catch (error) {
+        if (error?.code !== "inventory_incomplete" || attempt >= INVENTORY_ATTEMPTS) throw error;
+        await sleep(INVENTORY_RETRY_MS);
+      }
+    }
+  }
+  const obsolete = obsoleteCaches(await consistentInventory());
   if (apply) {
     for (const cache of obsolete) await request("DELETE", `${endpoint}/${cache.id}`);
-    if (obsoleteCaches(await inventory()).length) throw Object.assign(new Error("Compiler-cache retention did not converge"), { code: "retention_incomplete" });
+    if (obsoleteCaches(await consistentInventory()).length) throw Object.assign(new Error("Compiler-cache retention did not converge"), { code: "retention_incomplete" });
   }
   return { applied: apply, obsoleteIds: obsolete.map((cache) => cache.id), retainedPerOS: 2 };
 }
