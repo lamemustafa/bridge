@@ -201,7 +201,10 @@ fn any_redaction_drops_tally_line_error_text_but_keeps_the_count() {
     for redaction in [Redaction::MaskParties, Redaction::DropNarration] {
         let outcome = &redact_value(result.clone(), redaction)["dispatch"]["response"]["outcome"];
         assert!(outcome.get("tally_line_errors").is_none(), "{outcome}");
-        assert!(outcome.get("tally_line_errors_omitted").is_none(), "{outcome}");
+        assert!(
+            outcome.get("tally_line_errors_omitted").is_none(),
+            "{outcome}"
+        );
         assert_eq!(outcome["counters"]["line_error_count"], 2);
     }
     assert_eq!(redact_value(result.clone(), Redaction::None), result);

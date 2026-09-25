@@ -429,15 +429,30 @@ fn line_error_text_is_bounded_per_entry_and_in_count() {
 fn line_error_text_is_bounded_in_escaped_bytes() {
     let backslashes = "\\".repeat(MAX_TALLY_LINE_ERROR_CHARS);
     let outcome = with_line_errors(&[backslashes.as_str(); 5]);
-    assert_eq!(outcome.tally_line_errors().len(), 4, "a backslash escapes to two bytes");
+    assert_eq!(
+        outcome.tally_line_errors().len(),
+        4,
+        "a backslash escapes to two bytes"
+    );
     let quotes = "&quot;".repeat(MAX_TALLY_LINE_ERROR_CHARS);
     let outcome = with_line_errors(&[quotes.as_str(); 10]);
     let kept = outcome.tally_line_errors();
-    assert_eq!(kept.len(), 4, "four texts of 1,024 escaped bytes fill 4,096");
+    assert_eq!(
+        kept.len(),
+        4,
+        "four texts of 1,024 escaped bytes fill 4,096"
+    );
     assert_eq!(outcome.tally_line_errors_omitted(), 6);
-    assert_eq!(serde_json::to_value(&outcome).unwrap()["tally_line_errors_omitted"], 6);
+    assert_eq!(
+        serde_json::to_value(&outcome).unwrap()["tally_line_errors_omitted"],
+        6
+    );
     let escaped = serde_json::to_string(kept).unwrap();
-    assert!(escaped.len() <= MAX_TALLY_LINE_ERROR_BYTES + 64 * kept.len(), "{}", escaped.len());
+    assert!(
+        escaped.len() <= MAX_TALLY_LINE_ERROR_BYTES + 64 * kept.len(),
+        "{}",
+        escaped.len()
+    );
 }
 
 /// Control, format, separator, private-use and unassigned characters are
@@ -460,7 +475,11 @@ fn control_and_format_characters_are_replaced() {
 #[test]
 fn an_empty_line_error_is_kept_as_empty_text() {
     let outcome = with_line_errors(&["", "second"]);
-    let texts: Vec<_> = outcome.tally_line_errors().iter().map(|e| e.text()).collect();
+    let texts: Vec<_> = outcome
+        .tally_line_errors()
+        .iter()
+        .map(|e| e.text())
+        .collect();
     assert_eq!(texts, ["", "second"]);
 }
 
@@ -480,7 +499,10 @@ fn line_error_text_is_absent_from_old_and_clean_records() {
     let clean = parse_import_outcome("<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>").unwrap();
     let stored = serde_json::to_value(&clean).unwrap();
     assert!(stored.get("tally_line_errors").is_none(), "{stored}");
-    assert!(stored.get("tally_line_errors_omitted").is_none(), "{stored}");
+    assert!(
+        stored.get("tally_line_errors_omitted").is_none(),
+        "{stored}"
+    );
     let reread: TallyImportOutcome = serde_json::from_value(stored).unwrap();
     assert_eq!(reread, clean);
     // A record written before the text was kept counts its LINEERROR as
@@ -501,7 +523,8 @@ fn a_stored_record_is_bounded_again_on_read_and_never_fails_over_text() {
     let reread = |line_errors: serde_json::Value| {
         let mut record = stored.clone();
         record["tally_line_errors"] = line_errors;
-        serde_json::from_value::<TallyImportOutcome>(record).expect("display text never fails a record")
+        serde_json::from_value::<TallyImportOutcome>(record)
+            .expect("display text never fails a record")
     };
     let long = "y".repeat(MAX_TALLY_LINE_ERROR_CHARS + 7);
     let clipped = reread(serde_json::json!([

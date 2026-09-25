@@ -623,7 +623,12 @@ fn line_error_text_changes_no_dispatch_verdict_and_stays_small() {
         let kept = response.outcome.as_ref().unwrap().tally_line_errors();
         assert!(!kept.is_empty());
         let stripped = without_text(response);
-        assert!(stripped.outcome.as_ref().unwrap().tally_line_errors().is_empty());
+        assert!(stripped
+            .outcome
+            .as_ref()
+            .unwrap()
+            .tally_line_errors()
+            .is_empty());
         for finalize in [current, previous] {
             let verdict = |response: &ledger::DispatchResponse| {
                 let mut payload =
@@ -634,7 +639,10 @@ fn line_error_text_changes_no_dispatch_verdict_and_stays_small() {
             let shown = verdict(response);
             let bare = verdict(&stripped);
             for key in ["state", "response_state"] {
-                assert_eq!(shown["result"]["dispatch"][key], bare["result"]["dispatch"][key]);
+                assert_eq!(
+                    shown["result"]["dispatch"][key],
+                    bare["result"]["dispatch"][key]
+                );
             }
             assert_eq!(shown["result"]["error"], bare["result"]["error"]);
             assert_eq!(

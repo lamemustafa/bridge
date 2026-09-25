@@ -255,7 +255,8 @@ fn line_error_text_is_cut_before_a_result_is_refused() {
         sized.to_string().len() + 1
     };
     enforce_jsonrpc_response_byte_cap(&mut framed, cap).expect("fits without the text");
-    let outcome = &framed["result"]["structuredContent"]["result"]["dispatch"]["response"]["outcome"];
+    let outcome =
+        &framed["result"]["structuredContent"]["result"]["dispatch"]["response"]["outcome"];
     assert!(outcome.get("tally_line_errors").is_none(), "{outcome}");
     assert_eq!(outcome["tally_line_errors_omitted"], 5);
     assert_eq!(
@@ -295,7 +296,9 @@ fn a_result_without_line_error_text_is_untouched_by_the_text_step() {
     let mut response = json!({"result":{"offset":0,"items":
         (0..10_000).map(|id| json!({"id":id,"padding":"x".repeat(64)})).collect::<Vec<_>>()}});
     assert!(fit_response(&mut response, "", 512, |value| value.to_string().len()).unwrap());
-    assert!(response["result"].get("tally_line_errors_omitted").is_none());
+    assert!(response["result"]
+        .get("tally_line_errors_omitted")
+        .is_none());
 }
 
 /// A result that must be paged anyway loses its LINEERROR text before any
