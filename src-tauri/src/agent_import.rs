@@ -2439,8 +2439,15 @@ fn live_spelling_importable(position: usize, name: &str) -> bool {
     SourceEntity::new(position, without_trailing_crlf(name)).is_ok()
 }
 
-/// [`source_entities`], admitting a name that ends in one CR LF as
-/// [`RequestedMaster::ExactOnly`] when the rest of it passes the core's bounds.
+/// Parses requested names at the boundary, which is where the core's own
+/// bounds are enforced: a control character, or more identifiers than one name
+/// may carry. A name that ends in one CR LF is admitted as
+/// [`RequestedMaster::ExactOnly`] when the rest of it passes those bounds.
+///
+/// Kept separate from the report so a caller can run it **before** it reads
+/// Tally. A request the core will refuse cannot succeed at any catalogue, so
+/// spending a live read and collecting evidence of it first buys nothing and
+/// costs an external round trip against the operator's books.
 fn requested_masters(requested: &[String]) -> Result<Vec<RequestedMaster>, String> {
     let mut named = 0_usize;
     requested
@@ -2504,23 +2511,6 @@ fn requested_master_report(
         .collect()
 }
 
-/// Parses requested names into source entities, which is where the core's own
-/// bounds are enforced — a control character, or more identifiers than one name
-/// may carry.
-///
-/// Kept separate from `master_report` so a caller can run it **before** it
-/// reads Tally. A request the core will refuse cannot succeed at any catalogue,
-/// so spending a live read and collecting evidence of it first buys nothing and
-/// costs an external round trip against the operator's books.
-fn source_entities(requested: &[String]) -> Result<Vec<SourceEntity>, String> {
-    requested
-        .iter()
-        .enumerate()
-        .map(|(position, name)| SourceEntity::new(position, name))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.safe_reason_code().to_string())
-}
-
 fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
     payload
         .vouchers
@@ -2571,7 +2561,7 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             // proposed name is input. But it means the live spelling is not
             // always something the caller can send back, and the guidance below
             // used to tell them to copy it regardless. Following that failed the
-            // whole batch on `master_name_unsafe`, because `source_entities`
+            // whole batch on `master_name_unsafe`, because `requested_masters`
             // collects into one Result and refuses on the first bad name.
             //
             // Ask the proposal constructor rather than restating its rule, so

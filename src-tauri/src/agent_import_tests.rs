@@ -1674,8 +1674,8 @@ fn one_master_match(wanted: &str, catalogue: &[&str]) -> Value {
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
-    master_report(
-        &source_entities(&[wanted.to_string()]).expect("fabricated name parses"),
+    requested_master_report(
+        &requested_masters(&[wanted.to_string()]).expect("fabricated name parses"),
         &catalogue,
     )
     .expect("fabricated catalogue binds")
@@ -1735,7 +1735,10 @@ fn a_catalogue_that_was_never_read_refuses_instead_of_reporting_everything_missi
     // of the one failed engagement, so an empty catalogue must not look like
     // an answer. P5: nothing-found and request-failed stay distinguishable.
     assert_eq!(
-        master_report(&source_entities(&["Bank".to_string()]).expect("valid"), &[]),
+        requested_master_report(
+            &requested_masters(&["Bank".to_string()]).expect("valid"),
+            &[]
+        ),
         Err("master_catalog_empty".to_string())
     );
 }
@@ -1804,7 +1807,7 @@ fn import_recovery_guidance_names_the_state_and_next_safe_read() {
 /// input. The gap between those two correct rules is a spelling the tool can
 /// report but the caller cannot send back.
 ///
-/// Telling them to copy it anyway failed the *entire* batch: `source_entities`
+/// Telling them to copy it anyway failed the *entire* batch: `requested_masters`
 /// collects into one Result and refuses on the first bad name, so one such
 /// ledger takes every voucher in the request down with it.
 #[test]
