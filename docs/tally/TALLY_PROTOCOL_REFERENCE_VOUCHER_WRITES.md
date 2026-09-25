@@ -563,9 +563,10 @@ from a Voucher collection readback, not from the counters alone.
   - A second new voucher reusing a number reported `EXCEPTIONS=1` with **no `LINEERROR`**, and a readback held one voucher under that number.
   - An `EXCEPTIONS` count without any line error is the case §9.2's four-part success rule exists for: only the counters show the refusal.
 - **Related, same block:**
-  - An upsert omitting `REFERENCE` kept the stored value: omitted fields merge. PARTIAL — observed once (G).
+  - An upsert omitting `REFERENCE` kept the stored value: omitted fields merge. **VERIFIED for a `REFERENCE` written over the gateway**, licensed 7.1 Silver. There are two independent runs: this block's (G), and a 2026-09-26 repeat through Bridge's own `build_import_xml` amendment file, sent unchanged (`ALTERED 1`, reference kept; bridge#239 comment of that date). A `REFERENCE` typed in Tally's own screens is **not measured**.
   - Each upsert moved the voucher's ALTERID to the book's next mark. PARTIAL — observed across several upserts on one book (G).
 
 **Not measured here:** other voucher types, Gold concurrency, an edit in Tally's
-own screens, and repeatability beyond one run. A masters delete in the same session drew no
+own screens, and repeatability beyond one run (except the `REFERENCE` merge above, repeated
+once on 2026-09-26). A masters delete in the same session drew no
 response, and its cause is **UNVERIFIED**; nothing is recorded about it here.
