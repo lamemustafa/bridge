@@ -341,8 +341,9 @@ fn a_masters_comparison_without_exactly_one_target_row_says_nothing() {
 }
 
 /// The target's voucher mark is reported with its step, and whether the step
-/// is exactly what Tally reported creating; any other change to a voucher in
-/// the target within the interval makes it larger (protocol reference §11c.5).
+/// is exactly what Tally reported creating; a gateway change to another
+/// voucher in the target within the interval makes it larger (protocol
+/// reference §11c.5).
 #[test]
 fn the_target_step_is_reported_against_what_tally_reported_creating() {
     let step = |after: u64, created: Option<u64>| {
@@ -364,9 +365,11 @@ fn the_target_step_is_reported_against_what_tally_reported_creating() {
     assert_eq!(step(12, Some(1))["step"], 2);
     // Nothing moved although Tally reported a create.
     assert_eq!(step(10, Some(1))["matches_created"], false);
-    // A batch of three, exactly.
+    // Arithmetic only: a step of three matches a CREATED of three. No batch
+    // post exists, and a batch's step through this path is unmeasured.
     assert_eq!(step(13, Some(3))["matches_created"], true);
-    // A lost response: the step is reported, but nothing is matched.
+    // A response body that did not parse: the step is reported, but nothing
+    // is matched.
     assert_eq!(step(11, None)["matches_created"], Value::Null);
     assert_eq!(step(11, None)["step"], 1);
     // A mark that went backwards is no step.

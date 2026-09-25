@@ -1207,8 +1207,7 @@ async fn only_the_target_moving_is_reported_as_the_landing() {
 }
 
 /// A step larger than Tally's CREATED means another voucher in the target
-/// changed around the post. It is reported in `post_location`; no verdict
-/// reads it, since a single post stands on its readback.
+/// changed around the post. It is reported in `post_location`.
 #[tokio::test]
 async fn a_target_step_beyond_the_create_is_reported() {
     let located = located_after(company_marks(12, 50, "WR2 Unicode Lab")).await;

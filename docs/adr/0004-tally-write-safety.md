@@ -253,10 +253,14 @@ or an owner decision to amend the requirement instead:
    `post_company_scope_unconfirmed` if that read fails). It reads them again right after the
    POST, once its response is journaled, and reports which companies' voucher marks moved
    (`post_location` in the result), with the target's own step against Tally's `CREATED`
-   (`target_voucher_step`; each create, alter or cancel moves the mark by one, protocol reference
-   §11c.5, so a larger step means another voucher in the target changed meanwhile). The step is
-   reported only: a single post stands on its readback, and a batch post is to gate on it. This flags a possibly misdirected post; concurrent writers on
-   a shared book can make it ambiguous, and it cannot prevent one, because Tally cannot bind an
+   (`target_voucher_step`). Each gateway create, alter or cancel moves the mark by one (protocol
+   reference §11c.5), so for gateway writes a larger step means another voucher in the target
+   changed meanwhile. Screen edits were also seen to move it by one each (PARTIAL), and a change
+   that leaves the mark still is not ruled out, so a matching step does not prove that nothing
+   else changed. A multi-voucher import stepped by its count in lab scripts (PARTIAL); through
+   Bridge's own post path that is UNVERIFIED, and a batch post must measure it before gating on
+   it. The step is reported only: a single post stands on its readback. This flags a possibly
+   misdirected post; concurrent writers on a shared book can make it ambiguous, and it cannot prevent one, because Tally cannot bind an
    import to a GUID. The interval between that snapshot and the POST, local work only, stays accepted with
    #239. Locating the voucher inside another company, and removing it, are not built.
 10. **Batch record integrity (scope, "What it can send"), #575. Resolved by #578.** The post

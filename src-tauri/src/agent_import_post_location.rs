@@ -88,12 +88,17 @@ pub(super) fn target_masters_unchanged(
 }
 
 /// The target's voucher mark in each snapshot, and whether it moved by exactly
-/// what Tally reported creating. Each voucher create moves `ALTVCHID` by one,
-/// and so does every alter or cancel (a delete by two; protocol reference
-/// §11c.5), so a step above `CREATED` means another voucher in the target
-/// changed within the snapshots' interval. Reported only: a single post is
-/// proved by its readback. A batch post, not yet built, is to gate on it.
-/// `Null` unless each snapshot holds exactly one target row.
+/// what Tally reported creating. Each gateway create moves `ALTVCHID` by one,
+/// and so does every gateway alter or cancel (a delete by two), so for gateway
+/// writes a step above `CREATED` means another voucher in the target changed
+/// within the snapshots' interval (protocol reference §11c.5). Screen edits
+/// were also seen to move it by one each (PARTIAL, §11c.5), and nothing
+/// measured rules out a change that leaves it still; so a match is no proof
+/// that nothing else changed. A multi-voucher import stepped by its count in
+/// lab scripts (PARTIAL, §11c.5); through this post path that is UNVERIFIED.
+/// Reported only: a single post is proved by its readback. A batch post, not
+/// yet built, is to gate on it. `Null` unless each snapshot holds exactly one
+/// target row.
 fn target_voucher_step(
     before: &[LoadedCompanyMarks],
     after: &[LoadedCompanyMarks],
@@ -137,9 +142,11 @@ fn described(row: &LoadedCompanyMarks) -> Value {
 /// the voucher itself stays with the marker readback; this only says which
 /// companies' voucher marks moved. `after` is `None` when the snapshot after
 /// the POST could not be read, and that is said, never guessed.
-/// `reported_created` is Tally's CREATED counter, `None` when the response was
-/// lost or unreadable. A mark that moved elsewhere while Tally reported
-/// creating nothing is someone else's voucher, not a misdirected post.
+/// `reported_created` is Tally's CREATED counter, `None` when the response
+/// body did not parse (a response lost in transport never reaches here: the
+/// post fails first, with no location). A mark that moved elsewhere while
+/// Tally reported creating nothing is someone else's voucher, not a
+/// misdirected post.
 pub(super) fn classify_post_location(
     before: &[LoadedCompanyMarks],
     after: Option<&[LoadedCompanyMarks]>,
