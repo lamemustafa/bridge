@@ -1075,6 +1075,58 @@ mod through_the_tool {
         }
     }
 
+    /// bridge#653: `as_of` sets the date every row's `party_gstin` is read as
+    /// of, in either spelling. Which entry is in force on a date is pinned over
+    /// the live registration-history capture by
+    /// `a_gstin_held_only_in_the_dated_registration_history_is_reported_in_force`.
+    #[tokio::test]
+    async fn compliance_rows_read_their_gstin_as_of_the_date_given() {
+        for as_of in ["20260331", "2026-03-31"] {
+            let (response, _) = call(
+                compliance_plans(masters(), balances()),
+                json!({"company_guid":GUID,"fields":"compliance","as_of":as_of}),
+            )
+            .await;
+            let rows = items(&response);
+            assert!(!rows.is_empty());
+            for row in rows {
+                assert_eq!(row["party_gstin_as_of"], "20260331", "{row}");
+                assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+            }
+        }
+    }
+
+    /// `as_of` selects only the GSTIN, so a basic read refuses it before any
+    /// request rather than returning rows a caller could take as dated by it.
+    #[tokio::test]
+    async fn as_of_without_compliance_fields_is_refused_before_any_request() {
+        for args in [
+            json!({"company_guid":GUID,"as_of":"20260331"}),
+            json!({"company_guid":GUID,"fields":"basic","as_of":"20260331"}),
+        ] {
+            let (response, requests) = call_refused_before_any_request(args.clone()).await;
+            assert_eq!(requests, 0, "{args}");
+            let error = refusal(&response);
+            assert_eq!(
+                error["code"], "ledger_masters_as_of_requires_compliance",
+                "{args}"
+            );
+            assert!(error["remediation"]
+                .as_str()
+                .is_some_and(|text| text.contains("fields=compliance")));
+        }
+    }
+
+    #[tokio::test]
+    async fn an_impossible_as_of_date_is_refused_before_any_request() {
+        let (response, requests) = call_refused_before_any_request(
+            json!({"company_guid":GUID,"fields":"compliance","as_of":"20260231"}),
+        )
+        .await;
+        assert_eq!(requests, 0);
+        assert_eq!(refusal(&response)["code"], "invalid_date", "{response}");
+    }
+
     // -- #630: one read per logical listing ---------------------------------
 
     /// A continuation page's requests: the paired company identity read every
@@ -1221,6 +1273,92 @@ mod through_the_tool {
         assert_eq!(snapshot_of(&fresh)["reused"], false);
         assert_ne!(snapshot_of(&fresh)["id"], id.as_str());
         assert_eq!(snapshot_of(&fresh)["master_alter_id"], 220);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// #653 with #630: a compliance listing's rows are rendered with
+    /// `party_gstin` read as of one date, so its snapshot serves only a page
+    /// asking for that date. Named, another date is refused; the same date is
+    /// served.
+    #[tokio::test]
+    async fn a_compliance_continuation_for_another_as_of_is_not_served_from_the_snapshot() {
+        let mut plans = compliance_plans(masters(), balances());
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let first = one
+            .call(json!({"company_guid":GUID,"fields":"compliance","as_of":"20260331","limit":1}))
+            .await;
+        let id = snapshot_id(&first);
+        let refused = one
+            .call(
+                json!({"company_guid":GUID,"fields":"compliance","as_of":"20250630",
+                "offset":1,"limit":1,"snapshot_id":id}),
+            )
+            .await;
+        let error = refusal(&refused);
+        assert_eq!(error["code"], "listing_snapshot_changed");
+        assert_eq!(error["cause"], "snapshot_not_held");
+        assert_eq!(
+            one.requests(),
+            total,
+            "nothing is read after the extent check"
+        );
+
+        let mut plans = compliance_plans(masters(), balances());
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let id = snapshot_id(
+            &one.call(
+                json!({"company_guid":GUID,"fields":"compliance","as_of":"20260331","limit":1}),
+            )
+            .await,
+        );
+        let served = one
+            .call(
+                json!({"company_guid":GUID,"fields":"compliance","as_of":"2026-03-31",
+                "offset":1,"limit":1,"snapshot_id":id}),
+            )
+            .await;
+        assert_eq!(
+            snapshot_of(&served)["reused"],
+            true,
+            "the same date, spelled either way"
+        );
+        assert_eq!(one.requests(), total);
+    }
+
+    /// Unnamed, a page for another `as_of` reads fresh, and its rows carry the
+    /// date it asked for.
+    #[tokio::test]
+    async fn a_compliance_continuation_for_another_as_of_reads_fresh_when_unnamed() {
+        let mut plans = compliance_plans(masters(), balances());
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        plans.extend(
+            compliance_plans(masters(), balances())
+                .into_iter()
+                .skip(identity_plans().len()),
+        );
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let id = snapshot_id(
+            &one.call(
+                json!({"company_guid":GUID,"fields":"compliance","as_of":"20260331","limit":1}),
+            )
+            .await,
+        );
+        let fresh = one
+            .call(
+                json!({"company_guid":GUID,"fields":"compliance","as_of":"20250630",
+                "offset":1,"limit":1}),
+            )
+            .await;
+        assert_eq!(snapshot_of(&fresh)["reused"], false);
+        assert_ne!(snapshot_of(&fresh)["id"], id.as_str());
+        for row in items(&fresh) {
+            assert_eq!(row["party_gstin_as_of"], "20250630", "{row}");
+        }
         assert_eq!(one.requests(), total);
     }
 
@@ -1527,6 +1665,36 @@ mod through_the_tool {
 
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
         call_with_max_bytes(plans, args, 200_000).await
+    }
+
+    /// A call that should be refused before it sends anything. The simulator
+    /// needs at least one plan, so it holds one it serves only if a request is
+    /// sent; the requests Bridge actually sent are counted after a cancel,
+    /// whose wake-up connection carries no method.
+    async fn call_refused_before_any_request(args: Value) -> (Value, usize) {
+        let simulator = SequenceSimulator::spawn(vec![status()]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let response = server.call_tool("ledger_masters", args).await;
+        simulator.cancel();
+        let requests = simulator
+            .finish()
+            .unwrap()
+            .into_iter()
+            .filter(|request| !request.method.is_empty())
+            .count();
+        (response, requests)
     }
 
     async fn call_with_max_bytes(

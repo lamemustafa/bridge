@@ -586,6 +586,11 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
         ),
+        "ledger_masters_as_of_requires_compliance" => Some(
+            "`as_of` selects the date `party_gstin` is read as of, which only \
+             fields=compliance returns. Pass fields=compliance, or drop `as_of`: a basic \
+             read's opening balance is dated by `opening_balance_as_of`, not by `as_of`.",
+        ),
         // A cause, reached through `ledger_export_invalid` (#675).
         "foreign_currency_ledger_balance" => Some(
             "A ledger in this company holds its opening balance in a foreign currency, which \
