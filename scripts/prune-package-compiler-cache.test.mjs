@@ -105,6 +105,23 @@ test("an inconsistent listing is listed again before any plan is made", async ()
   assert.deepEqual(waits, [10_000]);
 });
 
+test("a cache repeated across shifted pages is an incomplete listing, listed again", async () => {
+  const rows = Array.from({ length: 101 }, (_, index) => cache(index + 1));
+  let listings = 0;
+  const fetcher = async (url, options) => {
+    assert.equal(options.method, "GET");
+    const page = Number(new URL(url).searchParams.get("page"));
+    if (page === 1) listings += 1;
+    // First listing: a cache saved between the pages raises total_count to 102 and shifts page 2,
+    // so cache 100 comes back twice and the count still matches; only the repeat shows it.
+    if (page === 2 && listings === 1) return response(200, { total_count: 102, actions_caches: rows.slice(99, 101) });
+    return response(200, { total_count: rows.length, actions_caches: rows.slice((page - 1) * 100, page * 100) });
+  };
+  const result = await pruneCaches({ env, fetcher, sleep: async () => {} });
+  assert.equal(listings, 2);
+  assert.equal(result.obsoleteIds.length, 99);
+});
+
 test("a listing that stays incomplete refuses without deleting anything", async () => {
   let gets = 0;
   const waits = [];

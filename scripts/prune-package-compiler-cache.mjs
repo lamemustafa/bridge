@@ -59,6 +59,8 @@ export async function pruneCaches({ env = process.env, fetcher = fetch, apply = 
       if (!Number.isSafeInteger(result.total_count) || result.total_count < 0 || result.total_count > 1000 ||
           !Array.isArray(result.actions_caches)) throw new TypeError("Invalid or excessive cache inventory");
       caches.push(...result.actions_caches);
+      // A page that shifted under a concurrent save or eviction can repeat a cache: incomplete too.
+      if (new Set(caches.map((cache) => cache?.id)).size !== caches.length) break;
       if (caches.length === result.total_count) return caches;
       if (caches.length > result.total_count || result.actions_caches.length === 0) break;
     }
