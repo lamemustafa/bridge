@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "715ad6fa8008ad99f7473f6c003b75a30c70ad5ac3daac10fae3c01d62cb466c"
+      "sha256": "dddc316daeb974af9bcc2148a1bdb708eae613b420143e3247f010b22c184756"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "b93ddbcd32485d0739ee37f73e415bcbf1018b584bf4c26489ea5869d116be26"
+      "sha256": "95f88769230351493f6a9f26e735cf262a5474c7960a84344b3e2dadbae50343"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -467,7 +467,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_ack.rs",
-      "sha256": "c84d8b5bdef0851c620a07dd2e8eb8120872d96eb24cfb4f242580f1385e3b3c"
+      "sha256": "9697822b68673df66afd63e8ce1f1bf713b316ad66bda9644c0a4ff1b2d5b86f"
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
@@ -491,7 +491,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "8ca8e0cb8a2496cbcf362d97b733424476ca370818c2476040fd1e00d9dd1ad6"
+      "sha256": "2f691cb46909b850f2ab90294b819b54fc11e4f978a389e5401d6d0298db186e"
     },
     {
       "path": "src-tauri/src/agent_import_post_location.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "834d09813e66f0d893a3d0ce2c7c0af6ca74320cd723be91e45aa052e29e57cf"
+  "manifest_sha256": "b51f941acf235a8152fdd8f7986fff574192dd3e82fad28930743040b4927d50"
 }

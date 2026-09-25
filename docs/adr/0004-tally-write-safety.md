@@ -540,7 +540,8 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
   (`masters` or `batch_step`), binding that doubt's bytes and every voucher's GUID, MASTERID,
   ALTERID and fingerprint, in batch order. A review covers only the doubt it names; an edit to
   any voucher makes it stale, naming the voucher. It is refused unless all N read back. It
-  changes no verdict.
+  changes no verdict. A `batch_step` review attests only the batch's own vouchers, not that
+  nothing else in the company changed.
 - The N-voucher step is PARTIAL on raw-gateway lab scripts (protocol reference §11c.5).
   Through Bridge's own post path it is UNVERIFIED until the lab proof (slice D3).
 - The desktop stays single-voucher `JournalOnly`.

@@ -564,6 +564,7 @@ fn batch_review_preview(
                     _ => "Bridge could not read its voucher mark after posting.".into(),
                 },
             );
+            text.push("Reviewing these vouchers covers no other voucher in this company.".into());
         }
     }
     text.push(String::new());
@@ -707,7 +708,9 @@ pub(super) fn operator_review(
 }
 
 /// `operator_review` for a batch: each kind of doubt reported on its own,
-/// `null` where the batch holds no such doubt. A review covers only the doubt
+/// `pending` while that kind's verdict is not recorded, and `null` where no
+/// doubt of that kind is observed: none, or one recorded only in the check
+/// record because its own file was not written. A review covers only the doubt
 /// it names, and only while every voucher it bound is unchanged; a stale
 /// review names the vouchers that changed. `None` when no doubt is observed.
 fn batch_operator_review(
@@ -735,7 +738,11 @@ fn batch_operator_review(
                 any = true;
                 json!({"state":"stale","covers_doubt":false,"vouchers_unchanged":false})
             }
-            MastersRecord::Pending | MastersRecord::NoDoubt => Value::Null,
+            MastersRecord::Pending => {
+                any = true;
+                json!({"state":"pending"})
+            }
+            MastersRecord::NoDoubt => Value::Null,
         };
         reviews.insert(kind.name().into(), review);
     }

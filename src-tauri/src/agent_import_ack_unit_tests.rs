@@ -414,6 +414,7 @@ fn the_batch_review_summarizes_the_doubt_and_the_vouchers_as_read() {
         "Record that you reviewed 3 vouchers in \"Books\"",
         "its voucher mark moved by 4 (from 10 to 14); Tally reported creating 3.",
         "Not shown here: narrations, voucher numbers and types.",
+        "Reviewing these vouchers covers no other voucher in this company.",
         "Dates: 20260907 to 20260907  ALTERIDs: 10 to 12",
         "Dr -3  Cr 0  3 entries  \"Ledger 0\"",
         &format!("Batch: {BATCH}"),
@@ -584,4 +585,28 @@ fn a_batch_review_covers_only_its_own_doubt_and_names_a_changed_voucher() {
     assert_eq!(review["batch_step"]["state"], "stale", "{review}");
     assert_eq!(review["batch_step"]["covers_doubt"], false, "{review}");
     assert_eq!(review["masters"]["state"], "current", "{review}");
+}
+
+/// A kind whose verdict is not yet recorded reads `pending`, not `null`: the
+/// verdict counts it as doubt, so the review reports it rather than hide it.
+#[test]
+fn a_batch_kind_whose_verdict_is_pending_reads_pending() {
+    let imports = tempfile::tempdir().unwrap();
+    let line = posted_batch(2);
+    let rows = batch_rows(&line);
+    let check = |masters: &str, step: &str| {
+        fs::write(
+            masters_check_path(imports.path(), BATCH),
+            serde_json::to_vec(&json!({"state":masters,"batch_step":{"state":step}})).unwrap(),
+        )
+        .unwrap();
+        operator_review(imports.path(), &line, &rows)
+    };
+    let review = check("unchanged", MASTERS_CHECK_PENDING).unwrap();
+    assert_eq!(review["batch_step"], json!({"state":"pending"}), "{review}");
+    assert_eq!(review["masters"], Value::Null, "{review}");
+    let review = check(MASTERS_CHECK_PENDING, MASTERS_CHECK_PENDING).unwrap();
+    assert_eq!(review["masters"], json!({"state":"pending"}), "{review}");
+    // Control: both recorded, no doubt observed, nothing to report.
+    assert_eq!(check("unchanged", "matched"), None);
 }
