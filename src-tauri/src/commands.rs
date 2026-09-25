@@ -306,6 +306,23 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
 /// Adds report context only after the shared runtime mapper has removed
 /// transport and internal details from the operator-facing text.
 fn party_ledger_master_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    // Sized before the master request was sent (#637): not a validation
+    // failure, and retrying the unchanged export cannot help.
+    if error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<PartyLedgerMasterSourceValidationError>(),
+            Some(PartyLedgerMasterSourceValidationError::TooLarge { .. })
+        )
+    }) {
+        return tally_command_error(
+            "ledger_masters_too_large",
+            "Response size",
+            "Bridge withheld the party/ledger master: this company's master-alteration mark puts the compliance read over the size Bridge will request, because a read of that size has left Tally unable to answer. The mark is an upper bound on ledgers (stock items, units and every other master count too), so a company with fewer ledgers may be refused. No ledger was requested.",
+            "after_change",
+            false,
+            "Do not retry the unchanged export: it refuses again. A precise ledger count is pending (bridge#668).",
+        );
+    }
     let mut mapped = tally_runtime_command_error(error);
     mapped.message = format!(
         "Bridge withheld the party/ledger master: {}",

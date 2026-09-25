@@ -721,6 +721,7 @@ fn an_undivided_read_is_byte_identical_to_the_request_before_the_bound() {
     };
     for shape in [
         VoucherReadShape::EntryWildcard,
+        VoucherReadShape::ClassEntryWildcard,
         VoucherReadShape::Movement,
         VoucherReadShape::ImportVerification,
     ] {

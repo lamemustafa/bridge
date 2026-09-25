@@ -25,6 +25,19 @@ fn published_pattern_inventory_preserves_the_admitted_wire_shapes() {
         BRIDGE_TRANSACTION_ID_PATTERN,
         "batch 20260901"
     ));
+    let sha = "0123456789abcdef".repeat(4);
+    assert!(published_pattern_matches(SHA256_HEX_PATTERN, &sha));
+    for rejected in [
+        &sha[..63],
+        &sha.to_uppercase(),
+        &format!("{sha}0"),
+        &sha.replace('a', "g"),
+    ] {
+        assert!(
+            !published_pattern_matches(SHA256_HEX_PATTERN, rejected),
+            "{rejected}"
+        );
+    }
 
     fn patterns(value: &Value, found: &mut Vec<String>) {
         match value {

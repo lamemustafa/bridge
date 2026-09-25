@@ -725,3 +725,31 @@ fn reviewed_probe_commitment_binds_time_company_name_and_full_company_list() {
     .unwrap();
     assert_ne!(first, different_review);
 }
+
+/// A compliance read refused on its size (#637) reaches the desktop as its own
+/// code, not as a validation failure worth retrying; any other source
+/// validation keeps the existing mapping. Both through the runtime's evidence
+/// wrapper, as the export receives them.
+#[test]
+fn a_size_refused_party_master_export_names_the_size_not_a_validation_failure() {
+    use crate::tally::connection::PartyLedgerMasterSourceValidationError as Validation;
+    use crate::tally::runtime::{with_read_evidence, RuntimeReadEvidence};
+    let too_large = party_ledger_master_runtime_command_error(with_read_evidence(
+        anyhow::Error::new(Validation::TooLarge {
+            master_alter_id: 9_500,
+            estimated_bytes: 35_625_000,
+            budget_bytes: 16_000_000,
+        }),
+        RuntimeReadEvidence::empty(),
+    ));
+    assert_eq!(too_large.code, "ledger_masters_too_large");
+    assert_eq!(too_large.category, "Response size");
+    assert_eq!(too_large.retry, "after_change");
+    assert!(!too_large.local_state_changed);
+
+    let other = party_ledger_master_runtime_command_error(with_read_evidence(
+        anyhow::Error::new(Validation::OpeningBalancesDisagreed),
+        RuntimeReadEvidence::empty(),
+    ));
+    assert_eq!(other.code, "response_validation_failed");
+}

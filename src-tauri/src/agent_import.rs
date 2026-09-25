@@ -1,8 +1,8 @@
 use super::{
-    combine_evidence, company_currency_read, company_high_water_read, company_json,
-    native_group_snapshot_read, normalized_date, parse_company_high_water, party_name,
-    required_string, sha256_hex, sha256_json, standard_ledger_catalog_read, Evidence, Server,
-    ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
+    arg_usize, combine_evidence, company_currency_read, company_high_water_read, company_json,
+    native_group_snapshot_read, normalized_date, optional_string, parse_company_high_water,
+    party_name, required_string, sha256_hex, sha256_json, standard_ledger_catalog_read, Evidence,
+    Server, ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{
@@ -58,8 +58,9 @@ use uuid::Uuid;
 use verification::{
     actual_entry_fingerprint, alter_id_delta, canonical_verification_amount,
     company_high_water_mark, corroborate_verification_window, expected_entry_fingerprint,
-    parse_import_voucher_rows, parse_import_vouchers, render_proof_markdown, verification_status,
-    verification_window_identities, verify_batch, voucher_diffs, voucher_is_accounting_effective,
+    parse_import_voucher_rows, parse_import_vouchers, render_proof_markdown,
+    verification_response_page, verification_status, verification_window_identities, verify_batch,
+    voucher_diffs, voucher_is_accounting_effective,
 };
 #[cfg(test)]
 use verification::{
@@ -820,9 +821,100 @@ impl Server {
         result.map_err(|failure| failure.with_prior_evidence(accumulated))
     }
 
+    /// The tool: page 1 verifies against Tally; a later page (`proof_sha256`
+    /// and `offset`) is served from the proof that verification persisted and
+    /// never reads Tally again, so every page describes one verification
+    /// (bridge#627).
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false, &mut None, None, &mut None)
-            .await
+        let offset = arg_usize(args, "offset", 0)?;
+        if let Some(proof_sha256) = optional_string(args, "proof_sha256")? {
+            return self.verify_import_page(args, &proof_sha256, offset);
+        }
+        if offset != 0 {
+            return Err("verification_page_requires_proof".to_string().into());
+        }
+        let batch_id = required_string(args, "batch_id")?;
+        let mut outcome = self
+            .verify_import_with_dispatch(args, false, &mut None, None, &mut None)
+            .await?;
+        let evidence = outcome.evidence.clone();
+        let persisted = self
+            .read_persisted_proof(batch_id)
+            .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+        // Page 1 is built from the bytes read back, not from memory, so the
+        // page and the hash it names are the same file even if another
+        // verification replaced it in between.
+        let proof: Value = serde_json::from_slice(&persisted).map_err(|_| {
+            ToolFailure::from("verification_proof_unreadable".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        if proof["batch_id"] != batch_id {
+            return Err(
+                ToolFailure::from("verification_proof_batch_mismatch".to_string())
+                    .with_prior_evidence(evidence),
+            );
+        }
+        let page = verification_response_page(&proof, &sha256_hex(&persisted), 0);
+        self.admit_verification_page(&page)
+            .map_err(|failure| failure.with_prior_evidence(evidence))?;
+        outcome.payload["result"] = page;
+        Ok(outcome)
+    }
+
+    /// A later page of a verification, from its persisted proof only.
+    fn verify_import_page(
+        &self,
+        args: &Value,
+        proof_sha256: &str,
+        offset: usize,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let guid = required_string(args, "company_guid")?;
+        let batch_id = required_string(args, "batch_id")?;
+        let persisted = self.read_persisted_proof(batch_id)?;
+        let sha256 = sha256_hex(&persisted);
+        // A newer verification replaced the proof this page belongs to.
+        if sha256 != proof_sha256 {
+            return Err("verification_proof_changed".to_string().into());
+        }
+        let proof: Value = serde_json::from_slice(&persisted)
+            .map_err(|_| "verification_proof_unreadable".to_string())?;
+        if proof["batch_id"] != batch_id
+            || !proof["company"]["guid"]
+                .as_str()
+                .is_some_and(|recorded| batch_guid_matches(recorded, guid))
+        {
+            return Err("verification_proof_batch_mismatch".to_string().into());
+        }
+        let page = verification_response_page(&proof, &sha256, offset);
+        self.admit_verification_page(&page)?;
+        Ok(ToolOutcome {
+            payload: json!({"company": proof["company"], "result": page}),
+            evidence: Evidence {
+                request_sha256: sha256_hex(
+                    format!("verify_import_page:{batch_id}:{offset}").as_bytes(),
+                ),
+                response_sha256: sha256,
+                bytes: persisted.len(),
+                state: "complete",
+                read_at: None,
+                duration_ms: None,
+                reason_code: None,
+            },
+            company_guid: Some(guid.to_string()),
+            truncated: false,
+        })
+    }
+
+    /// The parts of a page that are never cut must fit on their own: the byte
+    /// cap may shorten only the verified rows, so otherwise the refusal is
+    /// typed here rather than lost as a generic oversize.
+    fn admit_verification_page(&self, page: &Value) -> Result<(), ToolFailure> {
+        let mut essential = page.clone();
+        essential["items"] = json!([]);
+        if essential.to_string().len() > self.settings.max_bytes {
+            return Err("verification_too_large_to_report".to_string().into());
+        }
+        Ok(())
     }
 
     /// [`Self::verify_import`] for `acknowledge_post_review`, which also needs
@@ -1053,6 +1145,7 @@ impl Server {
             } else {
                 verification_status(&result, line.vouchers.len())
             };
+            payload["result"]["verification_status"] = json!(status);
             let mut update = line.clone();
             update.status = status.to_string();
             self.persist_import_verification(&payload["result"], &update, generation)?;
@@ -1238,6 +1331,32 @@ impl Server {
         Ok((mark, evidence))
     }
 
+    /// The proof the last verification of `batch_id` persisted, read whole.
+    /// The batch must be one the import journal records, and the file is
+    /// named exactly as `publish_proofs` names it, from the recorded id, so
+    /// a caller's argument never becomes a path on its own.
+    fn read_persisted_proof(&self, batch_id: &str) -> Result<Vec<u8>, String> {
+        const MAX_PERSISTED_PROOF_BYTES: usize = 32 * 1024 * 1024;
+        let recorded = self
+            .latest_import_snapshot(batch_id)?
+            .ok_or_else(|| "import_batch_not_found".to_string())?
+            .batch
+            .batch_id;
+        let path = self.imports_dir()?.join(format!("{recorded}.proof.json"));
+        let file = super::local_file::open_local_file(&path, false)
+            .map_err(|_| "verification_proof_missing".to_string())?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(file, (MAX_PERSISTED_PROOF_BYTES + 1) as u64),
+            &mut bytes,
+        )
+        .map_err(|_| "verification_proof_missing".to_string())?;
+        if bytes.len() > MAX_PERSISTED_PROOF_BYTES {
+            return Err("verification_proof_too_large".into());
+        }
+        Ok(bytes)
+    }
+
     /// The XML file Bridge persisted when it built `batch_id`, read whole. The
     /// desktop review and the post path both compare it byte for byte with
     /// what they accept or send, so a journal record that agrees only with
@@ -1332,6 +1451,17 @@ impl Server {
         match self.import_journal_while_admitted()? {
             Some(reader) => ledger::read_snapshot(reader, batch_id),
             None => Ok(None),
+        }
+    }
+
+    /// Whether the journal already records `remote_id` on a dispatch intent.
+    pub(super) fn import_remote_id_recorded_while_admitted(
+        &self,
+        remote_id: Uuid,
+    ) -> Result<bool, String> {
+        match self.import_journal_while_admitted()? {
+            Some(reader) => ledger::remote_id_recorded(reader, remote_id),
+            None => Ok(false),
         }
     }
 
