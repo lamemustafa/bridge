@@ -397,6 +397,66 @@ struct ToolFailure {
     /// What each request of a window read cost up to its failure (#595), when
     /// the failure came out of one. Data-free.
     window_timings: Option<Box<WindowReadTimings>>,
+    /// Set when no response reached Tally-protocol parsing (#629). The refusal
+    /// then names the configured endpoint, so a wrong or reset port is visible
+    /// instead of reading as a Tally data problem.
+    unanswered: Option<Unanswered>,
+}
+
+/// Why a refused request produced no response Bridge could read, as a typed,
+/// data-free code (#629). Three kinds count:
+/// - nothing reached the endpoint or came back from it: the configured endpoint
+///   is invalid, the connection was not accepted, the request failed before
+///   any response, or the deadline passed;
+/// - the responder was rejected on its HTTP status or headers before any body
+///   was read: an error status, a content type that is not XML, or an
+///   unsupported content encoding;
+/// - Bridge's runtime held the request back and sent nothing.
+///
+/// A failure from a body or from Bridge's own limits is not counted, because it
+/// does not suggest the endpoint is wrong: an oversized request or response, a
+/// truncated or undecodable body, or a local policy or client fault. The
+/// transport match is exhaustive, so a new transport error needs a decision
+/// here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Unanswered(&'static str);
+
+fn unanswered_cause(error: &anyhow::Error) -> Option<Unanswered> {
+    use crate::tally::runtime::TallyRuntimeControlError as Control;
+    use bridge_tally_transport::TallyTransportError as Transport;
+    error.chain().find_map(|cause| {
+        if let Some(transport) = cause.downcast_ref::<Transport>() {
+            return match transport {
+                Transport::EndpointInvalid { .. }
+                | Transport::ConnectionFailed
+                | Transport::RequestTimedOut
+                | Transport::RequestFailed
+                | Transport::HttpStatus { .. }
+                | Transport::UnsupportedContentEncoding => Some(Unanswered(transport.safe_code())),
+                Transport::InvalidEncoding {
+                    code: code @ "response_content_type_unsupported",
+                } => Some(Unanswered(code)),
+                Transport::InvalidEncoding { .. }
+                | Transport::PolicyInvalid { .. }
+                | Transport::ClientInitializationFailed
+                | Transport::RequestTooLarge { .. }
+                | Transport::ResponseTooLarge { .. }
+                | Transport::ResponseTruncated
+                | Transport::ResponseReadFailed => None,
+            };
+        }
+        match cause.downcast_ref::<Control>()? {
+            Control::Cancelled => None,
+            Control::QueueDeadline => Some(Unanswered("endpoint_queue_deadline_exceeded")),
+            Control::CircuitCooldown => Some(Unanswered("endpoint_circuit_cooldown")),
+            Control::HalfOpenProbeInFlight => {
+                Some(Unanswered("endpoint_half_open_probe_in_flight"))
+            }
+            Control::EndpointSessionCapacity => {
+                Some(Unanswered("endpoint_session_capacity_reached"))
+            }
+        }
+    })
 }
 
 /// A read's returned rows against the rows a census counted for it.
@@ -414,6 +474,7 @@ impl From<String> for ToolFailure {
             cause: None,
             counts: None,
             window_timings: None,
+            unanswered: None,
         }
     }
 }
@@ -647,6 +708,7 @@ impl ToolFailure {
             cause,
             counts: None,
             window_timings: None,
+            unanswered: unanswered_cause(&error),
         }
     }
 
@@ -755,6 +817,7 @@ impl Server {
                 cause,
                 counts,
                 window_timings,
+                unanswered,
             }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
@@ -784,12 +847,29 @@ impl Server {
                         error["remediation"] = json!(remediation);
                     }
                 }
+                // A typed validation cause wins; otherwise a request that no
+                // response answered names why, unless the code already says it.
+                let cause = cause.or_else(|| {
+                    unanswered
+                        .map(|unanswered| unanswered.0)
+                        .filter(|unanswered| *unanswered != code)
+                });
                 // Same budget rule as `remediation`: at a deliberately small cap
                 // the refusal code must survive, so the cause is only added
                 // where there is room for it.
                 if let Some(cause) = cause {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["cause"] = json!(cause);
+                    }
+                }
+                // #629: the endpoint that was tried, so a wrong or reset port
+                // is visible. Only in the refusal payload, never in evidence,
+                // and under the same budget rule as the cause.
+                if unanswered.is_some()
+                    && self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET
+                {
+                    if let Ok(endpoint) = endpoint_origin(&self.settings.endpoint) {
+                        error["endpoint"] = json!(endpoint);
                     }
                 }
                 if let Some(counts) = counts {
