@@ -177,3 +177,50 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
   - gold: moved to 7927967 (Lane F's own master merge). My local 28eea71/e9888fe on 1cde915 are discarded and will be redone.
   - Lane A asked for an iteration build of `lane-a/d1-wip` @ ddfcdc2 (per Lane D, lane-a first). Running that next.
   - `lane-c/601d-wip` @ 7543f8a has appeared.
+
+## 2026-09-25 16:45 UTC — lane-a/d1-wip: built ddfcdc2: RED (iteration build for Lane A, WIP)
+
+- Built exactly Lane A's seven commands on ddfcdc2, detached. No merge, reseal or push, and the branch is unchanged. The branch is 1 behind master a8324c6 and 18 ahead.
+- **Host note:** without a backend feature, the `rfd` build script panics on Linux: "You need to choose at least one backend: `gtk3` or `xdg-portal` features for x86_64-linux". Steps 2 and 3 as given therefore never reach Bridge's code. I reran both with `--features rfd/gtk3` (2b, 3b), which produce the real errors below.
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | cargo fmt --all -- --check | 1 | 20 diff hunks (list below) |
+| 2 | clippy --workspace --all-targets (no feature) | 101 | rfd build script: no Linux backend (host) |
+| 2b | same + `--features rfd/gtk3` | 101 | 2 × E0061 in `bridge` (lib test) |
+| 3 | cargo test -p bridge --lib (no feature) | 101 | rfd build script: no Linux backend (host) |
+| 3b | same + `--features rfd/gtk3` | 101 | same 2 × E0061; no tests ran |
+| 4 | cargo test -p bridge-tally-protocol | 0 | all pass (148 lib + 20 test binaries, 0 failed) |
+| 5 | tools cargo test --workspace | 101 | 23 passed, 1 failed (below) |
+| 6 | node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| 7 | scripts/reseal.sh --verify | 1 | expected FAIL: 4 stale pins (below) |
+
+**Compiler errors (2b and 3b; identical, the only errors, no warnings):**
+```
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> src/agent_import_post_e2e_tests.rs:216:13
+216 |     assert!(import_outcome_is_clean(Some(&outcome)));
+    |             argument #2 of type `usize` is missing
+note: function defined here --> src/agent_import_post.rs:789:4
+789 | fn import_outcome_is_clean(
+790 |     outcome: Option<&bridge_tally_protocol::TallyImportOutcome>,
+791 |     voucher_count: usize,
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+    --> src/agent_import_post_e2e_tests.rs:1443:13
+1443 |     assert!(import_outcome_is_clean(Some(&outcome)));
+     |             argument #2 of type `usize` is missing
+error: could not compile `bridge` (lib test) due to 2 previous errors
+```
+The non-test lib target reported no errors under clippy; only the lib-test target failed.
+
+**Tools failure (5):** `bridge-tally-compatibility` `tests::real_tree_has_complete_migration_and_report_surface_coverage` panicked at `bridge-tally-compatibility/src/lib_tests.rs:909:46`: `called Result::unwrap() on an Err value: Invalid { code: "surface_file_changed" }`. This follows from the unsealed surface (step 7), so a reseal should clear it.
+
+**Stale pins (7):** src-tauri/src/agent_import.rs, src-tauri/src/agent_import_ledger.rs, src-tauri/src/agent_import_post.rs, src-tauri/src/tally/approved_import.rs.
+
+**fmt diffs (1), file:line of each hunk.** Plain `cargo fmt` fixes them all:
+- agent_import_ledger.rs: 89, 348
+- agent_import_ledger_stream_tests.rs: 356, 371, 388, 400, 410
+- agent_import_post.rs: 436, 826, 966
+- agent_import_post_e2e_tests.rs: 523
+- agent_import_post_tests.rs: 690, 768, 1456, 1490, 1523, 1542, 1555, 1562, 1582
