@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "8c6246406c0daa45d605eca82b73991f47d82f1aadc707738208a885b50f2eb0"
+      "sha256": "de3126a04a748eb278098bc429a95335b65117b60e3cd93ec1627d8813b06051"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -275,7 +275,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "f0a0d989078aac2eb08142bd7ed67616c00fceaea128e88e7ec5d08723ae9735"
+      "sha256": "32174aad572aeabe182ea686fb55ffd0cef3d46ca7cc872eae42b7a2736326ce"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_ledger_collection.rs",
@@ -463,7 +463,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "593984b3f2220ab3f97a3e207924260444301436ad4ab4ab8ab4db0da630a5a9"
+      "sha256": "1c3ccd2d249c58157a873fcda9bde63b564818d1948ec6e56c0eecac76e2fa7a"
     },
     {
       "path": "src-tauri/src/agent_import_ack.rs",
@@ -471,7 +471,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
-      "sha256": "af0487581feb947dd82277a7a0822f31621b6e5671c4af0d942582adc8806b01"
+      "sha256": "efc1bf0adbd51b3d9aba922a83a10f154516dbbd21ac82108ab3c590f3c5be91"
     },
     {
       "path": "src-tauri/src/agent_import_cash_bank.rs",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
-      "sha256": "9522c09aabae6ff2b2f8bbfa09bdad458349e595a1cdae7fb44296e5539fea4b"
+      "sha256": "0caa09b95278694e02d1eca1ca1ab4f7a5d112a2256cb2e7fe11b94c25219dfa"
     },
     {
       "path": "src-tauri/src/axal.rs",
@@ -883,7 +883,7 @@
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
-      "sha256": "71d8e03f6b1b4f64a1ea383bd2d1eae80fffb4111ef65fa2f42c6355a76f8cab"
+      "sha256": "725c2134dbacdf96b2c928046946d8a9926923642932ca59b302dffc5e0120c7"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "9d9f1d17b08b20a0c8cd23295162011e7be3d821efc7a7fab6d79a30624b8eb9"
+  "manifest_sha256": "78d6cd07baf3ff2ec747a892059740d72f0dfc3be9edfbfee0ae4ba30cb0eccc"
 }
