@@ -1077,27 +1077,6 @@ mod through_the_tool {
 
     // -- #630: one read per logical listing ---------------------------------
 
-    /// The captured extents with only this company's master mark changed.
-    fn extent_with_master_mark(mark: u64) -> String {
-        let extent = include_str!(
-            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
-        );
-        let at = extent.find(GUID).expect("the captured company's extent");
-        let start = extent[..at].rfind("<COMPANY ").unwrap();
-        let end = at + extent[at..].find("</COMPANY>").unwrap();
-        let from = "<ALTMSTID TYPE=\"Number\"> 219</ALTMSTID>";
-        assert_eq!(extent[start..end].matches(from).count(), 1);
-        format!(
-            "{}{}{}",
-            &extent[..start],
-            extent[start..end].replace(
-                from,
-                &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")
-            ),
-            &extent[end..]
-        )
-    }
-
     /// A continuation page's requests: the paired company identity read every
     /// call starts with, then the bracketed, paired extent read.
     fn continuation_plans(extent: String) -> Vec<ScenarioPlan> {
