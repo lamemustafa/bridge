@@ -631,6 +631,7 @@ mod tests {
                 party_field: String::new(),
                 masterid: None,
                 inventory: Vec::new(),
+                ..Default::default()
             }],
             tb: BTreeMap::new(),
         }

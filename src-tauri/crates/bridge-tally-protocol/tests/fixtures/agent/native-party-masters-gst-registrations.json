@@ -1,0 +1,12 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver response to render_party_ledger_master_request (FETCH ending LEDGSTREGDETAILS.LIST) from the disposable BRIDGE READS LAB book, period 20250401..20250401, after four synthetic parties were created by gateway import for bridge#624",
+  "observed_date": "2026-09-24",
+  "fixture_bytes": 16082,
+  "fixture_sha256": "d95b63f4e0e215d8c26cf65febabdf58efc04fa351f6179a6c3ba581e6a86bc7",
+  "request_utf8_sha256": "c2f9f8e9fefab44077b222402254a2be3dfd9a9690d4e577efbae99d531c819c",
+  "encoding": "UTF-16LE without BOM, CRLF line endings",
+  "rows": 6,
+  "transformation": "none; byte-identical to the response file",
+  "provenance_limit": "Backs party A (a dated entry without a GSTIN, then a dated GSTIN, flat PARTYGSTIN empty), B (flat PARTYGSTIN only; the list comes back as an empty placeholder), C (no registration; empty placeholder) and D (two dated GSTINs). The parties were created by gateway import, not in Tally's screens; a history entered by hand is not established here. The entries arrived in date order, so document order differing from date order is not established. GSTINs are synthetic placeholders.",
+  "sensitivity_review": "Disposable synthetic lab book; company name is not in the file; synthetic GSTINs; no customer data or credentials."
+}
