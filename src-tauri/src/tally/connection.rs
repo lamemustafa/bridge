@@ -1524,18 +1524,41 @@ impl TallyClient {
         &self,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyBookExtent> {
+        self.fetch_company_book_extent_with_evidence(identity, &mut RuntimeReadEvidence::empty())
+            .await
+    }
+
+    /// [`Self::fetch_company_book_extent`], adding each of its two reads to
+    /// `evidence` as it completes, so a failure still accounts for what was sent.
+    pub(crate) async fn fetch_company_book_extent_with_evidence(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        evidence: &mut RuntimeReadEvidence,
+    ) -> anyhow::Result<CompanyBookExtent> {
         let expectation = identity.company_book_extent_expectation()?;
         let company_name = ValidatedCompanyName::new(identity.display_name().to_owned())?;
         let request = ReadOnlyProfile::CompanyBookExtentV2 {
             company: &company_name,
         }
         .render();
-        let first = self.post_xml(request.clone()).await?;
+        let (first, first_bytes, first_sha256) =
+            self.post_xml_with_encoded_bytes(request.clone()).await?;
+        *evidence = evidence.clone().combine(RuntimeReadEvidence::single(
+            &request,
+            first_sha256,
+            first_bytes,
+        ));
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check between company extent reads failed")?;
-        let second = self.post_xml(request).await?;
+        let (second, second_bytes, second_sha256) =
+            self.post_xml_with_encoded_bytes(request.clone()).await?;
+        *evidence = evidence.clone().combine(RuntimeReadEvidence::single(
+            &request,
+            second_sha256,
+            second_bytes,
+        ));
         self.http
             .get_status_decoded()
             .await
