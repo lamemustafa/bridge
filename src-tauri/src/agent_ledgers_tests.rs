@@ -989,7 +989,10 @@ mod through_the_tool {
         format!(
             "{}{}{}",
             &extent[..start],
-            extent[start..end].replace(from, &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")),
+            extent[start..end].replace(
+                from,
+                &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")
+            ),
             &extent[end..]
         )
     }
@@ -1116,15 +1119,25 @@ mod through_the_tool {
         let error = refusal(&refused);
         assert_eq!(error["code"], "listing_snapshot_changed");
         assert_eq!(error["cause"], "book_changed_since_first_page");
-        assert_eq!(one.requests(), total, "nothing is read after the extent check");
+        assert_eq!(
+            one.requests(),
+            total,
+            "nothing is read after the extent check"
+        );
 
         let mut plans = basic_plans();
         plans.extend(continuation_plans(extent_with_master_mark(220)));
-        plans.extend(basic_plans_marked(220).into_iter().skip(identity_plans().len()));
+        plans.extend(
+            basic_plans_marked(220)
+                .into_iter()
+                .skip(identity_plans().len()),
+        );
         let total = plans.len();
         let one = OneServer::spawn(plans);
         let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
-        let fresh = one.call(json!({"company_guid":GUID,"offset":4,"limit":4})).await;
+        let fresh = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
         assert_eq!(snapshot_of(&fresh)["reused"], false);
         assert_ne!(snapshot_of(&fresh)["id"], id.as_str());
         assert_eq!(snapshot_of(&fresh)["master_alter_id"], 220);
@@ -1194,7 +1207,9 @@ mod through_the_tool {
             .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
             .await;
         let refused = one
-            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":snapshot_id(&basic)}))
+            .call(
+                json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":snapshot_id(&basic)}),
+            )
             .await;
         assert_eq!(refusal(&refused)["cause"], "snapshot_not_held");
         assert_eq!(one.requests(), total);

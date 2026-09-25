@@ -47,7 +47,10 @@ mod listing {
         format!(
             "{}{}{}",
             &extent[..start],
-            extent[start..end].replace(from, &format!("<ALTVCHID TYPE=\"Number\"> {vouchers}</ALTVCHID>")),
+            extent[start..end].replace(
+                from,
+                &format!("<ALTVCHID TYPE=\"Number\"> {vouchers}</ALTVCHID>")
+            ),
             &extent[end..]
         )
     }
@@ -147,7 +150,8 @@ mod listing {
     }
 
     fn page(from: &str, offset: usize, snapshot_id: Option<&str>) -> Value {
-        let mut args = json!({"company_guid":GUID,"from":from,"to":"2026-09-02","limit":3,"offset":offset});
+        let mut args =
+            json!({"company_guid":GUID,"from":from,"to":"2026-09-02","limit":3,"offset":offset});
         if let Some(id) = snapshot_id {
             args["snapshot_id"] = json!(id);
         }
@@ -163,7 +167,10 @@ mod listing {
         let total = plans.len();
         let one = OneServer::spawn(plans);
         let first = one.call(page("2026-04-01", 0, None)).await;
-        let id = result(&first)["snapshot"]["id"].as_str().unwrap().to_string();
+        let id = result(&first)["snapshot"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let second = one.call(page("2026-04-01", 3, Some(&id))).await;
         assert_eq!(result(&second)["snapshot"]["reused"], true);
         assert_eq!(result(&second)["snapshot"]["voucher_alter_id"], 14);
@@ -177,7 +184,10 @@ mod listing {
             .await;
         let all = result(&all)["ledgers"].as_array().unwrap().clone();
         assert!(all.len() > 3, "the capture has more rows than one page");
-        assert_eq!(result(&first)["ledgers"].as_array().unwrap().as_slice(), &all[..3]);
+        assert_eq!(
+            result(&first)["ledgers"].as_array().unwrap().as_slice(),
+            &all[..3]
+        );
         assert_eq!(
             result(&second)["ledgers"].as_array().unwrap().as_slice(),
             &all[3..all.len().min(6)]
@@ -194,7 +204,10 @@ mod listing {
         let total = plans.len();
         let one = OneServer::spawn(plans);
         let first = one.call(page("2026-04-01", 0, None)).await;
-        let id = result(&first)["snapshot"]["id"].as_str().unwrap().to_string();
+        let id = result(&first)["snapshot"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let refused = one.call(page("2026-04-01", 3, Some(&id))).await;
         assert_eq!(refused["isError"], true, "{refused}");
         let error = &refused["structuredContent"]["result"]["error"];
@@ -204,7 +217,11 @@ mod listing {
 
         let mut plans = first_page_plans(14);
         plans.extend(continuation_plans(15));
-        plans.extend(first_page_plans(15).into_iter().skip(identity_plans().len()));
+        plans.extend(
+            first_page_plans(15)
+                .into_iter()
+                .skip(identity_plans().len()),
+        );
         let total = plans.len();
         let one = OneServer::spawn(plans);
         let _ = one.call(page("2026-04-01", 0, None)).await;
@@ -223,11 +240,13 @@ mod listing {
         let total = plans.len();
         let one = OneServer::spawn(plans);
         let first = one.call(page("2026-04-01", 0, None)).await;
-        let id = result(&first)["snapshot"]["id"].as_str().unwrap().to_string();
+        let id = result(&first)["snapshot"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let other = one.call(page("2026-05-01", 3, Some(&id))).await;
         assert_eq!(
-            other["structuredContent"]["result"]["error"]["cause"],
-            "snapshot_not_held",
+            other["structuredContent"]["result"]["error"]["cause"], "snapshot_not_held",
             "{other}"
         );
         assert_eq!(one.requests(), total);
@@ -237,12 +256,14 @@ mod listing {
         let total = plans.len();
         let one = OneServer::spawn(plans);
         let first = one.call(page("2026-04-01", 0, None)).await;
-        let id = result(&first)["snapshot"]["id"].as_str().unwrap().to_string();
+        let id = result(&first)["snapshot"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         one.server.drop_listing_snapshots(GUID);
         let dropped = one.call(page("2026-04-01", 3, Some(&id))).await;
         assert_eq!(
-            dropped["structuredContent"]["result"]["error"]["cause"],
-            "snapshot_not_held",
+            dropped["structuredContent"]["result"]["error"]["cause"], "snapshot_not_held",
             "{dropped}"
         );
         assert_eq!(one.requests(), total);

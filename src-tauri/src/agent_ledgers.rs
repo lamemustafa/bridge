@@ -285,8 +285,8 @@ impl ListingSnapshot {
         frame: Value,
         evidence: Evidence,
     ) -> Self {
-        let bytes = rows.iter().map(|row| row.to_string().len()).sum::<usize>()
-            + frame.to_string().len();
+        let bytes =
+            rows.iter().map(|row| row.to_string().len()).sum::<usize>() + frame.to_string().len();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             company_guid: identity.company_guid().to_string(),
@@ -339,7 +339,9 @@ impl ListingSnapshots {
     /// company and kind, and evicting the oldest until the cap holds.
     fn hold(&mut self, snapshot: Arc<ListingSnapshot>) {
         self.held.retain(|held| {
-            !(held.company_guid.eq_ignore_ascii_case(&snapshot.company_guid)
+            !(held
+                .company_guid
+                .eq_ignore_ascii_case(&snapshot.company_guid)
                 && held.kind == snapshot.kind)
         });
         if snapshot.bytes > self.max_bytes {
@@ -527,7 +529,9 @@ impl Server {
                     .runtime
                     .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), identity)
                     .await
-                    .map_err(|error| ToolFailure::from_runtime("party_ledger_master_read_failed", error))?;
+                    .map_err(|error| {
+                        ToolFailure::from_runtime("party_ledger_master_read_failed", error)
+                    })?;
                 // Built once per read, not per ledger: the same group
                 // collection classifies every row.
                 let group_index = GroupIndex::build(listing.groups);
@@ -565,7 +569,10 @@ impl Server {
             ListingKind::BasicWithGroups => {
                 let (listing, groups) = self
                     .runtime
-                    .fetch_ledgers_and_groups_with_opening_as_of_evidence(self.tally_config(), identity)
+                    .fetch_ledgers_and_groups_with_opening_as_of_evidence(
+                        self.tally_config(),
+                        identity,
+                    )
                     .await
                     .map_err(|error| ToolFailure::from_runtime("ledger_export_invalid", error))?;
                 let rows = listing
@@ -573,7 +580,12 @@ impl Server {
                     .into_iter()
                     .map(|ledger| basic_row(ledger, &listing.opening_as_of))
                     .collect::<Vec<_>>();
-                (rows, Some(GroupIndex::build(groups)), listing.extent, listing.evidence)
+                (
+                    rows,
+                    Some(GroupIndex::build(groups)),
+                    listing.extent,
+                    listing.evidence,
+                )
             }
             ListingKind::Basic => {
                 let listing = self

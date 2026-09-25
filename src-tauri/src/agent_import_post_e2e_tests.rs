@@ -379,7 +379,10 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     // The post drops every ledger listing snapshot of its company (#630).
     let dropped = server.listings.lock().unwrap().dropped_companies().to_vec();
     assert_eq!(dropped.len(), 1, "{dropped:?}");
-    assert!(dropped[0].eq_ignore_ascii_case(&company_guid), "{dropped:?}");
+    assert!(
+        dropped[0].eq_ignore_ascii_case(&company_guid),
+        "{dropped:?}"
+    );
 
     let intent = dispatch_intent(directory.path());
     assert_journaled_clean_create(directory.path());

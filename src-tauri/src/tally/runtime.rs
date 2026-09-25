@@ -992,9 +992,6 @@ impl PartyLedgerMasterCurrencyAssertion {
 #[error("{0}")]
 pub(crate) struct CurrencyAdmissionRefusal(pub(crate) &'static str);
 
-/// The result of the existing Tally currency probe, retaining the extent that
-/// bracketed it so a monetary document cannot separate the two facts.
-
 /// One BOOKSFROM-pinned ledger export and the book extent it was read under:
 /// the opening and closing extents were equal, or the read refused.
 #[derive(Debug)]
@@ -1025,6 +1022,8 @@ pub(crate) struct PartyLedgerMasterListing {
     pub(crate) evidence: RuntimeReadEvidence,
 }
 
+/// The result of the existing Tally currency probe, retaining the extent that
+/// bracketed it so a monetary document cannot separate the two facts.
 #[derive(Debug, Clone)]
 pub(crate) struct CompanyCurrencyRead {
     currency: CompanyCurrency,
