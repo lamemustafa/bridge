@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "e43403530df086d58cc9c1662b08b50e810e3560ebb3939cebf9cad78e28b356"
+      "sha256": "eb33fa327aede499be5fb42e29c2a6a0c140b0797db3a3fd5e27b8ec37120a5c"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "fcc86b7263468f968f149ae424421225da553a7d6c7777df644b494843ab6771"
+      "sha256": "a6c6cd5d8b224fd240b99e901a17d7e6006f296689e13eb775a4b54349db11fe"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -463,11 +463,11 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "d1645e6e636235e436a7f94a565e08689d6ec0c7e180a7a6c4d942a0daa79c61"
+      "sha256": "c7d550eced1c8aa942ab9de23b0f84a86a837e99dd47f91db0b2bbc15b75f550"
     },
     {
       "path": "src-tauri/src/agent_import_ack.rs",
-      "sha256": "18008dceb20577fadcae091bf4d5d0e79565729735180df60f577193044ed7c4"
+      "sha256": "35d3cfb9713b8b86c4cdf436db66be3d2a5a0c1fa7ab3ac4b8fcb67c83d43f19"
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
@@ -491,11 +491,11 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "507e3ee820fc421305da5c4197ac918d6555b316d6fb8495f975299f764f6236"
+      "sha256": "10bee642c490148e59962ab90b5404c21ebca7e0c07c5810eb39516c917a8b7c"
     },
     {
       "path": "src-tauri/src/agent_import_post_location.rs",
-      "sha256": "54d83acb9d2b7cd8e5fd23c4666118eb54297a6179cfbd457c8e6525856d6524"
+      "sha256": "84eec015260751841ccbc0a04bedebf862e07e7fe5dd5e736fd024cd7fe1b921"
     },
     {
       "path": "src-tauri/src/agent_import_verification.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "775df26c8e6b5efe30cdfbee81938fc4726897158aaf72e1b46787a23389c7d6"
+  "manifest_sha256": "827747024263305ff687335d8304884b59174b926387521d6083540cec8a969e"
 }
