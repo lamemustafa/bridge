@@ -925,7 +925,7 @@ mod tests {
         // then C and D tied at 100, where name order shows C; D's large credit note after the
         // period is its own column, not its rank and not its returns. The TB differs from the
         // total by exactly Re 1, which ties. Purchases differ by Rs 50, matched to within Re 1 by
-        // the one cancelled voucher inside the period, not the one after it.
+        // the one cancelled voucher inside the period, not the ones before and after it.
         let mut v = vec![
             voucher("s1", "20250401", "Sales", "Cust A", "Sales", 30_000),
             voucher("s2", "20250510", "Sales", "Cust B", "Sales", 20_000),
@@ -936,9 +936,11 @@ mod tests {
             voucher("p1", "20250701", "Purchase", "Purchases", "Supp X", 40_000),
             voucher("p2", "20250702", "Purchase", "Purchases", "Supp X", 4_900),
             voucher("p3", "20260402", "Purchase", "Purchases", "Supp X", 5_000),
+            voucher("p4", "20250331", "Purchase", "Purchases", "Supp X", 5_000),
         ];
-        v[7].status = VoucherStatus::Cancelled;
-        v[8].status = VoucherStatus::Cancelled;
+        for x in &mut v[7..] {
+            x.status = VoucherStatus::Cancelled;
+        }
         let book = Book {
             groups: [
                 "Sales Accounts",

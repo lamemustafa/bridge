@@ -4934,5 +4934,13 @@
   "file": "src/party_monthly.rs",
   "from": "Value::Int(sum.checked_mul(sign).ok_or_else(overflow)?)",
   "to": "Value::Int(sum)"
+ },
+ {
+  "id": "E4-35",
+  "by": "reviewer-opus",
+  "what": "excluded vouchers dated before the period are matched",
+  "file": "src/party_monthly.rs",
+  "from": "                    if in_period(&x.date) {",
+  "to": "                    if x.date <= *end {"
  }
 ]
