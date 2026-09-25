@@ -43,10 +43,11 @@ use super::{
     company_sweep_result, first_calendar_day_canary_window,
     party_ledger_master_currency_admission_error, party_ledger_master_foreign_currency_error,
     party_ledger_master_mixed_currency_error, party_ledger_master_runtime_command_error,
-    portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
-    tally_command_error, tally_runtime_command_error, verify_observed_company_tuple_from_companies,
-    write_unique_download, CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany,
-    SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity, FOREIGN_LEDGERS_NAMED,
+    party_ledger_master_withheld, portable_export_file_name, reconcile_review_cleanup,
+    reviewed_probe_commitment_sha256, tally_command_error, tally_runtime_command_error,
+    verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
+    OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
+    VerifiedCompanyIdentity, FOREIGN_LEDGERS_NAMED,
 };
 // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
 // path cannot be constructed portably. The import must carry the same gate as
@@ -754,5 +755,18 @@ fn party_master_export_withholds_and_names_the_ledgers_it_would_leave_out() {
         error.remediation.contains("Do not retry"),
         "{}",
         error.remediation
+    );
+
+    // The export's decision: any set-aside ledger withholds the workbook.
+    assert!(party_ledger_master_withheld(&[], &[]).is_ok());
+    assert_eq!(
+        party_ledger_master_withheld(&[], &mixed).unwrap_err().code,
+        "party_ledger_master_mixed_currency_ledgers"
+    );
+    assert_eq!(
+        party_ledger_master_withheld(&foreign, &mixed)
+            .unwrap_err()
+            .code,
+        "party_ledger_master_foreign_currency_ledgers"
     );
 }

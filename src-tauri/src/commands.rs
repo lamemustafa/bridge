@@ -1869,18 +1869,10 @@ pub async fn export_party_ledger_master(
         .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
         .await
         .map_err(party_ledger_master_runtime_command_error)?;
-    // A workbook that silently omits ledgers is worse than none: the desktop
-    // withholds it and names the ledgers kept in another currency.
-    if !source.foreign_currency_ledgers_excluded.is_empty() {
-        return Err(party_ledger_master_foreign_currency_error(
-            &source.foreign_currency_ledgers_excluded,
-        ));
-    }
-    if !source.mixed_currency_ledgers_excluded.is_empty() {
-        return Err(party_ledger_master_mixed_currency_error(
-            &source.mixed_currency_ledgers_excluded,
-        ));
-    }
+    party_ledger_master_withheld(
+        &source.foreign_currency_ledgers_excluded,
+        &source.mixed_currency_ledgers_excluded,
+    )?;
     let workbook = build_party_ledger_master_workbook(source)
         .map_err(|_| {
             party_ledger_master_local_export_error(
@@ -2155,6 +2147,22 @@ fn party_ledger_master_foreign_currency_error(
         false,
         "Do not retry the unchanged export. The agent connection's ledger_masters reads the base-currency ledgers and names the ones it leaves out.",
     )
+}
+
+/// A workbook that silently omits ledgers is worse than none: the desktop
+/// withholds it and names the ledgers a several-currency read set aside, those
+/// kept in another currency first (bridge#551).
+fn party_ledger_master_withheld(
+    foreign: &[bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger],
+    mixed: &[String],
+) -> Result<(), TallyCommandError> {
+    if !foreign.is_empty() {
+        return Err(party_ledger_master_foreign_currency_error(foreign));
+    }
+    if !mixed.is_empty() {
+        return Err(party_ledger_master_mixed_currency_error(mixed));
+    }
+    Ok(())
 }
 
 fn party_ledger_master_mixed_currency_error(mixed: &[String]) -> TallyCommandError {
