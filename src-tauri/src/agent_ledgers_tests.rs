@@ -1278,7 +1278,45 @@ mod through_the_tool {
             ]);
             let total = plans.len();
             let one = OneServer::spawn(plans);
-            let _first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            assert_ne!(first["isError"], true, "{first}");
+            let refused = one
+                .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+                .await;
+            assert_eq!(
+                refusal(&refused)["code"],
+                "listing_extent_read_failed",
+                "{refused}"
+            );
+            let bytes = refused["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap();
+            assert_eq!(one.requests(), total);
+            bytes
+        };
+        // Both extent responses are counted: each is one character longer
+        // under a four-digit mark, 2 bytes each in UTF-16.
+        assert_eq!(refused_under(2_200).await, refused_under(219).await + 4);
+    }
+
+    /// An extent pair that completed, followed by a closing identity bracket
+    /// that no longer finds the company, still records both extent requests.
+    #[tokio::test]
+    async fn a_closing_bracket_refusal_still_records_the_extent_pair() {
+        let refused_under = |mark: u64| async move {
+            let gone = companies();
+            assert_eq!(gone.matches(GUID).count(), 1, "one row names the company");
+            let mut plans = basic_plans_marked(mark);
+            plans.extend(identity_plans());
+            plans.push(xml(companies()));
+            pair(&mut plans, xml(extent_with_master_mark(mark)));
+            plans.push(xml(
+                gone.replace(GUID, "00000000-0000-0000-0000-000000000000"),
+            ));
+            let total = plans.len();
+            let one = OneServer::spawn(plans);
+            let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            assert_ne!(first["isError"], true, "{first}");
             let refused = one
                 .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
                 .await;
