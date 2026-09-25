@@ -423,14 +423,32 @@ pub(crate) mod test_seam {
     }
 
     /// The post dialog is answered only by the token echoing this call's
-    /// nonce, and a clean exit (#635). An executable that ignores
-    /// `--confirm-journal` and exits 0, one that echoes its input, a token for
-    /// another nonce, the review dialog's token, and the right token with a
-    /// failing exit are all refused, never approved.
+    /// nonce, and a clean exit (#635). Anything else is refused, never
+    /// approved. A clean exit without the token cannot be a person's decline,
+    /// which exits 1, so it is refused as the dialog being unavailable: an
+    /// executable that ignores `--confirm-journal`, one that echoes its input,
+    /// a token for another nonce, the review dialog's token, or stray output.
+    /// A failing exit is a decline, even after the right token.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_post_is_approved_only_by_the_token_for_its_nonce() {
         let directory = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            (
+                "a person's decline: no token, exit 1",
+                "cat > /dev/null; exit 1",
+            ),
+            (
+                "the token, but a failing exit",
+                "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
+            ),
+        ] {
+            assert_eq!(
+                super::confirm_with(&stub(directory.path(), body), "Post").await,
+                Err("import_approval_declined".to_string()),
+                "{name}"
+            );
+        }
         for (name, body) in [
             ("an executable ignoring the flag exits 0", "cat > /dev/null; exit 0"),
             ("an echo of the input", "cat"),
@@ -442,13 +460,9 @@ pub(crate) mod test_seam {
                 "the review dialog's token for this nonce",
                 "read nonce; printf 'bridge-review-acknowledged:%s\\n' \"$nonce\"; cat > /dev/null",
             ),
-            (
-                "the token, but a failing exit",
-                "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
-            ),
             // The answer is matched byte for byte, so any stray output, such
-            // as a log line, declines. That is fail-closed on purpose: do not
-            // trim or search the output to "fix" it.
+            // as a log line, is refused. That is fail-closed on purpose: do
+            // not trim or search the output to "fix" it.
             (
                 "a log line, then the token",
                 "read nonce; echo starting; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
@@ -464,7 +478,7 @@ pub(crate) mod test_seam {
         ] {
             assert_eq!(
                 super::confirm_with(&stub(directory.path(), body), "Post").await,
-                Err("import_approval_declined".to_string()),
+                Err("import_approval_unavailable".to_string()),
                 "{name}"
             );
         }
@@ -541,6 +555,10 @@ async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(),
     }
     match nonce_bound_dialog(executable, "--confirm-journal", POST_TOKEN_PREFIX, preview).await {
         Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
+        // A person's decline is no token and exit 1: `run_confirmation`
+        // returns false. A clean exit without the token is never that; it is
+        // an executable that is not this dialog, such as one ignoring the flag.
+        Ok(answer) if answer.exited_cleanly => Err("import_approval_unavailable".into()),
         Ok(_) => Err("import_approval_declined".into()),
         Err(DialogFailure::Unavailable) => Err("import_approval_unavailable".into()),
         Err(DialogFailure::TimedOut) => Err("import_approval_timed_out".into()),

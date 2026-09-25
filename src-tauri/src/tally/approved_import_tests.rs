@@ -72,7 +72,7 @@ fn an_input_not_in_the_parents_shape_shows_no_dialog_and_writes_nothing() {
         String::new(),
         NONCE.to_string(),
         format!("{NONCE}\n"),
-        format!("not-a-uuid\nPost one voucher"),
+        "not-a-uuid\nPost one voucher".to_string(),
         format!("{NONCE}\nPost\0one voucher"),
         format!("{NONCE}\n{oversized}"),
     ] {
