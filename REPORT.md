@@ -59,3 +59,6 @@ Not reviewed: #647 and #649 are stacked on #642's branch, not master, and no lan
 | #672 | 4375f63131c41c67d23355bf618a9d661aa944a6 | Master merge; the hunks are identical; 253 tests pass; the pins match. The #700 hazard stands. | https://github.com/lamemustafa/bridge/pull/672#issuecomment-5836641015 |
 | #700 | 362904c2122ccb69c0ac99cf8c52a1a91da12233 | Reseal only; the P2 (a snapshot key with #672) stands. | https://github.com/lamemustafa/bridge/pull/700#issuecomment-5836641779 |
 | #701 | a9b9e4e5b0199f409102465ead4f4265ef227cc5 | Reseal only; the P2 (a vacuous cargo-tree pass) stands, unfixed. | https://github.com/lamemustafa/bridge/pull/701#issuecomment-5836642599 |
+| #704 dialog decline test | ccfdaff010d8927cbcde80e255766fcdc54163af | Master merge; hunks identical; the seal matches. **New P2:** the stub tests flake with ETXTBSY (captured errno 26; 4/25 and 1/6 runs), a fork-inheritance race in `stub()`. Two affected tests are already on master from #665. Rows expecting `unavailable` can pass on a spawn failure. | https://github.com/lamemustafa/bridge/pull/704#issuecomment-5836879119 |
+
+Note: #672 has merged (b587f94a), so the as_of snapshot-key fix is now #700's to make.
