@@ -104,3 +104,21 @@ fn a_group_list_of_another_company_is_refused_as_an_identity_mismatch() {
         NativeCollectionError::CompanyIdentityMismatch
     );
 }
+
+/// bridge#676 review: a group list cut off inside its first row, right after
+/// the row's GUID, ends inside the group row parser. That is the response's
+/// fault, not the row's.
+#[test]
+fn a_group_list_cut_off_inside_a_row_is_malformed_not_the_row() {
+    let xml = decode_utf16le(GROUPS_WITH_IDENTITY);
+    let end = xml.find("</GUID>").unwrap() + "</GUID>".len();
+    assert!(
+        xml[..end].contains("<GROUP NAME="),
+        "the cut is inside a group row"
+    );
+    assert_eq!(
+        parse_native_group_source_records_with_evidence(&xml[..end], COMPANY_GUID)
+            .expect_err("a group list cut inside its first row is refused"),
+        NativeCollectionError::MalformedResponse
+    );
+}

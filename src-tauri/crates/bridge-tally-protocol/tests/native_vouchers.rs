@@ -204,6 +204,19 @@ fn a_voucher_list_cut_off_inside_a_row_is_malformed_not_the_row() {
 }
 
 #[test]
+fn a_voucher_list_cut_off_inside_a_ledger_entry_is_malformed_not_the_row() {
+    // The cut falls inside the first voucher's first ledger entry, after its
+    // LEDGERNAME, so the entry parser is the one that reaches the end.
+    let end = VOUCHERS.find("</LEDGERNAME>").unwrap() + "</LEDGERNAME>".len();
+    assert!(VOUCHERS[..end].contains("<ALLLEDGERENTRIES.LIST>"));
+    assert_eq!(
+        parse_native_voucher_source_records_with_evidence(&VOUCHERS[..end], COMPANY_GUID)
+            .expect_err("a voucher list cut inside a ledger entry is refused"),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
 fn a_voucher_type_list_whose_status_is_not_one_did_not_succeed() {
     let failed = VOUCHER_TYPES.replacen("<STATUS>1</STATUS>", "<STATUS>0</STATUS>", 1);
     assert_eq!(
