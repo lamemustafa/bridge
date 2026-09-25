@@ -907,10 +907,12 @@ impl Server {
 
     /// The parts of a page that are never cut must fit on their own: the byte
     /// cap may shorten only the verified rows, so otherwise the refusal is
-    /// typed here rather than lost as a generic oversize.
+    /// typed here rather than lost as a generic oversize. Tally's LINEERROR
+    /// text is not essential: the cap drops it first, so it is not counted.
     fn admit_verification_page(&self, page: &Value) -> Result<(), ToolFailure> {
         let mut essential = page.clone();
         essential["items"] = json!([]);
+        super::drop_tally_line_error_text(&mut essential);
         if essential.to_string().len() > self.settings.max_bytes {
             return Err("verification_too_large_to_report".to_string().into());
         }
@@ -1129,12 +1131,14 @@ impl Server {
                         &mut payload,
                         dispatch_response.as_ref(),
                         masters_after_post.as_ref(),
+                        line.vouchers.len(),
                     );
                 } else {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,
                         dispatch_response.as_ref(),
                         masters_after_post.as_ref(),
+                        line.vouchers.len(),
                     );
                 }
             }
@@ -1454,13 +1458,14 @@ impl Server {
         }
     }
 
-    /// Whether the journal already records `remote_id` on a dispatch intent.
-    pub(super) fn import_remote_id_recorded_while_admitted(
+    /// Whether the journal already records any of `remote_ids` on a dispatch
+    /// intent.
+    pub(super) fn import_remote_ids_recorded_while_admitted(
         &self,
-        remote_id: Uuid,
+        remote_ids: &[Uuid],
     ) -> Result<bool, String> {
         match self.import_journal_while_admitted()? {
-            Some(reader) => ledger::remote_id_recorded(reader, remote_id),
+            Some(reader) => ledger::remote_ids_recorded(reader, remote_ids),
             None => Ok(false),
         }
     }
@@ -2497,23 +2502,28 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
     render_import_envelope(company, &messages)
 }
 
-/// The native post's request. `remote_id` must be fresh for every attempt: a
-/// public file may already have been imported and edited, and reusing its
-/// client REMOTEID for a native Create can make Tally treat it as an upsert.
-/// The caller records `remote_id` with the dispatch intent before sending,
-/// because Tally deletes only by it and never exports it (bridge#579). The
-/// stable narration tag remains the batch attribution used by readback.
-fn render_native_voucher_xml(
+/// The native post's request: each voucher paired with its own REMOTEID. The
+/// caller pairs them, after checking there is one id per voucher. Every id
+/// must be fresh for every attempt: a public file may already have been
+/// imported and edited, and reusing its client REMOTEID for a native Create
+/// can make Tally treat it as an upsert. The caller records the ids with the
+/// dispatch intent before sending, because Tally deletes only by them and
+/// never exports them (bridge#579). The stable narration tag remains the
+/// batch attribution used by readback.
+fn render_native_vouchers_xml<'a>(
     company: &str,
-    voucher: &ImportVoucher,
     batch_id: &str,
-    remote_id: Uuid,
+    vouchers_with_remote_ids: impl Iterator<Item = (&'a ImportVoucher, Uuid)>,
 ) -> String {
-    let messages = render_voucher_xml(
-        voucher,
-        remote_id,
-        import_identity(batch_id, &voucher.bridge_txn_id),
-    );
+    let messages: String = vouchers_with_remote_ids
+        .map(|(voucher, remote_id)| {
+            render_voucher_xml(
+                voucher,
+                remote_id,
+                import_identity(batch_id, &voucher.bridge_txn_id),
+            )
+        })
+        .collect();
     render_import_envelope(company, &messages)
 }
 

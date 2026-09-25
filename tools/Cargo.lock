@@ -125,6 +125,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bridge-tally-primitives",
+ "icu_properties",
  "quick-xml",
  "serde",
  "sha2",

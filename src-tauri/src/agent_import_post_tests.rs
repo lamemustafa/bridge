@@ -294,7 +294,7 @@ fn exact_readback_requires_a_clean_persisted_response_to_reconcile() {
         let mut payload = json!({
             "result": {"counts": {"posted_verified": 1}, "duplicates": []}
         });
-        finalize_previous_attempt_reconciliation(&mut payload, response, None);
+        finalize_previous_attempt_reconciliation(&mut payload, response, None, 1);
         assert_eq!(payload["result"]["dispatch"]["state"], expected_state);
         assert_eq!(
             payload["result"]["dispatch"]["response_state"],
@@ -562,7 +562,7 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     let mut payload = json!({
         "result": {"counts": {"posted_verified": 1}, "duplicates": []}
     });
-    finalize_current_dispatch(&mut payload, Some(&response), None);
+    finalize_current_dispatch(&mut payload, Some(&response), None, 1);
     assert_eq!(payload["result"]["dispatch"]["state"], "posted_verified");
     assert_eq!(
         payload["result"]["dispatch"]["response_state"],
@@ -570,6 +570,95 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     );
     assert_eq!(payload["result"]["dispatch"]["counters"]["created"], 1);
     assert!(payload["result"].get("error").is_none());
+}
+
+/// Tally's LINEERROR text rides in the response for a person to read and
+/// changes no verdict: each finalizer gives the same state, response state
+/// and error with the text as without it, for the captured partial commit
+/// and for a hostile response past every bound. A clean response cannot carry
+/// text at all, because a record never keeps more texts than its count.
+#[test]
+fn line_error_text_changes_no_dispatch_verdict_and_stays_small() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/import_line_error_partial_commit_live.utf16le.xml"
+    );
+    let xml = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE import response")
+    .text;
+    let with_outcome = |xml: &str| ledger::DispatchResponse {
+        outcome: Some(bridge_tally_protocol::parse_import_outcome(xml).unwrap()),
+        ..dispatch_response("success", 0, 0)
+    };
+    let partial = with_outcome(&xml);
+    // A hostile response: more entries than are kept, each longer than is
+    // kept, all of it control characters. Each becomes a three-byte U+FFFD,
+    // never a six-byte JSON escape, and the total stays within 4,096 bytes.
+    // That the text can never cause a refusal is pinned where the cap is
+    // enforced (agent_response_tests.rs).
+    let hostile_line_errors =
+        format!("<LINEERROR>{}&quot;</LINEERROR>", "&#1;".repeat(600)).repeat(100);
+    let hostile = with_outcome(&format!(
+        "<RESPONSE>{hostile_line_errors}<CREATED>1</CREATED><ALTERED>0</ALTERED>\
+         <DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED>\
+         <EXCEPTIONS>100</EXCEPTIONS></RESPONSE>"
+    ));
+    let without_text = |response: &ledger::DispatchResponse| {
+        let mut saved = serde_json::to_value(response).unwrap();
+        saved["outcome"]
+            .as_object_mut()
+            .unwrap()
+            .remove("tally_line_errors");
+        serde_json::from_value::<ledger::DispatchResponse>(saved).unwrap()
+    };
+    let current: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+        |payload, response| finalize_current_dispatch(payload, response, None, 1);
+    let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+        |payload, response| finalize_previous_attempt_reconciliation(payload, response, None, 1);
+    for response in [&partial, &hostile] {
+        let kept = response.outcome.as_ref().unwrap().tally_line_errors();
+        assert!(!kept.is_empty());
+        let stripped = without_text(response);
+        assert!(stripped
+            .outcome
+            .as_ref()
+            .unwrap()
+            .tally_line_errors()
+            .is_empty());
+        for finalize in [current, previous] {
+            let verdict = |response: &ledger::DispatchResponse| {
+                let mut payload =
+                    json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
+                finalize(&mut payload, Some(response));
+                payload
+            };
+            let shown = verdict(response);
+            let bare = verdict(&stripped);
+            for key in ["state", "response_state"] {
+                assert_eq!(
+                    shown["result"]["dispatch"][key],
+                    bare["result"]["dispatch"][key]
+                );
+            }
+            assert_eq!(shown["result"]["error"], bare["result"]["error"]);
+            assert_eq!(
+                shown["result"]["dispatch"]["state"],
+                "reconciliation_required"
+            );
+            // The text is shown to the caller as kept, and the whole dispatch
+            // report stays far under the default 200,000-byte response cap.
+            assert_eq!(
+                shown["result"]["dispatch"]["response"]["outcome"]["tally_line_errors"],
+                serde_json::to_value(kept).unwrap()
+            );
+            let size = shown["result"]["dispatch"].to_string().len();
+            assert!(size < 8 * 1024, "{size}");
+        }
+    }
 }
 
 #[test]
@@ -600,9 +689,10 @@ fn missing_counter_evidence_cannot_confirm_current_or_previous_dispatch() {
         }
         let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
         let current: fn(&mut Value, Option<&ledger::DispatchResponse>) =
-            |payload, response| finalize_current_dispatch(payload, response, None);
-        let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) =
-            |payload, response| finalize_previous_attempt_reconciliation(payload, response, None);
+            |payload, response| finalize_current_dispatch(payload, response, None, 1);
+        let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) = |payload, response| {
+            finalize_previous_attempt_reconciliation(payload, response, None, 1)
+        };
         for finalize in [current, previous] {
             let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
             finalize(&mut payload, Some(&response));
@@ -675,14 +765,15 @@ fn absence_is_required_before_a_first_attempt() {
         json!({"result":{"counts":{"not_found":1},"vouchers":[{}]}}),
     ] {
         assert_eq!(
-            require_absent_verification_result(&payload).unwrap_err(),
+            require_absent_verification_result(&payload, 1).unwrap_err(),
             "import_preexisting_identity"
         );
     }
-    assert!(
-        require_absent_verification_result(&json!({"counts":{"not_found":1},"vouchers":[{}]}))
-            .is_ok()
-    );
+    assert!(require_absent_verification_result(
+        &json!({"counts":{"not_found":1},"vouchers":[{}]}),
+        1
+    )
+    .is_ok());
 }
 
 #[test]
@@ -690,17 +781,15 @@ fn native_request_uses_a_private_remote_identity_but_preserves_batch_attribution
     let (line, _) = batch();
     let voucher = &line.vouchers[0];
     let public = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
-    let first = render_native_voucher_xml(
+    let first = render_native_vouchers_xml(
         "Synthetic Accounts",
-        voucher,
         &line.batch_id,
-        Uuid::new_v4(),
+        std::iter::once((voucher, Uuid::new_v4())),
     );
-    let second = render_native_voucher_xml(
+    let second = render_native_vouchers_xml(
         "Synthetic Accounts",
-        voucher,
         &line.batch_id,
-        Uuid::new_v4(),
+        std::iter::once((voucher, Uuid::new_v4())),
     );
     let remote_id = |xml: &str| {
         let mut reader = quick_xml::Reader::from_str(xml);
@@ -1013,8 +1102,8 @@ async fn post_error(server: &Server, args: &Value) -> String {
 fn the_dispatch_intent_records_the_remoteid_the_native_request_carries() {
     let (line, _) = batch();
     let remote_id = Uuid::new_v4();
-    let request = native_post_request(&line, remote_id).unwrap();
-    assert_eq!(request.remote_id, remote_id);
+    let request = native_post_request(&line, RemoteIds::from_ids(vec![remote_id])).unwrap();
+    assert_eq!(request.remote_ids.as_slice(), [remote_id]);
     let sent = request
         .xml
         .split("<VOUCHER REMOTEID=\"")
@@ -1038,8 +1127,8 @@ fn the_dispatch_intent_records_the_remoteid_the_native_request_carries() {
     );
 
     // Two posts never share a REMOTEID: reuse could make Tally upsert.
-    let other = native_post_request(&line, Uuid::new_v4()).unwrap();
-    assert_ne!(other.remote_id, request.remote_id);
+    let other = native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap();
+    assert_ne!(other.remote_ids.as_slice(), request.remote_ids.as_slice());
     assert_ne!(other.request_sha256, request.request_sha256);
 }
 
@@ -1325,7 +1414,7 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
     let response = dispatch_response("success", 1, 0);
     let finalized = |masters: Value| {
         let mut payload = json!({"result": {"counts": {"posted_verified": 1}, "duplicates": []}});
-        finalize_current_dispatch(&mut payload, Some(&response), Some(&masters));
+        finalize_current_dispatch(&mut payload, Some(&response), Some(&masters), 1);
         payload["result"].clone()
     };
     for (state, code) in [
@@ -1367,7 +1456,12 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
     // A reconcile of an earlier attempt is held back by the same doubt.
     let reconciled = |masters: Option<Value>| {
         let mut payload = json!({"result": {"counts": {"posted_verified": 1}, "duplicates": []}});
-        finalize_previous_attempt_reconciliation(&mut payload, Some(&response), masters.as_ref());
+        finalize_previous_attempt_reconciliation(
+            &mut payload,
+            Some(&response),
+            masters.as_ref(),
+            1,
+        );
         payload["result"].clone()
     };
     let doubted = reconciled(Some(
@@ -1383,4 +1477,201 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
         clear["dispatch"]["state"], "previous_attempt_reconciled",
         "{clear}"
     );
+}
+
+/// A batch of two for the N-voucher paths. Admission still posts one voucher,
+/// so these call each generalized piece directly.
+fn batch_of_two() -> ImportLedgerLine {
+    let (mut line, _) = batch();
+    let mut second = line.vouchers[0].clone();
+    second.bridge_txn_id = "journal-test-2".into();
+    second.narration = Some("Synthetic second".into());
+    line.vouchers.push(second);
+    line.txn_ids.push("journal-test-2".into());
+    line
+}
+
+/// One fresh id per voucher, all distinct; none for an empty batch.
+#[test]
+fn remote_ids_are_minted_one_per_voucher_and_distinct() {
+    let ids = RemoteIds::mint(3).unwrap();
+    let distinct = ids
+        .as_slice()
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!((ids.as_slice().len(), distinct.len()), (3, 3));
+    assert_eq!(
+        RemoteIds::mint(0).err().as_deref(),
+        Some("import_post_requires_one_voucher")
+    );
+    // Never more than the journal admits on read.
+    assert_eq!(
+        RemoteIds::mint(ledger::MAX_BATCH_POST_VOUCHERS)
+            .map(|ids| ids.as_slice().len())
+            .ok(),
+        Some(ledger::MAX_BATCH_POST_VOUCHERS)
+    );
+    assert_eq!(
+        RemoteIds::mint(ledger::MAX_BATCH_POST_VOUCHERS + 1)
+            .err()
+            .as_deref(),
+        Some("import_post_batch_too_large")
+    );
+}
+
+/// The request carries every voucher, each with its own REMOTEID in batch
+/// order, and refuses ids that do not match the vouchers one for one.
+#[test]
+fn a_native_request_renders_every_voucher_with_its_own_remote_id() {
+    let line = batch_of_two();
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let request = native_post_request(&line, RemoteIds::from_ids(ids.to_vec())).unwrap();
+    let mut reader = quick_xml::Reader::from_str(&request.xml);
+    let mut remote_ids = Vec::new();
+    loop {
+        match reader.read_event().unwrap() {
+            quick_xml::events::Event::Start(tag) if tag.name().as_ref() == b"VOUCHER" => {
+                let remote_id = tag
+                    .attributes()
+                    .map(Result::unwrap)
+                    .find(|attribute| attribute.key.as_ref() == b"REMOTEID")
+                    .map(|attribute| String::from_utf8(attribute.value.to_vec()).unwrap());
+                remote_ids.push(remote_id.unwrap());
+            }
+            quick_xml::events::Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        remote_ids,
+        ids.iter()
+            .map(|id| id.hyphenated().to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        native_post_request(&line, RemoteIds::from_ids(vec![ids[0]]))
+            .err()
+            .as_deref(),
+        Some("import_post_remote_ids_mismatch")
+    );
+}
+
+/// One voucher keeps the single-id intent an older binary can read; a batch
+/// records every id, and the journal finds each of them.
+#[test]
+fn the_intent_keeps_the_single_id_shape_for_one_voucher() {
+    let (one, _) = batch();
+    let id = Uuid::new_v4();
+    let single = serde_json::to_value(ledger::StatusRecord::dispatch_for(
+        &one,
+        &native_post_request(&one, RemoteIds::from_ids(vec![id])).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(
+        single["native_remote_id"],
+        json!(id.hyphenated().to_string())
+    );
+    assert!(single.get("native_remote_ids").is_none(), "{single}");
+
+    let two = batch_of_two();
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let batch = serde_json::to_value(ledger::StatusRecord::dispatch_for(
+        &two,
+        &native_post_request(&two, RemoteIds::from_ids(ids.to_vec())).unwrap(),
+    ))
+    .unwrap();
+    assert!(batch.get("native_remote_id").is_none(), "{batch}");
+    assert_eq!(
+        batch["native_remote_ids"],
+        json!(ids
+            .iter()
+            .map(|id| id.hyphenated().to_string())
+            .collect::<Vec<_>>())
+    );
+}
+
+/// Every voucher must be absent: N not found, over N rows, and never zero.
+#[test]
+fn absence_is_required_for_every_voucher() {
+    let result = |not_found: u64, rows: usize| json!({"counts":{"not_found":not_found},"vouchers":vec![json!({}); rows]});
+    assert!(require_absent_verification_result(&result(2, 2), 2).is_ok());
+    for (not_found, rows, count) in [(1, 2, 2), (2, 1, 2), (1, 1, 2), (0, 0, 0)] {
+        assert_eq!(
+            require_absent_verification_result(&result(not_found, rows), count)
+                .err()
+                .as_deref(),
+            Some("import_preexisting_identity"),
+            "{not_found} {rows} {count}"
+        );
+    }
+}
+
+/// A batch is clean only when Tally created exactly its N vouchers and the
+/// readback verified all N; one short on either side is not clean.
+#[test]
+fn a_batch_is_clean_only_with_n_creates_and_n_verified() {
+    // A batch's masters check found nothing and its step matched.
+    let matched = json!({"state":"unchanged","batch_step":{"state":"matched"}});
+    let verdict = |created: u64, verified: u64| {
+        let mut payload = json!({"result":{"counts":{"posted_verified":verified},"duplicates":[]}});
+        finalize_current_dispatch(
+            &mut payload,
+            Some(&dispatch_response("success", created, 0)),
+            Some(&matched),
+            2,
+        );
+        payload["result"]["dispatch"]["state"].clone()
+    };
+    assert_eq!(verdict(2, 2), "posted_verified");
+    assert_eq!(verdict(1, 2), "reconciliation_required");
+    assert_eq!(verdict(2, 1), "reconciliation_required");
+    assert_eq!(verdict(3, 2), "reconciliation_required");
+    // With no step verdict recorded, even N creates and N verified is not clean.
+    let mut payload = json!({"result":{"counts":{"posted_verified":2},"duplicates":[]}});
+    finalize_current_dispatch(
+        &mut payload,
+        Some(&dispatch_response("success", 2, 0)),
+        Some(&json!({"state":"unchanged"})),
+        2,
+    );
+    assert_eq!(
+        payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
+    assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
+}
+
+/// A reconciliation of an earlier batch attempt is clean only with N creates
+/// and N verified, as for the current dispatch.
+#[test]
+fn a_previous_batch_attempt_reconciles_only_with_n_creates_and_n_verified() {
+    // A batch's masters check found nothing and its step matched.
+    let matched = json!({"state":"unchanged","batch_step":{"state":"matched"}});
+    let verdict = |created: u64, verified: u64| {
+        let mut payload = json!({"result":{"counts":{"posted_verified":verified},"duplicates":[]}});
+        finalize_previous_attempt_reconciliation(
+            &mut payload,
+            Some(&dispatch_response("success", created, 0)),
+            Some(&matched),
+            2,
+        );
+        payload["result"]["dispatch"]["state"].clone()
+    };
+    assert_eq!(verdict(2, 2), "previous_attempt_reconciled");
+    assert_eq!(verdict(1, 2), "reconciliation_required");
+    assert_eq!(verdict(2, 1), "reconciliation_required");
+    assert_eq!(verdict(3, 2), "reconciliation_required");
+    // With no step verdict recorded, even N creates and N verified is not clean.
+    let mut payload = json!({"result":{"counts":{"posted_verified":2},"duplicates":[]}});
+    finalize_previous_attempt_reconciliation(
+        &mut payload,
+        Some(&dispatch_response("success", 2, 0)),
+        Some(&json!({"state":"unchanged"})),
+        2,
+    );
+    assert_eq!(
+        payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
+    assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
 }
