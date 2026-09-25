@@ -3874,7 +3874,7 @@
  {
   "id": "E2A-13",
   "by": "author",
-  "what": "a repeated figure id overwrites instead of refusing",
+  "what": "a repeated figure id reaches TestResult::fig's panic instead of refusing",
   "file": "src/bank_reconciliation.rs",
   "from": "    if r.figures.iter().any(|f| f.id == id) {\n        return Err(",
   "to": "    if false && r.figures.iter().any(|f| f.id == id) {\n        return Err("
@@ -3950,5 +3950,13 @@
   "file": "src/documents.rs",
   "from": "if row.debit_paise != 0 && row.credit_paise != 0 {",
   "to": "if false && (row.debit_paise != 0 && row.credit_paise != 0) {"
+ },
+ {
+  "id": "E2A-23",
+  "by": "reviewer-opus",
+  "what": "an empty charge term is accepted",
+  "file": "src/bank_reconciliation.rs",
+  "from": "Some(\"\") => Err(AuditError::Config(format!(",
+  "to": "Some(\"\\u{0}\") => Err(AuditError::Config(format!("
  }
 ]

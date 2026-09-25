@@ -358,7 +358,7 @@ mod tests {
             ("row", json!(1)),
             ("doc", json!("bank:y:statement")),
             ("account_ref", json!("XX13")),
-            ("debit_paise", json!(-1)),
+            ("credit_paise", json!(-1)),
             ("debit_paise", json!(1)),
             ("txn_date", json!("2026-04-01")),
         ] {
