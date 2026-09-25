@@ -15,3 +15,9 @@ What was run (Linux, pinned 1.96.0, `--features rfd/gtk3`):
 - #665: `approved_import` tests 7 passed; `approval_seam_gate` 8 passed; a constant-nonce mutation was killed.
 - #684: `agent_import::post` 119 passed; `catalog` 51 passed.
 - #682: the `ci.yml` seal matches; `check-ci-workflow-consistency` passes; the quoting miss was reproduced in a scratch repo.
+
+## 2026-09-25, open PRs without an independent review (oldest first)
+
+| PR | Head | Result | Comment |
+| --- | --- | --- | --- |
+| #642 MCP outstandings on several-currency books | 7afce72f8f1504b0101e1614297319680fd9aec3 | No P1/P2. Foreign bills are excluded or refused; the omission is loud. The PR's named blocking capture gap still stands. | https://github.com/lamemustafa/bridge/pull/642#issuecomment-5834878917 |
