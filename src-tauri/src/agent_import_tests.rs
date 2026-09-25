@@ -2292,16 +2292,31 @@ async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_
         .expect("batch id")
         .to_string();
     let args = json!({"company_guid": CAPTURED_GUID, "batch_id": batch_id});
-    let first = server.call_tool_response("verify_import", args.clone()).await.value;
+    let first = server
+        .call_tool_response("verify_import", args.clone())
+        .await
+        .value;
     let page = &first["structuredContent"]["result"];
     assert_ne!(first["isError"], true, "{first}");
-    let proof_path = server.imports_dir().unwrap().join(format!("{batch_id}.proof.json"));
+    let proof_path = server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{batch_id}.proof.json"));
     let persisted = fs::read(&proof_path).unwrap();
-    assert_eq!(page["proof"]["sha256"], crate::agent::sha256_hex(&persisted));
-    assert!(page.get("vouchers").is_none(), "the rows are split, never both");
+    assert_eq!(
+        page["proof"]["sha256"],
+        crate::agent::sha256_hex(&persisted)
+    );
+    assert!(
+        page.get("vouchers").is_none(),
+        "the rows are split, never both"
+    );
     let proof: Value = serde_json::from_slice(&persisted).unwrap();
     let rows = proof["vouchers"].as_array().unwrap();
-    let verified = rows.iter().filter(|row| row["status"] == "posted_verified").count();
+    let verified = rows
+        .iter()
+        .filter(|row| row["status"] == "posted_verified")
+        .count();
     assert_eq!(page["verified_total"], verified);
     assert_eq!(page["items"].as_array().unwrap().len(), verified);
     assert_eq!(
@@ -2315,20 +2330,36 @@ async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_
     let mut next = args.clone();
     next["proof_sha256"] = page["proof"]["sha256"].clone();
     next["offset"] = json!(verified);
-    let later = server.call_tool_response("verify_import", next.clone()).await.value;
+    let later = server
+        .call_tool_response("verify_import", next.clone())
+        .await
+        .value;
     let later_page = &later["structuredContent"]["result"];
     assert_ne!(later["isError"], true, "{later}");
     assert_eq!(later_page["items"], json!([]));
     assert_eq!(later_page["counts"], page["counts"]);
-    assert_eq!(later_page["unverified_vouchers"], page["unverified_vouchers"]);
-    assert_eq!(later_page["verification_status"], page["verification_status"]);
+    assert_eq!(
+        later_page["unverified_vouchers"],
+        page["unverified_vouchers"]
+    );
+    assert_eq!(
+        later_page["verification_status"],
+        page["verification_status"]
+    );
     assert_eq!(later_page["proof"], page["proof"]);
-    assert_eq!(simulator.received(), requests, "no Tally request for a later page");
+    assert_eq!(
+        simulator.received(),
+        requests,
+        "no Tally request for a later page"
+    );
 
     // Never cut to fit: the parts that must stay whole refuse, typed.
     // Room for the refusal itself, not for the proof's never-cut part.
     let small = server_with(2_048);
-    let refused = small.call_tool_response("verify_import", next.clone()).await.value;
+    let refused = small
+        .call_tool_response("verify_import", next.clone())
+        .await
+        .value;
     assert_eq!(
         refused["structuredContent"]["result"]["error"]["code"],
         "verification_too_large_to_report"
@@ -2337,7 +2368,10 @@ async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_
     // A page belongs to one verification.
     let mut offset_only = args.clone();
     offset_only["offset"] = json!(1);
-    let refused = server.call_tool_response("verify_import", offset_only).await.value;
+    let refused = server
+        .call_tool_response("verify_import", offset_only)
+        .await
+        .value;
     assert_eq!(
         refused["structuredContent"]["result"]["error"]["code"],
         "verification_page_requires_proof"

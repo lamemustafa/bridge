@@ -4,6 +4,9 @@ use super::*;
 const NONBLANK_PATTERN: &str = r"\S";
 const DATE_WIRE_PATTERN: &str = "^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$";
 const BRIDGE_TRANSACTION_ID_PATTERN: &str = "^[A-Za-z0-9_-]+$";
+/// A lowercase SHA-256 in hex: the persisted proof a `verify_import` page
+/// names (#627).
+const SHA256_HEX_PATTERN: &str = "^[0-9a-f]{64}$";
 /// A Bridge batch identity, as `amends_batch_id` publishes it. Until this was
 /// in the vocabulary below, every `tools/call` naming `amends_batch_id` was
 /// refused `argument_invalid:amends_batch_id` before the handler ran: the
@@ -229,6 +232,12 @@ fn published_pattern_matcher(pattern: &str) -> Option<fn(&str) -> bool> {
         DATE_WIRE_PATTERN => Some(date_wire_matches),
         // Admission applies the build's own rule, which the published pattern restates.
         BRIDGE_BATCH_ID_PATTERN => Some(agent_import::valid_batch_id),
+        SHA256_HEX_PATTERN => Some(|text| {
+            text.len() == 64
+                && text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }),
         BRIDGE_TRANSACTION_ID_PATTERN => Some(|text| {
             !text.is_empty()
                 && text
@@ -377,7 +386,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                     ),
                     "verify_import" => (
                         "Read back a manually imported local batch and write Proof-of-Post files. This never dispatches import XML to Tally. The result gives `verification_status`, `counts`, every voucher that is not posted_verified (`unverified_vouchers`), `duplicates`, `unrelated_duplicates_in_window` and `ambiguous_within_batch` in full, never cut to fit. Only the posted_verified vouchers are paged, as `items` from `offset` out of `verified_total`; when the response cap shortens them it sets `truncated` and `next_offset`. To read further pages, call again with `proof_sha256` set to the returned `proof.sha256` and `offset` set to `next_offset`: those pages come from the persisted proof and never read Tally again. The call is refused with `verification_proof_changed` if a newer verification replaced that proof, and with `verification_too_large_to_report` if the parts never cut do not fit the response cap. The full proof is always written to disk.",
-                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string"},"offset":{"type":"integer","minimum":0,"default":0},"proof_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}),
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string"},"offset":{"type":"integer","minimum":0,"default":0},"proof_sha256":{"type":"string","pattern":SHA256_HEX_PATTERN}}}),
                     ),
                     "tally_status" => (
                         "Return loopback endpoint status and observed loaded-company identity tuples.",

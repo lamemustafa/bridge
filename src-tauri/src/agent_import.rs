@@ -1,8 +1,8 @@
 use super::{
-    combine_evidence, company_currency_read, company_high_water_read, company_json,
-    native_group_snapshot_read, normalized_date, parse_company_high_water, party_name,
-    required_string, sha256_hex, sha256_json, standard_ledger_catalog_read, Evidence, Server,
-    ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
+    arg_usize, combine_evidence, company_currency_read, company_high_water_read, company_json,
+    native_group_snapshot_read, normalized_date, optional_string, parse_company_high_water,
+    party_name, required_string, sha256_hex, sha256_json, standard_ledger_catalog_read, Evidence,
+    Server, ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{
@@ -58,9 +58,9 @@ use uuid::Uuid;
 use verification::{
     actual_entry_fingerprint, alter_id_delta, canonical_verification_amount,
     company_high_water_mark, corroborate_verification_window, expected_entry_fingerprint,
-    parse_import_voucher_rows, parse_import_vouchers, render_proof_markdown, verification_response_page,
-    verification_status,
-    verification_window_identities, verify_batch, voucher_diffs, voucher_is_accounting_effective,
+    parse_import_voucher_rows, parse_import_vouchers, render_proof_markdown,
+    verification_response_page, verification_status, verification_window_identities, verify_batch,
+    voucher_diffs, voucher_is_accounting_effective,
 };
 #[cfg(test)]
 use verification::{
@@ -849,8 +849,10 @@ impl Server {
                 .with_prior_evidence(evidence.clone())
         })?;
         if proof["batch_id"] != batch_id {
-            return Err(ToolFailure::from("verification_proof_batch_mismatch".to_string())
-                .with_prior_evidence(evidence));
+            return Err(
+                ToolFailure::from("verification_proof_batch_mismatch".to_string())
+                    .with_prior_evidence(evidence),
+            );
         }
         let page = verification_response_page(&proof, &sha256_hex(&persisted), 0);
         self.admit_verification_page(&page)
@@ -888,7 +890,9 @@ impl Server {
         Ok(ToolOutcome {
             payload: json!({"company": proof["company"], "result": page}),
             evidence: Evidence {
-                request_sha256: sha256_hex(format!("verify_import_page:{batch_id}:{offset}").as_bytes()),
+                request_sha256: sha256_hex(
+                    format!("verify_import_page:{batch_id}:{offset}").as_bytes(),
+                ),
                 response_sha256: sha256,
                 bytes: persisted.len(),
                 state: "complete",
@@ -1334,7 +1338,9 @@ impl Server {
             .strip_prefix("bridge-")
             .and_then(|value| uuid::Uuid::parse_str(value).ok())
             .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
-        let path = self.imports_dir()?.join(format!("bridge-{uuid}.proof.json"));
+        let path = self
+            .imports_dir()?
+            .join(format!("bridge-{uuid}.proof.json"));
         let file = super::local_file::open_local_file(&path, false)
             .map_err(|_| "verification_proof_missing".to_string())?;
         let mut bytes = Vec::new();
