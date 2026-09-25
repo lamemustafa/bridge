@@ -17,10 +17,11 @@
 //! * s.194N reports the statement window's narration-matched cash withdrawals, informational, and
 //!   states which threshold applies only when the recipient type is known.
 //! * A row's amount is the party side of the voucher, not its money line, as the reference
-//!   computes it. A voucher settling one party partly in cash and partly by bank (or against a
-//!   discount) is a cash row, and a bank row, for the whole party amount: s.269ST rows can
-//!   over-state, never under-state, and their findings ask for the document. Parity, kept because
-//!   the goldens pin it (`hvr_paths`' mixed cash-and-bank payment is one such row).
+//!   computes it (parity, pinned by the goldens). A voucher settling one party partly in cash and
+//!   partly by bank (or against a discount) is a cash row, and a bank row, for the whole party
+//!   amount (`hvr_paths`' h15). A voucher naming two or more parties gives each only its own line,
+//!   and its tax, round-off and Sales/Purchase lines go to no party (`hvr_paths`' h11). So an
+//!   s.269ST row can over-state, or under-state, the cash one party moved.
 //!
 //! The reference reads `[high_value_register].ca_threshold_paise` and `[s194n]` when the rules
 //! carry them and its own defaults otherwise. The vendored rules excerpt carries neither table, so
@@ -120,7 +121,8 @@ fn fig(
 ///
 /// Divergence, deliberate, and not parity (as `bank_reconciliation::charge_terms`): the reference
 /// passes the value to `frozenset(...)` unchecked, so a single string becomes the set of its
-/// characters. Here a non-list, and a list holding a non-string, refuse.
+/// characters. Here a non-list, a list holding a non-string, and a blank term (in every narration,
+/// so every debit would count) refuse.
 pub fn s194n_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());
