@@ -388,9 +388,20 @@ fn no_step_is_reported_unless_each_snapshot_holds_exactly_one_target() {
         .collect::<Vec<_>>();
     assert_eq!(state(&book(), &renamed)["target_voucher_step"], Value::Null);
     assert_eq!(state(&renamed, &book())["target_voucher_step"], Value::Null);
-    // A second row with the target's GUID and name under another key cannot
-    // occur (rows are keyed by both); a namesake with another GUID is not the
-    // target, so the step stays the target's own.
+    // Two target rows are ambiguous before the step is asked for (rows are
+    // keyed by GUID and name), but the step on its own also refuses them.
+    let mut doubled = with_vouchers(&book(), TARGET, 11);
+    doubled.push(marks("Synthetic Target", TARGET, 12));
+    assert_eq!(
+        target_voucher_step(&book(), &doubled, TARGET, "Synthetic Target", Some(1)),
+        Value::Null
+    );
+    assert_eq!(
+        target_voucher_step(&doubled, &book(), TARGET, "Synthetic Target", Some(1)),
+        Value::Null
+    );
+    // A namesake with another GUID is not the target, so the step stays the
+    // target's own.
     let mut namesake = with_vouchers(&book(), TARGET, 11);
     namesake.push(marks(
         "Synthetic Target",
