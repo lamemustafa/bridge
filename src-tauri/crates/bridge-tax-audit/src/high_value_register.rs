@@ -80,10 +80,10 @@ impl Recipient {
 }
 
 /// The reference's fallback defaults, equal to its rules tables' numbers.
-pub const DEFAULT_CA_THRESHOLD_PAISE: i64 = 2_00_000_00;
-pub const DEFAULT_S194N_THRESHOLD_PAISE: i64 = 1_00_00_000_00;
-pub const DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE: i64 = 3_00_00_000_00;
-pub const DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE: i64 = 20_00_000_00;
+pub const DEFAULT_CA_THRESHOLD_PAISE: i64 = 20_000_000; // Rs 2 lakh
+pub const DEFAULT_S194N_THRESHOLD_PAISE: i64 = 1_000_000_000; // Rs 1 crore
+pub const DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE: i64 = 3_000_000_000; // Rs 3 crore
+pub const DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE: i64 = 200_000_000; // Rs 20 lakh
 
 fn prefix_chars(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
@@ -408,7 +408,7 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
     let no_types: BTreeMap<String, String> = BTreeMap::new();
 
     #[allow(clippy::cast_precision_loss)] // Python's float division, formatted with :g
-    let lakh = py_format_g(threshold as f64 / 1_00_000_00.0);
+    let lakh = py_format_g(threshold as f64 / 10_000_000.0); // paise per lakh
     r.population_note = format!(
         "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded \
          throughout. Vouching threshold set by the CA: ₹{lakh} lakh. Every row states its own mode \
@@ -938,10 +938,10 @@ mod tests {
     fn the_defaults_are_the_reference_tables_numbers() {
         // The reference's rules/ay2026-27.toml at 1038dc05: [high_value_register].ca_threshold_paise
         // and [s194n]'s three thresholds; run() prefers those tables, and they equal its defaults.
-        assert_eq!(DEFAULT_CA_THRESHOLD_PAISE, 2_00_000_00);
-        assert_eq!(DEFAULT_S194N_THRESHOLD_PAISE, 1_00_00_000_00);
-        assert_eq!(DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE, 3_00_00_000_00);
-        assert_eq!(DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE, 20_00_000_00);
+        assert_eq!(DEFAULT_CA_THRESHOLD_PAISE, 20_000_000);
+        assert_eq!(DEFAULT_S194N_THRESHOLD_PAISE, 1_000_000_000);
+        assert_eq!(DEFAULT_S194N_THRESHOLD_CO_OPERATIVE_PAISE, 3_000_000_000);
+        assert_eq!(DEFAULT_S194N_THRESHOLD_NON_FILER_PAISE, 200_000_000);
     }
 
     #[test]
