@@ -92,3 +92,27 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
 | node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
 | live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
 | tools cargo test --workspace | 0 | 57 passed |
+
+## 2026-09-25 15:55 UTC — lane-f/626-crlf-ledger-names: built c808bd7: RED
+
+- Head c808bd7 already contains origin/master 54eb327, so there was no merge. Reseal → 3f0c5a8 (master_binding.rs, agent_catalog.rs, agent_import.rs, agent_import_post.rs, approved_import.rs rehashed); `--verify` current. Sonnet review of 3f0c5a8: no findings (all 280 pins match their bytes). **Not pushed**, because of the real red below. The commit stays local only.
+- **REAL: clippy fails** (`-D warnings` → `-D dead-code`) on the lib target:
+  ```
+  error: function `source_entities` is never used
+      --> src/agent_import.rs:2515:4
+  2515 | fn source_entities(requested: &[String]) -> Result<Vec<SourceEntity>, String> {
+  ```
+  Cause: 48be0ce ("Name a ledger whose stored name ends in CR LF by its exact bytes (#626)") removed both non-test callers that master has (agent_import.rs:433 and :2313 on master). The only remaining uses are in agent_import_tests.rs (lines 1678 and 1738), so the non-test lib build sees it as dead. Tests still compile and pass because the test build uses it.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1348 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 101 | **REAL**: dead `source_entities` (above) |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- Next: 653's new head edb3258.
