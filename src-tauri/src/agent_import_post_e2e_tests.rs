@@ -1261,9 +1261,9 @@ async fn only_the_target_moving_is_reported_as_the_landing() {
     );
 }
 
-/// After a gateway post, a step larger than Tally's CREATED means another
-/// voucher in the target changed around the post (protocol reference
-/// §11c.5). It is reported in `post_location`.
+/// A step larger than Tally's CREATED means the post altered or cancelled
+/// vouchers itself, or another voucher in the target changed around it
+/// (protocol reference §11c.5). It is reported in `post_location`.
 #[tokio::test]
 async fn a_target_step_beyond_the_create_is_reported() {
     let located = located_after(company_marks(12, 50, "WR2 Unicode Lab")).await;
@@ -1494,11 +1494,23 @@ fn saved_captured_line(server: &Server) -> ImportLedgerLine {
 /// location snapshot, then the readback finds the post's own voucher. This is
 /// the only simulator test that reaches `posted_verified`; the others stop at
 /// the POST, so their final result is the readback failing for want of plans.
+/// The verdict is the readback's: a target step of two, which does not match
+/// the one create, is reported and changes nothing.
 #[tokio::test]
 async fn a_native_post_reads_back_as_posted_verified() {
+    for (mark_after, step, matches_created) in [(11, 1, true), (12, 2, false)] {
+        native_post_reads_back_as_posted_verified(mark_after, step, matches_created).await;
+    }
+}
+
+async fn native_post_reads_back_as_posted_verified(
+    mark_after: u64,
+    step: u64,
+    matches_created: bool,
+) {
     let mut plans = before_approval();
     plans.extend(after_approval(xml(created_one())));
-    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    plans.push(xml(company_marks(mark_after, 50, "WR2 Unicode Lab")));
     // The readback: the same verification read the pre-post check made, now
     // serving the captured voucher.
     plans.extend(probe());
@@ -1526,6 +1538,15 @@ async fn a_native_post_reads_back_as_posted_verified() {
         result["post_location"]["state"], "target_only",
         "{response}"
     );
+    assert_eq!(
+        result["post_location"]["target_voucher_step"]["step"], step,
+        "{response}"
+    );
+    assert_eq!(
+        result["post_location"]["target_voucher_step"]["matches_created"], matches_created,
+        "{response}"
+    );
+    assert!(result.get("error").is_none(), "{response}");
     assert_journaled_clean_create(directory.path());
 }
 

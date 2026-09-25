@@ -89,9 +89,12 @@ pub(super) fn target_masters_unchanged(
 
 /// The target's voucher mark in each snapshot, and whether it moved by exactly
 /// what Tally reported creating. Each gateway create moves `ALTVCHID` by one,
-/// and so does every gateway alter or cancel (a delete by two), so for gateway
-/// writes a step above `CREATED` means another voucher in the target changed
-/// within the snapshots' interval (protocol reference §11c.5). Screen edits
+/// and so does every gateway alter or cancel (a delete by two; protocol
+/// reference §11c.5). So a step above `CREATED` means the post itself altered
+/// or cancelled vouchers, or another voucher in the target changed within the
+/// snapshots' interval, and the step alone cannot say which. A native post
+/// sends a REMOTEID no earlier intent records, so it is expected only to
+/// create, but nothing here relies on that. Screen edits
 /// were also seen to move it by one each (PARTIAL, §11c.5), and nothing
 /// measured rules out a change that leaves it still; so a match is no proof
 /// that nothing else changed. A multi-voucher import stepped by its count in
