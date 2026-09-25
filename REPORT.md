@@ -153,3 +153,27 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
 | tools cargo test --workspace | 0 | 57 passed |
 
 - Queue widened per Lane D to `lane-a/*` and `lane-c/*` (lane-a first). None exist yet. 626 is still RED at c808bd7. Back to polling.
+
+## 2026-09-25 16:42 UTC — lane-f/653-ledger-masters-as-of: built 362904c: green
+
+- Head 89edda1 (Lane F's merge of master a8324c6, with the JSONs on master's side). 0 behind. Reseal → **362904c** (agent.rs, agent_catalog.rs, agent_ledgers.rs rehashed); `--verify` current.
+- Sonnet review of 362904c: no findings. All 280 pins match their bytes; pin list, claims and bridge_commit_sha are unchanged; a8324c6 is an ancestor.
+- Pushed as a fast-forward: `lane-f/653-ledger-masters-as-of` 89edda1..362904c.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1338 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- Queue state:
+  - egress f51eaa5: reseal a9b9e4e ready, review clean, gates pending.
+  - 626 5d6d6d7: merge d1b7ccd + reseal f449833 ready, review clean, gates pending.
+  - gold: moved to 7927967 (Lane F's own master merge). My local 28eea71/e9888fe on 1cde915 are discarded and will be redone.
+  - Lane A asked for an iteration build of `lane-a/d1-wip` @ ddfcdc2 (per Lane D, lane-a first). Running that next.
+  - `lane-c/601d-wip` @ 7543f8a has appeared.
