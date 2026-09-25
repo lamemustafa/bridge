@@ -148,6 +148,62 @@ fn an_xml_error_inside_a_voucher_type_row_is_malformed_not_the_row() {
 }
 
 #[test]
+fn a_voucher_type_list_cut_off_inside_a_row_is_malformed_not_the_row() {
+    // The response ends right after the first row's GUID: quick-xml reports
+    // the end of input inside the row, and that is the response's fault.
+    let end = VOUCHER_TYPES.find(FIRST_VOUCHER_TYPE_GUID).unwrap() + FIRST_VOUCHER_TYPE_GUID.len();
+    assert_eq!(
+        voucher_type_refusal(&VOUCHER_TYPES[..end], COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_with_a_repeated_status_is_malformed() {
+    let repeated = VOUCHER_TYPES.replacen(
+        "<STATUS>1</STATUS>",
+        "<STATUS>1</STATUS><STATUS>1</STATUS>",
+        1,
+    );
+    assert_eq!(
+        voucher_type_refusal(&repeated, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_without_a_status_did_not_succeed() {
+    let silent = VOUCHER_TYPES.replacen("<STATUS>1</STATUS>", "", 1);
+    assert_ne!(silent, VOUCHER_TYPES);
+    assert_eq!(
+        voucher_type_refusal(&silent, COMPANY_GUID),
+        NativeCollectionError::NotSuccess
+    );
+}
+
+#[test]
+fn a_voucher_type_list_without_its_collection_is_malformed() {
+    let uncollected = VOUCHER_TYPES
+        .replacen("<COLLECTION ", "<ITEMS ", 1)
+        .replacen("</COLLECTION>", "</ITEMS>", 1);
+    assert_eq!(uncollected.matches("COLLECTION").count(), 0);
+    assert_eq!(
+        voucher_type_refusal(&uncollected, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_list_cut_off_inside_a_row_is_malformed_not_the_row() {
+    let end = VOUCHERS.find("</VOUCHERTYPENAME>").unwrap() + "</VOUCHERTYPENAME>".len();
+    assert_eq!(
+        parse_native_voucher_source_records_with_evidence(&VOUCHERS[..end], COMPANY_GUID)
+            .expect_err("a voucher list cut inside its first row is refused"),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
 fn a_voucher_type_list_whose_status_is_not_one_did_not_succeed() {
     let failed = VOUCHER_TYPES.replacen("<STATUS>1</STATUS>", "<STATUS>0</STATUS>", 1);
     assert_eq!(

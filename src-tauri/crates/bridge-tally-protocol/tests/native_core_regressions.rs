@@ -1,7 +1,7 @@
 use bridge_tally_protocol::{
     decode_tally_xml_response_bytes_limited, parse_native_group_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence, ExpectedTallyTextEncoding,
-    ParsedSourceIdentityKind,
+    NativeCollectionError, ParsedSourceIdentityKind,
 };
 use sha2::{Digest, Sha256};
 
@@ -88,4 +88,19 @@ fn zero_entry_voucher_is_preserved_as_a_supported_shape() {
     assert_eq!(parsed.records.len(), 1);
     assert_eq!(parsed.records[0].record.ledger_entry_count, Some(0));
     assert!(parsed.records[0].record.ledger_entries.is_empty());
+}
+
+/// bridge#676: the group parser shares the voucher-type parser's typed
+/// refusals. A captured group list read for another company binds no row.
+#[test]
+fn a_group_list_of_another_company_is_refused_as_an_identity_mismatch() {
+    let xml = decode_utf16le(GROUPS_WITH_IDENTITY);
+    assert_eq!(
+        parse_native_group_source_records_with_evidence(
+            &xml,
+            "00000000-0000-0000-0000-000000000000"
+        )
+        .expect_err("no group row carries this company's prefix"),
+        NativeCollectionError::CompanyIdentityMismatch
+    );
 }

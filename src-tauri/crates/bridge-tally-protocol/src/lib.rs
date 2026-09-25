@@ -946,13 +946,16 @@ impl NativeCollectionError {
     }
 
     /// A row parser reports through `anyhow`. An XML, escape or encoding
-    /// error inside the row is the response's syntax, not the row's content;
-    /// anything else the row parser refuses is the row.
+    /// error inside the row, or a response that ends before the row closes, is
+    /// the response, not the row's content. Anything else the row parser
+    /// refuses is the row. An attribute error is flattened to text by the
+    /// shared attribute helpers, so it still reads as the row.
     fn from_row(error: &anyhow::Error) -> Self {
         if error.chain().any(|cause| {
             cause.is::<quick_xml::Error>()
                 || cause.is::<quick_xml::escape::EscapeError>()
                 || cause.is::<quick_xml::encoding::EncodingError>()
+                || cause.is::<RowCutOff>()
         }) {
             Self::MalformedResponse
         } else {
@@ -960,6 +963,21 @@ impl NativeCollectionError {
         }
     }
 }
+
+/// A native collection row that the response ended inside. quick-xml returns
+/// end-of-input with elements still open, so a truncated response reaches the
+/// row parser's end-of-input arm. This marks it as the response's fault, by
+/// type (bridge#676).
+#[derive(Debug)]
+struct RowCutOff;
+
+impl std::fmt::Display for RowCutOff {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("native collection row ended before it closed")
+    }
+}
+
+impl std::error::Error for RowCutOff {}
 
 /// Parses a native `List of VoucherTypes` collection. Like native ledgers,
 /// the collection has no envelope company context, so at least one row must
@@ -1367,7 +1385,7 @@ fn parse_native_voucher_type_collection_row(
             Event::Text(text) if !text.decode()?.trim().is_empty() => {
                 anyhow::bail!("native voucher type row contained unexpected text");
             }
-            Event::Eof => anyhow::bail!("native voucher type row ended before VOUCHERTYPE closed"),
+            Event::Eof => return Err(RowCutOff.into()),
             _ => {}
         }
     }
@@ -1461,7 +1479,7 @@ fn parse_native_group_collection_row(
             Event::Text(text) if !text.decode()?.trim().is_empty() => {
                 anyhow::bail!("native group row contained unexpected text");
             }
-            Event::Eof => anyhow::bail!("native group row ended before GROUP closed"),
+            Event::Eof => return Err(RowCutOff.into()),
             _ => {}
         }
     }
@@ -1605,7 +1623,7 @@ fn parse_native_voucher_collection_row(
             Event::Text(text) if !text.decode()?.trim().is_empty() => {
                 anyhow::bail!("native voucher row contained unexpected text");
             }
-            Event::Eof => anyhow::bail!("native voucher row ended before VOUCHER closed"),
+            Event::Eof => return Err(RowCutOff.into()),
             _ => {}
         }
     }
@@ -1686,7 +1704,7 @@ fn parse_native_voucher_ledger_entry(
             Event::Text(text) if !text.decode()?.trim().is_empty() => {
                 anyhow::bail!("native voucher ledger entry contained unexpected text");
             }
-            Event::Eof => anyhow::bail!("native voucher entry ended before closing"),
+            Event::Eof => return Err(RowCutOff.into()),
             _ => {}
         }
     }
