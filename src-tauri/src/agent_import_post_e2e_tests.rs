@@ -464,8 +464,9 @@ async fn race_an_intent_during_approval(
 async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
     let raced = Uuid::new_v4();
     let (response, observed, post_at, intents) = race_an_intent_during_approval(raced, raced).await;
-    // A refusal inside the queue still reads as an unknown outcome (#656),
-    // though nothing was sent: the journal and the request count show that.
+    // A refusal under the admission lock still reads as an unknown outcome
+    // (#711), though nothing was sent: the journal and the request count show
+    // that.
     assert_eq!(
         response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
         "{response}"
@@ -501,12 +502,20 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch(&server);
+    let company_guid = args["company_guid"].as_str().unwrap().to_string();
     let scripted = ScriptedApproval::approving();
     let response = SCRIPTED_APPROVAL
         .scope(scripted.clone(), server.call_tool("post_import", args))
         .await;
     let observed = sent(simulator);
     assert!(observed.len() > post_at, "{response}");
+    // The post drops every ledger listing snapshot of its company (#630).
+    let dropped = server.listings.lock().unwrap().dropped_companies().to_vec();
+    assert_eq!(dropped.len(), 1, "{dropped:?}");
+    assert!(
+        dropped[0].eq_ignore_ascii_case(&company_guid),
+        "{dropped:?}"
+    );
 
     let intent = dispatch_intent(directory.path());
     assert_journaled_clean_create(directory.path());
@@ -1877,9 +1886,10 @@ async fn a_new_ledger_under_an_approved_name_during_approval_is_refused_by_ident
 /// bridge#634, #641: the queue's catalogue re-read at post time holds a
 /// repeated ledger. The admission recheck refuses before the intent and the
 /// POST under its own code, not the catch-all that says the outcome is
-/// unknown, and carries the catalogue's typed cause. Below the response
-/// budget the cause is left out, as on the generic refusal, and the fields a
-/// caller acts on survive. The name is never in the response.
+/// unknown, nor #656's `post_queue_read_failed` (the named refusal wins), and
+/// carries the catalogue's typed cause. Below the response budget the cause
+/// is left out, as on the generic refusal, and the fields a caller acts on
+/// survive. The name is never in the response.
 #[tokio::test]
 async fn a_post_time_catalogue_refusal_names_its_cause_and_no_ledger() {
     let repeated = crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
@@ -1983,6 +1993,91 @@ async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
             ["verification_status"]
         );
     }
+}
+
+/// #656: a queue read that fails before the intent is refused under its own
+/// code, not the catch-all that says the outcome is unknown. The queue's
+/// catalogue legs are lost in transport (the queue stops at once), or disagree
+/// (a pair drift); either way no intent is journaled, no POST is sent, and the
+/// cause names the failure.
+#[tokio::test]
+async fn a_queue_read_failing_before_the_intent_is_refused_as_such() {
+    let catalogue_at = probe().len() + 2;
+    let drifted = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    for (lost, cause) in [
+        (true, "response_truncated"),
+        (false, "native_report_pair_changed"),
+    ] {
+        let mut plans = before_approval();
+        let mut after = after_approval(xml(created_one()));
+        let expected = if lost {
+            after[catalogue_at + 1] = xml(catalogue()).with_delivery(Delivery::ResetBeforeBody);
+            plans.len() + catalogue_at + 2
+        } else {
+            after[catalogue_at + 3] = xml(drifted.clone());
+            // Each leg of the paired read is followed by a health check, and
+            // the legs are compared only after the second one.
+            plans.len() + catalogue_at + 5
+        };
+        plans.extend(after);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_batch(&server);
+        let before = journal(directory.path());
+        let response = SCRIPTED_APPROVAL
+            .scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            )
+            .await;
+        let observed = sent(simulator).len();
+        let error = &response["structuredContent"]["result"]["error"];
+        assert_eq!(error["code"], "post_queue_read_failed", "{response}");
+        assert_eq!(error["cause"], cause, "{response}");
+        assert_eq!(
+            response["structuredContent"]["result"]["attempt_recorded"],
+            json!(false),
+            "{response}"
+        );
+        assert_eq!(observed, expected, "{response}");
+        assert_eq!(
+            appended_kinds(&before, &journal(directory.path())),
+            ["verification_status"]
+        );
+    }
+}
+
+/// #656, the other direction: the pre-intent code must never reach a post
+/// whose bytes were sent. The POST's response is lost in transport, after the
+/// intent was journaled, so the outcome is unknown and the attempt recorded.
+#[tokio::test]
+async fn a_post_lost_after_the_intent_is_still_an_unknown_outcome() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(
+        xml(created_one()).with_delivery(Delivery::ResetBeforeBody),
+    ));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_dispatch_outcome_unknown",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(true), "{response}");
 }
 
 // bridge#239: the ledgers a batch names must still carry the GUIDs its build

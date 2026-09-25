@@ -59,11 +59,14 @@ With writing on:
 
 - **Prepares vouchers as a local file** — Journal, Payment, Receipt and
   Contra. Bridge writes the file; it does not send it.
-- **Posts a single Journal**, and only after you approve that exact voucher in
-  a dialog on your own machine. The assistant cannot approve it. Payment,
-  Receipt and Contra are prepared but not posted: you import those through
-  Tally yourself, and Bridge then reads them back so you can see what actually
-  landed.
+- **Posts one saved Journal, Payment, Receipt or Contra per approval**, and
+  only after you approve that exact voucher in a dialog on your own machine.
+  The assistant cannot approve it. Bridge then reads the voucher back so you
+  can see what actually landed. You can also import a prepared file through
+  Tally yourself; `verify_import` then reads that back.
+- **Posting has limits.** It creates no masters, posts no sales, purchase, tax
+  or inventory entries, and never alters or deletes a voucher. A company with
+  more than one currency defined is refused.
 
 **What it does not do**
 
