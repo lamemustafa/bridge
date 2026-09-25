@@ -986,6 +986,38 @@ mod through_the_tool {
         ))
     }
 
+    /// A basic read of a book with several Currency masters is refused after
+    /// its currency read and before any ledger request: a bare opening names
+    /// no currency, so a dollar ledger would read as rupees (#714).
+    #[tokio::test]
+    async fn a_basic_read_of_a_several_currency_book_is_refused_before_any_ledger() {
+        let forex = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+        let companies = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        )));
+        let extent = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_extents_forex_live.utf16le.xml"
+        )));
+        let mut plans = Vec::new();
+        pair(&mut plans, companies.clone());
+        plans.extend([status(), companies.clone(), companies]);
+        pair(&mut plans, extent);
+        pair(
+            &mut plans,
+            xml(captured(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+            ))),
+        );
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":forex})).await;
+        assert_eq!(requests, total, "no ledger request was sent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "company_several_currency_masters");
+        let remediation = error["remediation"].as_str().unwrap();
+        assert!(remediation.contains("fields=compliance"), "{error}");
+    }
+
     fn basic_plans_reading(ledgers: String, groups: Option<String>) -> Vec<ScenarioPlan> {
         let company = xml(companies());
         let extent = xml(include_str!(
