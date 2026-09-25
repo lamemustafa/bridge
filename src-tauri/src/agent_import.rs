@@ -1332,15 +1332,17 @@ impl Server {
     }
 
     /// The proof the last verification of `batch_id` persisted, read whole.
+    /// The batch must be one the import journal records, and the file is
+    /// named exactly as `publish_proofs` names it, from the recorded id, so
+    /// a caller's argument never becomes a path on its own.
     fn read_persisted_proof(&self, batch_id: &str) -> Result<Vec<u8>, String> {
         const MAX_PERSISTED_PROOF_BYTES: usize = 32 * 1024 * 1024;
-        let uuid = batch_id
-            .strip_prefix("bridge-")
-            .and_then(|value| uuid::Uuid::parse_str(value).ok())
-            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
-        let path = self
-            .imports_dir()?
-            .join(format!("bridge-{uuid}.proof.json"));
+        let recorded = self
+            .latest_import_snapshot(batch_id)?
+            .ok_or_else(|| "import_batch_not_found".to_string())?
+            .batch
+            .batch_id;
+        let path = self.imports_dir()?.join(format!("{recorded}.proof.json"));
         let file = super::local_file::open_local_file(&path, false)
             .map_err(|_| "verification_proof_missing".to_string())?;
         let mut bytes = Vec::new();
