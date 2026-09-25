@@ -13,8 +13,10 @@ const RESERVED_MARKER: &str = r"\[[Bb][Rr][Ii][Dd][Gg][Ee]:";
 // its bytes.
 const LEDGER_CONTROLS: &str = r"[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]";
 const INTERIOR_LINE_BREAK: &str = r"[\u000A\u000D][^\u000A\u000D]";
-// Non-control members of Unicode White_Space, matching Rust str::trim.
-const BLANK_LEDGER: &str = r"^[\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*$";
+// Non-control members of Unicode White_Space, matching Rust str::trim, plus
+// LF and CR: a ledger name may now end in a line break, so a name of nothing
+// else must still read as blank (bridge#626).
+const BLANK_LEDGER: &str = r"^[\u000A\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*$";
 
 pub(in crate::agent) fn voucher_input_schema() -> Value {
     let text = json!({

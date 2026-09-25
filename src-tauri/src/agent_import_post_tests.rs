@@ -1385,9 +1385,10 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
     );
 }
 
-/// bridge#626 slice 1: a ledger name ending in CR LF can be built and imported
-/// from the file, but the native dialog cannot yet show it so an operator can
-/// tell it from its twin, so native posting refuses it.
+/// bridge#626 slice 1 changes no post code: this pins the refusal that already
+/// applies to a ledger name ending in CR LF. Such a name can now be built and
+/// imported from the file, but the native dialog cannot yet show it so that an
+/// operator can tell it from its twin; slice 2 changes that, and this test.
 #[test]
 fn native_preview_refuses_a_ledger_name_ending_in_a_line_break() {
     let (mut line, endpoint) = batch();
