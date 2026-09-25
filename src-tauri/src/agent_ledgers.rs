@@ -229,26 +229,27 @@ fn basic_row(ledger: TallyLedger, opening_as_of: &TallyDate) -> Value {
     })
 }
 
-/// The date `party_gstin` is read as of: `as_of` when given, else the Bridge
-/// host's date (bridge#653). `as_of` selects only the GSTIN, so it is refused
-/// unless fields=compliance rather than left to be read as the opening-balance
-/// date, which `opening_balance_as_of` reports on its own.
-fn gstin_as_of(args: &Value) -> Result<String, String> {
+/// The caller's `as_of`, the date `party_gstin` is read as of (bridge#653);
+/// `None` leaves it to the Bridge host's date, taken where the rows are built.
+/// `as_of` selects only the GSTIN, so it is refused unless fields=compliance
+/// rather than left to be read as the opening-balance date, which
+/// `opening_balance_as_of` reports on its own.
+fn requested_gstin_as_of(args: &Value) -> Result<Option<String>, String> {
     let Some(as_of) = optional_string(args, "as_of")? else {
-        return Ok(tally_host_today());
+        return Ok(None);
     };
     let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
     if !ledger_master_fields(&fields)? {
         return Err("ledger_masters_as_of_requires_compliance".to_string());
     }
-    normalized_date(&as_of)
+    normalized_date(&as_of).map(Some)
 }
 
 impl Server {
     pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         // Before any read: a refused `as_of` costs no Tally request.
-        let gstin_as_of = gstin_as_of(args)?;
+        let requested_as_of = requested_gstin_as_of(args)?;
         let (company, identity, mut evidence) = self.verified_company(guid).await?;
         let result: Result<ToolOutcome, ToolFailure> = async {
             let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
@@ -268,6 +269,7 @@ impl Server {
                 // Built once per call, not per ledger: the same group
                 // collection classifies every row.
                 let group_index = GroupIndex::build(groups);
+                let gstin_as_of = requested_as_of.clone().unwrap_or_else(tally_host_today);
                 let mut rows = records
                     .into_iter()
                     .map(|record| {
