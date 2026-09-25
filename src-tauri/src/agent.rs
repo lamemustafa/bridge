@@ -582,6 +582,14 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
         ),
+        // A cause, reached through `ledger_export_invalid` (#714).
+        "company_several_currency_masters" => Some(
+            "This company keeps more than one Currency master, and a basic ledger read \
+             returns bare opening balances with no currency of their own, so a ledger kept \
+             in another currency would read as rupees. Bridge refused before reading any \
+             ledger. Call ledger_masters with fields=compliance, which reads the \
+             base-currency ledgers and names the ones it leaves out. Retrying refuses again.",
+        ),
         // A cause, reached through the shared `party_ledger_master_read_failed`.
         "ledger_masters_too_large" => Some(
             "The company's master-alteration mark (`size.master_alter_id`) puts the estimated \
