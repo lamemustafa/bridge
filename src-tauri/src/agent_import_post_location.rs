@@ -87,6 +87,49 @@ pub(super) fn target_masters_unchanged(
     Some(target(at_binding)? == target(at_aim)?)
 }
 
+/// The target's voucher mark in each snapshot, and whether it moved by exactly
+/// what Tally reported creating. Each gateway create moves `ALTVCHID` by one,
+/// and so does every gateway alter or cancel (a delete by two; protocol
+/// reference §11c.5). So a step above `CREATED` means the post itself altered
+/// or cancelled vouchers, or another voucher in the target changed within the
+/// snapshots' interval, and the step alone cannot say which. A native post
+/// sends a REMOTEID no earlier intent records, so it is expected only to
+/// create, but nothing here relies on that. Screen edits
+/// were also seen to move it by one each (PARTIAL, §11c.5), and nothing
+/// measured rules out a change that leaves it still; so a match is no proof
+/// that nothing else changed. A multi-voucher import stepped by its count in
+/// lab scripts (PARTIAL, §11c.5); through this post path that is UNVERIFIED.
+/// Reported only: a single post is proved by its readback. A batch post, not
+/// yet built, is to gate on it. `Null` unless each snapshot holds exactly one
+/// target row.
+fn target_voucher_step(
+    before: &[LoadedCompanyMarks],
+    after: &[LoadedCompanyMarks],
+    guid: &str,
+    name: &str,
+    reported_created: Option<u64>,
+) -> Value {
+    let mark = |rows: &[LoadedCompanyMarks]| {
+        let mut targets = rows.iter().filter(|row| is_target(row, guid, name));
+        match (targets.next(), targets.next()) {
+            (Some(row), None) => Some(row.vouchers),
+            _ => None,
+        }
+    };
+    let (Some(from), Some(to)) = (mark(before), mark(after)) else {
+        return Value::Null;
+    };
+    // A mark that went backwards is no step at all.
+    let step = to.checked_sub(from);
+    json!({
+        "before": from,
+        "after": to,
+        "step": step,
+        "reported_created": reported_created,
+        "matches_created": reported_created.map(|created| step == Some(created)),
+    })
+}
+
 fn key(row: &LoadedCompanyMarks) -> (String, String) {
     (
         row.guid.to_ascii_lowercase(),
@@ -102,9 +145,11 @@ fn described(row: &LoadedCompanyMarks) -> Value {
 /// the voucher itself stays with the marker readback; this only says which
 /// companies' voucher marks moved. `after` is `None` when the snapshot after
 /// the POST could not be read, and that is said, never guessed.
-/// `reported_created` is Tally's CREATED counter, `None` when the response was
-/// lost or unreadable. A mark that moved elsewhere while Tally reported
-/// creating nothing is someone else's voucher, not a misdirected post.
+/// `reported_created` is Tally's CREATED counter, `None` when the response
+/// body did not parse (a response lost in transport never reaches here: the
+/// post fails first, with no location). A mark that moved elsewhere while
+/// Tally reported creating nothing is someone else's voucher, not a
+/// misdirected post.
 pub(super) fn classify_post_location(
     before: &[LoadedCompanyMarks],
     after: Option<&[LoadedCompanyMarks]>,
@@ -175,6 +220,7 @@ pub(super) fn classify_post_location(
     json!({
         "state": state,
         "target_moved": target_moved,
+        "target_voucher_step": target_voucher_step(before, after, guid, name, reported_created),
         "other_companies_moved": others,
         "companies_added": added,
         "companies_removed": removed,

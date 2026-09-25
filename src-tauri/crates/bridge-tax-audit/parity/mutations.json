@@ -3781,7 +3781,7 @@
   "what": "the match tie goes to the later statement row",
   "file": "src/bank_reconciliation.rs",
   "from": "if best.is_none_or(|x| (gap, si) < x) {",
-  "to": "if best.is_none_or(|x| (gap, si) <= x) {"
+  "to": "if best.is_none_or(|x| gap <= x.0) {"
  },
  {
   "id": "E2A-02",
@@ -3818,7 +3818,7 @@
  {
   "id": "E2A-06",
   "by": "author",
-  "what": "a zero-net voucher is a books row",
+  "what": "every voucher in the window is a books row, even a zero-net one or one off the bank ledger",
   "file": "src/bank_reconciliation.rs",
   "from": "        if amount != 0 {\n            out.push(BookRow {",
   "to": "        if amount != 0 || !v.lines.is_empty() {\n            out.push(BookRow {"
@@ -3826,10 +3826,10 @@
  {
   "id": "E2A-07",
   "by": "author",
-  "what": "a books row with a zero amount is a cheque, not a deposit",
+  "what": "the two timing reasons swapped by sign",
   "file": "src/bank_reconciliation.rs",
   "from": "let reason = if book_rows[bi].amount_paise < 0 {",
-  "to": "let reason = if book_rows[bi].amount_paise <= 0 {"
+  "to": "let reason = if book_rows[bi].amount_paise > 0 {"
  },
  {
   "id": "E2A-08",
@@ -3874,7 +3874,7 @@
  {
   "id": "E2A-13",
   "by": "author",
-  "what": "a repeated figure id overwrites instead of refusing",
+  "what": "a repeated figure id reaches TestResult::fig's panic instead of refusing",
   "file": "src/bank_reconciliation.rs",
   "from": "    if r.figures.iter().any(|f| f.id == id) {\n        return Err(",
   "to": "    if false && r.figures.iter().any(|f| f.id == id) {\n        return Err("
@@ -3892,8 +3892,264 @@
   "by": "author",
   "what": "a statement balance of null read as zero",
   "file": "src/documents.rs",
-  "from": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => None,",
-  "to": "                balance_paise: match &r[\"balance_paise\"] {\n                    Value::Null => Some(0),"
+  "from": "                    Some(Value::Null) => None,",
+  "to": "                    Some(Value::Null) => Some(0),"
+ },
+ {
+  "id": "E2A-16",
+  "by": "reviewer-opus",
+  "what": "the window's last day is left out of the books rows",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if !(start <= &v.date && &v.date <= end) {",
+  "to": "if !(start <= &v.date && &v.date < end) {"
+ },
+ {
+  "id": "E2A-17",
+  "by": "reviewer-opus",
+  "what": "a statement row can be matched to several books rows",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            used.insert(si);\n",
+  "to": "            used.remove(&si);\n"
+ },
+ {
+  "id": "E2A-18",
+  "by": "reviewer-opus",
+  "what": "books rows ordered by date alone, not (date, GUID)",
+  "file": "src/bank_reconciliation.rs",
+  "from": "order.sort_by(|&a, &b| (&rows[a].date, &rows[a].guid).cmp(&(&rows[b].date, &rows[b].guid)));",
+  "to": "order.sort_by(|&a, &b| rows[a].date.cmp(&rows[b].date));"
+ },
+ {
+  "id": "E2A-19",
+  "by": "reviewer-opus",
+  "what": "a statement window outside the engagement year is run",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if start < &period.from || end > &period.to {",
+  "to": "if false && (start < &period.from || end > &period.to) {"
+ },
+ {
+  "id": "E2A-20",
+  "by": "reviewer-opus",
+  "what": "a negative statement amount is read",
+  "file": "src/documents.rs",
+  "from": "if row.debit_paise < 0 || row.credit_paise < 0 {",
+  "to": "if false && (row.debit_paise < 0 || row.credit_paise < 0) {"
+ },
+ {
+  "id": "E2A-21",
+  "by": "reviewer-opus",
+  "what": "a statement row dated outside its period is read",
+  "file": "src/documents.rs",
+  "from": "if row.txn_date < start || row.txn_date > end {",
+  "to": "if false && (row.txn_date < start || row.txn_date > end) {"
+ },
+ {
+  "id": "E2A-22",
+  "by": "reviewer-opus",
+  "what": "a statement row that is both a debit and a credit is read",
+  "file": "src/documents.rs",
+  "from": "if row.debit_paise != 0 && row.credit_paise != 0 {",
+  "to": "if false && (row.debit_paise != 0 && row.credit_paise != 0) {"
+ },
+ {
+  "id": "E2A-23",
+  "by": "reviewer-opus",
+  "what": "a blank charge term is accepted",
+  "file": "src/bank_reconciliation.rs",
+  "from": "Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(",
+  "to": "Some(s) if s.is_empty() => Err(AuditError::Config(format!("
+ },
+ {
+  "id": "E2A-24",
+  "by": "reviewer-opus",
+  "what": "the match takes the first eligible row, not the nearest",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if best.is_none_or(|x| (gap, si) < x) {",
+  "to": "if best.is_none() {"
+ },
+ {
+  "id": "E2A-25",
+  "by": "reviewer-opus",
+  "what": "books rows ordered by GUID alone, not (date, GUID)",
+  "file": "src/bank_reconciliation.rs",
+  "from": "order.sort_by(|&a, &b| (&rows[a].date, &rows[a].guid).cmp(&(&rows[b].date, &rows[b].guid)));",
+  "to": "order.sort_by(|&a, &b| rows[a].guid.cmp(&rows[b].guid));"
+ },
+ {
+  "id": "E2A-26",
+  "by": "reviewer-opus",
+  "what": "a forward split leaves its statement rows in the pool",
+  "file": "src/bank_reconciliation.rs",
+  "from": "                reason_stmt.insert(si, REASON_SPLIT_SETTLEMENT);\n                remaining_stmt.remove(&si);",
+  "to": "                reason_stmt.insert(si, REASON_SPLIT_SETTLEMENT);"
+ },
+ {
+  "id": "E2A-27",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool takes every books row, matched or split",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        for &bi in &remaining_books {",
+  "to": "        for bi in 0..book_rows.len() {"
+ },
+ {
+  "id": "E2A-28",
+  "by": "reviewer-opus",
+  "what": "the forward split pool ignores the day window",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days {",
+  "to": "            if true {"
+ },
+ {
+  "id": "E2A-29",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool ignores the day window",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days {",
+  "to": "            if true {"
+ },
+ {
+  "id": "E2A-30",
+  "by": "reviewer-opus",
+  "what": "the charge pass runs over every unmatched statement row, splits included",
+  "file": "src/bank_reconciliation.rs",
+  "from": "    for si in statement_order(stmt, remaining_stmt.clone()) {\n        let narration",
+  "to": "    for si in statement_order(stmt, unmatched_stmt.iter().copied()) {\n        let narration"
+ },
+ {
+  "id": "E2A-31",
+  "by": "reviewer-opus",
+  "what": "the forward split pass runs in books index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "    for bi in books_order(&book_rows, remaining_books.clone()) {\n        let b = &book_rows[bi];\n        let mut pool",
+  "to": "    for bi in remaining_books.clone() {\n        let b = &book_rows[bi];\n        let mut pool"
+ },
+ {
+  "id": "E2A-32",
+  "by": "reviewer-opus",
+  "what": "the reverse split pass runs in statement index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "    for si in statement_order(stmt, remaining_stmt.clone()) {\n        let s = &stmt[si];",
+  "to": "    for si in remaining_stmt.clone() {\n        let s = &stmt[si];"
+ },
+ {
+  "id": "E2A-33",
+  "by": "reviewer-opus",
+  "what": "a negative debit is read",
+  "file": "src/documents.rs",
+  "from": "if row.debit_paise < 0 || row.credit_paise < 0 {",
+  "to": "if row.credit_paise < 0 {"
+ },
+ {
+  "id": "E2A-34",
+  "by": "reviewer-opus",
+  "what": "a row dated before the period is read",
+  "file": "src/documents.rs",
+  "from": "if row.txn_date < start || row.txn_date > end {",
+  "to": "if row.txn_date > end {"
+ },
+ {
+  "id": "E2A-35",
+  "by": "reviewer-opus",
+  "what": "a one-day statement is refused",
+  "file": "src/documents.rs",
+  "from": "    if start > end {",
+  "to": "    if start >= end {"
+ },
+ {
+  "id": "E2A-36",
+  "by": "reviewer-opus",
+  "what": "run matches exactly, without the Re 1 tolerance",
+  "file": "src/bank_reconciliation.rs",
+  "from": "let pairs = match_rows(&book_rows, stmt, TOL_PAISE, match_max_days)?;",
+  "to": "let pairs = match_rows(&book_rows, stmt, 0, match_max_days)?;"
+ },
+ {
+  "id": "E2A-37",
+  "by": "reviewer-opus",
+  "what": "the forward split needs an exact sum",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if let Some(found) = find_split(b.amount_paise, &pool, TOL_PAISE)? {",
+  "to": "if let Some(found) = find_split(b.amount_paise, &pool, 0)? {"
+ },
+ {
+  "id": "E2A-38",
+  "by": "reviewer-opus",
+  "what": "the reverse split needs an exact sum",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        if let Some(found) = find_split(signed(s)?, &pool, TOL_PAISE)? {",
+  "to": "        if let Some(found) = find_split(signed(s)?, &pool, 0)? {"
+ },
+ {
+  "id": "E2A-39",
+  "by": "reviewer-opus",
+  "what": "a split exactly Re 1 off is not a split",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if distance(total, target)? <= tol {",
+  "to": "            if distance(total, target)? < tol {"
+ },
+ {
+  "id": "E2A-40",
+  "by": "reviewer-opus",
+  "what": "the forward split pool drops a row exactly 7 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days {",
+  "to": "            if days_apart(&stmt[si].txn_date, &b.date) < match_max_days {"
+ },
+ {
+  "id": "E2A-41",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool drops a row exactly 7 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days {",
+  "to": "            if days_apart(&book_rows[bi].date, &s.txn_date) < match_max_days {"
+ },
+ {
+  "id": "E2A-42",
+  "by": "reviewer-opus",
+  "what": "the forward split pool takes a row 8 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days {",
+  "to": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days + 1 {"
+ },
+ {
+  "id": "E2A-43",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool takes a row 8 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days {",
+  "to": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days + 1 {"
+ },
+ {
+  "id": "E2A-44",
+  "by": "reviewer-opus",
+  "what": "the forward split pool is searched in date order, not index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        for &si in &remaining_stmt {",
+  "to": "        for si in statement_order(stmt, remaining_stmt.iter().copied()) {"
+ },
+ {
+  "id": "E2A-45",
+  "by": "reviewer-opus",
+  "what": "statement rows on one date go in descending index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "order.sort_by(|&a, &b| (&rows[a].txn_date, a).cmp(&(&rows[b].txn_date, b)));",
+  "to": "order.sort_by(|&a, &b| (&rows[a].txn_date, std::cmp::Reverse(a)).cmp(&(&rows[b].txn_date, std::cmp::Reverse(b))));"
+ },
+ {
+  "id": "E2A-46",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool is searched in date order, not index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        for &bi in &remaining_books {",
+  "to": "        for bi in books_order(&book_rows, remaining_books.iter().copied()) {"
+ },
+ {
+  "id": "E2A-47",
+  "by": "reviewer-opus",
+  "what": "a reverse split leaves its statement row to the later passes",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            split_groups_rev.push(si);\n            remaining_stmt.remove(&si);",
+  "to": "            split_groups_rev.push(si);"
  },
  {
   "id": "E2B2-01",

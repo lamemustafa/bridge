@@ -208,10 +208,23 @@ fn bank_statement(v: &Value) -> Result<BankStatementDoc> {
     if !period.is_object() {
         return Err(bad("period is not an object"));
     }
-    let rows = rows(v, "rows")?
+    let doc_id = text(v, "doc_id", "statement")?;
+    let account_ref = text(v, "account_ref", "statement")?;
+    let start = iso_date(period, "start", "period")?;
+    let end = iso_date(period, "end", "period")?;
+    if start > end {
+        return Err(bad("period.start is after period.end"));
+    }
+    // Unlike the traces lists, a statement's rows and each row's balance are always written:
+    // an absent key is a malformed document, never an empty statement or a missing balance.
+    let Some(Value::Array(listed)) = v.get("rows") else {
+        return Err(bad("rows is not a list"));
+    };
+    let rows = listed
         .iter()
-        .map(|r| {
-            Ok(BankStatementRow {
+        .enumerate()
+        .map(|(i, r)| {
+            let row = BankStatementRow {
                 doc: text(r, "doc", "rows")?,
                 row: int(r, "row", "rows")?,
                 account_ref: text(r, "account_ref", "rows")?,
@@ -219,20 +232,38 @@ fn bank_statement(v: &Value) -> Result<BankStatementDoc> {
                 narration: text(r, "narration", "rows")?,
                 debit_paise: int(r, "debit_paise", "rows")?,
                 credit_paise: int(r, "credit_paise", "rows")?,
-                balance_paise: match &r["balance_paise"] {
-                    Value::Null => None,
-                    _ => Some(int(r, "balance_paise", "rows")?),
+                balance_paise: match r.get("balance_paise") {
+                    None => return Err(bad(&format!("rows[{i}].balance_paise is missing"))),
+                    Some(Value::Null) => None,
+                    Some(_) => Some(int(r, "balance_paise", "rows")?),
                 },
-            })
+            };
+            let at = format!("rows[{i}]");
+            if usize::try_from(row.row).ok() != Some(i) {
+                return Err(bad(&format!("{at}.row is not its position")));
+            }
+            if row.doc != doc_id || row.account_ref != account_ref {
+                return Err(bad(&format!("{at} names another document or account")));
+            }
+            if row.debit_paise < 0 || row.credit_paise < 0 {
+                return Err(bad(&format!("{at} has a negative amount")));
+            }
+            if row.debit_paise != 0 && row.credit_paise != 0 {
+                return Err(bad(&format!("{at} is both a debit and a credit")));
+            }
+            if row.txn_date < start || row.txn_date > end {
+                return Err(bad(&format!("{at}.txn_date is outside the period")));
+            }
+            Ok(row)
         })
         .collect::<Result<_>>()?;
     Ok(BankStatementDoc {
-        doc_id: text(v, "doc_id", "statement")?,
+        doc_id,
         source_sha256: text(v, "source_sha256", "statement")?,
-        account_ref: text(v, "account_ref", "statement")?,
+        account_ref,
         bank: text(v, "bank", "statement")?,
-        start: iso_date(period, "start", "period")?,
-        end: iso_date(period, "end", "period")?,
+        start,
+        end,
         opening_balance_paise: int(v, "opening_balance_paise", "statement")?,
         closing_balance_paise: int(v, "closing_balance_paise", "statement")?,
         rows,
@@ -323,5 +354,46 @@ mod tests {
         let mut broken = doc.clone();
         broken["rows"][0]["debit_paise"] = json!("0");
         assert!(bank_statement_from_json(&broken).is_err());
+        for (field, value) in [
+            ("row", json!(1)),
+            ("doc", json!("bank:y:statement")),
+            ("account_ref", json!("XX13")),
+            ("credit_paise", json!(-1)),
+            ("debit_paise", json!(1)),
+            ("txn_date", json!("2026-04-01")),
+            ("txn_date", json!("2026-02-28")),
+        ] {
+            let mut broken = doc.clone();
+            broken["rows"][0][field] = value;
+            assert!(bank_statement_from_json(&broken).is_err(), "{field}");
+        }
+        let mut broken = doc.clone();
+        broken["rows"][1]["debit_paise"] = json!(-1);
+        assert!(
+            bank_statement_from_json(&broken).is_err(),
+            "a negative debit"
+        );
+        let mut one_day = doc.clone();
+        one_day["period"] = json!({"start": "2026-03-02", "end": "2026-03-02"});
+        one_day["rows"] = json!([row]);
+        assert!(
+            bank_statement_from_json(&one_day).is_ok(),
+            "a one-day statement"
+        );
+        let mut broken = doc.clone();
+        broken["rows"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("balance_paise");
+        assert!(bank_statement_from_json(&broken).is_err(), "no balance key");
+        let mut broken = doc.clone();
+        broken.as_object_mut().unwrap().remove("rows");
+        assert!(bank_statement_from_json(&broken).is_err(), "no rows key");
+        let mut broken = doc.clone();
+        broken["period"]["start"] = json!("2026-04-01");
+        assert!(
+            bank_statement_from_json(&broken).is_err(),
+            "start after end"
+        );
     }
 }

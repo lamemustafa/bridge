@@ -144,6 +144,9 @@ base revision.
 <a id="82d-a-ledgers-currencyname-is-the-name-of-the-currency-master-it-is-kept-in--verified-2026-09-23-tallyprime-71-synthetic-and-client-derived-books"></a>
 
 [8.2d A ledger's `CURRENCYNAME` is the NAME of the Currency master it is kept in — **VERIFIED 2026-09-23; TallyPrime 7.1, synthetic and client-derived books**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#82d-a-ledgers-currencyname-is-the-name-of-the-currency-master-it-is-kept-in--verified-2026-09-23-tallyprime-71-synthetic-and-client-derived-books)
+<a id="82e-a-voucher-types-class-comes-from-tallys-class-functions-not-its-display-name--verified-2026-09-24-tallyprime-71-one-synthetic-book"></a>
+
+[8.2e A voucher type's class comes from Tally's class functions, not its display name — **VERIFIED 2026-09-24; TallyPrime 7.1, one synthetic book**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#82e-a-voucher-types-class-comes-from-tallys-class-functions-not-its-display-name--verified-2026-09-24-tallyprime-71-one-synthetic-book)
 <a id="83-gst-duty-head--the-vocabulary-is-irregular-and-taxtype-qualifies-it--verified-2026-09-12-single-instance"></a>
 
 [8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#83-gst-duty-head--the-vocabulary-is-irregular-and-taxtype-qualifies-it--verified-2026-09-12-single-instance)
@@ -198,6 +201,9 @@ base revision.
 <a id="96-actioncancel-by-remoteid-creates-a-new-voucher--it-does-not-cancel--trap"></a>
 
 [9.6 `ACTION="Cancel"` by `REMOTEID` creates a new voucher — it does not cancel — **TRAP**](./TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md#96-actioncancel-by-remoteid-creates-a-new-voucher--it-does-not-cancel--trap)
+<a id="914-a-remoteid-upsert-re-states-the-voucher-cancel-optional-delete-and-recreate"></a>
+
+[9.14 A `REMOTEID` upsert re-states the voucher: cancel, optional, delete and recreate](./TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md#914-a-remoteid-upsert-re-states-the-voucher-cancel-optional-delete-and-recreate)
 <a id="12-a-modal-error-dialog-in-tallys-ui-blocks-the-gateway-until-a-human-clicks-ok--p0-operationally"></a>
 
 [1.2 A modal error dialog in Tally's UI blocks the gateway until a human clicks OK — **P0 operationally**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#12-a-modal-error-dialog-in-tallys-ui-blocks-the-gateway-until-a-human-clicks-ok--p0-operationally)
