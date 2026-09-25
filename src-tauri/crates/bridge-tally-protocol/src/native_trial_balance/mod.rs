@@ -92,8 +92,8 @@ pub fn render_native_trial_balance_request(
 /// its `FETCH`, so each row names its ledger's currency and a foreign-currency
 /// ledger can be set aside by name (bridge#551). Sent only when the company
 /// defines several Currency masters, so a single-currency book's request is
-/// byte-for-byte unchanged. UNVERIFIED: that a Trial Balance row carries
-/// `CURRENCYNAME` at all waits on a live capture on a several-currency book.
+/// byte-for-byte unchanged. On the captured several-currency book every row
+/// carried it (`trial_balance_currency_forex_live`; one book, one run: PARTIAL).
 pub fn render_native_trial_balance_request_with_currency(
     company: &str,
     period: &NativeLedgerSnapshotPeriod,
