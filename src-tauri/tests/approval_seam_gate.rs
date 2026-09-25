@@ -109,6 +109,7 @@ fn remote_id_seam_problems(source: &str) -> Vec<String> {
     for item in [
         "tokio::task_local! {",
         "if let Ok(scripted) = SCRIPTED_REMOTE_ID.try_with(|id| *id) {",
+        "if let Ok(scripted) = SCRIPTED_REMOTE_IDS.try_with(Clone::clone) {",
     ] {
         let at = lines.iter().position(|line| *line == item);
         if at
@@ -135,6 +136,11 @@ fn the_remote_id_seam_is_gated_by_bare_cfg_test() {
         source.replacen(
             "    #[cfg(test)]\n    if let Ok(scripted)",
             "    if let Ok(scripted)",
+            1,
+        ),
+        source.replacen(
+            "        #[cfg(test)]\n        if let Ok(scripted) = SCRIPTED_REMOTE_IDS",
+            "        if let Ok(scripted) = SCRIPTED_REMOTE_IDS",
             1,
         ),
     ] {

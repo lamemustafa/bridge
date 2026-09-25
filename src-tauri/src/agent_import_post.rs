@@ -1211,6 +1211,8 @@ tokio::task_local! {
     /// Test-only: the REMOTEID a post mints, so a test can make it one the
     /// journal already records.
     pub(super) static SCRIPTED_REMOTE_ID: Uuid;
+    /// Test-only: the REMOTEIDs a batch post mints, one per voucher.
+    pub(super) static SCRIPTED_REMOTE_IDS: Vec<Uuid>;
 }
 
 /// A fresh random REMOTEID for one native post.
@@ -1233,6 +1235,12 @@ impl RemoteIds {
     pub(super) fn mint(count: usize) -> Result<Self, String> {
         if count == 0 {
             return Err("import_post_requires_one_voucher".into());
+        }
+        #[cfg(test)]
+        if let Ok(scripted) = SCRIPTED_REMOTE_IDS.try_with(Clone::clone) {
+            if scripted.len() == count {
+                return Ok(Self(scripted));
+            }
         }
         // No more than the journal will admit on read, so an intent is never
         // written that the next journal read would refuse.
