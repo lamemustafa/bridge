@@ -2658,9 +2658,15 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, None, false, LedgerCurrencyGate::None)
-            .await
-            .map(|read| (read.listing.ledgers, read.listing.evidence))
+        self.fetch_ledger_opening_with_evidence(
+            config,
+            identity,
+            None,
+            false,
+            LedgerCurrencyGate::None,
+        )
+        .await
+        .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
@@ -2728,8 +2734,8 @@ impl TallyRuntime {
             false,
             LedgerCurrencyGate::None,
         )
-            .await
-            .map(|read| (read.listing.ledgers, read.listing.evidence))
+        .await
+        .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     async fn fetch_ledger_opening_with_evidence(

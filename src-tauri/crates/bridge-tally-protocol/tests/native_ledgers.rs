@@ -364,7 +364,10 @@ fn a_several_currency_export_returns_foreign_openings_as_bare_numbers() {
         .find("<LEDGER NAME=\"BRIDGE FX DEBTOR A\"")
         .expect("the captured composite-opening row");
     let end = start + capture[start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
-    assert!(capture[start..end].contains(" @ "), "the removed row is the composite one");
+    assert!(
+        capture[start..end].contains(" @ "),
+        "the removed row is the composite one"
+    );
     let derived = format!("{}{}", &capture[..start], &capture[end..]);
     assert!(!derived.contains(" @ "), "no composite left");
     let parsed = parse_native_ledger_source_records_with_evidence(
