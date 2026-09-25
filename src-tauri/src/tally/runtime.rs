@@ -3385,162 +3385,185 @@ impl TallyRuntime {
                 let recheck_admission = &recheck_admission;
                 let before_dispatch = &before_dispatch;
                 async move {
-                    // Admit the initial observed product/mode and company scope before
-                    // any queued monetary source read. Those observations can become
-                    // stale during queued source reads, so the same admission is
-                    // repeated after the catalogue, before the final absence reads.
-                    let (opening_profile, opening_mode_evidence) =
-                        observe_read_boundary(&client).await?;
-                    let (opening_companies, opening_company_evidence) = client
-                        .fetch_companies_with_wire_evidence()
-                        .await
-                        .map_err(|error| {
-                            with_read_evidence(error, opening_mode_evidence.clone())
-                        })?;
-                    let admission_evidence =
-                        opening_mode_evidence.combine(opening_company_evidence);
-                    admit_company_identity(&opening_companies, &identity)
-                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    super::approved_import::require_unique_company_scope(
-                        &opening_companies,
-                        &identity,
-                    )
-                    .map_err(|error| {
-                        with_read_evidence(error.into(), admission_evidence.clone())
-                    })?;
-                    request
-                        .require_boundary_profile(opening_profile)
+                    // Every queue read and the admission recheck run in this block,
+                    // before the durable intent and the POST (#656). Its error is
+                    // marked as refused before the intent; nothing that records
+                    // the intent or sends may move into it
+                    // (`tests/approval_seam_gate.rs` holds it to that).
+                    let (admission_evidence, before_marks) = async {
+                        // Admit the initial observed product/mode and company scope before
+                        // any queued monetary source read. Those observations can become
+                        // stale during queued source reads, so the same admission is
+                        // repeated after the catalogue, before the final absence reads.
+                        let (opening_profile, opening_mode_evidence) =
+                            observe_read_boundary(&client).await?;
+                        let (opening_companies, opening_company_evidence) = client
+                            .fetch_companies_with_wire_evidence()
+                            .await
+                            .map_err(|error| {
+                                with_read_evidence(error, opening_mode_evidence.clone())
+                            })?;
+                        let admission_evidence =
+                            opening_mode_evidence.combine(opening_company_evidence);
+                        admit_company_identity(&opening_companies, &identity)
+                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        super::approved_import::require_unique_company_scope(
+                            &opening_companies,
+                            &identity,
+                        )
                         .map_err(|error| {
                             with_read_evidence(error.into(), admission_evidence.clone())
                         })?;
-                    // Every loaded company's marks as the binding reads begin
-                    // (#239). The aim snapshot sent last before the POST must
-                    // show the target's master mark unchanged, or a master moved
-                    // after the catalogue re-read below. As for the aim read, a
-                    // failure is the typed refusal itself: nothing was sent.
-                    let binding_marks_xml = request.company_marks_request().into_xml();
-                    let binding_marks = client
-                        .post_xml_raw(binding_marks_xml.clone())
+                        request
+                            .require_boundary_profile(opening_profile)
+                            .map_err(|error| {
+                                with_read_evidence(error.into(), admission_evidence.clone())
+                            })?;
+                        // Every loaded company's marks as the binding reads begin
+                        // (#239). The aim snapshot sent last before the POST must
+                        // show the target's master mark unchanged, or a master moved
+                        // after the catalogue re-read below. As for the aim read, a
+                        // failure is the typed refusal itself: nothing was sent.
+                        let binding_marks_xml = request.company_marks_request().into_xml();
+                        let binding_marks = client
+                            .post_xml_raw(binding_marks_xml.clone())
+                            .await
+                            .map_err(|error| {
+                                with_read_evidence(
+                                    anyhow::Error::new(
+                                        super::approved_import::ApprovedImportAdmissionError::MastersUnconfirmed,
+                                    )
+                                    .context(format!("{error:#}")),
+                                    admission_evidence.clone(),
+                                )
+                            })?;
+                        let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                            &binding_marks_xml,
+                            binding_marks.encoded_sha256.clone(),
+                            binding_marks.encoded_body.len(),
+                        ));
+                        let (catalogue, catalogue_evidence) = fetch_admitted_agent_read(
+                            &client,
+                            &identity,
+                            request.ledger_catalogue_request(),
+                        )
                         .await
-                        .map_err(|error| {
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        let admission_evidence = admission_evidence.combine(catalogue_evidence);
+                        // A bank voucher's legs are classified from the ledgers'
+                        // parents (in the catalogue above) and the group tree, so
+                        // both are re-read here, inside the same identity brackets,
+                        // after approval and before the POST.
+                        let (groups, admission_evidence) = match request.group_collection_request() {
+                            Some(group_request) => {
+                                let (groups, group_evidence) =
+                                    fetch_admitted_agent_read(&client, &identity, group_request)
+                                        .await
+                                        .map_err(|error| {
+                                            with_read_evidence(error, admission_evidence.clone())
+                                        })?;
+                                (Some(groups), admission_evidence.combine(group_evidence))
+                            }
+                            None => (None, admission_evidence),
+                        };
+                        // Every post re-reads the company's Currency masters in the
+                        // same brackets: it goes only into a book with exactly one
+                        // (bridge#551), and one can be added while approval waits.
+                        let (currencies, currency_evidence) =
+                            fetch_admitted_agent_read(&client, &identity, request.currency_request())
+                                .await
+                                .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        let admission_evidence = admission_evidence.combine(currency_evidence);
+                        let (profile, mode_evidence) = observe_read_boundary(&client)
+                            .await
+                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        let admission_evidence = admission_evidence.combine(mode_evidence);
+                        let (companies, company_evidence) = client
+                            .fetch_companies_with_wire_evidence()
+                            .await
+                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        let admission_evidence = admission_evidence.combine(company_evidence);
+                        admit_company_identity(&companies, &identity)
+                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        super::approved_import::require_unique_company_scope(&companies, &identity)
+                            .map_err(|error| {
+                                with_read_evidence(error.into(), admission_evidence.clone())
+                            })?;
+                        request.require_boundary_profile(profile).map_err(|error| {
+                            with_read_evidence(error.into(), admission_evidence.clone())
+                        })?;
+                        // Keep duplicate absence as the final source admission. The
+                        // helper retains its required identity/health brackets; only
+                        // the company-marks snapshot that aims the POST (#574)
+                        // follows this verdict, and no profile or catalogue read.
+                        let (first_read, first_evidence) = fetch_admitted_agent_read(
+                            &client,
+                            &identity,
+                            request.verification_request(),
+                        )
+                        .await
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        let admission_evidence = admission_evidence.combine(first_evidence);
+                        let (second_read, second_evidence) = fetch_admitted_agent_read(
+                            &client,
+                            &identity,
+                            request.verification_request(),
+                        )
+                        .await
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        let admission_evidence = admission_evidence.combine(second_evidence);
+                        // The last Tally request before the POST (#574): every
+                        // loaded company's change marks, one unpaired read. The
+                        // import names its company only by name, so the aim is
+                        // confirmed on this snapshot, and only local work (the
+                        // recheck and the durable intent) follows it.
+                        let marks_xml = request.company_marks_request().into_xml();
+                        // The typed refusal is the error itself, with the transport
+                        // failure as context: a context value is not reachable by
+                        // `downcast_ref` on the chain, and a failed read here means
+                        // nothing was sent, never an unknown outcome.
+                        let before_marks = client.post_xml_raw(marks_xml.clone()).await.map_err(|error| {
                             with_read_evidence(
                                 anyhow::Error::new(
-                                    super::approved_import::ApprovedImportAdmissionError::MastersUnconfirmed,
+                                    super::approved_import::ApprovedImportAdmissionError::CompanyScopeUnconfirmed,
                                 )
                                 .context(format!("{error:#}")),
                                 admission_evidence.clone(),
                             )
                         })?;
-                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
-                        &binding_marks_xml,
-                        binding_marks.encoded_sha256.clone(),
-                        binding_marks.encoded_body.len(),
-                    ));
-                    let (catalogue, catalogue_evidence) = fetch_admitted_agent_read(
-                        &client,
-                        &identity,
-                        request.ledger_catalogue_request(),
-                    )
+                        let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                            &marks_xml,
+                            before_marks.encoded_sha256.clone(),
+                            before_marks.encoded_body.len(),
+                        ));
+                        recheck_admission(super::approved_import::QueuedAdmission {
+                            first: &first_read.body,
+                            second: &second_read.body,
+                            catalogue: &catalogue.body,
+                            groups: groups.as_ref().map(|groups| groups.body.as_str()),
+                            currencies: &currencies.body,
+                            company_marks_at_binding: &binding_marks.text,
+                            company_marks: &before_marks.text,
+                            ledger_binding: request.ledger_binding(),
+                        })
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                        Ok::<_, anyhow::Error>((admission_evidence, before_marks))
+                    }
                     .await
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(catalogue_evidence);
-                    // A bank voucher's legs are classified from the ledgers'
-                    // parents (in the catalogue above) and the group tree, so
-                    // both are re-read here, inside the same identity brackets,
-                    // after approval and before the POST.
-                    let (groups, admission_evidence) = match request.group_collection_request() {
-                        Some(group_request) => {
-                            let (groups, group_evidence) =
-                                fetch_admitted_agent_read(&client, &identity, group_request)
-                                    .await
-                                    .map_err(|error| {
-                                        with_read_evidence(error, admission_evidence.clone())
-                                    })?;
-                            (Some(groups), admission_evidence.combine(group_evidence))
+                    .map_err(|source| {
+                        // The captured reads' evidence stays on top, where the
+                        // runtime's callers and tests read it.
+                        let evidence = source
+                            .downcast_ref::<RuntimeReadFailure>()
+                            .map(|failure| failure.evidence.clone());
+                        let marked = anyhow::Error::from(
+                            super::approved_import::PreIntentQueueRefusal { source },
+                        );
+                        match evidence {
+                            Some(evidence) => with_read_evidence(marked, evidence),
+                            None => marked,
                         }
-                        None => (None, admission_evidence),
-                    };
-                    // Every post re-reads the company's Currency masters in the
-                    // same brackets: it goes only into a book with exactly one
-                    // (bridge#551), and one can be added while approval waits.
-                    let (currencies, currency_evidence) =
-                        fetch_admitted_agent_read(&client, &identity, request.currency_request())
-                            .await
-                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(currency_evidence);
-                    let (profile, mode_evidence) = observe_read_boundary(&client)
-                        .await
-                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(mode_evidence);
-                    let (companies, company_evidence) = client
-                        .fetch_companies_with_wire_evidence()
-                        .await
-                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(company_evidence);
-                    admit_company_identity(&companies, &identity)
-                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    super::approved_import::require_unique_company_scope(&companies, &identity)
-                        .map_err(|error| {
-                            with_read_evidence(error.into(), admission_evidence.clone())
-                        })?;
-                    request.require_boundary_profile(profile).map_err(|error| {
-                        with_read_evidence(error.into(), admission_evidence.clone())
                     })?;
-                    // Keep duplicate absence as the final source admission. The
-                    // helper retains its required identity/health brackets; only
-                    // the company-marks snapshot that aims the POST (#574)
-                    // follows this verdict, and no profile or catalogue read.
-                    let (first_read, first_evidence) = fetch_admitted_agent_read(
-                        &client,
-                        &identity,
-                        request.verification_request(),
-                    )
-                    .await
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(first_evidence);
-                    let (second_read, second_evidence) = fetch_admitted_agent_read(
-                        &client,
-                        &identity,
-                        request.verification_request(),
-                    )
-                    .await
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(second_evidence);
-                    // The last Tally request before the POST (#574): every
-                    // loaded company's change marks, one unpaired read. The
-                    // import names its company only by name, so the aim is
-                    // confirmed on this snapshot, and only local work (the
-                    // recheck and the durable intent) follows it.
-                    let marks_xml = request.company_marks_request().into_xml();
-                    // The typed refusal is the error itself, with the transport
-                    // failure as context: a context value is not reachable by
-                    // `downcast_ref` on the chain, and a failed read here means
-                    // nothing was sent, never an unknown outcome.
-                    let before_marks = client.post_xml_raw(marks_xml.clone()).await.map_err(|error| {
-                        with_read_evidence(
-                            anyhow::Error::new(
-                                super::approved_import::ApprovedImportAdmissionError::CompanyScopeUnconfirmed,
-                            )
-                            .context(format!("{error:#}")),
-                            admission_evidence.clone(),
-                        )
-                    })?;
-                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
-                        &marks_xml,
-                        before_marks.encoded_sha256.clone(),
-                        before_marks.encoded_body.len(),
-                    ));
-                    recheck_admission(super::approved_import::QueuedAdmission {
-                        first: &first_read.body,
-                        second: &second_read.body,
-                        catalogue: &catalogue.body,
-                        groups: groups.as_ref().map(|groups| groups.body.as_str()),
-                        currencies: &currencies.body,
-                        company_marks_at_binding: &binding_marks.text,
-                        company_marks: &before_marks.text,
-                        ledger_binding: request.ledger_binding(),
-                    })
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
                     })?;
