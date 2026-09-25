@@ -213,7 +213,7 @@ fn journaled_outcome(
 fn assert_journaled_clean_create(directory: &std::path::Path) {
     let outcome = journaled_outcome(directory).expect("the POST answer was parsed and journaled");
     assert_eq!(outcome.counters().created, 1);
-    assert!(import_outcome_is_clean(Some(&outcome)));
+    assert!(import_outcome_is_clean(Some(&outcome), 1));
 }
 
 fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
@@ -514,7 +514,7 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     let recorded_id = intent["native_remote_id"].as_str().unwrap();
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
     let remote_id = Uuid::parse_str(recorded_id).unwrap();
-    let rendered = native_post_request(&line, remote_id).unwrap();
+    let rendered = native_post_request(&line, RemoteIds::from_ids(vec![remote_id])).unwrap();
     assert_eq!(rendered.request_sha256, recorded_sha);
     assert!(rendered
         .xml
@@ -523,11 +523,13 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     // REMOTEID renders the same bytes, and another REMOTEID different ones, so
     // the match above could not come from anything else in the request.
     assert_eq!(
-        native_post_request(&line, remote_id).unwrap().xml,
+        native_post_request(&line, RemoteIds::from_ids(vec![remote_id]))
+            .unwrap()
+            .xml,
         rendered.xml
     );
     assert_ne!(
-        native_post_request(&line, Uuid::new_v4())
+        native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]))
             .unwrap()
             .request_sha256,
         recorded_sha
@@ -913,7 +915,7 @@ async fn each_bank_type_posts_the_request_its_intent_recorded() {
             observed[post_at].request_body_sha256, recorded_sha,
             "{type_name}"
         );
-        let rendered = native_post_request(&line, remote_id).unwrap();
+        let rendered = native_post_request(&line, RemoteIds::from_ids(vec![remote_id])).unwrap();
         assert_eq!(rendered.request_sha256, recorded_sha, "{type_name}");
         assert!(
             rendered.xml.contains(&format!("VCHTYPE=\"{type_name}\"")),
@@ -983,7 +985,7 @@ async fn a_three_entry_receipt_posts_the_request_its_intent_recorded() {
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
     let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
     assert_eq!(
-        native_post_request(&line, remote_id)
+        native_post_request(&line, RemoteIds::from_ids(vec![remote_id]))
             .unwrap()
             .request_sha256,
         recorded_sha
@@ -1440,7 +1442,7 @@ async fn a_post_whose_response_cannot_be_journaled_still_reports_where_it_landed
 fn the_simulated_post_answer_parses_as_one_clean_create() {
     let outcome = parse_import_outcome(&created_one()).expect("the POST answer parses");
     assert_eq!(outcome.counters().created, 1);
-    assert!(import_outcome_is_clean(Some(&outcome)));
+    assert!(import_outcome_is_clean(Some(&outcome), 1));
 }
 
 /// A Journal Bridge posted live (bridge#582's lab qualification), as its
@@ -2098,7 +2100,7 @@ async fn a_dispatched_batch_without_identities_still_reconciles() {
     let (mut line, args) = saved_batch(&server);
     line.ledger_identities = None;
     server.append_import_ledger(&line).unwrap();
-    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    let native = native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap();
     {
         let _lock = server.lock_import_admission().unwrap();
         server
@@ -2326,7 +2328,7 @@ async fn reconcile_seeded(
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let line = saved_captured_line(&server);
-    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    let native = native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap();
     {
         let _lock = server.lock_import_admission().unwrap();
         server
