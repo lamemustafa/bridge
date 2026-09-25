@@ -653,12 +653,25 @@ test("captured checkout trusts only its differently-owned source path", (t) => {
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /dubious ownership/);
 
-  // The upload-pack child gets only the caller's trust, so a fetch that
-  // trusts another path is still refused.
-  assert.throws(
-    () => checkoutCapturedSource(source, join(sandbox, "untrusted-fixture"), before, emptyTemplate, wrongTrust),
-    /fetch captured source failed:[\s\S]*dubious ownership/,
-  );
+  // Git 2.43's upload-pack refuses a differently owned source; Git 2.55's
+  // (CI) serves it without an ownership check. Where this Git refuses an
+  // untrusted fetch, the upload-pack child must get only the caller's trust,
+  // so a fetch that trusts another path is still refused.
+  // The probe is a plain fetch with no trust, independent of uploadPackCommand.
+  const probe = join(sandbox, "untrusted-probe");
+  gitOk(sandbox, ["init", "--quiet", `--template=${emptyTemplate}`, probe], "initialize probe", ownerSimulation);
+  const probed = git(probe, ["-c", `safe.directory=${realpathSync(probe)}`, "fetch", "--quiet", "--depth=1", source, before.head], {
+    env: ownerSimulation,
+  });
+  assert.ok(probed.status === 0 || /dubious ownership/.test(probed.stderr), `ownership probe failed:\n${probed.stderr}`);
+  if (probed.status !== 0) {
+    assert.throws(
+      () => checkoutCapturedSource(source, join(sandbox, "untrusted-fixture"), before, emptyTemplate, wrongTrust),
+      /fetch captured source failed:[\s\S]*dubious ownership/,
+    );
+  } else {
+    t.diagnostic("this Git's upload-pack serves a differently owned source without trust; over-trust is not observable");
+  }
 });
 
 test("captured checkout trusts a differently-owned source whose path needs shell quoting", (t) => {
