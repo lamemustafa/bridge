@@ -1454,6 +1454,17 @@ impl Server {
         }
     }
 
+    /// Whether the journal already records `remote_id` on a dispatch intent.
+    pub(super) fn import_remote_id_recorded_while_admitted(
+        &self,
+        remote_id: Uuid,
+    ) -> Result<bool, String> {
+        match self.import_journal_while_admitted()? {
+            Some(reader) => ledger::remote_id_recorded(reader, remote_id),
+            None => Ok(false),
+        }
+    }
+
     fn latest_import_snapshot(
         &self,
         batch_id: &str,
