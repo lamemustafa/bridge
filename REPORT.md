@@ -217,3 +217,15 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - E3a is ready, but its records will need redoing after the E2b change: a golden or `high_value_register.rs` change moves the crate tree. The PR stays unopened until #713 merges.
   - E4 is not started (its build would compete with nothing now, but it would have to be redone after E2b and E3a change, too).
 - **Waiting on Lane D for:** the E2b reference change and goldens. When that lands on `lane-e/e2b-hvr` (or as instructions), I'll port the code side, rerun E2b's full list, re-stack E3a and redo its records, then continue with E4.
+
+## 2026-09-25 21:48 UTC — E4 re-stacked and compiled (local; no PR)
+
+- Merged the E3a head e1b6550 into `lane-e/e4-party-monthly` (c8389f1). `mutations.json` union: E4-01..25 appended, no id clash.
+- **E4's first build:** 347 tests pass. clippy `-D warnings` refused six explicit derefs in `party_monthly.rs` (`explicit_auto_deref`). Fixed mechanically, and E4-22's `from` follows its line (3459afc). clippy and fmt now clean; no stale mutation.
+- **Failing first:** at 4efcf7c, 5 tests fail, each with `party_monthly: not ported yet`:
+  - `edge_books::{a_party_tag_equal_to_a_fixed_row_is_refused_not_panicked, pwm_1_fires_on_a_total_or_movement_that_does_not_tie, pwm_2_fires_on_a_party_row_or_an_others_label_that_is_wrong, every_edge_book_matches_the_reference}`
+  - `registry::every_registered_test_matches_its_synthetic_golden`
+
+  At port commit 4e68199 all pass (344).
+- Mutations: **E4-01..25 all killed** (sampled with --full).
+- Review round (Sonnet and Opus) on 3459afc running. The E4 full run and records wait until E2b and E3a settle, since any E2b change moves every later crate tree.
