@@ -34,9 +34,8 @@ use bridge_tally_protocol::outstandings::{
 };
 use bridge_tally_protocol::{
     native_outstandings::{
-        parse_native_group_snapshot_with_evidence,
-        parse_compliance_ledger_snapshot_for_company, parse_native_ledger_snapshot_for_company,
-        render_native_group_snapshot_request,
+        parse_compliance_ledger_snapshot_for_company, parse_native_group_snapshot_with_evidence,
+        parse_native_ledger_snapshot_for_company, render_native_group_snapshot_request,
         render_native_ledger_export_request, render_native_ledger_snapshot_request,
         render_native_voucher_export_request, render_party_ledger_master_request,
         NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod, NativeOutstandingsError,
@@ -48,8 +47,7 @@ use bridge_tally_protocol::{
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
     parse_native_party_ledger_master_records_leaving_unparsed,
-    parse_native_party_ledger_master_records_with_evidence,
-    parse_native_voucher_source_records_with_evidence,
+    parse_native_party_ledger_master_structure, parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
     xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
@@ -1336,6 +1334,17 @@ impl TallyClient {
                 master_response_sha256.clone(),
                 master_response_bytes,
             ));
+            // Refuse a wrong or damaged master before any further request; its
+            // amounts are admitted below, once the snapshot names the ledgers
+            // set aside (bridge#551).
+            let structure =
+                parse_native_party_ledger_master_structure(&master_body, identity.company_guid())
+                    .map_err(party_ledger_master_master_snapshot_error)?;
+            if !structure.evidence.duplicate_identities.is_empty() {
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+                ));
+            }
             let balance_pair = self
                 .fetch_native_report_paired(balance_request.clone())
                 .await?;

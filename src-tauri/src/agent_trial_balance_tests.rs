@@ -333,9 +333,7 @@ mod listing {
         plans.push(companies);
         let total = plans.len();
         let one = OneServer::spawn(plans);
-        let args = |offset: usize| {
-            json!({"company_guid":FOREX,"from":"2025-04-01","to":"2026-09-15","limit":2,"offset":offset})
-        };
+        let args = |offset: usize| json!({"company_guid":FOREX,"from":"2025-04-01","to":"2026-09-15","limit":2,"offset":offset});
         let first = one.call(args(0)).await;
         let second = one.call(args(2)).await;
         assert_eq!(one.requests(), total);

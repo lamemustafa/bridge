@@ -532,13 +532,12 @@ fn the_compliance_snapshot_sets_mixed_rupee_ledgers_aside_by_name() {
         "../../tests/fixtures/balance_snapshot_forex_live.utf16le.xml"
     ));
     let company = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
-    let classified =
-        crate::native_outstandings::parse_compliance_ledger_snapshot_for_company(
-            &snapshot,
-            company,
-            &forex_base(),
-        )
-        .unwrap();
+    let classified = crate::native_outstandings::parse_compliance_ledger_snapshot_for_company(
+        &snapshot,
+        company,
+        &forex_base(),
+    )
+    .unwrap();
     let names = |rows: &[String]| rows.to_vec();
     assert_eq!(
         classified

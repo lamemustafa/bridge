@@ -126,7 +126,11 @@ impl Server {
             .collect::<Vec<_>>();
         let (truncated, next_offset) = page_boundary(offset, rows.len(), total);
         let frame = &snapshot.frame;
-        let mut limitations = json!(["Not voucher-level reconciliation or an atomic snapshot", "Native empty amounts are not numeric zero", "Includes ledger masters Tally may hide in its screen"]);
+        let mut limitations = json!([
+            "Not voucher-level reconciliation or an atomic snapshot",
+            "Native empty amounts are not numeric zero",
+            "Includes ledger masters Tally may hide in its screen"
+        ]);
         let mut result = json!({
             "state": "observed", "basis": "tally_native_trial_balance",
             "from": frame["from"], "to": frame["to"], "currency": frame["currency"],
@@ -146,9 +150,10 @@ impl Server {
                 result[key] = frame[key].clone();
             }
         }
-        if let (Some(limitation), Some(list)) =
-            (frame["scope_limitation"].as_str(), limitations.as_array_mut())
-        {
+        if let (Some(limitation), Some(list)) = (
+            frame["scope_limitation"].as_str(),
+            limitations.as_array_mut(),
+        ) {
             list.push(json!(limitation));
         }
         result["limitations"] = limitations;

@@ -41,11 +41,12 @@ use super::all_clients::{
 };
 use super::{
     company_sweep_result, first_calendar_day_canary_window,
-    party_ledger_master_currency_admission_error, party_ledger_master_runtime_command_error,
+    party_ledger_master_currency_admission_error, party_ledger_master_foreign_currency_error,
+    party_ledger_master_mixed_currency_error, party_ledger_master_runtime_command_error,
     portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
     tally_command_error, tally_runtime_command_error, verify_observed_company_tuple_from_companies,
     write_unique_download, CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany,
-    SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
+    SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity, FOREIGN_LEDGERS_NAMED,
 };
 // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
 // path cannot be constructed portably. The import must carry the same gate as
@@ -724,14 +725,20 @@ fn a_size_refused_party_master_export_names_the_size_not_a_validation_failure() 
 #[test]
 fn party_master_export_withholds_and_names_the_ledgers_it_would_leave_out() {
     let foreign = (1..=FOREIGN_LEDGERS_NAMED + 2)
-        .map(|index| bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger {
-            ledger: format!("Synthetic FX Debtor {index}"),
-            currency: "$".to_string(),
-        })
+        .map(
+            |index| bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger {
+                ledger: format!("Synthetic FX Debtor {index}"),
+                currency: "$".to_string(),
+            },
+        )
         .collect::<Vec<_>>();
     let error = party_ledger_master_foreign_currency_error(&foreign);
     assert_eq!(error.code, "party_ledger_master_foreign_currency_ledgers");
-    assert!(error.message.contains("Synthetic FX Debtor 1 ($)"), "{}", error.message);
+    assert!(
+        error.message.contains("Synthetic FX Debtor 1 ($)"),
+        "{}",
+        error.message
+    );
     assert!(error.message.contains(" and 2 more"), "{}", error.message);
 
     let mixed = vec!["Synthetic Party".to_string(), "Synthetic Sales".to_string()];
@@ -743,5 +750,9 @@ fn party_master_export_withholds_and_names_the_ledgers_it_would_leave_out() {
         error.message
     );
     assert!(!error.message.contains(" more"), "{}", error.message);
-    assert!(error.remediation.contains("Do not retry"), "{}", error.remediation);
+    assert!(
+        error.remediation.contains("Do not retry"),
+        "{}",
+        error.remediation
+    );
 }

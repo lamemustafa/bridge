@@ -173,12 +173,16 @@ impl TallyRuntime {
                             && currency.currency_count > 1
                         {
                             let masters = parse_currency_master_list(&currency_xml)?;
-                            let identified =
-                                identify_base_among_several(&client, &identity, &mut evidence, masters)
-                                    .await?
-                                    .ok_or(TrialBalanceReadError::Currency(
-                                        "company_base_currency_undetermined",
-                                    ))?;
+                            let identified = identify_base_among_several(
+                                &client,
+                                &identity,
+                                &mut evidence,
+                                masters,
+                            )
+                            .await?
+                            .ok_or(TrialBalanceReadError::Currency(
+                                "company_base_currency_undetermined",
+                            ))?;
                             if !identified.is_inr() {
                                 return Err(TrialBalanceReadError::Currency(
                                     "company_base_currency_not_inr",
