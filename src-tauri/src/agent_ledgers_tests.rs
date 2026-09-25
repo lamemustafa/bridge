@@ -1361,6 +1361,43 @@ mod through_the_tool {
         assert_eq!(error["cause"], "native_ledger_group_changed");
     }
 
+    /// A basic read of a book holding a foreign-currency opening is refused as
+    /// before, but names why and what to do (#675). The composite is the one in
+    /// the captured several-currency ledgers, placed in the captured basic
+    /// export; the closing extent and identity reads are never sent.
+    #[tokio::test]
+    async fn a_foreign_currency_opening_refuses_the_basic_read_with_its_cause() {
+        let forex = captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/ledgers_currency_forex_live.utf16le.xml"
+        ));
+        let composite = forex
+            .split("<OPENINGBALANCE")
+            .skip(1)
+            .filter_map(|tail| {
+                let text = &tail[tail.find('>')? + 1..tail.find("</OPENINGBALANCE>")?];
+                text.contains(" @ ").then(|| text.to_string())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(composite.len(), 1, "one composite opening in the capture");
+        let row = "<OPENINGBALANCE TYPE=\"Amount\">-50000.00</OPENINGBALANCE>";
+        let source = period_opening();
+        assert_eq!(source.matches(row).count(), 1);
+        let foreign = source.replace(
+            row,
+            &format!("<OPENINGBALANCE TYPE=\"Amount\">{}</OPENINGBALANCE>", composite[0]),
+        );
+        let mut plans = basic_plans_reading(foreign, None);
+        plans.truncate(plans.len() - 7);
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":GUID})).await;
+        assert_eq!(requests, total);
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "foreign_currency_ledger_balance");
+        let remediation = error["remediation"].as_str().unwrap();
+        assert!(remediation.contains("#683"), "{error}");
+    }
+
     #[tokio::test]
     async fn compliance_rows_carry_the_chain_resolved_from_the_captured_groups() {
         let plans = compliance_plans(masters(), balances());
