@@ -195,3 +195,8 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - **Pushed `lane-e/e2b-hvr` @ ab80466.** **Draft PR https://github.com/lamemustafa/bridge/pull/713** "E2b: port high_value_register", with "Real books: pending (local, Lane D)".
 - **Note for the stack:** because the ports are squash-merged, each later branch (E3a, E4) will conflict the same way when master takes its predecessor. I resolve it the same way, after checking that master's crate tree equals the predecessor's head.
 - E3a full run in progress on `cloud/lane-e-e3a-shards`.
+
+## 2026-09-25 20:30 UTC — #713 green; fourth container restart; E3a shards 2–4 rerunning
+
+- #713 (E2b): every check green on ab80466, including the required mutation-records check. Waiting on Lane D (real books, merge).
+- The container restarted again at about 20:25 UTC. E3a shard 1 had been pushed (146/146 killed). Shards 2–4 are rerunning on the frozen head 5beb691.
