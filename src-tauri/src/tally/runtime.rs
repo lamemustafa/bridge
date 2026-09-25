@@ -2927,12 +2927,20 @@ impl TallyRuntime {
             move |client| {
                 let identity = identity.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
-                    let read = client
-                        .fetch_company_book_extent_with_evidence(&identity)
-                        .await?;
-                    bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(read)
+                    let mut evidence = RuntimeReadEvidence::empty();
+                    let read = async {
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let extent = client
+                            .fetch_company_book_extent_with_evidence(&identity, &mut evidence)
+                            .await?;
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        Ok(extent)
+                    }
+                    .await;
+                    match read {
+                        Ok(extent) => Ok((extent, evidence)),
+                        Err(error) => Err(with_read_evidence(error, evidence)),
+                    }
                 }
             },
         )

@@ -1262,6 +1262,42 @@ mod through_the_tool {
         assert_eq!(bytes(&longer), bytes(&served) + 4);
     }
 
+    /// An extent read refused after both its requests were sent (the pair
+    /// disagreed) records both: the refusal's evidence counts what was sent.
+    #[tokio::test]
+    async fn a_refused_extent_read_still_records_the_requests_it_sent() {
+        let refused_under = |mark: u64| async move {
+            let mut plans = basic_plans_marked(mark);
+            plans.extend(identity_plans());
+            plans.push(xml(companies()));
+            plans.extend([
+                xml(extent_with_master_mark(mark)),
+                status(),
+                xml(extent_with_master_mark(mark + 1)),
+                status(),
+            ]);
+            let total = plans.len();
+            let one = OneServer::spawn(plans);
+            let _first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            let refused = one
+                .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+                .await;
+            assert_eq!(
+                refusal(&refused)["code"],
+                "listing_extent_read_failed",
+                "{refused}"
+            );
+            let bytes = refused["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap();
+            assert_eq!(one.requests(), total);
+            bytes
+        };
+        // Both extent responses are counted: each is one character longer
+        // under a four-digit mark, 2 bytes each in UTF-16.
+        assert_eq!(refused_under(2_200).await, refused_under(219).await + 4);
+    }
+
     /// An expired snapshot is not only skipped but dropped the next time the
     /// store is touched: by holding another listing, or by any write's drop.
     #[tokio::test]
