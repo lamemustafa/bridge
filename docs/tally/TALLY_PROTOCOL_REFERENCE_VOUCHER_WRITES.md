@@ -407,6 +407,34 @@ the `FETCH` list and looks at what arrives.
 > `PARTYLEDGERNAME` stays unfetched: on the same read it held a bank ledger, not the written
 > counterparty.
 
+> **Scoped correction, 2026-09-25 — Bridge-built files and `verify_import` on licensed Gold.**
+> The 2026-09-10 evidence above was a hand import of files Bridge did not build. Two later field
+> runs used Bridge's own output. Both were on production books (not synthetic), on licensed
+> TallyPrime 7.1 Gold, with the owner's authorisation. Each file was built by `build_import_xml`
+> against the live book and then sent **unchanged** over the XML gateway by a script. They were not
+> sent by `post_import`, and there was no native approval.
+>
+> - **VERIFIED 2026-09-16, one book (Bridge master `f25fc91a`).** A statement's 68 lines went in
+>   as a one-voucher pilot, then a batch of 67 (Payment, Receipt and Contra). The responses were
+>   `CREATED=1` and `CREATED=67`, with every other counter zero and no `LINEERROR`. `verify_import`
+>   returned `posted_verified` for 1/1 and 67/67, with no duplicates, and `alter_id_delta` equal to
+>   the voucher count. The bank ledger's closing balance equalled the statement's to the paisa.
+> - **PARTIAL 2026-09-17, a second book (Bridge master `d1327a92`).** `verify_import` returned
+>   `posted_verified` on pilot batches of two to four vouchers. On the same book it failed with
+>   `agent_runtime_read_failed` once the batch window held a few hundred vouchers, and at about
+>   4,900 vouchers `ledger_movement` failed the same way (bridge#485). The larger batches were
+>   proven by a full voucher readback instead.
+>
+> So a live monetary read of a Gold book (`verify_import` over vouchers with amounts) and the
+> gateway import of Bridge-built Payment, Receipt and Contra files are both observed on Gold. Two
+> things are not:
+> - **Native posting.** `post_import` with its approval has not been observed on Gold, on Windows
+>   or on Education.
+> - **Reads at scale.** Reads of books of thousands of vouchers are the open failure in bridge#485.
+>
+> Neither run exercised a second Tally user writing during the read. That is the case Gold adds
+> over Silver (bridge#239). This correction promotes no compatibility-matrix claim.
+
 ### 9.9 Bulk import throughput
 
 **VERIFIED.** One import request may carry many `<VOUCHER>` elements; the counters aggregate.

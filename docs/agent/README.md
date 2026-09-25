@@ -381,7 +381,12 @@ for the user. That client permission does not approve an accounting entry.
 
 One native-approved Journal and restart reconciliation have been observed on
 macOS against a synthetic Silver 7.1 instance. This remains a preview: Windows
-interactive approval and Gold/Education live posting have not been established.
+interactive approval and native posting on Gold or Education have not been
+established. What has been observed on licensed 7.1 Gold is `verify_import`
+returning `posted_verified` for Bridge-built Payment, Receipt and Contra files
+sent over the gateway by a script rather than by this tool. That was verified
+on one book, and partial on a second where larger reads failed (bridge#485); see
+[reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md).
 Native posts of a Payment, a Receipt, a Contra and a three-entry Receipt have
 been observed live on a synthetic Silver 7.1 company, each reading back
 `posted_verified` (ADR 0004, amended 2026-09-23).
