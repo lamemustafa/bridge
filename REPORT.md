@@ -206,3 +206,14 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - #713 real-book parity is byte-identical on clients A, B and C (Lane D). #713 was then **held** by Lane D. The h15 behaviour (a mixed cash-and-bank voucher raising a 31(bc) cash finding for the party's whole amount) is to be fixed in the reference engine first. #713 then takes new goldens, plus a `limits` line and a figure definition naming the cash-line amount, followed by a fresh review.
 - I can't produce goldens here. **E2b is blocked on Lane D's reference change and goldens.** When they arrive (pushed to `lane-e/e2b-hvr`, or as a message), I'll port the code change, redo the E2b mutation records on the new tree, and re-stack E3a and E4.
 - Meanwhile: E3a's full run continues. Its records will be made on E3a's current tree (5beb691), so they'll need redoing only if the E2b change alters files E3a carries, which a golden or `high_value_register.rs` change will. E3a's PR stays unopened (one port PR at a time).
+
+## 2026-09-25 21:41 UTC — E3a records pushed (no PR; the stack is held at #713)
+
+- A fifth container restart (about 21:15 UTC) cost only shard 4, which was rerun. E3a full run on the frozen head 5beb691: **583 run, 578 killed, 5 accepted survivors** (X11, X12, A04, A19, S08). No timeouts. All 34 E3A mutations killed. Shards on `cloud/lane-e-e3a-shards`.
+- Records commit e1b6550 (only `mutation-results.json`). `--verify --changed-since origin/lane-e/e2b-hvr`: 583/583 proven on crate tree 538b799cc815a446. A Sonnet pre-push check found none. **Pushed `lane-e/e3a-stock` @ e1b6550.**
+- **Status of the stack:**
+  - E2a merged (#710).
+  - E2b #713 is held for Lane D's reference change and goldens (h15, cash-line amount).
+  - E3a is ready, but its records will need redoing after the E2b change: a golden or `high_value_register.rs` change moves the crate tree. The PR stays unopened until #713 merges.
+  - E4 is not started (its build would compete with nothing now, but it would have to be redone after E2b and E3a change, too).
+- **Waiting on Lane D for:** the E2b reference change and goldens. When that lands on `lane-e/e2b-hvr` (or as instructions), I'll port the code side, rerun E2b's full list, re-stack E3a and redo its records, then continue with E4.
