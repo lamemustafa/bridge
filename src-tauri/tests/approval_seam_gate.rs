@@ -536,7 +536,11 @@ fn each_dialog_answers_only_on_its_positive_button() {
             1,
         ),
         source.replacen(") == IDYES", ") != IDNO", 1),
-        source.replacen("MB_DEFBUTTON2", "MB_DEFBUTTON1", 1),
+        source.replacen(
+            "MB_YESNOCANCEL | MB_DEFBUTTON2",
+            "MB_YESNOCANCEL | MB_DEFBUTTON1",
+            1,
+        ),
         source.replacen("\"Post voucher\"", "\"Cancel\"", 1),
         source.replacen("\"I reviewed it\"", "\"Cancel\"", 1),
         source.replacen(
