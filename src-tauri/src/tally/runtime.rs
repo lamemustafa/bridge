@@ -62,8 +62,8 @@ const MAX_ENDPOINT_SESSIONS: usize = 32;
 
 #[path = "runtime_trial_balance.rs"]
 mod trial_balance;
-pub(crate) use trial_balance::TrialBalanceReadError;
-pub use trial_balance::{TrialBalancePeriod, TrialBalanceRead};
+pub(crate) use trial_balance::{TrialBalanceCurrencyScope, TrialBalanceReadError};
+pub use trial_balance::{TrialBalanceLedgerScope, TrialBalancePeriod, TrialBalanceRead};
 
 #[cfg(test)]
 #[path = "runtime_trial_balance_tests.rs"]
@@ -808,6 +808,91 @@ pub(crate) enum CompanyIdentityBracketError {
 /// Re-enumerate the complete identity immediately before or after a scoped
 /// read. Tally accepts a company name as the scope selector, so the GUID alone
 /// is not a sufficient witness when company names differ only by presentation.
+/// The company's Currency masters, and its base among them when Tally
+/// identifies one (bridge#551): the plain read, and, only for a book with
+/// several masters, the `ORIGINALNAME` re-read (which must return the same
+/// masters) and the Company collection's `CURRENCYNAME`. Each read is paired.
+/// The caller brackets it with the identity and extent reads.
+pub(crate) async fn read_classified_currency(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+    evidence: &mut RuntimeReadEvidence,
+) -> anyhow::Result<(
+    usize,
+    Option<bridge_tally_protocol::native_outstandings::IdentifiedBaseCurrency>,
+)> {
+    let paired_read = |request: String, stability| async move {
+        let body = client.fetch_native_report_paired(request.clone()).await?;
+        let (body, encoded_bytes, encoded_sha256) = body.require_stable(stability)?;
+        anyhow::Ok((
+            body,
+            RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes),
+        ))
+    };
+    let (body, read) = paired_read(
+        render_company_currency_request(identity.display_name()),
+        PairedReadValidationError::CurrencyMaster,
+    )
+    .await?;
+    *evidence = evidence.clone().combine(read);
+    let masters = parse_currency_master_list(&body)?;
+    let count = masters.count();
+    let identified = if count > 1 {
+        identify_base_among_several(client, identity, evidence, masters).await?
+    } else {
+        masters.identify_base(None)
+    };
+    Ok((count, identified))
+}
+
+/// The base among a company's several Currency masters, when Tally identifies
+/// one: the `ORIGINALNAME` re-read, which must return the same masters, and
+/// the Company collection's `CURRENCYNAME` (bridge#551). Each read is paired.
+pub(crate) async fn identify_base_among_several(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+    evidence: &mut RuntimeReadEvidence,
+    masters: bridge_tally_protocol::native_outstandings::CurrencyMasters,
+) -> anyhow::Result<Option<bridge_tally_protocol::native_outstandings::IdentifiedBaseCurrency>> {
+    let paired_read = |request: String, stability| async move {
+        let body = client.fetch_native_report_paired(request.clone()).await?;
+        let (body, encoded_bytes, encoded_sha256) = body.require_stable(stability)?;
+        anyhow::Ok((
+            body,
+            RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes),
+        ))
+    };
+    let (with_original_names, company_currency_name) = {
+        let (body, read) = paired_read(
+            render_company_currency_request_with_originalname(identity.display_name()),
+            PairedReadValidationError::CurrencyMaster,
+        )
+        .await?;
+        *evidence = evidence.clone().combine(read);
+        let with_original_names = parse_currency_master_list(&body)?;
+        // The re-read must return the masters the plain read did; only then
+        // does its ORIGINALNAME describe them.
+        if !with_original_names.same_masters_as(&masters) {
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::CurrencyMaster,
+            ));
+        }
+        let (body, read) = paired_read(
+            render_company_base_currency_request(identity.display_name()),
+            PairedReadValidationError::CompanyCurrencyName,
+        )
+        .await?;
+        *evidence = evidence.clone().combine(read);
+        (
+            with_original_names,
+            parse_company_currency_name(&body, identity.company_guid())?,
+        )
+    };
+    // The base is identified among the re-read masters, whose ORIGINALNAME the
+    // company's CURRENCYNAME names.
+    Ok(with_original_names.identify_base(Some(company_currency_name.as_str())))
+}
+
 async fn bracket_verified_company_identity(
     client: &TallyClient,
     identity: &VerifiedCompanyIdentity,
@@ -4289,58 +4374,8 @@ impl TallyRuntime {
                     let result = async {
                         bracket_verified_company_identity(&client, &identity).await?;
                         let extent = client.fetch_company_book_extent(&identity).await?;
-                        let paired_read = |request: String, stability| {
-                            let client = &client;
-                            async move {
-                                let body =
-                                    client.fetch_native_report_paired(request.clone()).await?;
-                                let (body, encoded_bytes, encoded_sha256) =
-                                    body.require_stable(stability)?;
-                                anyhow::Ok((
-                                    body,
-                                    RuntimeReadEvidence::paired(
-                                        &request,
-                                        encoded_sha256,
-                                        encoded_bytes,
-                                    ),
-                                ))
-                            }
-                        };
-                        let (body, read) = paired_read(
-                            render_company_currency_request(identity.display_name()),
-                            PairedReadValidationError::CurrencyMaster,
-                        )
-                        .await?;
-                        evidence = read;
-                        let mut masters = parse_currency_master_list(&body)?;
-                        let company_currency_name = if masters.count() > 1 {
-                            let (body, read) = paired_read(
-                                render_company_currency_request_with_originalname(
-                                    identity.display_name(),
-                                ),
-                                PairedReadValidationError::CurrencyMaster,
-                            )
-                            .await?;
-                            evidence = evidence.clone().combine(read);
-                            let with_original_names = parse_currency_master_list(&body)?;
-                            // The re-read must return the masters the plain read
-                            // did; only then does its ORIGINALNAME describe them.
-                            if !with_original_names.same_masters_as(&masters) {
-                                return Err(anyhow::Error::new(
-                                    PairedReadValidationError::CurrencyMaster,
-                                ));
-                            }
-                            masters = with_original_names;
-                            let (body, read) = paired_read(
-                                render_company_base_currency_request(identity.display_name()),
-                                PairedReadValidationError::CompanyCurrencyName,
-                            )
-                            .await?;
-                            evidence = evidence.clone().combine(read);
-                            Some(parse_company_currency_name(&body, identity.company_guid())?)
-                        } else {
-                            None
-                        };
+                        let (currency_count, identified) =
+                            read_classified_currency(&client, &identity, &mut evidence).await?;
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Err(anyhow::Error::new(
@@ -4349,8 +4384,8 @@ impl TallyRuntime {
                         }
                         bracket_verified_company_identity(&client, &identity).await?;
                         Ok(ClassifiedCompanyCurrencyRead {
-                            currency_count: masters.count(),
-                            identified: masters.identify_base(company_currency_name.as_deref()),
+                            currency_count,
+                            identified,
                             extent,
                             evidence: evidence.clone(),
                         })

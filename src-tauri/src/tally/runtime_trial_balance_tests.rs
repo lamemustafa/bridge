@@ -359,3 +359,38 @@ async fn trial_balance_rejects_report_or_book_drift_and_retains_completed_source
         );
     }
 }
+
+/// bridge#551: the desktop Trial Balance, which cannot show the ledgers a
+/// several-currency book's read would leave out, still refuses such a book
+/// after its currency read, and sends nothing more. Only the MCP read asks for
+/// the base-currency ledgers.
+#[tokio::test]
+async fn the_desktop_trial_balance_still_refuses_a_several_currency_book() {
+    let currency = decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ));
+    let plans = opening_plans(currency);
+    let total = plans.len();
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let error = TallyRuntime::default()
+        .fetch_trial_balance(
+            config(&simulator),
+            &identity(),
+            TrialBalancePeriod::new(
+                TallyDate::parse("20260401").unwrap(),
+                TallyDate::parse("20260902").unwrap(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<super::trial_balance::TrialBalanceReadError>()),
+        Some(super::trial_balance::TrialBalanceReadError::Currency(
+            "company_base_currency_undetermined"
+        ))
+    ));
+    assert_eq!(simulator.finish().unwrap().len(), total);
+}

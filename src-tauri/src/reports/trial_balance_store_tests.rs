@@ -34,6 +34,7 @@ fn captured_read(name: &str) -> TrialBalanceRead {
             response_sha256: "b".repeat(64),
             bytes: 42,
         },
+        ledger_scope: Default::default(),
     }
 }
 

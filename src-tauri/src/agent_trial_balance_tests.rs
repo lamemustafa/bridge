@@ -275,4 +275,112 @@ mod listing {
         );
         assert_eq!(one.requests(), total);
     }
+
+    // -- bridge#551: a several-currency book's Trial Balance ------------------
+
+    const FOREX: &str = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+
+    fn forex_extents() -> String {
+        decode(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_extents_forex_live.utf16le.xml"
+        ))
+    }
+
+    /// Whether `value` holds `key` at any depth.
+    fn holds_key(value: &Value, key: &str) -> bool {
+        match value {
+            Value::Object(map) => map.contains_key(key) || map.values().any(|v| holds_key(v, key)),
+            Value::Array(items) => items.iter().any(|v| holds_key(v, key)),
+            _ => false,
+        }
+    }
+
+    /// Through the tool on the several-currency book's captures (one moment
+    /// of the book; FOREX_601D_CAPTURE_PROVENANCE): the first page reads the
+    /// plain rupee ledgers only, names the dollar ledgers and the rupee
+    /// ledgers with a composite value, labels its totals as covering those
+    /// rupee ledgers only, and nowhere claims a balance. A page served from
+    /// the snapshot reports the same scope.
+    #[tokio::test]
+    async fn a_several_currency_trial_balance_reads_base_ledgers_and_claims_no_balance() {
+        let companies = xml(companies());
+        let fixture = |bytes: &[u8]| xml(decode(bytes));
+        let mut plans = identity_plans();
+        plans.extend([status(), companies.clone(), companies.clone()]);
+        pair(&mut plans, xml(forex_extents()));
+        for source in [
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/trial_balance_currency_forex_live.utf16le.xml"
+            )),
+        ] {
+            pair(&mut plans, source);
+        }
+        pair(&mut plans, xml(forex_extents()));
+        plans.extend([companies.clone(), status(), companies.clone()]);
+        // The continuation page: identity, then the bracketed extent pair.
+        plans.extend(identity_plans());
+        plans.push(companies.clone());
+        pair(&mut plans, xml(forex_extents()));
+        plans.push(companies);
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let args = |offset: usize| {
+            json!({"company_guid":FOREX,"from":"2025-04-01","to":"2026-09-15","limit":2,"offset":offset})
+        };
+        let first = one.call(args(0)).await;
+        let second = one.call(args(2)).await;
+        assert_eq!(one.requests(), total);
+        let mut names = Vec::new();
+        for response in [&first, &second] {
+            let page = result(response);
+            assert_eq!(page["total_ledgers"], 4);
+            assert_eq!(page["ledgers_scope"], "base_currency_ledgers_only");
+            assert_eq!(
+                page["totals_scope"],
+                "base_currency_ledgers_only_numeric_observations_only"
+            );
+            assert_eq!(page["currency"]["base"], "I\u{20b9}");
+            let foreign = &page["foreign_currency_ledgers_excluded"];
+            assert_eq!(foreign["count"], 3);
+            assert!(foreign["ledgers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|ledger| ledger["currency"] == "$"));
+            let mixed = &page["base_currency_ledgers_mixed_excluded"];
+            assert_eq!(mixed["count"], 3);
+            assert_eq!(mixed["reason"], "mixed_currency_movement");
+            assert_eq!(
+                mixed["ledgers"],
+                json!(["FX Party 01", "FX Sales", "Profit & Loss A/c"])
+            );
+            assert!(page["limitations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|line| line.as_str().unwrap().contains("expected to differ")));
+            assert!(!holds_key(response, "balanced"), "{response}");
+            assert!(!response.to_string().contains(" @ "), "{response}");
+            names.extend(
+                page["ledgers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["ledger"].as_str().unwrap().to_string()),
+            );
+        }
+        assert_eq!(
+            names,
+            ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]
+        );
+    }
 }
