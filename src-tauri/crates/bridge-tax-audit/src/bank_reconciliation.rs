@@ -868,4 +868,87 @@ mod tests {
         );
         assert_eq!(find_split(2, &big[..40], 0).unwrap(), Some(vec![0, 1]));
     }
+
+    #[test]
+    fn a_match_takes_exactly_re_1_and_exactly_7_days_and_a_tie_goes_to_the_lower_index() {
+        let row = |date: &str, credit_paise: i64| BankStatementRow {
+            doc: "bank:unit".to_string(),
+            row: 0,
+            account_ref: "XXXXXX0001".to_string(),
+            txn_date: TallyDate::parse(date).unwrap(),
+            narration: String::new(),
+            debit_paise: 0,
+            credit_paise,
+            balance_paise: None,
+        };
+        let books = [BookRow {
+            guid: "g1".to_string(),
+            label: "g1".to_string(),
+            date: TallyDate::parse("20260310").unwrap(),
+            amount_paise: 10_000,
+        }];
+        let pairs = |stmt: &[BankStatementRow]| {
+            match_rows(&books, stmt, TOL_PAISE, MATCH_MAX_DAYS).unwrap()
+        };
+        assert_eq!(pairs(&[row("20260310", 10_100)]), vec![(0, 0)], "Re 1 off");
+        assert_eq!(pairs(&[row("20260310", 10_101)]), vec![], "Re 1.01 off");
+        assert_eq!(pairs(&[row("20260317", 10_000)]), vec![(0, 0)], "7 days");
+        assert_eq!(pairs(&[row("20260318", 10_000)]), vec![], "8 days");
+        assert_eq!(
+            pairs(&[row("20260313", 10_000), row("20260307", 10_000)]),
+            vec![(0, 0)],
+            "an equal gap goes to the lower statement index"
+        );
+    }
+
+    #[test]
+    fn the_opening_stops_before_the_first_day_and_the_window_starts_on_it() {
+        use crate::book::{LedgerLine, TbRow, Voucher, VoucherStatus};
+        let voucher = |guid: &str, date: &str, amount_paise: i64| Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse(date).unwrap(),
+            status: VoucherStatus::Regular,
+            lines: vec![
+                LedgerLine {
+                    ledger: "Bank".to_string(),
+                    amount_paise,
+                },
+                LedgerLine {
+                    ledger: "Sales".to_string(),
+                    amount_paise: -amount_paise,
+                },
+            ],
+            ..Default::default()
+        };
+        let book = Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            vouchers: vec![
+                voucher("v1", "20260228", 20_000),
+                voucher("v2", "20260301", 5_000),
+            ],
+            tb: BTreeMap::from([(
+                "Bank".to_string(),
+                TbRow {
+                    opening_paise: 100_000,
+                    debit_paise: 25_000,
+                    credit_paise: 0,
+                    closing_paise: 125_000,
+                },
+            )]),
+        };
+        let start = TallyDate::parse("20260301").unwrap();
+        let end = TallyDate::parse("20260331").unwrap();
+        assert_eq!(
+            books_balance_before(&book, "Bank", &start).unwrap(),
+            120_000
+        );
+        let rows = books_rows(&book, "Bank", &start, &end).unwrap();
+        let guids: Vec<&str> = rows.iter().map(|r| r.guid.as_str()).collect();
+        assert_eq!(guids, ["v2"]);
+    }
 }

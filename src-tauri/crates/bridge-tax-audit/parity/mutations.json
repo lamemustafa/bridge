@@ -3781,7 +3781,7 @@
   "what": "the match tie goes to the later statement row",
   "file": "src/bank_reconciliation.rs",
   "from": "if best.is_none_or(|x| (gap, si) < x) {",
-  "to": "if best.is_none_or(|x| (gap, si) <= x) {"
+  "to": "if best.is_none_or(|x| gap <= x.0) {"
  },
  {
   "id": "E2A-02",
@@ -3826,10 +3826,10 @@
  {
   "id": "E2A-07",
   "by": "author",
-  "what": "a books row with a zero amount is a cheque, not a deposit",
+  "what": "the two timing reasons swapped by sign",
   "file": "src/bank_reconciliation.rs",
   "from": "let reason = if book_rows[bi].amount_paise < 0 {",
-  "to": "let reason = if book_rows[bi].amount_paise <= 0 {"
+  "to": "let reason = if book_rows[bi].amount_paise > 0 {"
  },
  {
   "id": "E2A-08",
