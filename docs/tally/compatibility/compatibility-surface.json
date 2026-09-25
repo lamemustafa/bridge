@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "1574db58e003cd77749fcc584fc90a825bd27faab1a8d290ca3bad10280b422a"
+      "sha256": "8c6246406c0daa45d605eca82b73991f47d82f1aadc707738208a885b50f2eb0"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -883,7 +883,7 @@
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
-      "sha256": "71d8e03f6b1b4f64a1ea383bd2d1eae80fffb4111ef65fa2f42c6355a76f8cab"
+      "sha256": "725c2134dbacdf96b2c928046946d8a9926923642932ca59b302dffc5e0120c7"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "32072363f47d8dddd448d802641d4f895befee1e9bfa7f92482455a9c88e93e1"
+  "manifest_sha256": "ec2e67ac24dc28316e11533127806ca00eabf07117ab2afd04026af318901620"
 }
