@@ -21,3 +21,27 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - Merged head: 334 tests pass, clippy clean, fmt clean.
 - **Finding:** sampled the E2A mutations. E2A-01 (equivalent: `(gap,si) <= x` can never tie because si is unique), E2A-02 (exact Re 1), E2A-03 (exact 7 days), E2A-07 (unreachable: books rows are never zero) and E2A-09 (voucher on the window's first day) **survive**. No fixture row sits on those bounds. Fixing with 2 small unit tests plus redefinitions of E2A-01 and E2A-07. No golden touched.
 - Timing: about 8 s per mutation at 4 jobs with warm workers, so a full run of about 487 is roughly 65–75 min. It fits this session.
+
+## 2026-09-25 14:48 UTC — E2a review round 1 and fixes (local, not pushed yet)
+
+- Nightly workflow guard re-checked: the issue step is `if: github.ref == 'refs/heads/master'` (line 116), and the file is identical to master on all five lane-e branches.
+- Opus review (round 1). Code: no panic or wrap; paise arithmetic is all checked. Findings:
+  - **P1:** the reader accepted negative, two-sided and out-of-period rows.
+  - **P1:** test gaps. The window's last day could be dropped, or a statement row matched twice, and every test still passed.
+  - **P2:** window outside the FY; empty charge term; missing rows or balance keys; row number, doc or account mismatch.
+  - **P2:** untested split orchestration, invariants that don't check money, a missing TB row read as 0.
+- Sonnet review (round 1): gates pass; no HashMap; fixtures synthetic and balanced. **P2:** the binding of `bank_reconciliation_ledger` is untested. **P3:** E2A-13's wording. Its "P1" was the missing mutation records, which is expected before the full run.
+- Fixed in 3 commits (59452ee, 539d449, plus a third). Reader refusals; window-in-FY refusal; empty-term refusal; unit assertions for the last day, (date, GUID) order and one-use statement rows; binding assertions. Mutations E2A-16..23 added, and E2A-01, 07, 13 and 15 redefined. **All E2A-01..23 killed** (sampled, --full). Tests 336 pass; clippy and fmt clean. No golden or fixture touched. 6 tests added in total, all small.
+- **Left for Lane D (needs a reference golden, which I can't make):** an edge book that exercises split orchestration. Opus showed these wrong ports all pass today:
+  - a forward split that doesn't retire its statement rows;
+  - a reverse-split pool that reuses forward-split books rows;
+  - a charge pass that overwrites split_settlement;
+  - statement order by index only;
+  - a split window made exclusive at 7 days;
+  - the BANK-2 duplicate check disabled.
+  Suggested fixture rows: two books rows competing for one statement row, a split at exactly 7 days, a split statement row whose narration holds a charge term, and a duplicate statement row.
+- **Not changed, for Lane D's call:**
+  - no invariant checks money (books opening + rows = closing); adding one is new behaviour beyond the reference's check_invariants;
+  - a missing TB row reads as 0, as the reference's `map_or(0)` parity does;
+  - opening + Σrows ≠ closing is not refused, because bankrec_paths deliberately tests a closing that doesn't tie.
+- Round-2 reviews (fresh Sonnet and Opus) running. Then freeze and run the full mutation list.
