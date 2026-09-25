@@ -979,6 +979,13 @@ mod through_the_tool {
     /// As `basic_plans`, with the ledger export given and, when `groups` is
     /// supplied, the paired group collection a `group` filter adds inside the
     /// same extent and identity bracket.
+    /// The captured currency read of a book with one master (INR).
+    fn single_currency() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        ))
+    }
+
     fn basic_plans_reading(ledgers: String, groups: Option<String>) -> Vec<ScenarioPlan> {
         let company = xml(companies());
         let extent = xml(include_str!(
@@ -995,6 +1002,8 @@ mod through_the_tool {
             extent.clone(),
             status(),
         ]);
+        // The basic read proves the book keeps one Currency master (#714).
+        pair(&mut plans, xml(single_currency()));
         pair(&mut plans, xml(ledgers));
         if let Some(groups) = groups {
             pair(&mut plans, xml(groups));
