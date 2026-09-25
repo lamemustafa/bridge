@@ -12,9 +12,11 @@ const RESERVED_MARKER: &str = r"\[[Bb][Rr][Ii][Dd][Gg][Ee]:";
 // after it. The server admits only one trailing CR LF, and only when a live
 // ledger holds exactly those bytes.
 const LEDGER_CONTROLS: &str = r"[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]";
-// Any CR or LF other than one CR LF ending the name: a CR not followed by the
-// final LF, an LF not preceded by CR, or an LF with anything after it.
-const INTERIOR_LINE_BREAK: &str = r"\u000D(?!\u000A$)|(?<!\u000D)\u000A|\u000A[\s\S]";
+// Any CR or LF other than one CR LF ending the name, without lookaround so
+// that any ECMA-262 or RE2-style validator accepts it: a CR followed by
+// anything but LF, a CR at the end, an LF after anything but CR, an LF first,
+// or an LF with anything after it.
+const INTERIOR_LINE_BREAK: &str = r"\u000D[^\u000A]|\u000D$|[^\u000D]\u000A|^\u000A|\u000A[\s\S]";
 // Non-control members of Unicode White_Space, matching Rust str::trim, plus
 // LF and CR: a ledger name may now end in a line break, so a name of nothing
 // else must still read as blank (bridge#626).

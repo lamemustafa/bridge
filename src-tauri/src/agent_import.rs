@@ -300,7 +300,7 @@ fn folded_twins<'a>(
     catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
 ) -> Vec<FoldedTwins> {
     let catalogue = catalogue.collect::<Vec<_>>();
-    let mut by_key: [BTreeMap<String, Vec<usize>>; 2] = Default::default();
+    let mut by_key: [BTreeMap<String, Vec<usize>>; 3] = Default::default();
     for (index, (name, _)) in catalogue.iter().enumerate() {
         for (keys, key) in by_key.iter_mut().zip(twin_fold_keys(name)) {
             keys.entry(key).or_default().push(index);

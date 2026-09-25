@@ -870,7 +870,10 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &ledger_binding,
     )
     .expect_err("a folded twin added since approval must refuse the queued post");
-    assert_eq!(error.to_string(), "ledger_has_folded_twin");
+    assert!(matches!(
+        error.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::LedgerFoldedTwin)
+    ));
 
     // A bank voucher is classified from the group collection read beside the
     // catalogue. Without that read the queue refuses rather than post on half

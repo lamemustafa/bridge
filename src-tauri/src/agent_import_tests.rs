@@ -2913,3 +2913,15 @@ fn a_folded_twin_marks_the_report_unimportable_with_its_own_remedy() {
         "a twin is not a spelling problem: {guidance}"
     );
 }
+
+#[test]
+fn a_twin_needing_both_folds_is_still_found() {
+    // Neither fold alone joins these: one needs the slash step and the other
+    // the line break or a non-ASCII case. The composite key does.
+    for (requested, other) in [("Rent/Office\r\n", "RENT OFFICE"), ("Café/Bar", "CAFÉ BAR")] {
+        let catalogue = [(requested, None), (other, None)];
+        let twins = folded_twins(&[requested.to_string()], catalogue.iter().copied());
+        assert_eq!(twins.len(), 1, "{requested:?}");
+        assert_eq!(twins[0].live.len(), 2, "{requested:?}");
+    }
+}

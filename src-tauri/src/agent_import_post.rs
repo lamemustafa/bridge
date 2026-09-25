@@ -496,6 +496,13 @@ impl Server {
                 } else if error.chain().any(|cause| {
                     matches!(
                         cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::LedgerFoldedTwin)
+                    )
+                }) {
+                    "ledger_has_folded_twin"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
                         Some(ApprovedImportAdmissionError::AdmissionInconsistent)
                     )
                 }) {
@@ -974,7 +981,7 @@ fn recheck_import_admission(
         .into_iter()
         .collect::<Vec<_>>();
     if !folded_twins(&named, parents.parents()).is_empty() {
-        return Err(anyhow::Error::msg("ledger_has_folded_twin"));
+        return Err(ApprovedImportAdmissionError::LedgerFoldedTwin.into());
     }
     // The binding above compares each ledger's name and GUID, not its parent,
     // so it cannot see a ledger or a group re-parented since approval. A bank

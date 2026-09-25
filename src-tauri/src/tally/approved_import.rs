@@ -174,6 +174,10 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// approved: a ledger or one of its groups moved (bridge#466 follow-up).
     #[error("import_bank_classification_changed")]
     BankClassificationChanged,
+    /// A named ledger now folds equal to another live ledger, which Tally's
+    /// import lookup could take for it (bridge#626).
+    #[error("ledger_has_folded_twin")]
+    LedgerFoldedTwin,
     /// A bank voucher reached the queue without its group read, or a Journal
     /// with one: a wiring fault, refused before any request is sent.
     #[error("import_post_admission_inconsistent")]
