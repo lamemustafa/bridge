@@ -21,3 +21,4 @@ What was run (Linux, pinned 1.96.0, `--features rfd/gtk3`):
 | PR | Head | Result | Comment |
 | --- | --- | --- | --- |
 | #642 MCP outstandings on several-currency books | 7afce72f8f1504b0101e1614297319680fd9aec3 | No P1/P2. Foreign bills are excluded or refused; the omission is loud. The PR's named blocking capture gap still stands. | https://github.com/lamemustafa/bridge/pull/642#issuecomment-5834878917 |
+| #666 post_queue_read_failed before the intent | 76a99f50842801572d98f3b0de99c33011365de8 | No P1. P2: a merge hazard with master's #641 arm and test (keep `post_catalogue_unreadable` first). P3: the gate forbids only `post_probe_xml(`. A mutation marking the POST's own error was killed by the e2e test. | https://github.com/lamemustafa/bridge/pull/666#issuecomment-5834950609 |
