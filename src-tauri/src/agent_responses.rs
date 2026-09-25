@@ -122,9 +122,14 @@ pub(super) fn drop_tally_line_error_text(value: &mut Value) -> bool {
             }
             dropped
         }
-        Value::Array(items) => items.iter_mut().fold(false, |dropped, item| {
-            drop_tally_line_error_text(item) || dropped
-        }),
+        Value::Array(items) => {
+            // Every element, never stopping at the first with text.
+            let mut dropped = false;
+            for item in items {
+                dropped |= drop_tally_line_error_text(item);
+            }
+            dropped
+        }
         _ => false,
     }
 }
