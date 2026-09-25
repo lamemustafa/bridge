@@ -362,11 +362,17 @@ pub(crate) mod test_seam {
         );
     }
 
-    /// A script standing in for the review subprocess.
+    /// A script standing in for a dialog subprocess.
+    ///
+    /// Each call writes a file of its own. Rewriting one path that another
+    /// thread may be executing can fail on Linux with "text file busy"
+    /// (ETXTBSY), which would surface as `import_approval_unavailable`.
     #[cfg(unix)]
     fn stub(directory: &std::path::Path, body: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let path = directory.join("stub");
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = directory.join(format!("stub-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
