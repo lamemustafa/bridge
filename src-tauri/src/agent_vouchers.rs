@@ -145,12 +145,29 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             let selection = select_voucher_rows(rows, selector).map_err(|refusal| {
                 let mut failure = ToolFailure::from(refusal.code.to_string());
                 if !refusal.candidates.is_empty() {
-                    failure.candidates = Some(
-                        refusal.candidates.iter().map(WindowVoucherType::json).collect(),
-                    );
+                    failure.candidates = Some(Box::new(Candidates {
+                        requested: None,
+                        items: refusal.candidates.iter().map(WindowVoucherType::json).collect(),
+                    }));
                 }
                 failure
             })?;
+            // A name that selected nothing may name no type at all (a typo):
+            // only then, one read of the book's voucher types tells a
+            // confident zero from an unknown name (bridge#664).
+            if let (VoucherTypeSelector::Name(name), true) = (selector, selection.rows.is_empty()) {
+                let (book, catalogue_evidence) =
+                    server.read_voucher_type_catalogue(&identity, &company.name).await?;
+                accumulate_evidence(&mut accumulated, catalogue_evidence);
+                if let Some(nearest) = unknown_voucher_type(name, &book) {
+                    let mut failure = ToolFailure::from("unknown_voucher_type".to_string());
+                    failure.candidates = Some(Box::new(Candidates {
+                        requested: Some(name.clone()),
+                        items: nearest.into_iter().map(BookVoucherType::json).collect(),
+                    }));
+                    return Err(failure);
+                }
+            }
             rows = selection.rows;
             voucher_types = Some(json!({
                 "included": selection.included.iter().map(WindowVoucherType::json).collect::<Vec<_>>(),
@@ -194,6 +211,35 @@ fn accumulate_evidence(target: &mut Option<Evidence>, next: Evidence) {
 }
 
 impl Server {
+    /// The book's voucher types (`voucher_type_catalogue_read`), bound to the
+    /// verified company by their GUIDs.
+    async fn read_voucher_type_catalogue(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+    ) -> Result<(Vec<BookVoucherType>, Evidence), ToolFailure> {
+        let (xml, evidence) = self
+            .post_read(identity, voucher_type_catalogue_read(company))
+            .await?;
+        let parsed = bridge_tally_protocol::parse_native_voucher_type_source_records_with_evidence(
+            &xml,
+            identity.company_guid(),
+        )
+        .map_err(|_| {
+            ToolFailure::from("voucher_type_export_invalid".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        let book = parsed
+            .records
+            .into_iter()
+            .map(|record| BookVoucherType {
+                name: record.record.name,
+                guid: record.identities.guid,
+            })
+            .collect();
+        Ok((book, evidence))
+    }
+
     pub(super) async fn corroborate_empty_voucher_read(
         &self,
         identity: &VerifiedCompanyIdentity,

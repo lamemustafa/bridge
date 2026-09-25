@@ -417,6 +417,57 @@ fn the_selectors_are_exclusive_and_the_schema_offers_only_measured_classes() {
     }
 }
 
+#[test]
+fn a_name_no_type_carries_is_unknown_and_the_nearest_names_come_first() {
+    let book = [
+        "Purchase",
+        "PURCHASE A/C",
+        "Purchase Local",
+        "Sales",
+        "Journal",
+    ]
+    .map(|name| BookVoucherType {
+        name: name.to_string(),
+        guid: None,
+    });
+    // Any type carrying the name, ignoring ASCII case, makes the zero stand.
+    for known in ["Purchase", "purchase a/c", "SALES"] {
+        assert_eq!(unknown_voucher_type(known, &book), None, "{known}");
+    }
+    let nearest = unknown_voucher_type("Purchse", &book).expect("no type is named Purchse");
+    assert_eq!(
+        nearest
+            .iter()
+            .map(|kind| kind.name.as_str())
+            .collect::<Vec<_>>(),
+        // Distances 1, 5, 6, 6 and 7; the tie at 6 keeps name order.
+        [
+            "Purchase",
+            "PURCHASE A/C",
+            "Journal",
+            "Sales",
+            "Purchase Local"
+        ]
+    );
+    // The distance ignores ASCII case.
+    let nearest = unknown_voucher_type("JOURNL", &book).unwrap();
+    assert_eq!(nearest[0].name, "Journal");
+    assert_eq!(unknown_voucher_type("x", &[]), Some(Vec::new()));
+}
+
+#[test]
+fn the_edit_distance_counts_each_insertion_deletion_and_substitution_once() {
+    let distance =
+        |wanted: &str, other: &str| edit_distance(&wanted.chars().collect::<Vec<_>>(), other);
+    assert_eq!(distance("", ""), 0);
+    assert_eq!(distance("abc", ""), 3);
+    assert_eq!(distance("", "abc"), 3);
+    assert_eq!(distance("kitten", "sitting"), 3);
+    assert_eq!(distance("purchse", "purchase"), 1);
+    assert_eq!(distance("purchase", "purchse"), 1);
+    assert_eq!(distance("sales", "salse"), 2);
+}
+
 fn captured_window() -> String {
     let bytes = include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-vouchers-renamed-purchase-class.utf16le.xml"
@@ -491,23 +542,32 @@ mod through_the_tool {
         xml(format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE READS LAB\"><GUID>{COMPANY}</GUID><COMPANYNUMBER>100023</COMPANYNUMBER><BOOKSFROM>20250401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"))
     }
 
+    /// One read in its company bracket: the paired read with a status probe
+    /// after each half.
+    fn bracketed(payload: String) -> [ScenarioPlan; 6] {
+        [
+            company(),
+            xml(payload.clone()),
+            status(),
+            xml(payload),
+            status(),
+            company(),
+        ]
+    }
+
     /// Identity, then the high-water pre-flight and the window, each read in
     /// its company bracket. The window is the live capture; the rest frames it.
     fn plans() -> Vec<ScenarioPlan> {
         let high_water = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{COMPANY}</GUID><ALTVCHID>3</ALTVCHID><ALTMSTID>224</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
         let mut plans = vec![company(), status(), company(), status()];
         for payload in [high_water, captured_window()] {
-            plans.extend([
-                company(),
-                xml(payload.clone()),
-                status(),
-                xml(payload),
-                status(),
-                company(),
-            ]);
+            plans.extend(bracketed(payload));
         }
         plans
     }
+
+    /// The requests [`plans`] answers: identity, then two bracketed reads.
+    const WINDOW_REQUESTS: usize = 4 + 2 * 6;
 
     async fn call(filter: Value) -> Value {
         call_with(filter, false).await.0
@@ -520,7 +580,23 @@ mod through_the_tool {
     }
 
     async fn call_with(filter: Value, observe: bool) -> (Value, Vec<String>) {
-        let simulator = SequenceSimulator::spawn(plans()).expect("simulator");
+        let (response, simulator) = call_on(plans(), filter).await;
+        if !observe {
+            return (response, Vec::new());
+        }
+        let requests = simulator
+            .finish()
+            .expect("observed requests")
+            .into_iter()
+            .map(|request| request.request_body_sha256)
+            .collect();
+        (response, requests)
+    }
+
+    /// The response, and the simulator, still holding any response the call
+    /// did not ask for.
+    async fn call_on(plans: Vec<ScenarioPlan>, filter: Value) -> (Value, SequenceSimulator) {
+        let simulator = SequenceSimulator::spawn(plans).expect("simulator");
         let directory = tempfile::tempdir().expect("directory");
         let server = Server::new(Settings {
             endpoint: TallyEndpointConfig {
@@ -539,16 +615,81 @@ mod through_the_tool {
             args[key] = value.clone();
         }
         let response = server.call_tool_response("vouchers", args).await.value;
-        if !observe {
-            return (response, Vec::new());
-        }
-        let requests = simulator
-            .finish()
-            .expect("observed requests")
-            .into_iter()
-            .map(|request| request.request_body_sha256)
-            .collect();
-        (response, requests)
+        (response, simulator)
+    }
+
+    /// The window's reads, then the book's voucher types (a live capture from
+    /// the same book) in their own bracket.
+    fn plans_with_voucher_types() -> Vec<ScenarioPlan> {
+        let mut plans = plans();
+        plans.extend(bracketed(captured_voucher_types()));
+        plans
+    }
+
+    fn captured_voucher_types() -> String {
+        let bytes = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-voucher-types-reads-lab.utf16le.xml"
+        );
+        let units = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).expect("the capture is UTF-16LE")
+    }
+
+    #[tokio::test]
+    async fn a_name_no_type_carries_costs_one_catalogue_read_and_is_refused_with_the_nearest() {
+        let (response, simulator) = call_on(
+            plans_with_voucher_types(),
+            json!({"voucher_type": "Purchse"}),
+        )
+        .await;
+        assert_eq!(response["isError"], true, "{response}");
+        let error = &response["structuredContent"]["result"]["error"];
+        assert_eq!(error["code"], "unknown_voucher_type");
+        assert_eq!(error["requested"], "Purchse");
+        assert_eq!(error["candidates_total"], 35);
+        assert_eq!(error["candidates_truncated"], false);
+        let nearest = error["candidates"].as_array().unwrap();
+        assert_eq!(nearest[0]["name"], "Purchase");
+        assert_eq!(nearest[0]["guid"], format!("{COMPANY}-000000d2"));
+        assert_eq!(nearest[1]["name"], "PURCHASE A/C");
+        assert_eq!(simulator.received(), WINDOW_REQUESTS + 6);
+    }
+
+    #[tokio::test]
+    async fn a_real_type_with_no_voucher_in_the_window_keeps_its_zero_after_one_catalogue_read() {
+        // Sales exists in this book (and matches ignoring case) but has no
+        // voucher in the window.
+        let (response, simulator) =
+            call_on(plans_with_voucher_types(), json!({"voucher_type": "sales"})).await;
+        assert_ne!(response["isError"], true, "{response}");
+        let result = &response["structuredContent"]["result"];
+        assert_eq!(result["total"], 0, "{response}");
+        assert_eq!(result["voucher_types"]["included"], json!([]));
+        assert_eq!(
+            result["voucher_types"]["in_scope"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(simulator.received(), WINDOW_REQUESTS + 6);
+    }
+
+    #[tokio::test]
+    async fn a_name_that_selects_rows_makes_no_catalogue_read() {
+        let (response, simulator) = call_on(
+            plans_with_voucher_types(),
+            json!({"voucher_type": "purchase a/c"}),
+        )
+        .await;
+        assert_ne!(response["isError"], true, "{response}");
+        assert_eq!(
+            response["structuredContent"]["result"]["total"], 2,
+            "{response}"
+        );
+        assert_eq!(simulator.received(), WINDOW_REQUESTS);
     }
 
     #[tokio::test]

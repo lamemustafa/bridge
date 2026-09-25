@@ -404,9 +404,17 @@ struct ToolFailure {
     /// instead of reading as a Tally data problem.
     unanswered: Option<Unanswered>,
     /// The voucher types a type-filter refusal is about, so a caller can pick
-    /// one (bridge#625). Type names and GUIDs from the read window, never
-    /// the whole book. Boxed to keep the refusal small on every other path.
-    candidates: Option<Box<[Value]>>,
+    /// one (bridge#625, bridge#664). Boxed to keep the refusal small on every
+    /// other path.
+    candidates: Option<Box<Candidates>>,
+}
+
+/// The types a refusal offers instead, and the name the caller asked for when
+/// that name matched none (bridge#664).
+#[derive(Debug)]
+struct Candidates {
+    requested: Option<String>,
+    items: Vec<Value>,
 }
 
 /// A compliance read refused on its size before the master request was sent:
@@ -941,7 +949,11 @@ impl Server {
                 // refusal code must survive the byte cap.
                 if let Some(candidates) = candidates {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
-                        let fields = candidate_fields(&candidates, self.settings.max_bytes / 4);
+                        if let Some(requested) = &candidates.requested {
+                            error["requested"] = json!(requested);
+                        }
+                        let fields =
+                            candidate_fields(&candidates.items, self.settings.max_bytes / 4);
                         for (key, value) in fields {
                             error[key] = value;
                         }

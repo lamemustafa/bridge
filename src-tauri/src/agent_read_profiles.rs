@@ -292,6 +292,16 @@ impl ReadRequest {
     }
 }
 
+/// The book's voucher-type masters, as the sync connector reads them: names
+/// and GUIDs only, no period (bridge#664).
+pub(super) fn voucher_type_catalogue_read(company: &str) -> ReadRequest {
+    ReadRequest(
+        bridge_tally_protocol::native_outstandings::render_native_voucher_type_export_request(
+            company,
+        ),
+    )
+}
+
 pub(super) fn company_high_water_read(company: &str) -> ReadRequest {
     ReadRequest(render_agent_company_high_water(company))
 }
