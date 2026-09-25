@@ -1866,10 +1866,15 @@ fn the_compliance_read_admits_a_mark_within_budget_and_refuses_one_more() {
         }
         other => panic!("expected a size refusal, got {other:?}"),
     }
+    let missing = super::admit_compliance_master_read(None);
     assert!(matches!(
-        super::admit_compliance_master_read(None),
+        missing,
         Err(super::PartyLedgerMasterSourceValidationError::MasterMarkMissing)
     ));
+    assert_eq!(
+        missing.unwrap_err().safe_code(),
+        "company_master_mark_missing"
+    );
 }
 
 /// The budget boundary itself, at figures that land exactly on it (#637): an
