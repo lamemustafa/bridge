@@ -1896,9 +1896,9 @@ fn a_batch_keeps_its_masters_and_step_verdicts_independently() {
         server.record_post_checks_pending("batch-a", true).unwrap();
         let recorded = if step_first {
             server.record_batch_step_verdict("batch-a", step);
-            server.record_masters_verdict("batch-a", masters.clone())
+            server.record_masters_verdict_for("batch-a", masters.clone(), true)
         } else {
-            let verdict = server.record_masters_verdict("batch-a", masters.clone());
+            let verdict = server.record_masters_verdict_for("batch-a", masters.clone(), true);
             server.record_batch_step_verdict("batch-a", step);
             let _ = verdict;
             super::super::read_masters_check(&server.imports_dir().unwrap(), "batch-a").unwrap()
@@ -1958,10 +1958,42 @@ fn an_observed_step_doubt_outlives_a_later_verdict() {
     server.record_post_checks_pending("batch-a", true).unwrap();
     server.record_batch_step_verdict("batch-a", &json!({"matches_created":false}));
     server.record_batch_step_verdict("batch-a", &json!({"matches_created":true}));
-    let recorded = server.record_masters_verdict("batch-a", json!({"state":"unchanged"}));
+    let recorded = server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
     assert_eq!(
         post_doubt(Some(&recorded), 2).map(|(code, _)| code),
         Some("batch_step_unconfirmed"),
         "{recorded}"
     );
+}
+
+/// A batch whose check record cannot be read when its masters verdict is
+/// written keeps its step pending, so it stays in doubt; and a batch in
+/// doubt, or with no step verdict at all, is never an amendment baseline.
+#[test]
+fn an_unreadable_batch_record_keeps_the_step_pending_and_blocks_the_baseline() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = records_server(directory.path());
+    let imports = server.imports_dir().unwrap();
+    server.record_post_checks_pending("batch-a", true).unwrap();
+    fs::write(imports.join("batch-a.masters_check.json"), b"not json").unwrap();
+    let recorded = server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
+    assert_eq!(recorded["batch_step"]["state"], "check_pending", "{recorded}");
+    assert!(post_doubt(Some(&recorded), 2).is_some());
+
+    let baseline = serde_json::to_vec(&super::super::amend::VerifiedBaseline::default()).unwrap();
+    for batch in ["batch-a", "batch-b", "batch-c"] {
+        fs::write(imports.join(format!("{batch}.baseline.json")), &baseline).unwrap();
+    }
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-a", 2).is_none());
+    // A clean single post is a baseline; the same record read as a batch,
+    // holding no step verdict, is not.
+    server.record_post_checks_pending("batch-b", false).unwrap();
+    server.record_masters_verdict("batch-b", json!({"state":"unchanged"}));
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-b", 1).is_some());
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-b", 2).is_none());
+    // A batch whose masters and step both came out clean is a baseline.
+    server.record_post_checks_pending("batch-c", true).unwrap();
+    server.record_batch_step_verdict("batch-c", &json!({"matches_created":true}));
+    server.record_masters_verdict_for("batch-c", json!({"state":"unchanged"}), true);
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-c", 2).is_some());
 }

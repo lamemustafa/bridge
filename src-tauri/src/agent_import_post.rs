@@ -632,7 +632,11 @@ impl Server {
                 .await;
             // The verdict replaces the pending record before the readback, so no
             // later reconcile, which compares by name, can clear a doubt (#239).
-            let masters_after_post = self.record_masters_verdict(batch_id, masters_after_post);
+            let masters_after_post = self.record_masters_verdict_for(
+                batch_id,
+                masters_after_post,
+                line.vouchers.len() > 1,
+            );
             masters_verdict = Some(masters_after_post.clone());
             let mut proof = self
                 .verify_import_after_current_dispatch(args, masters_after_post)
@@ -927,7 +931,7 @@ fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
 
 /// Every doubt across the post: the masters check, and for a batch its step,
 /// which must be recorded as matched.
-fn post_doubt(
+pub(super) fn post_doubt(
     masters_after_post: Option<&Value>,
     voucher_count: usize,
 ) -> Option<(&'static str, String)> {
@@ -1565,6 +1569,7 @@ fn batch_review_text(
                 .join(", ")
         ),
         format!("Dates: {first} to {last}  Voucher numbers: Tally assigns them"),
+        "Not shown here: each voucher's own date, narration and reference.".into(),
         String::new(),
     ];
     for (ledger, (dr, cr, count)) in &ledgers {

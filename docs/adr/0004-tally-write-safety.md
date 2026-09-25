@@ -510,7 +510,7 @@ proved. With it off, a batch of more than one voucher refuses exactly as before
   cash/bank ledgers;
 - the standing cautions.
 
-Narrations and references are not shown. Its budget is its own: 40 lines, 3,200 characters, 100
+It says, in a line of its own, that each voucher's date, narration and reference are not shown. Its budget is its own: 40 lines, 3,200 characters, 100
 a line, and 7,000 UTF-8 bytes (under the dialog's 8,000). A summary over it is refused
 (`import_review_too_large`), never cut, and the caller posts the batch in parts. A 40-line native
 dialog has not yet been shown on Windows or macOS (UNVERIFIED).
@@ -540,3 +540,12 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
 - The N-voucher step is PARTIAL on raw-gateway lab scripts (protocol reference §11c.5).
   Through Bridge's own post path it is UNVERIFIED until the lab proof (slice D3).
 - The desktop stays single-voucher `JournalOnly`.
+
+**Rollback.**
+- Reverting to slice D1's build keeps a posted batch `reconciliation_required`
+  (`batch_step_unconfirmed`), because D1 requires a matched step verdict and never records one.
+- Reverting further, to before D1, leaves a batch unverifiable: that build expects one voucher,
+  so its readback count never matches.
+- A build older than D1 refuses a journal holding a batch's dispatch intent
+  (`deny_unknown_fields`) loudly, never by skipping it.
+- Do not edit the journal or the check records by hand to get around any of these.

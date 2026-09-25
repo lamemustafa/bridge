@@ -563,6 +563,44 @@ async fn a_batch_whose_second_remote_id_is_recorded_during_approval_is_never_sen
     );
 }
 
+/// A live batch post records its step verdict durably, before anything else
+/// can fail. Tally's captured answer reports one create for this batch of
+/// two, and the target's mark moves by two: the step doubt is recorded, and
+/// the batch is not verified.
+#[tokio::test]
+async fn a_batch_post_records_its_step_verdict_before_anything_else_can_fail() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(company_marks(12, 50, "WR2 Unicode Lab")));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = batch_server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch_of_two(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    let imports = server.imports_dir().unwrap();
+    let doubt: Value = serde_json::from_slice(
+        &fs::read(imports.join(format!("{}.batch_step_doubt.json", line.batch_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(doubt["state"], "unmatched", "{response}");
+    assert_eq!(doubt["target_voucher_step"]["step"], 2, "{doubt}");
+    assert_eq!(doubt["target_voucher_step"]["reported_created"], 1, "{doubt}");
+    assert_eq!(
+        super::super::read_masters_check(&imports, &line.batch_id).unwrap()["batch_step"]["state"],
+        "unmatched"
+    );
+    assert_ne!(
+        response["structuredContent"]["result"]["dispatch"]["state"], "posted_verified",
+        "{response}"
+    );
+}
+
 /// With batch posting off, a batch of two is refused before any request.
 #[tokio::test]
 async fn a_batch_is_refused_while_batch_posting_is_off() {

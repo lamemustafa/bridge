@@ -415,8 +415,9 @@ impl Server {
         } = self
             .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
-        // Refused before any read or dialog. `post_import` posts one voucher,
-        // so a batch it dispatched holds exactly one.
+        // Refused before any read or dialog. A review binds one voucher, so a
+        // batch of several has no review record yet (batch posting, slice
+        // D2b): its vouchers are reviewed in Tally.
         if !dispatched || line.vouchers.len() != 1 {
             return Err("ack_batch_not_posted".to_string().into());
         }

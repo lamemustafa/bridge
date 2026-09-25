@@ -407,7 +407,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only a single-voucher batch is eligible for post_import: an unnumbered Journal, or a Payment, Receipt or Contra, whose legs post_import classifies again before approval and after approval inside the endpoint queue, before the final duplicate check and the post."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. A single-voucher batch is eligible for post_import (and, when BRIDGE_AGENT_ENABLE_BATCH_POST is on, a batch of 2 to 50 such vouchers): an unnumbered Journal, or a Payment, Receipt or Contra, whose legs post_import classifies again before approval and after approval inside the endpoint queue, before the final duplicate check and the post."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -1100,7 +1100,11 @@ impl Server {
                                 )
                                 .await
                             };
-                            Some(self.record_masters_verdict(&line.batch_id, verdict))
+                            Some(self.record_masters_verdict_for(
+                                &line.batch_id,
+                                verdict,
+                                line.vouchers.len() > 1,
+                            ))
                         }
                         recorded => recorded,
                     }
@@ -2790,7 +2794,19 @@ impl Server {
     /// outranks any later verdict. A check that could not run
     /// (`check_unavailable`) is not recorded, so a later readback checks
     /// again; a verdict that cannot be written leaves the check pending.
+    #[cfg(test)]
     pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
+        self.record_masters_verdict_for(batch_id, verdict, false)
+    }
+
+    /// As [`Self::record_masters_verdict`], for a batch (`batch`) keeping its
+    /// step verdict beside: pending when none can be read, never dropped.
+    pub(super) fn record_masters_verdict_for(
+        &self,
+        batch_id: &str,
+        verdict: Value,
+        batch: bool,
+    ) -> Value {
         if verdict["state"] == "check_unavailable" {
             return verdict;
         }
@@ -2801,15 +2817,15 @@ impl Server {
         if verdict["state"] == "posted_under_changed_masters" {
             let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
         }
-        // The batch step verdict beside it is kept, never overwritten.
+        // The batch step verdict beside it is kept, never overwritten; for a
+        // batch whose step verdict cannot be read, it stays pending (doubt).
         let path = masters_check_path(&imports, batch_id);
         let mut verdict = verdict;
-        if let Some(step) =
-            read_masters_record(&path).and_then(|check| check.get("batch_step").cloned())
-        {
-            if let Some(fields) = verdict.as_object_mut() {
-                fields.insert("batch_step".into(), step);
-            }
+        let step = read_masters_record(&path)
+            .and_then(|check| check.get("batch_step").cloned())
+            .or_else(|| batch.then(|| json!({"state": MASTERS_CHECK_PENDING})));
+        if let (Some(step), Some(fields)) = (step, verdict.as_object_mut()) {
+            fields.insert("batch_step".into(), step);
         }
         let _ = write_masters_record(&path, &verdict);
         read_masters_check(&imports, batch_id).unwrap_or(pending)
@@ -2823,9 +2839,20 @@ fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
 /// A build's verified baseline, or `None` when it has none or it cannot be
 /// read. Either way an amendment of that build refuses.
 fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    read_verified_baseline_for(imports, batch_id, 1)
+}
+
+/// As [`read_verified_baseline`], for a build of `voucher_count` vouchers: a
+/// batch whose step verdict is doubted, or was never recorded, is no
+/// baseline either.
+fn read_verified_baseline_for(
+    imports: &Path,
+    batch_id: &str,
+    voucher_count: usize,
+) -> Option<amend::VerifiedBaseline> {
     // A batch in doubt about its ledgers, or whose check is still pending
     // (#239), is no baseline, whenever its baseline was written.
-    if post::masters_doubt(read_masters_check(imports, batch_id).as_ref()).is_some() {
+    if post::post_doubt(read_masters_check(imports, batch_id).as_ref(), voucher_count).is_some() {
         return None;
     }
     let mut file =
@@ -2866,8 +2893,12 @@ fn verified_baselines(imports: &Path, lineage: &amend::Lineage) -> amend::Verifi
             .builds
             .iter()
             .filter_map(|build| {
-                read_verified_baseline(imports, &build.batch.batch_id)
-                    .map(|baseline| (build.batch.batch_id.clone(), baseline))
+                read_verified_baseline_for(
+                    imports,
+                    &build.batch.batch_id,
+                    build.batch.vouchers.len(),
+                )
+                .map(|baseline| (build.batch.batch_id.clone(), baseline))
             })
             .collect(),
     )
