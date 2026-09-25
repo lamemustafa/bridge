@@ -88,7 +88,7 @@ const TALLY_HTTP_TRANSPORT_CRATE = "bridge-tally-transport";
 
 // `bridge` is the app crate. It legitimately depends on reqwest directly for
 // two things that are NOT the Tally path: axal.rs (AXAL sign-in / cloud
-// storage) and documents.rs (the document upload feature). The README section
+// storage) and documents.rs (the document upload feature). The README paragraph
 // 'One part of the app does upload' names both explicitly as the parts of the
 // app that DO upload.
 //
@@ -202,7 +202,7 @@ for (const workspace of workspaces) {
 // silently in either direction -- same shape as
 // admission_and_egress_files_stay_pinned.rs's pin check.
 const APP_CRATE_HTTP_ALLOW_LIST = new Set([
-  // AXAL sign-in and document upload: the two features the README section
+  // AXAL sign-in and document upload: the two features the README paragraph
   // 'One part of the app does upload' names as the parts of the app that DO
   // upload, on purpose, user-initiated.
   "src-tauri/src/axal.rs",
