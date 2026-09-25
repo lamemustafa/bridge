@@ -7,11 +7,13 @@
 //! rows the caller passes it, as the reference reads `eng.bank`.
 //!
 //! Books side: one row per population voucher touching the bank ledger, summed over that voucher's
-//! lines on the ledger (never per line), dated within the statement's window. Matching pairs each
-//! books row, in (date, GUID) order, with the nearest-date unmatched statement row that agrees in
-//! amount within `TOL_PAISE` and lies within `match_max_days`. What stays unmatched is tried as a
-//! split settlement (2 to 4 rows on the other side summing to it), then classified by narration
-//! terms and by sign.
+//! lines on the ledger (never per line), dated within the statement's window; a voucher netting
+//! to zero there is no row. Matching pairs each books row, in (date, GUID) order, with the
+//! nearest-date unmatched statement row that agrees in amount within `TOL_PAISE` and lies within
+//! `match_max_days`. What stays unmatched is tried as a split settlement (2 to 4 rows on the
+//! other side, each within `match_max_days`, summing to it within `TOL_PAISE`; a pool over
+//! `MAX_SPLIT_POOL` is not searched); then a statement row is a charge by its narration terms or
+//! else not found, and a books row a timing difference by sign.
 //!
 //! Python's orders are kept where they decide a result:
 //! * the reference iterates `set`s of small list indices, which CPython yields in ascending order
@@ -21,6 +23,12 @@
 //!
 //! A figure id the reference would repeat (two books rows sharing a GUID's hash) is refused with
 //! an error, as the reference's `fig` raises, never a panic.
+//!
+//! Divergences, deliberate, and not parity: where the reference runs, this port refuses a
+//! statement window that is not inside the engagement year (a window starting before it gets the
+//! year's TB opening as its opening, and one ending after it misses later vouchers), a blank
+//! charge term ([`charge_terms`]), and the malformed statements the reader refuses
+//! ([`crate::documents::bank_statement_from_json`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -106,7 +114,8 @@ fn fig(
 ///
 /// Divergence, deliberate, and not parity (as `cash_book_integrity::own_account_terms`): the
 /// reference passes the value to `set(...)` unchecked, so a single string becomes the set of its
-/// characters and a table the set of its keys. Here both, and a list holding a non-string, refuse.
+/// characters and a table the set of its keys. Here both refuse, and so does a list holding a
+/// non-string or a blank term.
 pub fn charge_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());
@@ -115,10 +124,16 @@ pub fn charge_terms(raw: Option<&toml::Value>) -> Result<BTreeSet<String>> {
     raw.as_array()
         .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} is not a list")))?
         .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} holds a non-string")))
+        .map(|v| match v.as_str() {
+            // A blank term is in every narration, or nearly (a space), so every row would be a
+            // charge.
+            Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a blank term"
+            ))),
+            Some(s) => Ok(s.to_string()),
+            None => Err(AuditError::Config(format!(
+                "{TEST_ID}: {key} holds a non-string"
+            ))),
         })
         .collect()
 }
@@ -276,6 +291,15 @@ pub fn run(
         .collect();
     let (start, end) = (&statement.start, &statement.end);
     let stmt = &statement.rows;
+    // Not parity (see the module docs): the opening is the TB opening plus earlier lines of this
+    // year's book, and the closing its rows, so both are balances only for a window inside it.
+    if start < &period.from || end > &period.to {
+        return Err(AuditError::Config(format!(
+            "{TEST_ID}: the statement window {} to {} is not inside the engagement year",
+            iso(start),
+            iso(end)
+        )));
+    }
 
     r.population_note = format!(
         "Books population (optional, cancelled and post-dated vouchers excluded), ledger \
@@ -842,9 +866,131 @@ pub fn check_invariants(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::book::{LedgerLine, TbRow, Voucher, VoucherStatus};
+
+    fn date(d: &str) -> TallyDate {
+        TallyDate::parse(d).unwrap()
+    }
+
+    /// A statement row of `amount_paise`, money in (+) as a credit and money out (-) as a debit.
+    fn stmt_row(row: i64, on: &str, amount_paise: i64, narration: &str) -> BankStatementRow {
+        BankStatementRow {
+            doc: "bank:unit".to_string(),
+            row,
+            account_ref: "XXXXXX0001".to_string(),
+            txn_date: date(on),
+            narration: narration.to_string(),
+            debit_paise: (-amount_paise).max(0),
+            credit_paise: amount_paise.max(0),
+            balance_paise: None,
+        }
+    }
+
+    fn book_row(guid: &str, on: &str, amount_paise: i64) -> BookRow {
+        BookRow {
+            guid: guid.to_string(),
+            label: guid.to_string(),
+            date: date(on),
+            amount_paise,
+        }
+    }
+
+    /// A balanced Bank/Sales voucher.
+    fn voucher(guid: &str, on: &str, amount_paise: i64) -> Voucher {
+        Voucher {
+            guid: guid.to_string(),
+            date: date(on),
+            status: VoucherStatus::Regular,
+            lines: vec![
+                LedgerLine {
+                    ledger: "Bank".to_string(),
+                    amount_paise,
+                },
+                LedgerLine {
+                    ledger: "Sales".to_string(),
+                    amount_paise: -amount_paise,
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// A book of `vouchers` whose Trial Balance carries only the Bank opening.
+    fn book_of(vouchers: Vec<Voucher>, opening_paise: i64) -> Book {
+        Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            stock: None,
+            vouchers,
+            tb: BTreeMap::from([(
+                "Bank".to_string(),
+                TbRow {
+                    opening_paise,
+                    debit_paise: 0,
+                    credit_paise: 0,
+                    closing_paise: opening_paise,
+                },
+            )]),
+        }
+    }
+
+    fn march_statement(rows: Vec<BankStatementRow>) -> BankStatementDoc {
+        BankStatementDoc {
+            doc_id: "bank:unit".to_string(),
+            source_sha256: String::new(),
+            account_ref: "XXXXXX0001".to_string(),
+            bank: "Invented Bank".to_string(),
+            start: date("20260301"),
+            end: date("20260331"),
+            opening_balance_paise: 0,
+            closing_balance_paise: 0,
+            rows,
+        }
+    }
+
+    fn year() -> Window {
+        Window {
+            from: date("20250401"),
+            to: date("20260331"),
+        }
+    }
+
+    /// `run` over March with the "FEE" charge term.
+    fn run_march(vouchers: Vec<Voucher>, rows: Vec<BankStatementRow>) -> TestResult {
+        let terms = BTreeSet::from(["FEE".to_string()]);
+        let rules = Rules::vendored().unwrap();
+        let (book, statement) = (book_of(vouchers, 0), march_statement(rows));
+        run(
+            &book,
+            &rules,
+            &year(),
+            &statement,
+            "Bank",
+            &terms,
+            MATCH_MAX_DAYS,
+        )
+        .unwrap()
+    }
+
+    /// The rows `run` gave one reason on one side, by their evidence: a voucher's GUID, a
+    /// statement row's narration.
+    fn reasons(r: &TestResult, side: &str, reason: &str) -> Vec<String> {
+        let id = format!("{TEST_ID}.{side}_only_reason_{reason}_count");
+        let f = r.figures.iter().find(|f| f.id == id);
+        let f = f.unwrap_or_else(|| panic!("no figure {id}"));
+        let pick = |e: &EvidenceRef| match e.kind.as_str() {
+            "voucher" => e.id.clone(),
+            _ => e.label.clone(),
+        };
+        f.evidence.iter().map(pick).collect()
+    }
 
     #[test]
-    fn a_split_is_the_first_hit_in_combinations_order() {
+    fn splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows() {
         // Python: next(c for size in 2..4 for c in combinations(pool, size) if within tol)
         let pool = [(10, 5), (11, 3), (12, 2), (13, 1)];
         assert_eq!(find_split(5, &pool, 0).unwrap(), Some(vec![11, 12]));
@@ -867,5 +1013,184 @@ mod tests {
             "a pool over 40 is not searched"
         );
         assert_eq!(find_split(2, &big[..40], 0).unwrap(), Some(vec![0, 1]));
+
+        // The passes over a whole run. b1 and b2 both fit s0 + s1: b1 is earlier though listed
+        // later, and s0 + s1 is spent once. s9 and s7 both fit b8 + b9: s9 is earlier though
+        // listed later. s7 also equals the matched b6 + b7, which are spent (were they not, s9
+        // would take them first and leave b8 and b9). b3 fits s2 + s3, and s4 fits b4 + b5, but
+        // more than 7 days apart. s1 names a charge term but is a split.
+        let r = run_march(
+            vec![
+                voucher("b2", "20260312", 300_000),
+                voucher("b1", "20260310", 300_000),
+                voucher("b3", "20260301", -50_000),
+                voucher("b4", "20260305", 30_000),
+                voucher("b5", "20260306", 40_000),
+                voucher("b6", "20260320", 10_000),
+                voucher("b7", "20260321", 15_000),
+                voucher("b8", "20260319", 12_000),
+                voucher("b9", "20260319", 13_000),
+            ],
+            vec![
+                stmt_row(0, "20260310", 100_000, "s0"),
+                stmt_row(1, "20260311", 200_000, "s1 BANK FEE"),
+                stmt_row(2, "20260322", 25_000, "s7"),
+                stmt_row(3, "20260318", 25_000, "s9"),
+                stmt_row(4, "20260311", 600_000, "s8"),
+                stmt_row(5, "20260325", -20_000, "s2"),
+                stmt_row(6, "20260326", -30_000, "s3"),
+                stmt_row(7, "20260330", 70_000, "s4"),
+                stmt_row(8, "20260320", 10_000, "s5"),
+                stmt_row(9, "20260321", 15_000, "s6"),
+            ],
+        );
+        let reason = |side: &str, why: &str| reasons(&r, side, why);
+        assert_eq!(reason("books", REASON_SPLIT_SETTLEMENT), ["b1", "b8", "b9"]);
+        assert_eq!(
+            reason("books", REASON_DEPOSIT_NOT_CREDITED),
+            ["b2", "b4", "b5"]
+        );
+        assert_eq!(reason("books", REASON_CHEQUE_NOT_PRESENTED), ["b3"]);
+        assert_eq!(
+            reason("statement", REASON_SPLIT_SETTLEMENT),
+            ["s0", "s1 BANK FEE", "s9"]
+        );
+        assert_eq!(
+            reason("statement", REASON_NOT_FOUND),
+            ["s7", "s8", "s2", "s3", "s4"]
+        );
+        assert!(reason("statement", REASON_BANK_ONLY_CHARGE).is_empty());
+
+        // The bounds inside a run: m matches mb 50 paise off; f1 takes r0 + r1, 50 paise off and
+        // exactly 7 days away, and not far (8 days) or r2 (listed after r1, dated before it); v0
+        // takes g1 + g2, exactly Re 1 off and 7 days away, and not g0 (8 days); v1, on v0's date
+        // but listed after it, finds them spent.
+        let r = run_march(
+            vec![
+                voucher("f1", "20260305", 30_000),
+                voucher("g0", "20260320", -14_950),
+                voucher("g1", "20260321", -15_000),
+                voucher("g2", "20260321", -25_100),
+                voucher("mb", "20260315", 7_000),
+            ],
+            vec![
+                stmt_row(0, "20260313", 10_000, "far"),
+                stmt_row(1, "20260312", 10_000, "r0"),
+                stmt_row(2, "20260312", 20_050, "r1"),
+                stmt_row(3, "20260306", 20_050, "r2"),
+                stmt_row(4, "20260315", 7_050, "m"),
+                stmt_row(5, "20260328", -40_000, "v0"),
+                stmt_row(6, "20260328", -40_000, "v1"),
+            ],
+        );
+        let reason = |side: &str, why: &str| reasons(&r, side, why);
+        assert_eq!(reason("books", REASON_SPLIT_SETTLEMENT), ["f1", "g1", "g2"]);
+        assert_eq!(reason("books", REASON_CHEQUE_NOT_PRESENTED), ["g0"]);
+        assert!(reason("books", REASON_DEPOSIT_NOT_CREDITED).is_empty());
+        assert_eq!(
+            reason("statement", REASON_SPLIT_SETTLEMENT),
+            ["r0", "r1", "v0"]
+        );
+        assert_eq!(reason("statement", REASON_NOT_FOUND), ["far", "r2", "v1"]);
+
+        // The reverse pool in index order: t0 takes a + b, where date order would take c + b
+        // (Re 1 off); and a reverse split's statement row is spent, so its charge term is moot.
+        let r = run_march(
+            vec![
+                voucher("a", "20260312", -6_000),
+                voucher("b", "20260311", -4_000),
+                voucher("c", "20260309", -5_900),
+            ],
+            vec![stmt_row(0, "20260310", -10_000, "t0 FEE")],
+        );
+        let reason = |side: &str, why: &str| reasons(&r, side, why);
+        assert_eq!(reason("books", REASON_SPLIT_SETTLEMENT), ["a", "b"]);
+        assert_eq!(reason("books", REASON_CHEQUE_NOT_PRESENTED), ["c"]);
+        assert_eq!(reason("statement", REASON_SPLIT_SETTLEMENT), ["t0 FEE"]);
+        assert!(reason("statement", REASON_BANK_ONLY_CHARGE).is_empty());
+
+        for blank in ["", " "] {
+            let raw = toml::Value::Array(vec![toml::Value::String(blank.to_string())]);
+            assert!(
+                matches!(charge_terms(Some(&raw)), Err(AuditError::Config(m)) if m.contains("blank term")),
+                "{blank:?} is in nearly every narration"
+            );
+        }
+    }
+
+    #[test]
+    fn a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order() {
+        let books = [book_row("g1", "20260310", 10_000)];
+        let pairs = |stmt: &[BankStatementRow]| {
+            match_rows(&books, stmt, TOL_PAISE, MATCH_MAX_DAYS).unwrap()
+        };
+        let row = |on: &str, amount_paise: i64| stmt_row(0, on, amount_paise, "");
+        assert_eq!(pairs(&[row("20260310", 10_100)]), vec![(0, 0)], "Re 1 off");
+        assert_eq!(pairs(&[row("20260310", 10_101)]), vec![], "Re 1.01 off");
+        assert_eq!(pairs(&[row("20260317", 10_000)]), vec![(0, 0)], "7 days");
+        assert_eq!(pairs(&[row("20260318", 10_000)]), vec![], "8 days");
+        assert_eq!(
+            pairs(&[row("20260313", 10_000), row("20260307", 10_000)]),
+            vec![(0, 0)],
+            "an equal gap goes to the lower statement index"
+        );
+        assert_eq!(
+            pairs(&[row("20260315", 10_000), row("20260311", 10_000)]),
+            vec![(0, 1)],
+            "the nearer row wins over a lower index"
+        );
+        // Books rows go in (date, GUID) order, and a statement row is taken once.
+        let one = [row("20260310", 10_000)];
+        let same_day = [
+            book_row("gB", "20260310", 10_000),
+            book_row("gA", "20260310", 10_000),
+        ];
+        assert_eq!(
+            match_rows(&same_day, &one, TOL_PAISE, MATCH_MAX_DAYS).unwrap(),
+            vec![(1, 0)]
+        );
+        let by_date = [
+            book_row("gA", "20260312", 10_000),
+            book_row("gB", "20260308", 10_000),
+        ];
+        assert_eq!(
+            match_rows(&by_date, &one, TOL_PAISE, MATCH_MAX_DAYS).unwrap(),
+            vec![(1, 0)]
+        );
+    }
+
+    #[test]
+    fn the_window_holds_its_first_and_last_days_and_lies_inside_the_year() {
+        let book = book_of(
+            vec![
+                voucher("v1", "20260228", 20_000),
+                voucher("v2", "20260301", 5_000),
+                voucher("v3", "20260331", 1_000),
+                voucher("v4", "20260401", 1_000),
+            ],
+            100_000,
+        );
+        let (start, end) = (date("20260301"), date("20260331"));
+        assert_eq!(
+            books_balance_before(&book, "Bank", &start).unwrap(),
+            120_000
+        );
+        let rows = books_rows(&book, "Bank", &start, &end).unwrap();
+        let guids: Vec<&str> = rows.iter().map(|r| r.guid.as_str()).collect();
+        assert_eq!(guids, ["v2", "v3"]);
+
+        let rules = Rules::vendored().unwrap();
+        let terms = BTreeSet::new();
+        let run_on =
+            |s: &BankStatementDoc| run(&book, &rules, &year(), s, "Bank", &terms, MATCH_MAX_DAYS);
+        let mut statement = march_statement(Vec::new());
+        assert!(run_on(&statement).is_ok());
+        for (from, to) in [("20260301", "20260401"), ("20250331", "20250430")] {
+            (statement.start, statement.end) = (date(from), date(to));
+            assert!(
+                matches!(run_on(&statement), Err(AuditError::Config(m)) if m.contains("not inside the engagement year")),
+                "{from}..{to}"
+            );
+        }
     }
 }

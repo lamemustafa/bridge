@@ -78,20 +78,72 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
     if source.contains("impl From<") || source.contains("impl Into<") {
         problems.push("no conversion may exist between the approval types".into());
     }
-    // Any other attribute that names `test` inside a cfg (`any(test, ..)`,
-    // `cfg_attr(test, ..)`) could widen or relocate the gate, including one on
-    // an enclosing block or wrapped over several lines, so each attribute is
-    // read whole, from `#[` to its closing bracket. Unrelated cfgs elsewhere
-    // in the file are not the seam's business.
-    for attribute in attributes(source) {
-        let names_test_in_cfg = attribute.contains("cfg")
-            && (attribute.contains("(test") || attribute.contains(",test"));
-        if names_test_in_cfg && !matches!(attribute.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]")
+    problems.extend(widened_test_gates(source));
+    problems
+}
+
+/// Any attribute that names `test` inside a cfg (`any(test, ..)`,
+/// `cfg_attr(test, ..)`) other than a bare `#[cfg(test)]` or
+/// `#[cfg(not(test))]` could widen or relocate a seam's gate, including one on
+/// an enclosing block or wrapped over several lines, so each attribute is read
+/// whole, from `#[` to its closing bracket. Unrelated cfgs are not a seam's
+/// business.
+fn widened_test_gates(source: &str) -> Vec<String> {
+    attributes(source)
+        .into_iter()
+        .filter(|attribute| {
+            attribute.contains("cfg")
+                && (attribute.contains("(test") || attribute.contains(",test"))
+                && !matches!(attribute.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]")
+        })
+        .map(|attribute| format!("`{attribute}` could widen the seam's gate"))
+        .collect()
+}
+
+/// The post's test-only REMOTEID seam (`SCRIPTED_REMOTE_ID`) lives in the post
+/// path itself, so that file may carry only bare `cfg(test)` gates, and the
+/// seam's two items must each sit under one.
+fn remote_id_seam_problems(source: &str) -> Vec<String> {
+    let mut problems = widened_test_gates(source);
+    let lines: Vec<&str> = source.lines().map(str::trim).collect();
+    for item in [
+        "tokio::task_local! {",
+        "if let Ok(scripted) = SCRIPTED_REMOTE_ID.try_with(|id| *id) {",
+    ] {
+        let at = lines.iter().position(|line| *line == item);
+        if at
+            .and_then(|at| at.checked_sub(1))
+            .map(|above| lines[above])
+            != Some("#[cfg(test)]")
         {
-            problems.push(format!("`{attribute}` could widen the seam's gate"));
+            problems.push(format!("`{item}` must sit directly under `#[cfg(test)]`"));
         }
     }
     problems
+}
+
+#[test]
+fn the_remote_id_seam_is_gated_by_bare_cfg_test() {
+    let source = read("src-tauri/src/agent_import_post.rs");
+    assert_eq!(remote_id_seam_problems(&source), Vec::<String>::new());
+    for broken in [
+        source.replacen(
+            "#[cfg(test)]\ntokio::task_local! {",
+            "#[cfg(any(test, feature = \"remote-id-seam\"))]\ntokio::task_local! {",
+            1,
+        ),
+        source.replacen(
+            "    #[cfg(test)]\n    if let Ok(scripted)",
+            "    if let Ok(scripted)",
+            1,
+        ),
+    ] {
+        assert_ne!(
+            broken, source,
+            "the fabricated breakage must change the source"
+        );
+        assert!(!remote_id_seam_problems(&broken).is_empty());
+    }
 }
 
 /// Every outer or inner attribute in `source`, read from `#[` or `#![` to the
@@ -333,6 +385,48 @@ fn each_dialog_mode_runs_its_own_dialog() {
         .replace("SWAP,", "agent::run_review_confirmation,");
     assert_ne!(swapped, lib);
     assert!(!dialog_mode_problems(&swapped).is_empty());
+}
+
+/// Each dialog subprocess answers with its own token, after its own dialog
+/// (#635). The parent approves a post only on the post token, so pairing that
+/// token with the review dialog would let "I reviewed it" approve a post, and
+/// no stub test could see it: a stub is a script, not this code.
+fn dialog_token_problems(source: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for pairing in [
+        "answer_with_token(POST_TOKEN_PREFIX, show_review)",
+        "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
+    ] {
+        if source.matches(pairing).count() != 1 {
+            problems.push(format!("expected exactly one `{pairing}`"));
+        }
+    }
+    if source.matches("answer_with_token(").count() != 3 {
+        problems.push("expected the two pairings and the definition only".into());
+    }
+    problems
+}
+
+#[test]
+fn each_dialog_answers_with_its_own_token() {
+    let source = read("src-tauri/src/tally/approved_import.rs");
+    assert_eq!(dialog_token_problems(&source), Vec::<String>::new());
+    for broken in [
+        source.replace(
+            "answer_with_token(POST_TOKEN_PREFIX, show_review)",
+            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
+        ),
+        source.replace(
+            "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
+            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
+        ),
+        format!(
+            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true) }}\n"
+        ),
+    ] {
+        assert_ne!(broken, source);
+        assert!(!dialog_token_problems(&broken).is_empty());
+    }
 }
 
 #[test]

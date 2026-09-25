@@ -65,6 +65,7 @@ fn party_ledger_master_request_fetches_tax_type_and_gst_duty_head() {
 
     let request = render_party_ledger_master_request("BRIDGE GST RECON LAB", &period);
     assert!(request.contains("TAXTYPE, GSTDUTYHEAD"));
+    assert!(request.contains(", LEDGSTREGDETAILS.LIST</FETCH>"));
 }
 
 #[test]
@@ -281,6 +282,220 @@ fn live_capture_backs_the_recognised_duty_head_vocabulary() {
             GstDutyHeadObservation::NotTaxLedger { .. }
         )),
         "the same capture must also carry ordinary non-tax ledgers"
+    );
+}
+
+#[test]
+fn a_gstin_held_only_in_the_dated_registration_history_is_reported_in_force() {
+    // bridge#624, over a live TallyPrime 7.1 Silver capture of the request this
+    // tool sends: party A's GSTIN is only in its second dated entry, and the
+    // flat PARTYGSTIN is empty. Before the fix A read as `party_gstin: null`.
+    let period = NativeLedgerExportPeriod::new(
+        DateBoundaryProfile::ModeAgnostic,
+        TallyDate::parse("20250401").unwrap(),
+        TallyDate::parse("20250401").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        sha256_hex(render_party_ledger_master_request("BRIDGE READS LAB", &period).as_bytes()),
+        "c2f9f8e9fefab44077b222402254a2be3dfd9a9690d4e577efbae99d531c819c",
+        "the fixture answers exactly the request ledger_masters sends"
+    );
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-masters-gst-registrations.utf16le.xml"
+    );
+    let capture = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let parsed = parse_native_party_ledger_master_records_with_evidence(
+        &capture,
+        "de2e15f2-6d42-4715-b6e7-b7a95a68abe8",
+    )
+    .expect("the live registration-history capture parses");
+    let answer = |name: &str, as_of: &str| {
+        let row = parsed
+            .records
+            .iter()
+            .find(|row| row.record.ledger.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the capture"));
+        let gstin = party_gstin_on(
+            row.record.ledger.party_gstin.returned_text(),
+            &row.record.fields.gst_registrations,
+            as_of,
+        );
+        assert!(
+            !gstin.sources_disagree,
+            "{name}: the capture's sources agree"
+        );
+        (
+            gstin.gstin,
+            gstin.status,
+            gstin.registration_type,
+            gstin.flat,
+        )
+    };
+    let text = |value: &str| Some(value.to_string());
+    assert_eq!(
+        answer("G1 Party A Later GSTIN", "20250930"),
+        (text("27ZZZZZ0000Z1Z5"), "in_force", text("Regular"), None)
+    );
+    assert_eq!(
+        answer("G1 Party A Later GSTIN", "20250630"),
+        (
+            None,
+            "no_gstin_in_force",
+            text("Unregistered/Consumer"),
+            None
+        ),
+        "the first entry is dated but carries no GSTIN"
+    );
+    assert_eq!(
+        answer("G1 Party B Flat GSTIN", "20250930"),
+        (
+            text("29ZZZZZ0000Z1Z5"),
+            "flat_field",
+            None,
+            text("29ZZZZZ0000Z1Z5")
+        ),
+        "Tally returns an empty placeholder list beside the flat field"
+    );
+    assert_eq!(
+        answer("G1 Party C Unregistered", "20250930"),
+        (None, "not_reported", None, None)
+    );
+    assert_eq!(
+        answer("G1 Party D Two GSTINs", "20250930"),
+        (text("27ZZZZZ0000Z1Z5"), "in_force", text("Regular"), None)
+    );
+    assert_eq!(
+        answer("G1 Party D Two GSTINs", "20251001"),
+        (text("29ZZZZZ0000Z1Z5"), "in_force", text("Regular"), None),
+        "the later registration applies from its own date"
+    );
+}
+
+#[test]
+fn both_gstin_sources_are_reported_and_a_difference_is_flagged_not_resolved() {
+    use bridge_tally_protocol::gst_registration::GstRegistrationEntry;
+    let entry = |date: &str, gstin: Option<&str>, kind: &str| GstRegistrationEntry {
+        applicable_from: date.to_string(),
+        gstin: gstin.map(str::to_string),
+        registration_type: Some(kind.to_string()),
+    };
+    let history = |entries| GstRegistrationHistory::Entries { entries };
+    const FLAT: &str = "27ZZZZZ0000Z1Z5";
+    const DATED: &str = "29ZZZZZ0000Z1Z5";
+    let text = |value: &str| Some(value.to_string());
+
+    // The flat field names a GSTIN; the history says none on that date.
+    let unregistered = history(vec![entry("20170701", None, "Unregistered/Consumer")]);
+    let got = party_gstin_on(Some(FLAT), &unregistered, "20260331");
+    assert_eq!((got.gstin, got.status), (None, "no_gstin_in_force"));
+    assert_eq!(got.flat, text(FLAT), "the flat GSTIN is still reported");
+    assert!(got.sources_disagree);
+
+    // The two sources name different GSTINs.
+    let other = history(vec![entry("20170701", Some(DATED), "Regular")]);
+    let got = party_gstin_on(Some(FLAT), &other, "20260331");
+    assert_eq!((got.gstin, got.status), (text(DATED), "in_force"));
+    assert_eq!(got.flat, text(FLAT));
+    assert!(got.sources_disagree);
+
+    // Agreement is not a disagreement, and an absent flat field is not one.
+    assert!(!party_gstin_on(Some(DATED), &other, "20260331").sources_disagree);
+    assert!(!party_gstin_on(None, &other, "20260331").sources_disagree);
+
+    // An explicitly empty flat field (`<PARTYGSTIN/>`, seen live) names no
+    // GSTIN: it is reported as read but neither disagrees nor is used.
+    let got = party_gstin_on(Some(""), &other, "20260331");
+    assert_eq!((got.status, got.flat.as_deref()), ("in_force", Some("")));
+    assert!(!got.sources_disagree);
+    let got = party_gstin_on(Some(""), &unregistered, "20260331");
+    assert!(!got.sources_disagree);
+    let got = party_gstin_on(Some(""), &history(vec![]), "20260331");
+    assert_eq!((got.gstin, got.status), (None, "not_reported"));
+
+    // A history that starts after the date names nothing yet.
+    let future = history(vec![entry("20270401", Some(DATED), "Regular")]);
+    let got = party_gstin_on(None, &future, "20260331");
+    assert_eq!(
+        (got.gstin, got.status, got.registration_type),
+        (None, "no_gstin_in_force", None)
+    );
+
+    // Every source is reported under its own key.
+    let fields = party_gstin_fields(party_gstin_on(Some(FLAT), &other, "20260331"), "20260331");
+    assert_eq!(
+        Value::Object(fields),
+        json!({
+            "party_gstin": DATED,
+            "party_gstin_status": "in_force",
+            "party_gstin_registration_type": "Regular",
+            "party_gstin_as_of": "20260331",
+            "party_gstin_flat": FLAT,
+            "gstin_sources_disagree": true,
+        })
+    );
+
+    // Registered with no GSTIN recorded is not read as unregistered.
+    let regular = history(vec![entry("20170701", None, "Regular")]);
+    let got = party_gstin_on(None, &regular, "20260331");
+    assert_eq!(
+        (got.status, got.registration_type),
+        ("no_gstin_in_force", text("Regular"))
+    );
+
+    // An unreadable history never falls back to the flat field.
+    let unreadable = GstRegistrationHistory::Unreadable {
+        defect: bridge_tally_protocol::gst_registration::GstRegistrationDefect::DateInvalid,
+    };
+    let got = party_gstin_on(Some(FLAT), &unreadable, "20260331");
+    assert_eq!((got.gstin, got.status), (None, "history_unreadable"));
+    assert_eq!(got.flat, text(FLAT), "reported as read, not used");
+    assert!(!got.sources_disagree, "nothing readable to compare");
+}
+
+#[test]
+fn a_repeated_registration_field_fails_its_own_ledger_not_the_read() {
+    let ledger = |name: &str, id: u8, registrations: &str| {
+        format!(
+            "<LEDGER NAME=\"{name}\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-000000{id:02x}</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>{id}</MASTERID><ALTERID>{id}</ALTERID><PARENT>Sundry Creditors</PARENT>{registrations}<OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>"
+        )
+    };
+    let repeated = |gstins: &str| {
+        format!("<LEDGSTREGDETAILS.LIST><APPLICABLEFROM TYPE=\"Date\">20250401</APPLICABLEFROM>{gstins}</LEDGSTREGDETAILS.LIST>")
+    };
+    let response = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}{}{}{}</COLLECTION></DATA></BODY></ENVELOPE>",
+        ledger(
+            "Repeated",
+            1,
+            &repeated("<GSTIN>27ZZZZZ0000Z1Z5</GSTIN><GSTIN>29ZZZZZ0000Z1Z5</GSTIN>")
+        ),
+        ledger("Empty element", 2, "<LEDGSTREGDETAILS.LIST/>"),
+        ledger("Empty then value", 3, &repeated("<GSTIN></GSTIN><GSTIN>29ZZZZZ0000Z1Z5</GSTIN>")),
+        ledger("Self-closing then value", 4, &repeated("<GSTIN/><GSTIN>29ZZZZZ0000Z1Z5</GSTIN>")),
+    );
+    let parsed = parse_native_party_ledger_master_records_with_evidence(&response, COMPANY_GUID)
+        .expect("one ledger's defect does not refuse the book");
+    let histories = parsed
+        .records
+        .iter()
+        .map(|row| serde_json::to_value(&row.record.fields.gst_registrations).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        histories,
+        vec![
+            json!({"observation": "unreadable", "defect": "entry_repeats_a_field"}),
+            json!({"observation": "entries", "entries": []}),
+            json!({"observation": "unreadable", "defect": "entry_repeats_a_field"}),
+            json!({"observation": "unreadable", "defect": "entry_repeats_a_field"}),
+        ],
+        "a field seen twice is a repeat even when the first carried no text"
     );
 }
 
@@ -648,6 +863,107 @@ mod through_the_tool {
         plans
     }
 
+    // -- #637: the compliance read is sized before its master request -------
+
+    /// The captured extents with only this company's master mark (`ALTMSTID`)
+    /// changed. The same text serves every extent read of the call, so the
+    /// brackets stay equal unless a test changes the closing one.
+    fn extent_with_master_mark(mark: u64) -> String {
+        let extent = include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        );
+        let at = extent.find(GUID).expect("the captured company's extent");
+        let start = extent[..at].rfind("<COMPANY ").unwrap();
+        let end = at + extent[at..].find("</COMPANY>").unwrap();
+        let from = "<ALTMSTID TYPE=\"Number\"> 219</ALTMSTID>";
+        assert_eq!(extent[start..end].matches(from).count(), 1);
+        format!(
+            "{}{}{}",
+            &extent[..start],
+            extent[start..end].replace(
+                from,
+                &format!("<ALTMSTID TYPE=\"Number\"> {mark}</ALTMSTID>")
+            ),
+            &extent[end..]
+        )
+    }
+
+    /// The compliance sequence on a book whose master mark is `mark`, with the
+    /// source reads in the order given. `closing` is the source's closing
+    /// extent; `None` ends the replay after the reads, for a refusal that sends
+    /// nothing more.
+    fn marked_compliance_plans(
+        mark: u64,
+        reads: Vec<String>,
+        closing: Option<String>,
+    ) -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(extent_with_master_mark(mark));
+        let currency = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )));
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, extent.clone());
+        pair(&mut plans, currency);
+        pair(&mut plans, extent.clone());
+        plans.push(company.clone());
+        plans.extend([status(), company.clone(), company.clone()]);
+        pair(&mut plans, extent);
+        for source in reads {
+            pair(&mut plans, xml(source));
+        }
+        if let Some(closing) = closing {
+            pair(&mut plans, xml(closing));
+            plans.extend([company.clone(), status(), company]);
+        }
+        plans
+    }
+
+    /// A master mark whose estimate is over the budget refuses right after the
+    /// source's opening extent: no ledger, balance or group request is sent,
+    /// and the refusal names the mark as an upper bound, not a ledger count.
+    #[tokio::test]
+    async fn a_book_whose_master_mark_is_over_the_bound_is_refused_before_any_ledger_read() {
+        let plans = marked_compliance_plans(5_000, Vec::new(), None);
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        assert_eq!(requests, total, "nothing is sent after the opening extent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert_eq!(error["cause"], "ledger_masters_too_large");
+        assert_eq!(
+            error["size"],
+            json!({"master_alter_id": 5_000, "estimated_bytes": 18_750_000, "budget_bytes": 16_000_000})
+        );
+        let remediation = error["remediation"].as_str().unwrap();
+        assert!(remediation.contains("UPPER BOUND"), "{error}");
+        assert!(remediation.contains("fields=basic"), "{error}");
+    }
+
+    /// A mark exactly at the bound is admitted and read as it was before #637:
+    /// the same three reads in the same order, and the same rows.
+    #[tokio::test]
+    async fn a_book_whose_master_mark_is_at_the_bound_reads_as_before() {
+        let mark = 16_000_000 / 3_750;
+        let plans = marked_compliance_plans(
+            mark,
+            vec![masters(), balances(), groups()],
+            Some(extent_with_master_mark(mark)),
+        );
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        assert_eq!(requests, total);
+        let (unsized_response, _) = call(
+            compliance_plans(masters(), balances()),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        assert_eq!(items(&response), items(&unsized_response));
+    }
+
     /// The whole successful `fields=basic` sequence: identity, then the runtime's boundary
     /// probe, the extent-bracketed BOOKSFROM-pinned ledger export and the closing checks.
     fn basic_plans() -> Vec<ScenarioPlan> {
@@ -737,7 +1053,476 @@ mod through_the_tool {
         assert!(!rows.is_empty());
         for row in rows {
             assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+            // This capture predates the registration-history FETCH, so every
+            // row falls back to the flat field, and says so (bridge#624).
+            let expected = if row["party_gstin"].is_null() {
+                "not_reported"
+            } else {
+                "flat_field"
+            };
+            assert_eq!(row["party_gstin_status"], expected, "{row}");
+            let flat = row["party_gstin_flat"]
+                .as_str()
+                .filter(|flat| !flat.is_empty());
+            assert_eq!(flat, row["party_gstin"].as_str(), "{row}");
+            assert_eq!(row["gstin_sources_disagree"], false, "{row}");
+            assert!(row["party_gstin_registration_type"].is_null(), "{row}");
+            assert_eq!(row["party_gstin_as_of"], tally_host_today(), "{row}");
+            assert_eq!(
+                row["compliance"]["gst_registrations"]["observation"], "not_observed",
+                "{row}"
+            );
         }
+    }
+
+    // -- #630: one read per logical listing ---------------------------------
+
+    /// A continuation page's requests: the paired company identity read every
+    /// call starts with, then the bracketed, paired extent read.
+    fn continuation_plans(extent: String) -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, xml(extent));
+        plans.push(company);
+        plans
+    }
+
+    /// A `fields=basic` first page on a book whose master mark is `mark`.
+    fn basic_plans_marked(mark: u64) -> Vec<ScenarioPlan> {
+        let captured_extent = include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        );
+        let marked = extent_with_master_mark(mark);
+        basic_plans()
+            .into_iter()
+            .map(|plan| {
+                if plan.fixture.body() == captured_extent {
+                    xml(marked.clone())
+                } else {
+                    plan
+                }
+            })
+            .collect()
+    }
+
+    /// One server over one replayed sequence, so a later call can be served
+    /// from what an earlier call held.
+    struct OneServer {
+        simulator: SequenceSimulator,
+        server: Server,
+        _directory: tempfile::TempDir,
+    }
+
+    impl OneServer {
+        fn spawn(plans: Vec<ScenarioPlan>) -> Self {
+            let simulator = SequenceSimulator::spawn(plans).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let server = Server::new(Settings {
+                endpoint: TallyEndpointConfig {
+                    host: "127.0.0.1".into(),
+                    port: simulator.address().port(),
+                },
+                data_dir: directory.path().into(),
+                max_rows: 500,
+                max_bytes: 200_000,
+                redaction: Redaction::None,
+                import_enabled: false,
+                writes_enabled: false,
+            });
+            Self {
+                simulator,
+                server,
+                _directory: directory,
+            }
+        }
+
+        async fn call(&self, args: Value) -> Value {
+            self.server.call_tool("ledger_masters", args).await
+        }
+
+        fn requests(self) -> usize {
+            self.simulator.finish().unwrap().len()
+        }
+    }
+
+    fn snapshot_of(response: &Value) -> &Value {
+        assert_ne!(response["isError"], true, "{response}");
+        &response["structuredContent"]["result"]["snapshot"]
+    }
+
+    fn snapshot_id(response: &Value) -> String {
+        snapshot_of(response)["id"].as_str().unwrap().to_string()
+    }
+
+    /// The rows a whole, unpaged basic listing returns, for comparing pages.
+    async fn whole_listing() -> Vec<Value> {
+        let (response, _) = call(basic_plans(), json!({"company_guid":GUID})).await;
+        items(&response).clone()
+    }
+
+    /// Page 2 costs the identity read and one extent read, and returns the
+    /// rows that follow page 1 in the same read.
+    #[tokio::test]
+    async fn a_continuation_page_is_served_from_its_first_pages_read() {
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let id = snapshot_id(&first);
+        assert_eq!(snapshot_of(&first)["reused"], false);
+        assert_eq!(snapshot_of(&first)["master_alter_id"], 219);
+        let second = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":id}))
+            .await;
+        assert_eq!(snapshot_of(&second)["reused"], true);
+        assert_eq!(snapshot_of(&second)["id"], id);
+        assert_eq!(one.requests(), total);
+        let whole = whole_listing().await;
+        assert_eq!(items(&first).as_slice(), &whole[..4]);
+        assert_eq!(items(&second).as_slice(), &whole[4..8]);
+    }
+
+    /// A book that moved after page 1 is refused when the caller named the
+    /// snapshot, and read fresh when it did not.
+    #[tokio::test]
+    async fn a_continuation_after_the_book_moved_is_refused_by_id_or_read_fresh() {
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(220)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+        let refused = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":id}))
+            .await;
+        let error = refusal(&refused);
+        assert_eq!(error["code"], "listing_snapshot_changed");
+        assert_eq!(error["cause"], "book_changed_since_first_page");
+        assert_eq!(
+            one.requests(),
+            total,
+            "nothing is read after the extent check"
+        );
+
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(220)));
+        plans.extend(
+            basic_plans_marked(220)
+                .into_iter()
+                .skip(identity_plans().len()),
+        );
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+        let fresh = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&fresh)["reused"], false);
+        assert_ne!(snapshot_of(&fresh)["id"], id.as_str());
+        assert_eq!(snapshot_of(&fresh)["master_alter_id"], 220);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A continuation that names no snapshot is still served from the held
+    /// read while the book is unchanged: the id only makes a change loud.
+    #[tokio::test]
+    async fn a_continuation_without_an_id_is_served_from_the_held_read_while_the_book_is_unchanged()
+    {
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let second = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&second)["reused"], true);
+        assert_eq!(snapshot_of(&second)["id"], snapshot_of(&first)["id"]);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A second first page replaces the held snapshot, so a continuation
+    /// naming the first page's id is refused rather than served from the
+    /// newer read, even though the book did not change.
+    #[tokio::test]
+    async fn a_continuation_naming_a_replaced_snapshot_is_refused() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans());
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let replaced = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+        let _newer = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let refused = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":replaced}))
+            .await;
+        let error = refusal(&refused);
+        assert_eq!(error["code"], "listing_snapshot_changed");
+        assert_eq!(error["cause"], "snapshot_not_held");
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A first page is a new question: it always reads fresh, even when an
+    /// unexpired snapshot of the same listing is held.
+    #[tokio::test]
+    async fn a_first_page_always_reads_fresh() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans());
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let again = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        assert_eq!(snapshot_of(&again)["reused"], false);
+        assert_ne!(snapshot_of(&again)["id"], snapshot_of(&first)["id"]);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A snapshot that is no longer held refuses a continuation that names
+    /// it: after the TTL, after a write through this server drops it, and
+    /// when it was larger than the byte cap.
+    #[tokio::test]
+    async fn a_snapshot_no_longer_held_refuses_a_continuation_that_names_it() {
+        for case in ["expired", "written", "over_cap"] {
+            let mut plans = basic_plans();
+            plans.extend(continuation_plans(extent_with_master_mark(219)));
+            let total = plans.len();
+            let one = OneServer::spawn(plans);
+            {
+                let mut listings = one.server.listings.lock().unwrap();
+                match case {
+                    "expired" => listings.ttl = std::time::Duration::ZERO,
+                    "over_cap" => listings.max_bytes = 1,
+                    _ => {}
+                }
+            }
+            let id = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+            if case == "written" {
+                one.server.drop_listing_snapshots(GUID);
+            }
+            let refused = one
+                .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":id}))
+                .await;
+            let error = refusal(&refused);
+            assert_eq!(error["code"], "listing_snapshot_changed", "{case}");
+            assert_eq!(error["cause"], "snapshot_not_held", "{case}");
+            assert_eq!(one.requests(), total, "{case}");
+        }
+    }
+
+    /// A page served from a snapshot records only the requests it sent: the
+    /// identity read and the extent pair, never its first page's read again.
+    #[tokio::test]
+    async fn a_page_served_from_a_snapshot_records_only_the_reads_it_sent() {
+        let bytes = |response: &Value| {
+            response["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap()
+        };
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let served = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&served)["reused"], true);
+        assert!(bytes(&served) < bytes(&first), "{served}");
+
+        // The extent pair is what it counts: an extent one character longer
+        // (a four-digit mark, UTF-16) costs 2 bytes more per read of the pair.
+        let mut plans = basic_plans_marked(2_200);
+        plans.extend(continuation_plans(extent_with_master_mark(2_200)));
+        let one = OneServer::spawn(plans);
+        let _first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let longer = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&longer)["reused"], true);
+        assert_eq!(bytes(&longer), bytes(&served) + 4);
+    }
+
+    /// An extent read refused after both its requests were sent (the pair
+    /// disagreed) records both: the refusal's evidence counts what was sent.
+    #[tokio::test]
+    async fn a_refused_extent_read_still_records_the_requests_it_sent() {
+        let refused_under = |mark: u64| async move {
+            let mut plans = basic_plans_marked(mark);
+            plans.extend(identity_plans());
+            plans.push(xml(companies()));
+            plans.extend([
+                xml(extent_with_master_mark(mark)),
+                status(),
+                xml(extent_with_master_mark(mark + 1)),
+                status(),
+            ]);
+            let total = plans.len();
+            let one = OneServer::spawn(plans);
+            let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            assert_ne!(first["isError"], true, "{first}");
+            let refused = one
+                .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+                .await;
+            assert_eq!(
+                refusal(&refused)["code"],
+                "listing_extent_read_failed",
+                "{refused}"
+            );
+            let bytes = refused["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap();
+            assert_eq!(one.requests(), total);
+            bytes
+        };
+        // Both extent responses are counted: each is one character longer
+        // under a four-digit mark, 2 bytes each in UTF-16.
+        assert_eq!(refused_under(2_200).await, refused_under(219).await + 4);
+    }
+
+    /// An extent pair that completed, followed by a closing identity bracket
+    /// that no longer finds the company, still records both extent requests.
+    #[tokio::test]
+    async fn a_closing_bracket_refusal_still_records_the_extent_pair() {
+        let refused_under = |mark: u64| async move {
+            let gone = companies();
+            assert_eq!(gone.matches(GUID).count(), 1, "one row names the company");
+            let mut plans = basic_plans_marked(mark);
+            plans.extend(identity_plans());
+            plans.push(xml(companies()));
+            pair(&mut plans, xml(extent_with_master_mark(mark)));
+            plans.push(xml(
+                gone.replace(GUID, "00000000-0000-0000-0000-000000000000")
+            ));
+            let total = plans.len();
+            let one = OneServer::spawn(plans);
+            let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            assert_ne!(first["isError"], true, "{first}");
+            let refused = one
+                .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+                .await;
+            assert_eq!(
+                refusal(&refused)["code"],
+                "listing_extent_read_failed",
+                "{refused}"
+            );
+            let bytes = refused["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap();
+            assert_eq!(one.requests(), total);
+            bytes
+        };
+        // Both extent responses are counted: each is one character longer
+        // under a four-digit mark, 2 bytes each in UTF-16.
+        assert_eq!(refused_under(2_200).await, refused_under(219).await + 4);
+    }
+
+    /// An expired snapshot is not only skipped but dropped the next time the
+    /// store is touched: by holding another listing, or by any write's drop.
+    #[tokio::test]
+    async fn an_expired_snapshot_is_no_longer_held_once_the_store_is_next_touched() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        one.server.listings.lock().unwrap().ttl = std::time::Duration::ZERO;
+        let _basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        assert_eq!(one.server.listings.lock().unwrap().held.len(), 1);
+        let _grouped = one
+            .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+            .await;
+        assert_eq!(
+            one.server.listings.lock().unwrap().held.len(),
+            1,
+            "holding the grouped listing dropped the expired basic one"
+        );
+        one.server
+            .drop_listing_snapshots("00000000-0000-0000-0000-000000000000");
+        assert!(
+            one.server.listings.lock().unwrap().held.is_empty(),
+            "a drop for another company still drops what has expired"
+        );
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A write's drop still happens after the store's lock was poisoned: a
+    /// drop that did nothing would let a snapshot outlive the write.
+    #[tokio::test]
+    async fn a_write_drops_snapshots_even_from_a_poisoned_store() {
+        let one = OneServer::spawn(basic_plans());
+        let _first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let listings = one.server.listings.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = listings.lock().unwrap();
+            panic!("poison the listing store");
+        })
+        .join();
+        assert!(one.server.listings.is_poisoned());
+        one.server.drop_listing_snapshots(GUID);
+        let store = one
+            .server
+            .listings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(store.held.is_empty());
+    }
+
+    /// A listing that holds the group collection counts it toward the byte
+    /// cap: the same rows with groups weigh more than without.
+    #[tokio::test]
+    async fn a_grouped_listing_counts_its_groups_toward_the_cap() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+        let one = OneServer::spawn(plans);
+        let _basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let _grouped = one
+            .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+            .await;
+        let store = one.server.listings.lock().unwrap();
+        let [basic, grouped] = store.held.as_slice() else {
+            panic!("two listings held");
+        };
+        assert_eq!(basic.rows, grouped.rows);
+        assert!(grouped.bytes > basic.bytes);
+    }
+
+    /// The byte cap drops the oldest snapshot to make room for a newer one.
+    #[tokio::test]
+    async fn the_byte_cap_evicts_the_oldest_listing_first() {
+        // Each listing's size, measured on its own server first.
+        let sizes = {
+            let mut plans = basic_plans();
+            plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+            let one = OneServer::spawn(plans);
+            let _basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            let _grouped = one
+                .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+                .await;
+            let store = one.server.listings.lock().unwrap();
+            store.held.iter().map(|held| held.bytes).collect::<Vec<_>>()
+        };
+        let mut plans = basic_plans();
+        plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        // Room for either listing, not both.
+        one.server.listings.lock().unwrap().max_bytes = sizes.iter().sum::<usize>() - 1;
+        let basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let _grouped = one
+            .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+            .await;
+        let refused = one
+            .call(
+                json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":snapshot_id(&basic)}),
+            )
+            .await;
+        assert_eq!(refusal(&refused)["cause"], "snapshot_not_held");
+        assert_eq!(
+            one.server.listings.lock().unwrap().held.len(),
+            1,
+            "the newer listing is held"
+        );
+        assert_eq!(one.requests(), total);
     }
 
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {

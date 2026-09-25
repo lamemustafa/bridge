@@ -1228,6 +1228,10 @@ fn a_goods_line_without_a_quantity_field_is_refused() {
             .contains("1 goods inventory line(s) in the population carry no quantity field (BILLEDQTY/ACTUALQTY) at all, first 'Widget' on Receipt q01 on 2025-04-05;"),
         "{err}"
     );
+    // Outside the population (a cancelled voucher) the same line is not read.
+    s["vouchers"][0]["status"] = Value::from("cancelled");
+    let book = build(&s);
+    stock::run(&book, &rules, &stock_inputs(&s)).expect("a cancelled voucher's line is not read");
 }
 
 /// A party ledger whose tag equals a fixed row's (a blank-GUID ledger named "sales:total" hashes

@@ -334,8 +334,11 @@ mod tests {
             "close",
             "stock_summary",
             Some("2026-03-31"),
-            "<STOCKITEM NAME=\"Hinge\"><CLOSINGBALANCE> -2 Nos</CLOSINGBALANCE>\
-             <CLOSINGVALUE>200.00</CLOSINGVALUE><CLOSINGRATE>100.00/Nos</CLOSINGRATE></STOCKITEM>",
+            "<STOCKITEM NAME=\"Hinge\"><CLOSINGBALANCE> -5 Nos</CLOSINGBALANCE>\
+             <CLOSINGVALUE>500.00</CLOSINGVALUE></STOCKITEM>\
+             <STOCKITEM NAME=\"Hinge\"><CLOSINGBALANCE> -2 Nos</CLOSINGBALANCE>\
+             <CLOSINGVALUE>200.00</CLOSINGVALUE><CLOSINGRATE>100.00/Nos</CLOSINGRATE></STOCKITEM>\
+             <STOCKITEM NAME=\"\"><CLOSINGVALUE>-999.00</CLOSINGVALUE></STOCKITEM>",
         );
         let parts = StockReadParts {
             items: Some(items),
@@ -358,6 +361,9 @@ mod tests {
             (row.qty, row.value_paise, row.rate_paise),
             (Some(-2.0), Some(-20_000), Some(10_000))
         );
+        // A repeated summary name keeps its last row and a nameless one is dropped, as for masters.
+        assert_eq!(got.closing.rows.len(), 1);
+        assert_eq!(got.closing.total_value_paise().unwrap(), -20_000);
         assert_eq!(got.is_integrated, Some(false));
 
         let code = |c: &toml::Value, p: &StockReadParts| {

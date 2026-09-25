@@ -8,8 +8,14 @@
 //! * The books figure is read off the Trial Balance both ways (Tally's closing field, and opening +
 //!   debit - credit); the Stock Summary figures are Tally's item valuation. Gaps are figures, never
 //!   a conclusion about which side is right.
-//! * A value-only item (BASEUNITS is Tally's reserved "Not Applicable") is left out of every
-//!   quantity figure and counted separately when its value is negative.
+//! * A value-only item (BASEUNITS is Tally's reserved "Not Applicable") is left out of the
+//!   quantity-field check (and its two `goods_lines_without_quantity_*` figures) and of negative
+//!   quantity at year end, and counted separately when its value is negative. It is not left out
+//!   of the opening seed (`opening_seed_*`, `opening_summary_differs_from_master_count`), the
+//!   during-year walk or STK-1: those take every item's opening quantity and every line that
+//!   carries a quantity, whatever the unit (a value-only item's normally carry none). The output's
+//!   own text ("excluded from every quantity-based figure") is the reference's, kept word for word
+//!   for parity; it overstates the exclusion in the same way.
 //! * "Went negative during the year": each item's running quantity from its period-start quantity
 //!   (the opening Stock Summary's, else the master's own opening), walked through the population's
 //!   inventory lines by date. Same-day order is not in the export, so the walk runs twice (stock-in

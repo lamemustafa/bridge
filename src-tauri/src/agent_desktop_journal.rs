@@ -258,6 +258,7 @@ impl Server {
             settings,
             runtime,
             evidence: Arc::new(Mutex::new(EvidenceStore::default())),
+            listings: Arc::new(Mutex::new(crate::agent::ListingSnapshots::default())),
         }
     }
 }
