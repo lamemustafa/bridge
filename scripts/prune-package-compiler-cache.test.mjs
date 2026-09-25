@@ -87,3 +87,35 @@ test("pagination is complete before selecting any deletion", async () => {
   assert.equal(result.obsoleteIds.length, 99);
   assert.deepEqual(result.obsoleteIds.slice(0, 2), [99, 98]);
 });
+
+test("an inconsistent listing is listed again before any plan is made", async () => {
+  const rows = [cache(1), cache(2), cache(3)];
+  let gets = 0;
+  const waits = [];
+  const fetcher = async (_url, options) => {
+    assert.equal(options.method, "GET");
+    gets += 1;
+    // The first listing counts a cache its page does not carry yet (saved while it was paged).
+    return gets === 1 ? response(200, { total_count: 4, actions_caches: rows }) :
+      gets === 2 ? response(200, { total_count: 4, actions_caches: [] }) :
+      response(200, { total_count: rows.length, actions_caches: rows });
+  };
+  const sleep = async (ms) => { waits.push(ms); };
+  assert.deepEqual(await pruneCaches({ env, fetcher, sleep }), { applied: false, obsoleteIds: [1], retainedPerOS: 2 });
+  assert.deepEqual(waits, [10_000]);
+});
+
+test("a listing that stays incomplete refuses without deleting anything", async () => {
+  let gets = 0;
+  const waits = [];
+  const fetcher = async (_url, options) => {
+    assert.equal(options.method, "GET", "nothing may be deleted from an incomplete listing");
+    gets += 1;
+    const page = Number(new URL(_url).searchParams.get("page"));
+    return response(200, { total_count: 4, actions_caches: page === 1 ? [cache(1), cache(2), cache(3)] : [] });
+  };
+  await assert.rejects(pruneCaches({ env, fetcher, apply: true, sleep: async (ms) => { waits.push(ms); } }),
+    { code: "inventory_incomplete" });
+  assert.equal(gets, 6); // three listings of two pages each
+  assert.deepEqual(waits, [10_000, 10_000]);
+});
