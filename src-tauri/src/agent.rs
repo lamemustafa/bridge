@@ -405,8 +405,8 @@ struct ToolFailure {
     unanswered: Option<Unanswered>,
     /// The voucher types a type-filter refusal is about, so a caller can pick
     /// one (bridge#625). Type names and GUIDs from the read window, never
-    /// the whole book.
-    candidates: Option<Vec<Value>>,
+    /// the whole book. Boxed to keep the refusal small on every other path.
+    candidates: Option<Box<[Value]>>,
 }
 
 /// A compliance read refused on its size before the master request was sent:
