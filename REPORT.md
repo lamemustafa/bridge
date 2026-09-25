@@ -144,3 +144,23 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - **E2b** full run on the frozen head fb9f6e2 (4 shards on `cloud/lane-e-e2b-shards`, 15–17 min each): **549 run, 544 killed, 5 accepted survivors** (X11, X12, A04, A19, S08). No timeouts. All 30 E2B2 mutations killed.
 - Records commit 0f04441 (only `mutation-results.json`). `--verify` against both origin/master and origin/lane-e/e2a-bank-recon: 549 selected, 549 proven on crate tree 8cf87d249d9b4f6b. A Sonnet pre-push check found none. **Pushed `lane-e/e2b-hvr` @ 0f04441.**
 - E2b PR: **held until #710 merges** (one port PR at a time). When it merges I'll merge master into E2b (crate unchanged if #710 merges as-is), re-verify, and open "E2b: port high_value_register" as a draft.
+
+## 2026-09-25 19:40 UTC — E3a re-stacked and compiled (local; no PR)
+
+- Merged the E2b head 0f04441 into `lane-e/e3a-stock` (fafe3ad). The one conflict was `mutations.json`, resolved as the union (E3A-01..32 appended).
+- E3a adds `Book::stock`. The two field-built unit-test books from the E2a and E2b reviews needed `stock: None` (02027c7).
+- This is E3a's **first build**. 344 tests pass; clippy and fmt clean.
+- **Failing first:** at 7ce1d55, 3 tests fail, each with `stock: not ported yet`:
+  - `edge_books::a_goods_line_without_a_quantity_field_is_refused`
+  - `edge_books::every_edge_book_matches_the_reference`
+  - `registry::every_registered_test_matches_its_synthetic_golden`
+
+  At port commit 01cb619 all pass (341).
+- Mutations: **E3A-01..32 all killed** (sampled with --full).
+- **Lane D's condition, the string literals the stock-part reader compares against.** Counted over non-test code in `src/stock_read.rs` and E3a's lines in `src/book.rs`:
+  - **Tally data values: 2.** `"Not Applicable"` is BASEUNITS, compared exactly after Tally's reserved-value marker via `xml::reserved_value`. `"yes"` is COMPANY/ISINTEGRATED, after `py_lower`.
+  - **Engagement config values: 2**, `"from_masters"` and `"from_read"` (`[stock].{opening,closing}_summary`). Plus one key-presence check, `"items"` (the mixed-config refusal).
+  - **Manifest part kinds: 2**, `"stock_items"` and `"stock_summary"`.
+  - **XML names looked up: 12 distinct.** STOCKITEM, @NAME, GUID, PARENT, BASEUNITS, OPENINGBALANCE, OPENINGVALUE, CLOSINGBALANCE, CLOSINGVALUE, CLOSINGRATE, COMPANY, ISINTEGRATED.
+  - The quantity and rate parsers are pre-existing (master) and match a numeric pattern, not literals.
+- The review round (Sonnet + Opus) on 02027c7 is running.
