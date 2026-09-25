@@ -2001,7 +2001,7 @@ fn shape_lab_catalogue_plans(catalogue: &str) -> Vec<ScenarioPlan> {
 }
 
 fn marked(value: &Value) -> Option<&str> {
-    value[super::super::PARTY_NAME_MARKER].as_str()
+    value[super::super::super::PARTY_NAME_MARKER].as_str()
 }
 
 #[tokio::test]
@@ -2032,7 +2032,7 @@ async fn validate_masters_offers_a_captured_crlf_spelling_for_copying() {
 #[tokio::test]
 async fn validate_masters_marks_both_spellings_of_a_folded_twin_unimportable() {
     let plans = shape_lab_catalogue_plans(&shape_lab_catalogue_with_folded_twin());
-    let simulator = SequenceSimulator::spawn(plans).expect("shape lab plan");
+    let simulator = SequenceSimulator::spawn(plans.clone()).expect("shape lab plan");
     let directory = tempfile::tempdir().unwrap();
     let server = bank_server(directory.path(), simulator.address().port());
     let outcome = server
@@ -2055,6 +2055,7 @@ async fn validate_masters_marks_both_spellings_of_a_folded_twin_unimportable() {
             .iter()
             .all(|twin| twin["parent"] == "Chemical Suppliers"));
     }
+    assert_eq!(simulator.finish().unwrap().len(), plans.len());
 }
 
 #[tokio::test]
@@ -2082,7 +2083,7 @@ async fn a_build_naming_either_spelling_of_a_folded_twin_is_refused_without_a_fi
         let twins = result["ledger_twins"].as_array().unwrap();
         assert_eq!(twins.len(), 1, "Cash has no twin");
         assert_eq!(marked(&twins[0]["requested"]), Some(ledger));
-        assert_eq!(twins[0]["relation"], "equal_under_identity_fold");
+        assert_eq!(twins[0]["relation"], "fold_equal");
         assert_eq!(twins[0]["live_ledgers"].as_array().unwrap().len(), 2);
         assert!(result["next_step"].as_str().unwrap().contains("rename"));
         // Refused on the catalogue it read: nothing after it is sent, and no

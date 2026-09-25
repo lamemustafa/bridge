@@ -2829,6 +2829,8 @@ fn a_name_folding_equal_to_two_live_ledgers_is_reported_whichever_it_names() {
         ("ACME Traders", Some("Sundry Debtors")),
         ("Acme-Co", Some("Sundry Creditors")),
         ("ACME CO", Some("Sundry Debtors")),
+        ("Rent/Office", Some("Indirect Expenses")),
+        ("Rent Office", Some("Indirect Expenses")),
     ];
     let family = |names: &[(&str, &str)]| {
         names
@@ -2836,8 +2838,8 @@ fn a_name_folding_equal_to_two_live_ledgers_is_reported_whichever_it_names() {
             .map(|(name, parent)| (name.to_string(), Some(parent.to_string())))
             .collect::<Vec<_>>()
     };
-    // Both directions of the trailing line break, and a case-and-dash pair:
-    // each is the same identity under the binding contract's fold.
+    // Both directions of the trailing line break, a case-and-dash pair, and the
+    // gateway fold Tally was measured to apply, a slash as a space (§9.4d).
     for (requested, live) in [
         (
             "ACME",
@@ -2852,6 +2854,13 @@ fn a_name_folding_equal_to_two_live_ledgers_is_reported_whichever_it_names() {
             family(&[
                 ("Acme-Co", "Sundry Creditors"),
                 ("ACME CO", "Sundry Debtors"),
+            ]),
+        ),
+        (
+            "Rent/Office",
+            family(&[
+                ("Rent/Office", "Indirect Expenses"),
+                ("Rent Office", "Indirect Expenses"),
             ]),
         ),
     ] {

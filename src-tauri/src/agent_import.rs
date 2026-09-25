@@ -9,7 +9,7 @@ use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
 };
 use bridge_tally_core::master_binding::{
-    self, identity_fold, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog,
+    self, twin_fold_keys, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog,
     MasterClass, SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
@@ -282,11 +282,11 @@ pub(super) struct ImportLedgerLine {
 }
 
 /// A requested name and every live ledger whose stored name folds equal to it
-/// under the binding contract's identity fold (case, whitespace including CR
-/// and LF, dashes, quotes), when there are at least two (bridge#626). Tally's
-/// import lookup also matches names loosely, and which of two such ledgers it
-/// would post to is not established, so a build naming a name like this is
-/// refused, whichever of the two it names.
+/// under either of the binding module's folds (`twin_fold_keys`: case, NFC,
+/// dashes, quotes, whitespace including CR and LF, and `/` as a space), when
+/// there are at least two (bridge#626). Tally's import lookup also matches
+/// names loosely (§9.4d), and which of two such ledgers it would post to is
+/// not established, so a build naming either is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FoldedTwins {
     requested: String,
@@ -294,29 +294,35 @@ struct FoldedTwins {
 }
 
 /// The requested names that fold equal to two or more live ledgers, in the
-/// order requested.
+/// order requested. Each lists its live ledgers in catalogue order.
 fn folded_twins<'a>(
     requested: &[String],
     catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
 ) -> Vec<FoldedTwins> {
-    let mut by_fold: BTreeMap<String, Vec<(&str, Option<&str>)>> = BTreeMap::new();
-    for (name, parent) in catalogue {
-        by_fold
-            .entry(identity_fold(name))
-            .or_default()
-            .push((name, parent));
+    let catalogue = catalogue.collect::<Vec<_>>();
+    let mut by_key: [BTreeMap<String, Vec<usize>>; 2] = Default::default();
+    for (index, (name, _)) in catalogue.iter().enumerate() {
+        for (keys, key) in by_key.iter_mut().zip(twin_fold_keys(name)) {
+            keys.entry(key).or_default().push(index);
+        }
     }
     requested
         .iter()
         .filter_map(|name| {
-            let live = by_fold
-                .get(&identity_fold(name))
-                .filter(|family| family.len() > 1)?;
-            Some(FoldedTwins {
+            let mut family = BTreeSet::new();
+            for (keys, key) in by_key.iter().zip(twin_fold_keys(name)) {
+                if let Some(found) = keys.get(&key) {
+                    family.extend(found.iter().copied());
+                }
+            }
+            (family.len() > 1).then(|| FoldedTwins {
                 requested: name.clone(),
-                live: live
-                    .iter()
-                    .map(|(name, parent)| ((*name).to_string(), parent.map(str::to_string)))
+                live: family
+                    .into_iter()
+                    .map(|index| {
+                        let (name, parent) = catalogue[index];
+                        (name.to_string(), parent.map(str::to_string))
+                    })
                     .collect(),
             })
         })
@@ -350,7 +356,7 @@ fn annotate_folded_twins<'a>(
     }
 }
 
-const FOLDED_TWIN_NEXT_STEP: &str = "No file was written. Each ledger in ledger_twins has another live ledger whose name differs from it only by case, spacing, dashes or quotes, or a trailing line break. Tally's import also matches names loosely, and which of them it would post to is not established, so Bridge names neither. Have an operator rename one of each such pair in Tally so that no two ledgers fold equal, then run validate_masters and build again.";
+const FOLDED_TWIN_NEXT_STEP: &str = "No file was written. Each ledger in ledger_twins has at least one other live ledger whose name differs from it only by case, spacing, dashes, slashes or quotes, or a trailing line break. Tally's import also matches names loosely, and which of them it would post to is not established, so Bridge names none of them. Have an operator rename ledgers in Tally until no two in each group fold equal, then run validate_masters and build again.";
 
 /// One ledger name and the GUID it was bound to at build time.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -631,7 +637,7 @@ impl Server {
                         "state":"refused", "reason":"ledger_has_folded_twin",
                         "ledger_twins": twins.iter().map(|twins| json!({
                             "requested": party_name(twins.requested.clone()),
-                            "relation": "equal_under_identity_fold",
+                            "relation": "fold_equal",
                             "live_ledgers": folded_live_ledgers_json(twins),
                         })).collect::<Vec<_>>(),
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
@@ -2659,7 +2665,7 @@ fn master_recovery_guidance(report: &[Value]) -> String {
         .iter()
         .any(|master| master.get("folded_twins").is_some())
     {
-        guidance.push("A requested ledger folds equal to another live ledger (folded_twins: the same name apart from case, spacing, dashes or quotes, or a trailing line break), and which of them Tally's import would post to is not established, so neither is importable; have an operator rename one of them in Tally, then run validate_masters again.");
+        guidance.push("A requested ledger folds equal to another live ledger (folded_twins: the same name apart from case, spacing, dashes, slashes or quotes, or a trailing line break), and which of them Tally's import would post to is not established, so neither is importable; have an operator rename one of them in Tally, then run validate_masters again.");
     }
     if report
         .iter()

@@ -12,7 +12,9 @@ const RESERVED_MARKER: &str = r"\[[Bb][Rr][Ii][Dd][Gg][Ee]:";
 // after it. The server admits only one trailing CR LF, and only when a live
 // ledger holds exactly those bytes.
 const LEDGER_CONTROLS: &str = r"[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]";
-const INTERIOR_LINE_BREAK: &str = r"[\u000A\u000D][^\u000A\u000D]";
+// Any CR or LF other than one CR LF ending the name: a CR not followed by the
+// final LF, an LF not preceded by CR, or an LF with anything after it.
+const INTERIOR_LINE_BREAK: &str = r"\u000D(?!\u000A$)|(?<!\u000D)\u000A|\u000A[\s\S]";
 // Non-control members of Unicode White_Space, matching Rust str::trim, plus
 // LF and CR: a ledger name may now end in a line break, so a name of nothing
 // else must still read as blank (bridge#626).
@@ -32,7 +34,7 @@ pub(in crate::agent) fn voucher_input_schema() -> Value {
             "ledger":{
                 "type":"string", "minLength":1, "maxLength":MAX_MASTER_NAME_CHARS,
                 "not":{"anyOf":[{"pattern":LEDGER_CONTROLS},{"pattern":INTERIOR_LINE_BREAK},{"pattern":BLANK_LEDGER}]},
-                "description":"The ledger's exact live name. It may end in one CR LF only when the live ledger's stored name does, as validate_masters reports it in exact_live_spelling; no other control character is accepted. A name that folds equal to another live ledger (case, spacing, dashes or quotes, a trailing line break) is refused as ledger_has_folded_twin."
+                "description":"The ledger's exact live name. It may end in one CR LF only when the live ledger's stored name does, as validate_masters reports it in exact_live_spelling; no other control character is accepted. A name that folds equal to another live ledger (case, spacing, dashes, slashes or quotes, a trailing line break) is refused as ledger_has_folded_twin."
             },
             "amount":{
                 "type":"string", "pattern":r"^[0-9]+\.[0-9]{2}$",

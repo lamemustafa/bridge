@@ -316,6 +316,18 @@ impl Server {
             {
                 return Err("import_masters_changed".to_string().into());
             }
+            // A ledger that now folds equal to another live ledger could be
+            // taken for it by Tally's import lookup (bridge#626). Refused as the
+            // build refuses it, including for a batch built before the twin
+            // appeared or before the build checked for one.
+            if !folded_twins(
+                &requested_ledger_names(&payload),
+                catalogue_identities.parents(),
+            )
+            .is_empty()
+            {
+                return Err("ledger_has_folded_twin".to_string().into());
+            }
             let ledger_binding = catalogue_identities
                 .bind_selected(requested_ledger_names(&payload))
                 .map_err(|_| "import_masters_changed".to_string())?;
@@ -949,6 +961,21 @@ fn recheck_import_admission(
     {
         return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
     }
+    let parents = parse_standard_ledger_catalog_response(catalogue, company_name, company_guid)
+        .map_err(ApprovedImportAdmissionError::CatalogueUnreadable)?;
+    // Nor can the binding see a ledger added since approval that folds equal to
+    // a named one, which Tally's import lookup could take for it (bridge#626).
+    let named = line
+        .vouchers
+        .iter()
+        .flat_map(|voucher| &voucher.entries)
+        .map(|entry| entry.ledger.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if !folded_twins(&named, parents.parents()).is_empty() {
+        return Err(anyhow::Error::msg("ledger_has_folded_twin"));
+    }
     // The binding above compares each ledger's name and GUID, not its parent,
     // so it cannot see a ledger or a group re-parented since approval. A bank
     // voucher's type rests on exactly that, so classify every leg again from
@@ -957,9 +984,6 @@ fn recheck_import_admission(
     match (bank, groups) {
         (false, None) => {}
         (true, Some(groups)) => {
-            let parents =
-                parse_standard_ledger_catalog_response(catalogue, company_name, company_guid)
-                    .map_err(ApprovedImportAdmissionError::CatalogueUnreadable)?;
             let groups = parse_native_group_snapshot(groups, company_guid)
                 .map_err(|_| anyhow::Error::msg("group_export_invalid"))?;
             let payload = ImportPayload {

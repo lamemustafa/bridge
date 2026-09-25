@@ -847,6 +847,31 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
     )
     .expect("paired captured source establishes absence of the new candidate");
 
+    // bridge#626: a ledger added since approval that folds equal to a named one
+    // refuses the queued post. The catalogue is a test-local rewrite of the
+    // capture, an unrelated ledger renamed `Cash` plus CR LF, and no evidence
+    // of Tally behaviour. The named ledgers' binding is unchanged, so only the
+    // twin check can refuse it.
+    assert_eq!(
+        catalogue.matches("WR2 Sales").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = catalogue.replace("WR2 Sales", "Cash&#13;&#10;");
+    let error = recheck_import_admission(
+        &absent,
+        company_guid,
+        "WR2 Unicode Lab",
+        &captured,
+        &captured,
+        &twinned,
+        None,
+        &single_currency,
+        &ledger_binding,
+    )
+    .expect_err("a folded twin added since approval must refuse the queued post");
+    assert_eq!(error.to_string(), "ledger_has_folded_twin");
+
     // A bank voucher is classified from the group collection read beside the
     // catalogue. Without that read the queue refuses rather than post on half
     // a check, and a Journal that somehow carries one is a wiring fault too.

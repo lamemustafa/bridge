@@ -1896,21 +1896,22 @@ pub(crate) fn comparison_key(value: &str) -> String {
 /// of sameness, each named for the question it answers — and here there are two
 /// notions, because "could this be the master?" and "is this the master?" are
 /// different questions with different evidence behind them.
-/// The fold under which the binding contract treats two names as one
-/// identity: NFC, case, dash and quote variants, whitespace runs (CR and LF
-/// included) and hyphens. Exposed so a caller can find two live masters that
-/// fold equal: Tally's import lookup also matches names loosely, and which of
-/// two such masters it would choose is not established (bridge#626).
-pub fn identity_fold(value: &str) -> String {
-    master_identity_key(value)
-}
-
 fn master_identity_key(value: &str) -> String {
     comparison_key(value)
         .replace('-', " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Both folds this module knows, for finding two live masters that Tally's
+/// import lookup might not tell apart (bridge#626): the wide fold (case, NFC,
+/// dash and quote variants, whitespace runs including CR and LF) and the
+/// observed gateway fold (`/` and `-` as a space, §9.4d). Two names that agree
+/// on either key are treated as possibly one master to Tally. Neither key
+/// decides a binding here; a caller uses them only to refuse.
+pub fn twin_fold_keys(value: &str) -> [String; 2] {
+    [master_identity_key(value), verified_fold(value)]
 }
 
 /// A historical candidate index, retained for deterministic ordering.
