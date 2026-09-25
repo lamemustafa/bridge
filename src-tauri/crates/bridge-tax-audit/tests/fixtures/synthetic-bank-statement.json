@@ -1,0 +1,21 @@
+{
+ "doc_id": "bank:2026-27:statement",
+ "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+ "account_ref": "XXXXXX0001",
+ "bank": "Invented Bank",
+ "period": {"start": "2025-04-01", "end": "2025-05-31"},
+ "opening_balance_paise": 15000000,
+ "closing_balance_paise": 24295777,
+ "rows": [
+  {"doc": "bank:2026-27:statement", "row": 0, "account_ref": "XXXXXX0001", "txn_date": "2025-04-19",
+   "narration": "NEFT CR RIVERSIDE TRADERS", "debit_paise": 0, "credit_paise": 11800000, "balance_paise": 26800000},
+  {"doc": "bank:2026-27:statement", "row": 1, "account_ref": "XXXXXX0001", "txn_date": "2025-05-01",
+   "narration": "CHQ 000101 PART", "debit_paise": 1500000, "credit_paise": 0, "balance_paise": 25300000},
+  {"doc": "bank:2026-27:statement", "row": 2, "account_ref": "XXXXXX0001", "txn_date": "2025-05-03",
+   "narration": "CHQ 000102 PART", "debit_paise": 1000000, "credit_paise": 0, "balance_paise": 24300000},
+  {"doc": "bank:2026-27:statement", "row": 3, "account_ref": "XXXXXX0001", "txn_date": "2025-05-10",
+   "narration": "SERVICE CHARGES MAY", "debit_paise": 5000, "credit_paise": 0, "balance_paise": 24295000},
+  {"doc": "bank:2026-27:statement", "row": 4, "account_ref": "XXXXXX0001", "txn_date": "2025-05-20",
+   "narration": "UNIDENTIFIED CREDIT", "debit_paise": 0, "credit_paise": 777, "balance_paise": null}
+ ]
+}
