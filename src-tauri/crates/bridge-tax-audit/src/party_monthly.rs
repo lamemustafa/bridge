@@ -866,3 +866,165 @@ pub fn check_invariants(book: &Book, period: &Window, result: &TestResult) -> Re
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::book::{Ledger, LedgerLine, TbRow};
+
+    fn date(d: &str) -> TallyDate {
+        TallyDate::parse(d).unwrap()
+    }
+
+    fn ledger(name: &str, group: &str) -> (String, Ledger) {
+        let l = Ledger {
+            name: name.to_string(),
+            parent: group.to_string(),
+            chain: vec![group.to_string()],
+            chain_complete: true,
+            master_opening_paise: 0,
+            guid: String::new(),
+            masterid: None,
+        };
+        (name.to_string(), l)
+    }
+
+    /// A balanced voucher of `amount` paise debited to `dr` and credited to `cr`.
+    fn voucher(guid: &str, on: &str, base_type: &str, dr: &str, cr: &str, amount: i64) -> Voucher {
+        Voucher {
+            guid: guid.to_string(),
+            date: date(on),
+            base_type: base_type.to_string(),
+            status: VoucherStatus::Regular,
+            lines: vec![
+                LedgerLine {
+                    ledger: dr.to_string(),
+                    amount_paise: amount,
+                },
+                LedgerLine {
+                    ledger: cr.to_string(),
+                    amount_paise: -amount,
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn tb(opening_paise: i64, debit_paise: i64, credit_paise: i64) -> TbRow {
+        TbRow {
+            opening_paise,
+            debit_paise,
+            credit_paise,
+            closing_paise: opening_paise + debit_paise - credit_paise,
+        }
+    }
+
+    #[test]
+    fn a_whole_run_pins_the_period_ranking_cut_and_trial_balance_ties() {
+        // Sales, top 4 by absolute year: E (-500, a credit note) above A (300, on 1 April), B,
+        // then C and D tied at 100, where name order shows C; D's large credit note after the
+        // period is its own column, not its rank and not its returns. The TB differs from the
+        // total by exactly Re 1, which ties. Purchases differ by Rs 50, matched to within Re 1 by
+        // the one cancelled voucher inside the period, not the one after it.
+        let mut v = vec![
+            voucher("s1", "20250401", "Sales", "Cust A", "Sales", 30_000),
+            voucher("s2", "20250510", "Sales", "Cust B", "Sales", 20_000),
+            voucher("s3", "20250610", "Sales", "Cust C", "Sales", 10_000),
+            voucher("s4", "20250610", "Sales", "Cust D", "Sales", 10_000),
+            voucher("s5", "20250601", "Credit Note", "Sales", "Cust E", 50_000),
+            voucher("s6", "20260405", "Credit Note", "Sales", "Cust D", 100_000),
+            voucher("p1", "20250701", "Purchase", "Purchases", "Supp X", 40_000),
+            voucher("p2", "20250702", "Purchase", "Purchases", "Supp X", 4_900),
+            voucher("p3", "20260402", "Purchase", "Purchases", "Supp X", 5_000),
+        ];
+        v[7].status = VoucherStatus::Cancelled;
+        v[8].status = VoucherStatus::Cancelled;
+        let book = Book {
+            groups: [
+                "Sales Accounts",
+                "Purchase Accounts",
+                "Sundry Debtors",
+                "Sundry Creditors",
+            ]
+            .into_iter()
+            .map(|g| (g.to_string(), None))
+            .collect(),
+            ledgers: [
+                ledger("Sales", "Sales Accounts"),
+                ledger("Purchases", "Purchase Accounts"),
+                ledger("Cust A", "Sundry Debtors"),
+                ledger("Cust B", "Sundry Debtors"),
+                ledger("Cust C", "Sundry Debtors"),
+                ledger("Cust D", "Sundry Debtors"),
+                ledger("Cust E", "Sundry Debtors"),
+                ledger("Supp X", "Sundry Creditors"),
+            ]
+            .into_iter()
+            .collect(),
+            vouchers: v,
+            tb: BTreeMap::from([
+                ("Sales".to_string(), tb(-7_000, 50_000, 69_900)),
+                ("Purchases".to_string(), tb(0, 45_000, 0)),
+            ]),
+            ..Default::default()
+        };
+        let period = Window {
+            from: date("20250401"),
+            to: date("20260331"),
+        };
+        let rules = Rules::vendored().unwrap();
+        let none = BTreeSet::new();
+        let r = run(&book, &rules, &period, &none, &none, 4).unwrap();
+        let value = |id: &str| -> Option<Value> {
+            let id = format!("{TEST_ID}.{id}");
+            r.figures
+                .iter()
+                .find(|f| f.id == id)
+                .map(|f| f.value.clone())
+        };
+        let row_value = |prefix: &str, label: &str| -> Option<Value> {
+            let prefix = format!("{TEST_ID}.{prefix}_");
+            r.figures
+                .iter()
+                .find(|f| f.id.starts_with(&prefix) && f.evidence[0].label == label)
+                .map(|f| f.value.clone())
+        };
+        let shown: Vec<&str> = r
+            .figures
+            .iter()
+            .filter(|f| f.id.starts_with(&format!("{TEST_ID}.sales_vouchers_")))
+            .map(|f| f.evidence[0].label.as_str())
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "Cust E",
+                "Cust A",
+                "Cust B",
+                "Cust C",
+                "Others (1 party)",
+                "Total"
+            ]
+        );
+        assert_eq!(row_value("sales_apr", "Cust A"), Some(Value::Int(30_000)));
+        assert_eq!(
+            row_value("sales_returns", "Cust E"),
+            Some(Value::Int(-50_000))
+        );
+        assert_eq!(
+            row_value("sales_outside", "Others (1 party)"),
+            Some(Value::Int(-100_000))
+        );
+        assert_eq!(row_value("sales_returns", "Others (1 party)"), None);
+        assert_eq!(value("sales_tb_difference"), Some(Value::Int(100)));
+        assert_eq!(value("sales_opening_balance"), Some(Value::Int(7_000)));
+        let found = |id: &str| r.findings.iter().any(|f| f.id == format!("{TEST_ID}/{id}"));
+        assert!(!found("tb_difference/sales"), "Re 1 ties");
+        assert!(found("tb_difference/purchases"));
+        assert_eq!(value("purchases_tb_difference"), Some(Value::Int(-5_000)));
+        assert_eq!(
+            value("purchases_vouchers_left_out"),
+            Some(Value::Int(4_900))
+        );
+    }
+}

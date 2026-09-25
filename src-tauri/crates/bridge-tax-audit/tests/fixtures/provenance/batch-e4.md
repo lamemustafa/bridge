@@ -7,12 +7,15 @@ Lane E, 2026-09-25. Every book here is invented: no fixture is a Tally read of a
 - `golden/synthetic.party_monthly.json` is the reference's dump on the synthetic read (52 figures; its
   Trial Balance ties in every block, so no finding).
 - `edge-books/pm_paths.json` (`top_n` 2) reaches: named parties, "Others" with its plural and singular
-  labels and an equal-total tie decided by name, a sub-group party, the cash-or-bank, no-party and
+  labels, a sub-group party, the cash-or-bank, no-party and
   several-parties rows (an expense with a cash line stays no party), credit and debit notes, a month
   that nets to nil (no figure), a voucher dated after the period, two vouchers sharing one GUID counted as
   two; and the Trial Balance tied within a rupee, matched by one optional voucher, matched only by the
   post-dated and cancelled vouchers together, and matched by two sets at once (so naming none), with an
-  opening balance on a P&L ledger.
+  opening balance on a P&L ledger. It does not reach an equal-total tie: its own comment says Cust C
+  and Cust D tie, but they do not (120,000 against 100,000 paise in the golden, both in "Others"). The
+  tie at the cut, a voucher on the period's first day, a Trial Balance difference of exactly Re 1 and
+  the ranking by absolute year are pinned by the unit test in `src/party_monthly.rs` instead.
 - `edge-books/pm_not_fy.json`: a calendar-year period (no month figures), a missing Direct Expenses
   group, and a Trial Balance difference no excluded voucher matches.
 - `edge-books/pm_empty.json`: all four groups and no voucher. Its 16 figures are the registry's

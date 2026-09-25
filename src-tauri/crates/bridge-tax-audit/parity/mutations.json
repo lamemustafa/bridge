@@ -4862,5 +4862,77 @@
   "file": "src/party_monthly.rs",
   "from": "if e.kind == \"ledger\" {",
   "to": "if e.kind == \"ledger_\" {"
+ },
+ {
+  "id": "E4-26",
+  "by": "reviewer-opus",
+  "what": "a voucher on the period's first day is outside it",
+  "file": "src/party_monthly.rs",
+  "from": "let in_period = |d: &TallyDate| start <= d && d <= end;",
+  "to": "let in_period = |d: &TallyDate| start < d && d <= end;"
+ },
+ {
+  "id": "E4-27",
+  "by": "reviewer-opus",
+  "what": "a TB difference of exactly Re 1 is a finding",
+  "file": "src/party_monthly.rs",
+  "from": "if abs(diff)? > TIE_TOLERANCE_PAISE {",
+  "to": "if abs(diff)? >= TIE_TOLERANCE_PAISE {"
+ },
+ {
+  "id": "E4-28",
+  "by": "reviewer-opus",
+  "what": "excluded vouchers matching to exactly Re 1 do not match",
+  "file": "src/party_monthly.rs",
+  "from": "if abs(s)? <= TIE_TOLERANCE_PAISE {",
+  "to": "if abs(s)? < TIE_TOLERANCE_PAISE {"
+ },
+ {
+  "id": "E4-29",
+  "by": "reviewer-opus",
+  "what": "excluded vouchers of any date are matched",
+  "file": "src/party_monthly.rs",
+  "from": "                    if in_period(&x.date) {",
+  "to": "                    if true {"
+ },
+ {
+  "id": "E4-30",
+  "by": "reviewer-opus",
+  "what": "named parties tied on amount go in descending name order",
+  "file": "src/party_monthly.rs",
+  "from": "named_rows.sort_by(|a, b| (Reverse(a.0), a.1).cmp(&(Reverse(b.0), b.1)));",
+  "to": "named_rows.sort_by(|a, b| (Reverse(a.0), Reverse(a.1)).cmp(&(Reverse(b.0), Reverse(b.1))));"
+ },
+ {
+  "id": "E4-31",
+  "by": "reviewer-opus",
+  "what": "named parties ranked by signed year, not absolute",
+  "file": "src/party_monthly.rs",
+  "from": "named_rows.push((abs(row.year)?, name));",
+  "to": "named_rows.push((row.year, name));"
+ },
+ {
+  "id": "E4-32",
+  "by": "reviewer-opus",
+  "what": "the ranking counts amounts dated outside the period",
+  "file": "src/party_monthly.rs",
+  "from": "named_rows.push((abs(row.year)?, name));",
+  "to": "named_rows.push((abs(add(row.year, row.cols.get(\"outside\").copied().unwrap_or(0))?)?, name));"
+ },
+ {
+  "id": "E4-33",
+  "by": "reviewer-opus",
+  "what": "a note dated outside the period counts in returns",
+  "file": "src/party_monthly.rs",
+  "from": "                let cell = row.cols.entry(\"outside\").or_insert(0);\n                *cell = add(*cell, amount)?;",
+  "to": "                let cell = row.cols.entry(\"outside\").or_insert(0);\n                *cell = add(*cell, amount)?;\n                if NOTE_TYPES.contains(&v.base_type.as_str()) {\n                    row.returns = add(row.returns, amount)?;\n                }"
+ },
+ {
+  "id": "E4-34",
+  "by": "reviewer-opus",
+  "what": "the opening balance is published without the block's sign",
+  "file": "src/party_monthly.rs",
+  "from": "Value::Int(sum.checked_mul(sign).ok_or_else(overflow)?)",
+  "to": "Value::Int(sum)"
  }
 ]
