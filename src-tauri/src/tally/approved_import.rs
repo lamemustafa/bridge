@@ -216,6 +216,19 @@ pub(crate) enum ApprovedImportAdmissionError {
     CatalogueUnreadable(#[source] bridge_tally_protocol::StandardLedgerCatalogError),
 }
 
+/// A failure inside the endpoint queue before the dispatch intent is recorded
+/// (#656): every queue read, and the admission recheck, run in one block whose
+/// error this wraps; the intent, the POST and the readback run after it. So it
+/// marks a refusal whose outcome is known — nothing was sent — by where it
+/// happened, and a read added to that block later is covered without a list.
+/// A named admission refusal inside it keeps its own code.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub(crate) struct PreIntentQueueRefusal {
+    #[source]
+    pub(crate) source: anyhow::Error,
+}
+
 /// The native approval every real post goes through. Outside this crate's own
 /// unit tests it is exactly [`confirm`]: nothing else exists to answer it.
 #[cfg(not(test))]
