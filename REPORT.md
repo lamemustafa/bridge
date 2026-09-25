@@ -47,3 +47,30 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
 | tools cargo test --workspace | 0 | 57 passed |
 
 - `src-tauri/gen/schemas/linux-schema.json` was created by the build. I deleted it; it was not committed.
+
+## 2026-09-25 15:41 UTC — lane-f/653-ledger-masters-as-of: built d0f59ab: RED
+
+- Head d0f59ab. Merged origin/master 54eb327 --no-ff → c6d5672 (clean). Reseal → 9134e35 (agent.rs, agent_catalog.rs, agent_ledgers.rs rehashed); `--verify` current. Sonnet review of c6d5672 + 9134e35: no findings. **Not pushed**, because of the real reds below. Both commits stay local only.
+- **REAL 1: `cargo fmt --check` fails** in Lane F's code: `src-tauri/src/agent_ledgers_tests.rs` around line 1107. rustfmt wants two lines wrapped:
+  - `assert_eq!(error["code"], "ledger_masters_as_of_requires_compliance", "{args}");`
+  - `assert!(error["remediation"].as_str().is_some_and(|text| text.contains("fields=compliance")));`
+  Both lines come from 01568e5.
+- **REAL 2: 2 lib tests fail**, and they fail identically on d0f59ab without the master merge (I ran them in a separate worktree at d0f59ab):
+  - `agent::ledgers::tests::through_the_tool::an_impossible_as_of_date_is_refused_before_any_request`
+  - `agent::ledgers::tests::through_the_tool::as_of_without_compliance_fields_is_refused_before_any_request`
+  - The first panic lines are the same for both:
+    `panicked at src/agent_ledgers_tests.rs:1135:57: called Result::unwrap() on an Err value: Custom { kind: InvalidInput, error: "simulator sequence request count is out of range" }`
+  - Line 1135 is `SequenceSimulator::spawn(plans).unwrap()`, and both tests call `call(Vec::new(), …)`. The simulator refuses an empty plan list, so a "refused before any request" test can't use that helper as written.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 1 | **REAL**: diff in agent_ledgers_tests.rs (above) |
+| bridge --lib (rfd/gtk3) | 101 | 1336 passed, 3 failed (**2 REAL** above + known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- I'll rebuild when Lane F pushes a new head.
