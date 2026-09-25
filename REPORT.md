@@ -116,3 +116,23 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
 | tools cargo test --workspace | 0 | 57 passed |
 
 - Next: 653's new head edb3258.
+
+## 2026-09-25 16:03 UTC — lane-f/653-ledger-masters-as-of: built 591f401: green
+
+- New head edb3258 ("Count requests with a held plan in the #653 refusal tests, and format them"). It fixes both reds reported for d0f59ab. Merged origin/master 54eb327 --no-ff → 3e76bef (clean). Reseal → **591f401** (agent.rs, agent_catalog.rs, agent_ledgers.rs rehashed); `--verify` current.
+- Sonnet review of 3e76bef + 591f401: no findings. The merge is a byte-identical union both ways; all 280 pins match their bytes; pin list, claims and bridge_commit_sha are unchanged.
+- Both previously failing tests now pass: `through_the_tool::an_impossible_as_of_date_is_refused_before_any_request` and `through_the_tool::as_of_without_compliance_fields_is_refused_before_any_request`.
+- Pushed as a fast-forward: `lane-f/653-ledger-masters-as-of` edb3258..591f401. (The earlier local c6d5672/9134e35 were never pushed.)
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1338 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- Queue now: 626 is still RED at c808bd7 and waits for a new head. Idle-polling every 10 minutes.
