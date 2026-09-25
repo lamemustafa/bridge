@@ -1101,26 +1101,47 @@ impl ClassifiedCompanyCurrencyRead {
     }
 }
 
-/// The compliance ledger records, the group collection read with them, and the
-/// ledgers left out because they are kept in another currency (bridge#551).
-#[derive(Debug)]
-pub(crate) struct PartyLedgerMasterListing {
-    pub(crate) records: Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
-    pub(crate) groups: Vec<bridge_tally_protocol::TallyNamedMaster>,
-    pub(crate) foreign_currency_ledgers_excluded:
-        Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
-    /// Base-currency ledgers left out because a balance is a currency composite.
-    pub(crate) mixed_currency_ledgers_excluded: Vec<String>,
-    /// The master request's SVFROMDATE (the admitted BOOKSFROM).
-    pub(crate) opening_as_of: TallyDate,
-    pub(crate) evidence: RuntimeReadEvidence,
-}
-
 /// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
 /// as INR. The code is one of that function's static reasons, never data.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub(crate) struct CurrencyAdmissionRefusal(pub(crate) &'static str);
+
+/// One BOOKSFROM-pinned ledger export and the book extent it was read under:
+/// the opening and closing extents were equal, or the read refused.
+#[derive(Debug)]
+pub(crate) struct LedgerListing {
+    pub(crate) ledgers: Vec<TallyLedger>,
+    /// The `SVFROMDATE` the export was pinned to (the admitted BOOKSFROM).
+    pub(crate) opening_as_of: TallyDate,
+    pub(crate) extent: CompanyBookExtent,
+    pub(crate) evidence: RuntimeReadEvidence,
+}
+
+/// A ledger export and, when asked for, the group collection read in the same
+/// bracket.
+struct LedgerOpeningRead {
+    listing: LedgerListing,
+    groups: Option<Vec<bridge_tally_protocol::TallyNamedMaster>>,
+}
+
+/// The compliance ledger records, the group collection read with them, the
+/// ledgers set aside by currency (bridge#551), and the book extent the whole
+/// read was pinned under (#630).
+#[derive(Debug)]
+pub(crate) struct PartyLedgerMasterListing {
+    pub(crate) records: Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+    pub(crate) groups: Vec<bridge_tally_protocol::TallyNamedMaster>,
+    /// Ledgers kept in another currency, set aside by name.
+    pub(crate) foreign_currency_ledgers_excluded:
+        Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
+    /// Base-currency ledgers set aside because a balance is a currency composite.
+    pub(crate) mixed_currency_ledgers_excluded: Vec<String>,
+    /// The master request's SVFROMDATE (the admitted BOOKSFROM).
+    pub(crate) opening_as_of: TallyDate,
+    pub(crate) extent: CompanyBookExtent,
+    pub(crate) evidence: RuntimeReadEvidence,
+}
 
 /// The result of the existing Tally currency probe, retaining the extent that
 /// bracketed it so a monetary document cannot separate the two facts.
@@ -2767,21 +2788,24 @@ impl TallyRuntime {
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         self.fetch_ledger_opening_with_evidence(config, identity, None, false)
             .await
-            .map(|(ledgers, _, evidence, _)| (ledgers, evidence))
+            .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
     /// export was pinned to (the admitted BOOKSFROM). Each ledger's
     /// `OPENINGBALANCE` is the opening at that date (TALLY_PROTOCOL_REFERENCE
     /// §5.5), which on a multi-year book is not the current year's opening.
-    pub async fn fetch_ledgers_with_opening_as_of_evidence(
+    ///
+    /// The listing also carries the book extent the export was read under, so
+    /// a caller can tell later whether the book has moved since (#630).
+    pub(crate) async fn fetch_ledgers_with_opening_as_of_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<(Vec<TallyLedger>, TallyDate, RuntimeReadEvidence)> {
+    ) -> anyhow::Result<LedgerListing> {
         self.fetch_ledger_opening_with_evidence(config, identity, None, false)
             .await
-            .map(|(ledgers, from, evidence, _)| (ledgers, from, evidence))
+            .map(|read| read.listing)
     }
 
     /// As `fetch_ledgers_with_opening_as_of_evidence`, also reading the group
@@ -2789,23 +2813,18 @@ impl TallyRuntime {
     /// bracket, so every ledger's `PARENT` resolves against groups from the
     /// same unchanged book. This is the group request outstandings already
     /// sends; its size follows the book's group count, not its ledger count.
-    pub async fn fetch_ledgers_and_groups_with_opening_as_of_evidence(
+    pub(crate) async fn fetch_ledgers_and_groups_with_opening_as_of_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<(
-        Vec<TallyLedger>,
-        Vec<bridge_tally_protocol::TallyNamedMaster>,
-        TallyDate,
-        RuntimeReadEvidence,
-    )> {
-        let (ledgers, from, evidence, groups) = self
+    ) -> anyhow::Result<(LedgerListing, Vec<bridge_tally_protocol::TallyNamedMaster>)> {
+        let read = self
             .fetch_ledger_opening_with_evidence(config, identity, None, true)
             .await?;
-        let Some(groups) = groups else {
+        let Some(groups) = read.groups else {
             unreachable!("a ledger read asked for groups returns them or an error");
         };
-        Ok((ledgers, groups, from, evidence))
+        Ok((read.listing, groups))
     }
 
     /// Reads the native period opening at `from`, retaining the existing paired
@@ -2820,7 +2839,7 @@ impl TallyRuntime {
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         self.fetch_ledger_opening_with_evidence(config, identity, Some(from), false)
             .await
-            .map(|(ledgers, _, evidence, _)| (ledgers, evidence))
+            .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     async fn fetch_ledger_opening_with_evidence(
@@ -2829,12 +2848,7 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
         read_groups: bool,
-    ) -> anyhow::Result<(
-        Vec<TallyLedger>,
-        TallyDate,
-        RuntimeReadEvidence,
-        Option<Vec<bridge_tally_protocol::TallyNamedMaster>>,
-    )> {
+    ) -> anyhow::Result<LedgerOpeningRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -2898,7 +2912,15 @@ impl TallyRuntime {
                         let closing_evidence =
                             confirm_read_boundary(&client, boundary_profile).await?;
                         evidence = evidence.clone().combine(closing_evidence);
-                        Ok((ledgers, period.from().clone(), evidence.clone(), groups))
+                        Ok(LedgerOpeningRead {
+                            listing: LedgerListing {
+                                ledgers,
+                                opening_as_of: period.from().clone(),
+                                extent: opening_extent,
+                                evidence: evidence.clone(),
+                            },
+                            groups,
+                        })
                     }
                     .await;
                     result.map_err(|error| with_read_evidence(error, evidence))
@@ -2988,6 +3010,10 @@ impl TallyRuntime {
             .detect_classified_base_currency_with_extent(config.clone(), identity)
             .await?;
         let currency_evidence = currency_read.evidence();
+        // The source refuses unless its opening extent equals this one, and
+        // its closing extent its opening one, so this is the extent the whole
+        // compliance read was pinned under (#630).
+        let extent = currency_read.extent.clone();
         let assertion = currency_read
             .admit_inr_classified()
             .map_err(|code| {
@@ -3026,8 +3052,47 @@ impl TallyRuntime {
             foreign_currency_ledgers_excluded: foreign,
             mixed_currency_ledgers_excluded: mixed,
             opening_as_of,
+            extent,
             evidence,
         })
+    }
+
+    /// The company's book extent, paired, inside the identity bracket: the one
+    /// request a continuation page of a ledger listing sends before it is
+    /// served from the snapshot its first page read (#630). The evidence is
+    /// the extent pair's, which is all a page served from a snapshot reads.
+    pub(crate) async fn fetch_listing_extent(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(CompanyBookExtent, RuntimeReadEvidence)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::OtherRead,
+            ReadRetryPolicy::transient_default(),
+            move |client| {
+                let identity = identity.clone();
+                async move {
+                    let mut evidence = RuntimeReadEvidence::empty();
+                    let read = async {
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let extent = client
+                            .fetch_company_book_extent_with_evidence(&identity, &mut evidence)
+                            .await?;
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        Ok(extent)
+                    }
+                    .await;
+                    match read {
+                        Ok(extent) => Ok((extent, evidence)),
+                        Err(error) => Err(with_read_evidence(error, evidence)),
+                    }
+                }
+            },
+        )
+        .await
     }
 
     /// Retain the three actual request body commitments alongside their paired
