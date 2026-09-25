@@ -315,3 +315,11 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 
 - The entry above says "Pushed … 7927967..924796e". That is wrong. My pre-push check (origin/master must be an ancestor) failed because master had moved to 237d415, so the push never ran. `lane-f/gold-docs-evidence` is still at 7927967 on the remote. The gate results above are real, but for 924796e on master a8324c6.
 - Redoing gold from step 1 on master 237d415.
+
+## 2026-09-25 17:14 UTC — lane-f/gold-docs-evidence @ 7927967: STOPPED, source conflict with master 237d415
+
+- `git merge --no-ff origin/master` (237d415, #684) conflicts in a non-JSON file, so per the brief I stopped and resolved nothing. The merge was aborted (`git merge --abort`) and nothing was pushed.
+- Conflicting path: **docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md**. One hunk, at about line 955 of the merged file: one line on each side. The branch side is from f96ac7a; the master side is 237d415 ("Report the target's voucher-mark step against Tally's CREATED (batch posting slice C) (#684)").
+- The other files master changed merged cleanly: docs/adr/0004-tally-write-safety.md, agent_catalog.rs, agent_import_post_e2e_tests.rs, agent_import_post_location.rs, agent_import_post_location_tests.rs, plus the JSONs.
+- Lane F needs to merge master and resolve that line. I'll rebuild the new head when it appears.
+- Note: 653 (362904c), egress (a9b9e4e) and 626 (f449833) were pushed and reported on a8324c6, before master moved, so I'm not re-merging them.
