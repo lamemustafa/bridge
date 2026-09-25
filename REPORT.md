@@ -135,3 +135,8 @@ Queue item 3: stopping here and waiting for Lane D.
 - On 2.43.0: 20 tests, 17 pass, 3 fail (the item 3 group only).
 - Mutation results: trusting `*` fails the owner test; dropping `--upload-pack` fails both owner tests; forcing the served branch passes with the diagnostic.
 - PR body updated. CI re-runs on the push; I'm waiting on it.
+
+## Fri Sep 25 15:03:17 UTC 2026 — PR #688 green
+
+- All 12 check runs on `bdb8e53` completed with success or skipped. Passed: `Workflow consistency`, `Frontend build`, `Required checks`, `Tally portable core`, `Rust format`, `Dependency security`, `GitGuardian Security Checks`, `Tax-audit mutation records`, `Determine bundle scope`. Skipped as not applicable to a scripts-only change: `Native checks (matrix)`, `Bundle smoke (matrix)`, `Retain two compiler-cache snapshots per OS`.
+- The PR is still a draft, waiting on Lane D. Queue item 3: stopped and waiting.
