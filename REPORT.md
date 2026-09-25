@@ -323,3 +323,29 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 - The other files master changed merged cleanly: docs/adr/0004-tally-write-safety.md, agent_catalog.rs, agent_import_post_e2e_tests.rs, agent_import_post_location.rs, agent_import_post_location_tests.rs, plus the JSONs.
 - Lane F needs to merge master and resolve that line. I'll rebuild the new head when it appears.
 - Note: 653 (362904c), egress (a9b9e4e) and 626 (f449833) were pushed and reported on a8324c6, before master moved, so I'm not re-merging them.
+
+## 2026-09-25 17:18 UTC — lane-c/601d-wip: built 7543f8a: RED
+
+- Head 7543f8a (28 ahead, 3 behind). Merged origin/master 237d415 --no-ff → 618899e: **no conflicts**. The earlier attempt against a8324c6 was also clean; I discarded it when master moved. Reseal → 21fb291; `--verify` current. **Not pushed** (RED), and both commits stay local only. No Sonnet review, since nothing is being pushed.
+- **Compiler errors: exactly 1** (the same in the lib-test build and in clippy; no warnings). It also exists on 7543f8a without the merge: the branch removed the function but kept the test import.
+  ```
+  error[E0432]: unresolved import `super::establish_inr_currency`
+    --> src/commands_tests.rs:43:27
+  43 |     company_sweep_result, establish_inr_currency, first_calendar_day_canary_window,
+     |                           ^^^^^^^^^^^^^^^^^^^^^^ no `establish_inr_currency` in `commands`
+  error: could not compile `bridge` (lib test) due to 1 previous error
+  ```
+  On master, `establish_inr_currency` is defined at commands.rs:2133 and used by commands_tests.rs:340. The branch's commands.rs no longer defines it, and no test in the branch calls it any more; only the import on line 43 is left.
+- **fmt diffs** (`cargo fmt` fixes them): crates/bridge-tally-protocol/src/native_outstandings/mod.rs:50, src/commands.rs:38, src/commands_tests.rs:53, src/tally/connection.rs:35 and :1373.
+- Because the lib-test target doesn't compile, no bridge lib tests ran. Nothing masks the other gates:
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 1 | **REAL**: 5 hunks (above) |
+| bridge --lib (rfd/gtk3) | 101 | **REAL**: E0432 (above); 0 tests ran |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 101 | **REAL**: the same E0432, and nothing else |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 287 tests, 279 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
