@@ -469,12 +469,13 @@ fn each_dialog_answers_with_its_own_token() {
 }
 
 /// Where a click becomes the answer (#687). No test can open a real window,
-/// so the four native dialog functions, and the two parent functions that
-/// run them, are pinned here verbatim, with the button labels. This pins the
-/// text, not the platform's behaviour. Any edit to these functions must also
-/// change this gate. That includes flipping a comparison, relabelling the
-/// post button "Cancel", changing the default button, discarding the result
-/// and returning `true`, or making `confirm` return `Ok(())`.
+/// and the parent's stub tests run only on unix. So the four native dialog
+/// functions, `confirm` and `confirm_review`, and the two functions that
+/// decide from the child's answer (`confirm_with`, `confirm_review_with`)
+/// are pinned here verbatim, with the button labels. The file's `cfg`
+/// attributes are counted as well: a platform or test split anywhere in it,
+/// such as a `#[cfg(windows)]` twin of a pinned function, must change this
+/// gate. This pins text, not the platform's behaviour.
 const REVIEW_ACK_DIALOG: &str = r#"#[cfg(not(windows))]
 fn show_review_acknowledgement(preview: &str) -> bool {
     rfd::MessageDialog::new()
@@ -551,7 +552,36 @@ fn show_review(preview: &str) -> bool {
     }
 }"#;
 
-const DIALOG_ANSWER_PINS: [(&str, usize); 10] = [
+const CONFIRM_WITH: &str = r#"async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
+    if preview.len() > MAX_PREVIEW_BYTES {
+        return Err("import_review_too_large".into());
+    }
+    match nonce_bound_dialog(executable, "--confirm-journal", POST_TOKEN_PREFIX, preview).await {
+        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
+        // A person's decline is no token and exit 1: `run_confirmation`
+        // returns false. A clean exit without the token is never that; it is
+        // an executable that does not answer with this token, such as one
+        // ignoring the flag, or a build from before #635 whose dialog ran.
+        Ok(answer) if answer.exited_cleanly => Err("import_approval_unavailable".into()),
+        Ok(_) => Err("import_approval_declined".into()),
+        Err(DialogFailure::Unavailable) => Err("import_approval_unavailable".into()),
+        Err(DialogFailure::TimedOut) => Err("import_approval_timed_out".into()),
+    }
+}"#;
+
+const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
+    if preview.len() > MAX_PREVIEW_BYTES {
+        return Err("ack_review_too_large".into());
+    }
+    match nonce_bound_dialog(executable, "--confirm-review", REVIEW_TOKEN_PREFIX, preview).await {
+        Ok(answer) if answer.token_matched => Ok(()),
+        Ok(_) => Err("ack_review_declined".into()),
+        Err(DialogFailure::Unavailable) => Err("ack_review_unavailable".into()),
+        Err(DialogFailure::TimedOut) => Err("ack_review_timed_out".into()),
+    }
+}"#;
+
+const DIALOG_ANSWER_PINS: [(&str, usize); 11] = [
     ("const POST_LABEL: &str = \"Post voucher\";", 1),
     (
         "pub(crate) const REVIEW_BUTTON: &str = \"I reviewed it\";",
@@ -575,17 +605,27 @@ const DIALOG_ANSWER_PINS: [(&str, usize); 10] = [
 }",
         1,
     ),
-    (
-        "Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
-        1,
-    ),
-    ("Ok(answer) if answer.token_matched => Ok(()),", 1),
+    (CONFIRM_WITH, 1),
+    (CONFIRM_REVIEW_WITH, 1),
+    ("pub(crate) const REVIEW_BUTTON: &str = \"Yes\";", 1),
+];
+
+/// Every `cfg` in approved_import.rs, by form. The last entry counts the
+/// bare text `cfg`, so a `cfg_attr`, a `cfg!`, or a combined predicate such as
+/// `cfg(any(…))` is caught too.
+const CFG_CENSUS: [(&str, usize); 6] = [
+    ("#[cfg(test)]", 5),
+    ("#[cfg(not(test))]", 2),
+    ("#[cfg(unix)]", 4),
+    ("#[cfg(windows)]", 3),
+    ("#[cfg(not(windows))]", 4),
+    ("cfg", 19),
 ];
 
 fn dialog_answer_problems(source: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    for (pin, expected) in DIALOG_ANSWER_PINS {
-        if source.matches(pin).count() != expected {
+    for (pin, expected) in DIALOG_ANSWER_PINS.iter().chain(CFG_CENSUS.iter()) {
+        if source.matches(pin).count() != *expected {
             problems.push(format!("expected {expected} of `{pin}`"));
         }
     }
@@ -661,6 +701,29 @@ fn each_dialog_answers_only_on_its_positive_button() {
             1,
         ),
         // rfd post dialog discards its answer: it still computes the comparison, then returns true.
+        // A Windows-only twin that approves, beside the real one made
+        // non-Windows: every pinned body is still present.
+        source.replacen(
+            CONFIRM_WITH,
+            &format!(
+                "#[cfg(not(windows))]\n{CONFIRM_WITH}\n#[cfg(windows)]\nasync fn confirm_with(_: &std::path::Path, _: &str) -> Result<(), String> {{\n    Ok(())\n}}"
+            ),
+            1,
+        ),
+        format!(
+            "{source}\n#[cfg(windows)]\nfn dialog_token(prefix: &str, _: &str) -> String {{\n    prefix.to_string()\n}}\n"
+        ),
+        format!("{source}\n#[cfg_attr(windows, allow(unused))]\nfn extra() {{}}\n"),
+        source.replacen(
+            CONFIRM_WITH,
+            &CONFIRM_WITH.replacen(
+                "        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+                "        Ok(answer) if answer.exited_cleanly => Ok(()),\n        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+                1,
+            ),
+            1,
+        ),
+        source.replacen("\"Yes\";", "\"No\";", 1),
         source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
         // Windows post dialog discards its answer: it still computes the comparison, then returns true.
         source.replacen(POST_DIALOG_WINDOWS, &discard_answer(POST_DIALOG_WINDOWS), 1),
