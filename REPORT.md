@@ -77,3 +77,10 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - A fresh Sonnet review found no P1 or P2. It exercised the step's bash on an empty diff and on ASCII, non-ASCII, space, quote, backslash, deleted and renamed paths. No case selects less than before.
 - **Pushed `lane-e/require-mutation-records` @ 1b482dd** (fast-forward from Lane D's 7296886). Replied on the PR and updated the body (candidate SHA, net LOC +27/−6).
 - E2a full run: 230/519 done at this point. The only survivors so far are the five in accepted-survivors.json (X11, X12, A04, A19, S08).
+
+## 2026-09-25 16:27 UTC — container restart; E2a full run restarted in shards
+
+- The cloud container restarted at about 16:15 UTC and wiped all local state. The E2a full run (386/519 done) was lost; its records were never committed. Everything pushed is intact: gate 1b482dd, E2a 6a1fad0, this report.
+- PR #682: CI on 1b482dd completed with no failures.
+- Re-running on the same frozen head 6a1fad0 in 4 shards (`--full --jobs 4 --shard k/4`). Each shard's results and log are pushed to a scratch branch **`cloud/lane-e-e2a-shards`** (never to be merged) as the shard finishes, so another restart loses at most one shard. At the end I'll `--merge` them into `parity/mutation-results.json` on the E2a branch.
+- Before the restart the run had found no survivors except the five accepted ones (X11, X12, A04, A19, S08).
