@@ -229,3 +229,25 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   At port commit 4e68199 all pass (344).
 - Mutations: **E4-01..25 all killed** (sampled with --full).
 - Review round (Sonnet and Opus) on 3459afc running. The E4 full run and records wait until E2b and E3a settle, since any E2b change moves every later crate tree.
+
+## 2026-09-25 22:09 UTC — E4 reviewed and pushed (no records, no PR); stack waiting on Lane D
+
+- **Opus round 1 on E4:** no P1. The arithmetic is checked (the i128 sums in PWM only widen) and no panic was found. The P2s:
+  - wrong implementations passed every test while moving paise: the period's first day excluded, a TB difference of exactly Re 1 made a finding, excluded vouchers matched strictly or of any date, ranking by signed year or counting outside amounts, ties by descending name, a note after the period counted in returns, the opening balance published without its sign;
+  - `batch-e4.md` claimed pm_paths reaches a Cust C/D tie, but the golden has them at 120,000 and 100,000.
+- **Fixed** in d85e238 and 1e7f14d:
+  - one whole-run unit test on a synthetic book (E4 now adds 4 tests);
+  - E4-26..35 recorded;
+  - the provenance note corrected. The fixture's own comment is left as is, because its bytes are what the goldens were made from.
+- **Sonnet round 1** found no P1 or P2. Round 2 (Opus and Sonnet) found only the lower date bound, which is now pinned. **All 35 E4 mutations killed.** 348 tests pass; clippy and fmt clean.
+- **Pushed `lane-e/e4-party-monthly` @ 1e7f14d.** No full run and no records yet: they would be invalidated by the E2b change.
+- **Where the stack stands:**
+  - E2a merged (#710).
+  - **E2b #713 is held by Lane D:** the reference fix, then new goldens, a `limits` line and a cash-line figure definition. Nothing on the branch yet as of 22:10 UTC.
+  - E3a is ready (e1b6550, records on its current tree).
+  - E4 is reviewed (1e7f14d).
+- **Next, once Lane D pushes the E2b change:**
+  1. port and review it;
+  2. rerun E2b's full list;
+  3. re-stack E3a, then E4, redoing their records;
+  4. open each PR in turn.
