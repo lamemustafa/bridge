@@ -204,6 +204,26 @@ pub fn parse_native_party_ledger_master_records_with_evidence(
     )
 }
 
+/// [`parse_native_party_ledger_master_records_with_evidence`], except that a
+/// ledger named in `unparsed` keeps its `OPENINGBALANCE` as text and never
+/// has it parsed. The compliance source names the ledgers it sets aside
+/// (bridge#551), whose openings may be currency composites; their rows are
+/// still read and bound to the company, and the source then drops them.
+pub fn parse_native_party_ledger_master_records_leaving_unparsed(
+    xml: &str,
+    expected_company_guid: &str,
+    unparsed: &std::collections::BTreeSet<String>,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<PartyLedgerMasterRecord>>> {
+    parse_native_ledger_collection_with_evidence(
+        xml,
+        expected_company_guid,
+        NativeLedgerCollectionCompanyBinding::ResponseGuid,
+        |reader, element| {
+            party_ledger_master_collection_row(reader, element, Some(unparsed))
+        },
+    )
+}
+
 fn parse_native_ledger_collection_with_evidence<T>(
     xml: &str,
     expected_company_guid: &str,
@@ -382,7 +402,7 @@ fn parse_native_ledger_collection_row(
         alter_id,
         response_company_guid,
         ..
-    } = parse_native_ledger_collection_row_with_master_fields(reader, element, false)?;
+    } = parse_native_ledger_collection_row_with_master_fields(reader, element, false, None)?;
     Ok(NativeLedgerCollectionRow {
         record: ledger,
         identities,
@@ -395,13 +415,21 @@ fn parse_native_party_ledger_master_collection_row(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
 ) -> anyhow::Result<NativeLedgerCollectionRow<PartyLedgerMasterRecord>> {
+    party_ledger_master_collection_row(reader, element, None)
+}
+
+fn party_ledger_master_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    unparsed: Option<&std::collections::BTreeSet<String>>,
+) -> anyhow::Result<NativeLedgerCollectionRow<PartyLedgerMasterRecord>> {
     let ParsedNativeLedgerCollectionRow {
         ledger,
         fields,
         identities,
         alter_id,
         response_company_guid,
-    } = parse_native_ledger_collection_row_with_master_fields(reader, element, true)?;
+    } = parse_native_ledger_collection_row_with_master_fields(reader, element, true, unparsed)?;
     Ok(NativeLedgerCollectionRow {
         record: PartyLedgerMasterRecord { ledger, fields },
         identities,
@@ -414,6 +442,7 @@ fn parse_native_ledger_collection_row_with_master_fields(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
     retain_master_fields: bool,
+    unparsed: Option<&std::collections::BTreeSet<String>>,
 ) -> anyhow::Result<ParsedNativeLedgerCollectionRow> {
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let name = attr_value(reader, element, b"NAME")
@@ -509,7 +538,9 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     // Every captured row carries this field. Its absence is
                     // unmeasured, so fail closed rather than silently turning
                     // a missing debtor/creditor balance into zero.
-                    bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone())?;
+                    if !unparsed.is_some_and(|names| names.contains(&ledger.name)) {
+                        bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone())?;
+                    }
                     ledger.opening_balance = Some(opening_balance);
                 }
                 b"BRIDGECOMPANYGUID" => {

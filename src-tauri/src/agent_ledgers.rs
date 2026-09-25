@@ -252,6 +252,21 @@ fn excluded_ledgers_json(
     })
 }
 
+/// The base-currency ledgers a read left out because a balance of theirs is a
+/// currency composite: how many, the reason, and the first
+/// [`EXCLUDED_LEDGERS_NAMED`], each marked for redaction as party data.
+fn mixed_ledgers_json(mixed: &[String]) -> Value {
+    json!({
+        "count": mixed.len(),
+        "reason": "mixed_currency_movement",
+        "ledgers": mixed
+            .iter()
+            .take(EXCLUDED_LEDGERS_NAMED)
+            .map(|ledger| party_name(ledger.clone()))
+            .collect::<Vec<_>>(),
+    })
+}
+
 impl Server {
     pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
@@ -265,11 +280,12 @@ impl Server {
             // to admit sub-group ledgers (ancestry) or to report them
             // (immediate). `compliance` already reads it; `basic` reads it
             // only when a filter is given, so an unfiltered read is unchanged.
-            let (ledgers, group_filter, ledger_evidence, foreign) = if compliance {
+            let (ledgers, group_filter, ledger_evidence, foreign, mixed) = if compliance {
                 let crate::tally::runtime::PartyLedgerMasterListing {
                     records,
                     groups,
                     foreign_currency_ledgers_excluded: foreign,
+                    mixed_currency_ledgers_excluded: mixed,
                     opening_as_of,
                     evidence,
                 } = self
@@ -310,7 +326,7 @@ impl Server {
                 let report = group
                     .as_deref()
                     .map(|group| apply_group_filter(&mut rows, scope, group, &group_index));
-                (rows, report, evidence, foreign)
+                (rows, report, evidence, foreign, mixed)
             } else if let Some(group) = group.as_deref() {
                 let (records, groups, opening_as_of, evidence) = self
                     .runtime
@@ -322,7 +338,7 @@ impl Server {
                     .map(|ledger| basic_row(ledger, &opening_as_of))
                     .collect::<Vec<_>>();
                 let report = apply_group_filter(&mut rows, scope, group, &GroupIndex::build(groups));
-                (rows, Some(report), evidence, Vec::new())
+                (rows, Some(report), evidence, Vec::new(), Vec::new())
             } else {
                 let (records, opening_as_of, evidence) = self
                     .runtime
@@ -333,7 +349,7 @@ impl Server {
                     .into_iter()
                     .map(|ledger| basic_row(ledger, &opening_as_of))
                     .collect::<Vec<_>>();
-                (rows, None, evidence, Vec::new())
+                (rows, None, evidence, Vec::new(), Vec::new())
             };
             evidence = combine_evidence(evidence.clone(), evidence_from_runtime_read(ledger_evidence));
             let offset = arg_usize(args, "offset", 0)?;
@@ -352,10 +368,12 @@ impl Server {
                 result["group_filter"] = group_filter;
             }
             // A book with several Currency masters: its foreign-currency
-            // ledgers are left out and named, never read as rupees (bridge#551).
-            if !foreign.is_empty() {
+            // ledgers, and its rupee ledgers with a composite balance, are left
+            // out and named, never read as rupees (bridge#551).
+            if !foreign.is_empty() || !mixed.is_empty() {
                 result["ledgers_scope"] = json!("base_currency_ledgers_only");
                 result["foreign_currency_ledgers_excluded"] = excluded_ledgers_json(&foreign);
+                result["base_currency_ledgers_mixed_excluded"] = mixed_ledgers_json(&mixed);
             }
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),

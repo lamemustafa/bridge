@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::fmt;
 mod scalar;
 mod wire;
+pub(crate) use scalar::is_currency_composite;
 pub use wire::{parse_native_trial_balance, parse_native_trial_balance_with_currency};
 
 /// One amount exactly as the native collection exposed it.

@@ -53,3 +53,4 @@ pub use wire::{
     parse_native_ledger_snapshot_classified_for_company, parse_native_ledger_snapshot_for_company,
     ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
 };
+pub use wire::{parse_compliance_ledger_snapshot_for_company, ComplianceLedgerSnapshot};

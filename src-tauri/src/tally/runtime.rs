@@ -1109,6 +1109,8 @@ pub(crate) struct PartyLedgerMasterListing {
     pub(crate) groups: Vec<bridge_tally_protocol::TallyNamedMaster>,
     pub(crate) foreign_currency_ledgers_excluded:
         Vec<bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger>,
+    /// Base-currency ledgers left out because a balance is a currency composite.
+    pub(crate) mixed_currency_ledgers_excluded: Vec<String>,
     /// The master request's SVFROMDATE (the admitted BOOKSFROM).
     pub(crate) opening_as_of: TallyDate,
     pub(crate) evidence: RuntimeReadEvidence,
@@ -3002,6 +3004,7 @@ impl TallyRuntime {
         let evidence = currency_evidence.combine(source_evidence);
         let groups = source.groups.clone();
         let foreign = source.foreign_currency_ledgers_excluded.clone();
+        let mixed = source.mixed_currency_ledgers_excluded.clone();
         // The master request's SVFROMDATE (the admitted BOOKSFROM): each opening is as of it.
         let opening_as_of = source.from.clone();
         let records = source
@@ -3021,6 +3024,7 @@ impl TallyRuntime {
             records,
             groups,
             foreign_currency_ledgers_excluded: foreign,
+            mixed_currency_ledgers_excluded: mixed,
             opening_as_of,
             evidence,
         })

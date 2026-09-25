@@ -458,6 +458,62 @@ pub fn parse_native_ledger_snapshot_classified_for_company(
     classify_snapshot_rows(rows, base)
 }
 
+/// The compliance source's balance snapshot of a book with several Currency
+/// masters (bridge#551): the plain base-currency rows parsed; the ledgers kept
+/// in another currency named; and the base-currency ledgers with a value Tally
+/// wrote as a currency composite named, their balances never parsed. Such a
+/// ledger is a rupee ledger a foreign-currency entry touched: on the captured
+/// several-currency book its closing is `-$ 100.00 @ I₹ 201/$  = -I₹ 20100.00`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComplianceLedgerSnapshot {
+    pub base: Vec<LedgerSnapshotEntry>,
+    pub foreign: Vec<super::ForeignCurrencyLedger>,
+    pub mixed: Vec<String>,
+}
+
+/// [`ComplianceLedgerSnapshot`] from a snapshot that Tally's collection-level
+/// compute proves came from the selected company. The outstandings read keeps
+/// [`parse_native_ledger_snapshot_classified_for_company`], which refuses a
+/// composite base balance.
+pub fn parse_compliance_ledger_snapshot_for_company(
+    xml: &str,
+    expected_company_guid: &str,
+    base: &super::BaseCurrencyName,
+) -> Result<ComplianceLedgerSnapshot, NativeOutstandingsError> {
+    let rows = parse_native_ledger_snapshot_rows(xml)?;
+    require_snapshot_company(&rows, expected_company_guid)?;
+    let classified = super::classify_ledger_currencies(
+        base,
+        rows.iter()
+            .map(|row| (row.name.as_str(), row.currency_name.as_deref())),
+    )
+    .map_err(NativeOutstandingsError::LedgerCurrency)?;
+    let foreign_names = classified
+        .foreign
+        .iter()
+        .map(|ledger| ledger.ledger.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut plain = Vec::new();
+    let mut mixed = Vec::new();
+    for row in rows {
+        if foreign_names.contains(&row.name) {
+            continue;
+        }
+        if crate::native_trial_balance::is_currency_composite(&row.opening_text)
+            || crate::native_trial_balance::is_currency_composite(&row.closing_text)
+        {
+            mixed.push(row.name);
+            continue;
+        }
+        plain.push(row.into_entry()?);
+    }
+    Ok(ComplianceLedgerSnapshot {
+        base: plain,
+        foreign: classified.foreign,
+        mixed,
+    })
+}
+
 fn classify_snapshot_rows(
     rows: Vec<ParsedLedgerSnapshotRow>,
     base: &super::BaseCurrencyName,

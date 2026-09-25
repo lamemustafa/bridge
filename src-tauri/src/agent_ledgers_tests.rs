@@ -1366,7 +1366,8 @@ mod through_the_tool {
 
     /// bridge#551, through the tool on the several-currency book's captures:
     /// the compliance read admits it through the classified base, returns its
-    /// rupee ledgers only, and names the three dollar ledgers it left out. The
+    /// plain rupee ledgers only, and names the three dollar ledgers and the
+    /// three rupee ledgers with a composite balance that it left out. The
     /// extent, master, balance and group responses are one moment of the book
     /// (FOREX_601D_CAPTURE_PROVENANCE); the currency and Company reads are the
     /// committed 22 Sep captures, from before the C1 voucher, which added no
@@ -1427,12 +1428,24 @@ mod through_the_tool {
             .map(|row| row["name"].as_str().unwrap().to_string())
             .collect::<Vec<_>>();
         let dollar = ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"];
-        assert_eq!(names.len(), 7, "{names:?}");
+        assert_eq!(
+            names,
+            ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]
+        );
         assert!(
             names.iter().all(|name| !dollar.contains(&name.as_str())),
             "{names:?}"
         );
-        assert_eq!(result["total"], 7);
+        assert_eq!(result["total"], 4);
+        // Rupee ledgers a dollar entry touched carry composite balances: set
+        // aside by name, never read.
+        let mixed = &result["base_currency_ledgers_mixed_excluded"];
+        assert_eq!(mixed["count"], 3);
+        assert_eq!(mixed["reason"], "mixed_currency_movement");
+        assert_eq!(
+            mixed["ledgers"],
+            json!(["FX Party 01", "FX Sales", "Profit & Loss A/c"])
+        );
         assert_eq!(result["ledgers_scope"], "base_currency_ledgers_only");
         let excluded = &result["foreign_currency_ledgers_excluded"];
         assert_eq!(excluded["count"], 3);

@@ -35,8 +35,8 @@ use bridge_tally_protocol::outstandings::{
 use bridge_tally_protocol::{
     native_outstandings::{
         parse_native_group_snapshot_with_evidence,
-        parse_native_ledger_snapshot_classified_for_company,
-        parse_native_ledger_snapshot_for_company, render_native_group_snapshot_request,
+        parse_compliance_ledger_snapshot_for_company, parse_native_ledger_snapshot_for_company,
+        render_native_group_snapshot_request,
         render_native_ledger_export_request, render_native_ledger_snapshot_request,
         render_native_voucher_export_request, render_party_ledger_master_request,
         NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod, NativeOutstandingsError,
@@ -47,6 +47,7 @@ use bridge_tally_protocol::{
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
+    parse_native_party_ledger_master_records_leaving_unparsed,
     parse_native_party_ledger_master_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
@@ -1335,16 +1336,6 @@ impl TallyClient {
                 master_response_sha256.clone(),
                 master_response_bytes,
             ));
-            let master = parse_native_party_ledger_master_records_with_evidence(
-                &master_body,
-                identity.company_guid(),
-            )
-            .map_err(party_ledger_master_master_snapshot_error)?;
-            if !master.evidence.duplicate_identities.is_empty() {
-                return Err(anyhow::Error::new(
-                    PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
-                ));
-            }
             let balance_pair = self
                 .fetch_native_report_paired(balance_request.clone())
                 .await?;
@@ -1358,29 +1349,51 @@ impl TallyClient {
             // Each ledger's own currency is compared with the base before any
             // balance is parsed (bridge#551): a foreign ledger's balance is a
             // composite display string, never rupees, so the ledger leaves the
-            // source, its master row included, and is named instead. A base of
-            // one master refuses a ledger in another currency outright. An
-            // assertion with no base (one master whose NAME was not read)
-            // keeps the unclassified read it had before.
-            let (balances, foreign_currency_ledgers_excluded) = match &ledger_currency_base {
-                Some(base) => {
-                    let classified = parse_native_ledger_snapshot_classified_for_company(
-                        &balance_body,
-                        identity.company_guid(),
-                        base,
-                    )
-                    .map_err(party_ledger_master_balance_snapshot_error)?;
-                    (classified.base, classified.foreign)
-                }
-                None => (
-                    parse_native_ledger_snapshot_for_company(
-                        &balance_body,
-                        identity.company_guid(),
-                    )
-                    .map_err(party_ledger_master_balance_snapshot_error)?,
-                    Vec::new(),
-                ),
-            };
+            // source, its master row included, and is named instead. So does a
+            // base-currency ledger with any composite balance: a rupee ledger a
+            // foreign-currency entry touched. A base of one master refuses a
+            // ledger in another currency outright. An assertion with no base
+            // (one master whose NAME was not read) keeps the unclassified read.
+            let (balances, foreign_currency_ledgers_excluded, mixed_currency_ledgers_excluded) =
+                match &ledger_currency_base {
+                    Some(base) => {
+                        let classified = parse_compliance_ledger_snapshot_for_company(
+                            &balance_body,
+                            identity.company_guid(),
+                            base,
+                        )
+                        .map_err(party_ledger_master_balance_snapshot_error)?;
+                        (classified.base, classified.foreign, classified.mixed)
+                    }
+                    None => (
+                        parse_native_ledger_snapshot_for_company(
+                            &balance_body,
+                            identity.company_guid(),
+                        )
+                        .map_err(party_ledger_master_balance_snapshot_error)?,
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                };
+            // Ledger names are unique within a Tally company, so a ledger set
+            // aside is the master row with its name. The master is parsed only
+            // now, leaving those rows' openings unparsed.
+            let set_aside = foreign_currency_ledgers_excluded
+                .iter()
+                .map(|ledger| ledger.ledger.clone())
+                .chain(mixed_currency_ledgers_excluded.iter().cloned())
+                .collect::<BTreeSet<_>>();
+            let master = parse_native_party_ledger_master_records_leaving_unparsed(
+                &master_body,
+                identity.company_guid(),
+                &set_aside,
+            )
+            .map_err(party_ledger_master_master_snapshot_error)?;
+            if !master.evidence.duplicate_identities.is_empty() {
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+                ));
+            }
             let group_pair = self
                 .fetch_native_report_paired(group_request.clone())
                 .await?;
@@ -1413,17 +1426,11 @@ impl TallyClient {
                     ));
                 }
             }
-            // Ledger names are unique within a Tally company, so a foreign
-            // ledger's master row is the one with its name.
-            let foreign_names = foreign_currency_ledgers_excluded
-                .iter()
-                .map(|ledger| ledger.ledger.as_str())
-                .collect::<BTreeSet<_>>();
             let mut rows = Vec::with_capacity(master.records.len());
             for source in master
                 .records
                 .into_iter()
-                .filter(|source| !foreign_names.contains(source.record.ledger.name.as_str()))
+                .filter(|source| !set_aside.contains(&source.record.ledger.name))
             {
                 let key = ledger_display_key(
                     &source.record.ledger.name,
@@ -1497,6 +1504,7 @@ impl TallyClient {
                 group_response_bytes,
                 groups,
                 foreign_currency_ledgers_excluded,
+                mixed_currency_ledgers_excluded,
             })
         }
         .await;

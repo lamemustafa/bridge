@@ -43,7 +43,7 @@ pub(super) fn parse_amount_text(
 /// Exactly one ` @ ` and one ` = `; anything else is not a composite, so a
 /// truncated or garbled value is refused as an invalid amount rather than set
 /// aside. It only classifies: no value is ever read from a composite.
-pub(super) fn is_currency_composite(text: &str) -> bool {
+pub(crate) fn is_currency_composite(text: &str) -> bool {
     let Some((foreign, rest)) = split_once_exact(text, " @ ") else {
         return false;
     };

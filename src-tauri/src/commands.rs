@@ -1876,6 +1876,11 @@ pub async fn export_party_ledger_master(
             &source.foreign_currency_ledgers_excluded,
         ));
     }
+    if !source.mixed_currency_ledgers_excluded.is_empty() {
+        return Err(party_ledger_master_mixed_currency_error(
+            &source.mixed_currency_ledgers_excluded,
+        ));
+    }
     let workbook = build_party_ledger_master_workbook(source)
         .map_err(|_| {
             party_ledger_master_local_export_error(
@@ -2149,6 +2154,31 @@ fn party_ledger_master_foreign_currency_error(
         "after_change",
         false,
         "Do not retry the unchanged export. The agent connection's ledger_masters reads the base-currency ledgers and names the ones it leaves out.",
+    )
+}
+
+fn party_ledger_master_mixed_currency_error(mixed: &[String]) -> TallyCommandError {
+    let named = mixed
+        .iter()
+        .take(FOREIGN_LEDGERS_NAMED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = mixed.len().saturating_sub(FOREIGN_LEDGERS_NAMED);
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    tally_command_error(
+        "party_ledger_master_mixed_currency_ledgers",
+        "Currency admission",
+        format!(
+            "Bridge withheld the party/ledger master: some base-currency ledgers hold balances Tally shows in another currency ({named}{more}). A workbook without them would not describe the whole book, and Bridge does not read those balances."
+        ),
+        "after_change",
+        false,
+        "Do not retry the unchanged export. The agent connection's ledger_masters reads the plain base-currency ledgers and names the ones it leaves out.",
     )
 }
 
