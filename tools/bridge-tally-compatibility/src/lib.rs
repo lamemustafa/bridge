@@ -310,7 +310,10 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // `bridge-tally-protocol/src/gst_registration.rs` (bridge#624) decides which
 // GSTIN ledger_masters reports for a party on a date; a defect there reports a
 // registered supplier as unregistered, or the reverse.
-pub const MAX_SURFACE_FILES: usize = 279;
+// `src-tauri/src/agent_voucher_type_class.rs` (bridge#625) decides which
+// vouchers a type filter returns, and which request is refused as ambiguous;
+// a defect there reports a class of vouchers as absent.
+pub const MAX_SURFACE_FILES: usize = 280;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

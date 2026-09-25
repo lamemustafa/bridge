@@ -205,6 +205,12 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// read, or either did not hold exactly one row for the target.
     #[error("post_masters_unconfirmed")]
     MastersUnconfirmed,
+    /// The ledger catalogue the queue re-read could not be parsed, so the
+    /// approved binding cannot be rechecked. Raised only by that recheck,
+    /// before the intent or the POST (bridge#641). The source is the typed,
+    /// data-free cause the refusal carries.
+    #[error("post_catalogue_unreadable")]
+    CatalogueUnreadable(#[source] bridge_tally_protocol::StandardLedgerCatalogError),
 }
 
 /// A failure inside the endpoint queue before the dispatch intent is recorded
