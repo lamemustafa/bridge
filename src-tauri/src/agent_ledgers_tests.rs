@@ -1144,6 +1144,45 @@ mod through_the_tool {
         assert_eq!(one.requests(), total);
     }
 
+    /// A continuation that names no snapshot is still served from the held
+    /// read while the book is unchanged: the id only makes a change loud.
+    #[tokio::test]
+    async fn a_continuation_without_an_id_is_served_from_the_held_read_while_the_book_is_unchanged()
+    {
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let second = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&second)["reused"], true);
+        assert_eq!(snapshot_of(&second)["id"], snapshot_of(&first)["id"]);
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A second first page replaces the held snapshot, so a continuation
+    /// naming the first page's id is refused rather than served from the
+    /// newer read, even though the book did not change.
+    #[tokio::test]
+    async fn a_continuation_naming_a_replaced_snapshot_is_refused() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans());
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let replaced = snapshot_id(&one.call(json!({"company_guid":GUID,"limit":4})).await);
+        let _newer = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let refused = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4,"snapshot_id":replaced}))
+            .await;
+        let error = refusal(&refused);
+        assert_eq!(error["code"], "listing_snapshot_changed");
+        assert_eq!(error["cause"], "snapshot_not_held");
+        assert_eq!(one.requests(), total);
+    }
+
     /// A first page is a new question: it always reads fresh, even when an
     /// unexpired snapshot of the same listing is held.
     #[tokio::test]
