@@ -4054,5 +4054,85 @@
   "file": "src/documents.rs",
   "from": "    if start > end {",
   "to": "    if start >= end {"
+ },
+ {
+  "id": "E2A-36",
+  "by": "reviewer-opus",
+  "what": "run matches exactly, without the Re 1 tolerance",
+  "file": "src/bank_reconciliation.rs",
+  "from": "let pairs = match_rows(&book_rows, stmt, TOL_PAISE, match_max_days)?;",
+  "to": "let pairs = match_rows(&book_rows, stmt, 0, match_max_days)?;"
+ },
+ {
+  "id": "E2A-37",
+  "by": "reviewer-opus",
+  "what": "the forward split needs an exact sum",
+  "file": "src/bank_reconciliation.rs",
+  "from": "if let Some(found) = find_split(b.amount_paise, &pool, TOL_PAISE)? {",
+  "to": "if let Some(found) = find_split(b.amount_paise, &pool, 0)? {"
+ },
+ {
+  "id": "E2A-38",
+  "by": "reviewer-opus",
+  "what": "the reverse split needs an exact sum",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        if let Some(found) = find_split(signed(s)?, &pool, TOL_PAISE)? {",
+  "to": "        if let Some(found) = find_split(signed(s)?, &pool, 0)? {"
+ },
+ {
+  "id": "E2A-39",
+  "by": "reviewer-opus",
+  "what": "a split exactly Re 1 off is not a split",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if distance(total, target)? <= tol {",
+  "to": "            if distance(total, target)? < tol {"
+ },
+ {
+  "id": "E2A-40",
+  "by": "reviewer-opus",
+  "what": "the forward split pool drops a row exactly 7 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days {",
+  "to": "            if days_apart(&stmt[si].txn_date, &b.date) < match_max_days {"
+ },
+ {
+  "id": "E2A-41",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool drops a row exactly 7 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days {",
+  "to": "            if days_apart(&book_rows[bi].date, &s.txn_date) < match_max_days {"
+ },
+ {
+  "id": "E2A-42",
+  "by": "reviewer-opus",
+  "what": "the forward split pool takes a row 8 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days {",
+  "to": "            if days_apart(&stmt[si].txn_date, &b.date) <= match_max_days + 1 {"
+ },
+ {
+  "id": "E2A-43",
+  "by": "reviewer-opus",
+  "what": "the reverse split pool takes a row 8 days away",
+  "file": "src/bank_reconciliation.rs",
+  "from": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days {",
+  "to": "            if days_apart(&book_rows[bi].date, &s.txn_date) <= match_max_days + 1 {"
+ },
+ {
+  "id": "E2A-44",
+  "by": "reviewer-opus",
+  "what": "the forward split pool is searched in date order, not index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "        for &si in &remaining_stmt {",
+  "to": "        for si in statement_order(stmt, remaining_stmt.iter().copied()) {"
+ },
+ {
+  "id": "E2A-45",
+  "by": "reviewer-opus",
+  "what": "statement rows on one date go in descending index order",
+  "file": "src/bank_reconciliation.rs",
+  "from": "order.sort_by(|&a, &b| (&rows[a].txn_date, a).cmp(&(&rows[b].txn_date, b)));",
+  "to": "order.sort_by(|&a, &b| (&rows[a].txn_date, std::cmp::Reverse(a)).cmp(&(&rows[b].txn_date, std::cmp::Reverse(b))));"
  }
 ]
