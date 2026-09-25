@@ -4646,5 +4646,21 @@
   "file": "src/book.rs",
   "from": "items: read.one(\"stock_items\").cloned(),",
   "to": "items: None,"
+ },
+ {
+  "id": "E3A-33",
+  "by": "reviewer-opus",
+  "what": "a repeated Stock Summary name keeps its first row",
+  "file": "src/stock_read.rs",
+  "from": "        rows.insert(name.to_string(), row);",
+  "to": "        rows.entry(name.to_string()).or_insert(row);"
+ },
+ {
+  "id": "E3A-34",
+  "by": "reviewer-opus",
+  "what": "the quantity-field check reads every voucher, not the population",
+  "file": "src/stock.rs",
+  "from": "    let goods_lines: Vec<(&Voucher, &InventoryLine)> = pop\n        .iter()\n        .flat_map(|v| v.inventory.iter().map(move |il| (*v, il)))",
+  "to": "    let goods_lines: Vec<(&Voucher, &InventoryLine)> = book\n        .vouchers\n        .iter()\n        .flat_map(|v| v.inventory.iter().map(move |il| (v, il)))"
  }
 ]

@@ -8,8 +8,10 @@
 //! * The books figure is read off the Trial Balance both ways (Tally's closing field, and opening +
 //!   debit - credit); the Stock Summary figures are Tally's item valuation. Gaps are figures, never
 //!   a conclusion about which side is right.
-//! * A value-only item (BASEUNITS is Tally's reserved "Not Applicable") is left out of every
-//!   quantity figure and counted separately when its value is negative.
+//! * A value-only item (BASEUNITS is Tally's reserved "Not Applicable") is left out of the
+//!   quantity-field check and of negative quantity at year end, and counted separately when its
+//!   value is negative. The during-year walk and STK-1 move every line that carries a quantity,
+//!   whatever its item's unit; a value-only item's lines normally carry none.
 //! * "Went negative during the year": each item's running quantity from its period-start quantity
 //!   (the opening Stock Summary's, else the master's own opening), walked through the population's
 //!   inventory lines by date. Same-day order is not in the export, so the walk runs twice (stock-in
