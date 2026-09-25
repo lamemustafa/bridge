@@ -616,10 +616,10 @@ const DIALOG_ANSWER_PINS: [(&str, usize); 11] = [
 const CFG_CENSUS: [(&str, usize); 6] = [
     ("#[cfg(test)]", 5),
     ("#[cfg(not(test))]", 2),
-    ("#[cfg(unix)]", 4),
+    ("#[cfg(unix)]", 6),
     ("#[cfg(windows)]", 3),
     ("#[cfg(not(windows))]", 4),
-    ("cfg", 19),
+    ("cfg", 21),
 ];
 
 fn dialog_answer_problems(source: &str) -> Vec<String> {

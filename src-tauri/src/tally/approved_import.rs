@@ -362,20 +362,60 @@ pub(crate) mod test_seam {
         );
     }
 
-    /// A script standing in for a dialog subprocess.
+    /// A script standing in for a dialog subprocess. Its first act is to
+    /// create `<script>.ran`, which [`stub_ran`] checks, so a row can tell a
+    /// refusal the script produced from a spawn that failed.
     ///
-    /// Each call writes a file of its own. Rewriting one path that another
-    /// thread may be executing can fail on Linux with "text file busy"
-    /// (ETXTBSY), which would surface as `import_approval_unavailable`.
+    /// Each call writes a file of its own, from a child process. The test
+    /// process never holds a writable descriptor to an executable. If it did,
+    /// another test thread's fork would inherit that descriptor until its
+    /// exec, and exec'ing the script in that window fails on Linux with "text
+    /// file busy" (ETXTBSY). That failure surfaces as `…_unavailable`, the
+    /// very code some rows expect (#704 review).
     #[cfg(unix)]
     fn stub(directory: &std::path::Path, body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::Write as _;
         use std::sync::atomic::{AtomicUsize, Ordering};
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = directory.join(format!("stub-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut writer = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("cat > \"$1\" && chmod 755 \"$1\"")
+            .arg("sh")
+            .arg(&path)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("#!/bin/sh\n: > \"$0.ran\"\n{body}\n").as_bytes())
+            .unwrap();
+        assert!(writer.wait().unwrap().success(), "the stub was written");
         path
+    }
+
+    /// Whether the script at `stub` started: see [`stub`].
+    #[cfg(unix)]
+    fn stub_ran(stub: &std::path::Path) -> bool {
+        std::path::PathBuf::from(format!("{}.ran", stub.display())).exists()
+    }
+
+    /// The control for [`stub_ran`]. A stand-in that cannot start is refused
+    /// as unavailable too, and leaves no marker. So each row's marker check is
+    /// what tells a refusal the script produced from a spawn that failed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_stand_in_that_cannot_start_is_unavailable_and_leaves_no_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("not-executable");
+        std::fs::write(&script, "#!/bin/sh\n: > \"$0.ran\"\nexit 0\n").unwrap();
+        assert_eq!(
+            super::confirm_with(&script, "Post").await,
+            Err("import_approval_unavailable".to_string())
+        );
+        assert!(!stub_ran(&script));
     }
 
     /// Only the token echoing this call's nonce is an answer. An older build
@@ -403,13 +443,15 @@ pub(crate) mod test_seam {
             ),
         ];
         for (name, body) in answers {
-            let result = super::confirm_review_with(&stub(directory.path(), body), "Review").await;
+            let script = stub(directory.path(), body);
+            let result = super::confirm_review_with(&script, "Review").await;
             let expected = if name == "the token, but a failing exit" {
                 Ok(())
             } else {
                 Err("ack_review_declined".to_string())
             };
             assert_eq!(result, expected, "{name}");
+            assert!(stub_ran(&script), "{name}: the stand-in ran");
         }
         // The control: the token for this call's nonce is accepted.
         let echoes_token = stub(
@@ -420,6 +462,7 @@ pub(crate) mod test_seam {
             super::confirm_review_with(&echoes_token, "Review").await,
             Ok(())
         );
+        assert!(stub_ran(&echoes_token));
     }
 
     /// The post dialog is answered only by the token echoing this call's
@@ -443,11 +486,13 @@ pub(crate) mod test_seam {
                 "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
             ),
         ] {
+            let script = stub(directory.path(), body);
             assert_eq!(
-                super::confirm_with(&stub(directory.path(), body), "Post").await,
+                super::confirm_with(&script, "Post").await,
                 Err("import_approval_declined".to_string()),
                 "{name}"
             );
+            assert!(stub_ran(&script), "{name}: the stand-in ran");
         }
         for (name, body) in [
             ("an executable ignoring the flag exits 0", "cat > /dev/null; exit 0"),
@@ -476,11 +521,16 @@ pub(crate) mod test_seam {
                 "read nonce; printf 'bridge-post-approved:%s' \"$nonce\"; cat > /dev/null",
             ),
         ] {
+            // The stand-in must have run: a spawn failure is also
+            // `import_approval_unavailable`, and would pass this row without
+            // reaching the clean-exit-without-token arm it is here to pin.
+            let script = stub(directory.path(), body);
             assert_eq!(
-                super::confirm_with(&stub(directory.path(), body), "Post").await,
+                super::confirm_with(&script, "Post").await,
                 Err("import_approval_unavailable".to_string()),
                 "{name}"
             );
+            assert!(stub_ran(&script), "{name}: the stand-in ran");
         }
         // The control: the token for this call's nonce, then a clean exit.
         let approves = stub(
@@ -488,6 +538,7 @@ pub(crate) mod test_seam {
             "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
         );
         assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
+        assert!(stub_ran(&approves));
     }
 
     /// Each call sends a nonce of its own: a stub that answers every call
@@ -507,6 +558,7 @@ pub(crate) mod test_seam {
         for _ in 0..2 {
             assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
         }
+        assert!(stub_ran(&approves));
         let nonces = std::fs::read_to_string(&seen).unwrap();
         let nonces = nonces.lines().collect::<Vec<_>>();
         assert_eq!(nonces.len(), 2);
