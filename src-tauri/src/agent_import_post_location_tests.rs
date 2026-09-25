@@ -339,3 +339,64 @@ fn a_masters_comparison_without_exactly_one_target_row_says_nothing() {
         );
     }
 }
+
+/// The target's voucher mark is reported with its step, and whether the step
+/// is exactly what Tally reported creating; any other change to a voucher in
+/// the target within the interval makes it larger (protocol reference §11c.5).
+#[test]
+fn the_target_step_is_reported_against_what_tally_reported_creating() {
+    let step = |after: u64, created: Option<u64>| {
+        classify_post_location(
+            &book(),
+            Some(&with_vouchers(&book(), TARGET, after)),
+            TARGET,
+            "Synthetic Target",
+            created,
+        )["target_voucher_step"]
+            .clone()
+    };
+    assert_eq!(
+        step(11, Some(1)),
+        json!({"before": 10, "after": 11, "step": 1, "reported_created": 1, "matches_created": true})
+    );
+    // Another voucher changed in the target: the step exceeds CREATED.
+    assert_eq!(step(12, Some(1))["matches_created"], false);
+    assert_eq!(step(12, Some(1))["step"], 2);
+    // Nothing moved although Tally reported a create.
+    assert_eq!(step(10, Some(1))["matches_created"], false);
+    // A batch of three, exactly.
+    assert_eq!(step(13, Some(3))["matches_created"], true);
+    // A lost response: the step is reported, but nothing is matched.
+    assert_eq!(step(11, None)["matches_created"], Value::Null);
+    assert_eq!(step(11, None)["step"], 1);
+    // A mark that went backwards is no step.
+    assert_eq!(step(9, Some(1))["step"], Value::Null);
+    assert_eq!(step(9, Some(1))["matches_created"], false);
+}
+
+#[test]
+fn no_step_is_reported_unless_each_snapshot_holds_exactly_one_target() {
+    let renamed = book()
+        .into_iter()
+        .map(|mut row| {
+            if row.guid == TARGET {
+                row.name = "Renamed Target".into();
+                row.vouchers = 11;
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(state(&book(), &renamed)["target_voucher_step"], Value::Null);
+    assert_eq!(state(&renamed, &book())["target_voucher_step"], Value::Null);
+    // A second row with the target's GUID and name under another key cannot
+    // occur (rows are keyed by both); a namesake with another GUID is not the
+    // target, so the step stays the target's own.
+    let mut namesake = with_vouchers(&book(), TARGET, 11);
+    namesake.push(marks(
+        "Synthetic Target",
+        "44444444-4444-4444-8444-444444444444",
+        5,
+    ));
+    let located = state(&book(), &namesake);
+    assert_eq!(located["target_voucher_step"]["step"], 1, "{located}");
+}

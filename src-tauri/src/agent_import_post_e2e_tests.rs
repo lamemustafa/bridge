@@ -1066,6 +1066,26 @@ async fn located_after_response(post_response: String, marks_after: String) -> V
 async fn only_the_target_moving_is_reported_as_the_landing() {
     let located = located_after(company_marks(11, 50, "WR2 Unicode Lab")).await;
     assert_eq!(located["state"], "target_only", "{located}");
+    // The captured answer reports one create, and the target's mark moved by one.
+    assert_eq!(
+        located["target_voucher_step"],
+        json!({"before": 10, "after": 11, "step": 1, "reported_created": 1, "matches_created": true}),
+        "{located}"
+    );
+}
+
+/// A step larger than Tally's CREATED means another voucher in the target
+/// changed around the post. It is reported in `post_location`; no verdict
+/// reads it, since a single post stands on its readback.
+#[tokio::test]
+async fn a_target_step_beyond_the_create_is_reported() {
+    let located = located_after(company_marks(12, 50, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "target_only", "{located}");
+    assert_eq!(located["target_voucher_step"]["step"], 2, "{located}");
+    assert_eq!(
+        located["target_voucher_step"]["matches_created"], false,
+        "{located}"
+    );
 }
 
 #[tokio::test]

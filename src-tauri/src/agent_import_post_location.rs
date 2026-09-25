@@ -87,6 +87,41 @@ pub(super) fn target_masters_unchanged(
     Some(target(at_binding)? == target(at_aim)?)
 }
 
+/// The target's voucher mark in each snapshot, and whether it moved by exactly
+/// what Tally reported creating. Each voucher create moves `ALTVCHID` by one,
+/// and so does every alter or cancel (a delete by two; protocol reference
+/// §11c.5), so a step above `CREATED` means another voucher in the target
+/// changed within the snapshots' interval. Reported only: a single post is
+/// proved by its readback. A batch post, not yet built, is to gate on it.
+/// `Null` unless each snapshot holds exactly one target row.
+fn target_voucher_step(
+    before: &[LoadedCompanyMarks],
+    after: &[LoadedCompanyMarks],
+    guid: &str,
+    name: &str,
+    reported_created: Option<u64>,
+) -> Value {
+    let mark = |rows: &[LoadedCompanyMarks]| {
+        let mut targets = rows.iter().filter(|row| is_target(row, guid, name));
+        match (targets.next(), targets.next()) {
+            (Some(row), None) => Some(row.vouchers),
+            _ => None,
+        }
+    };
+    let (Some(from), Some(to)) = (mark(before), mark(after)) else {
+        return Value::Null;
+    };
+    // A mark that went backwards is no step at all.
+    let step = to.checked_sub(from);
+    json!({
+        "before": from,
+        "after": to,
+        "step": step,
+        "reported_created": reported_created,
+        "matches_created": reported_created.map(|created| step == Some(created)),
+    })
+}
+
 fn key(row: &LoadedCompanyMarks) -> (String, String) {
     (
         row.guid.to_ascii_lowercase(),
@@ -175,6 +210,7 @@ pub(super) fn classify_post_location(
     json!({
         "state": state,
         "target_moved": target_moved,
+        "target_voucher_step": target_voucher_step(before, after, guid, name, reported_created),
         "other_companies_moved": others,
         "companies_added": added,
         "companies_removed": removed,
