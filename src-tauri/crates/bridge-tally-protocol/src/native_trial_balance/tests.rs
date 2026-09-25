@@ -267,3 +267,150 @@ fn captured_trial_balance_mutations_fail_closed() {
         );
     }
 }
+
+// -- bridge#551: a several-currency book's Trial Balance ----------------------
+
+const FOREX_COMPANY: &str = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+
+fn forex_capture(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+fn forex_with_currency() -> String {
+    forex_capture(include_bytes!(
+        "../../tests/fixtures/trial_balance_currency_forex_live.utf16le.xml"
+    ))
+}
+
+fn forex_base() -> crate::native_outstandings::BaseCurrencyName {
+    crate::native_outstandings::BaseCurrencyName::among_several_for_tests("I\u{20b9}")
+}
+
+/// Every value the captured response holds in a composite, read from the bytes.
+fn captured_composites(capture: &str) -> Vec<String> {
+    ["TBALOPENING", "DEBITTOTALS", "CREDITTOTALS", "TBALCLOSING"]
+        .iter()
+        .flat_map(|tag| {
+            capture
+                .split(&format!("<{tag} "))
+                .skip(1)
+                .filter_map(|tail| {
+                    let text = &tail[tail.find('>')? + 1..tail.find(&format!("</{tag}>"))?];
+                    text.contains(" @ ").then(|| text.to_string())
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The captured several-currency Trial Balance: foreign ledgers and rupee
+/// ledgers with a composite value are set aside by name, and only the plain
+/// rupee rows are read.
+#[test]
+fn a_several_currency_trial_balance_reads_only_its_plain_base_rows() {
+    let scoped =
+        parse_native_trial_balance_with_currency(&forex_with_currency(), FOREX_COMPANY, &forex_base())
+            .unwrap();
+    let foreign = scoped
+        .foreign_currency_ledgers
+        .iter()
+        .map(|ledger| (ledger.ledger.as_str(), ledger.currency.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        foreign,
+        [
+            ("BRIDGE FX DEBTOR A", "$"),
+            ("FX USD Debtor 01", "$"),
+            ("FX USD Debtor 02", "$"),
+        ]
+    );
+    // The empty-rate closing (`$ 0.00 @ I₹ /$  = I₹ 0.00`) is set aside too.
+    assert_eq!(
+        scoped.mixed_currency_ledgers,
+        ["FX Party 01", "FX Sales", "Profit & Loss A/c"]
+    );
+    let read = scoped
+        .report
+        .rows
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(read, ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]);
+}
+
+/// No value is ever read from a composite: every row that is read holds only
+/// plain decimals or empty amounts, and every composite in the capture sits on
+/// a row set aside.
+#[test]
+fn no_trial_balance_value_is_read_from_a_composite() {
+    let capture = forex_with_currency();
+    let composites = captured_composites(&capture);
+    assert_eq!(composites.len(), 11, "{composites:?}");
+    for composite in &composites {
+        assert!(super::scalar::is_currency_composite(composite), "{composite}");
+    }
+    let scoped =
+        parse_native_trial_balance_with_currency(&capture, FOREX_COMPANY, &forex_base()).unwrap();
+    for row in &scoped.report.rows {
+        for amount in [&row.opening, &row.debit, &row.credit, &row.closing] {
+            if let NativeTrialBalanceAmount::Present(value) = amount {
+                assert!(!value.to_string().contains('@'), "{row:?}");
+            }
+        }
+    }
+    // Control: the single-currency parser still refuses this response.
+    assert_eq!(
+        parse_native_trial_balance(&capture, FOREX_COMPANY),
+        Err(NativeTrialBalanceError::InvalidAmount)
+    );
+}
+
+/// The classifier admits only the composite shape. A captured composite cut
+/// short, doubled or with a non-ASCII digit is not one, so a base row holding
+/// it is refused as an invalid amount rather than set aside.
+#[test]
+fn a_damaged_composite_is_refused_not_set_aside() {
+    use super::scalar::is_currency_composite;
+    let capture = forex_with_currency();
+    let empty_rate = captured_composites(&capture)
+        .into_iter()
+        .find(|value| value.contains(" /$"))
+        .expect("the captured empty-rate composite");
+    assert!(is_currency_composite(&empty_rate));
+    let cut = &empty_rate[..empty_rate.find(" = ").unwrap()];
+    for damaged in [
+        cut.to_string(),
+        format!("{empty_rate} @ $ 1/$"),
+        empty_rate.replace("0.00", "\u{0660}.00"),
+        empty_rate.replacen("$ ", "", 1),
+    ] {
+        assert!(!is_currency_composite(&damaged), "{damaged}");
+    }
+    // Through the parser: the rupee P&L row with its closing cut short.
+    let damaged = capture.replacen(&empty_rate, cut, 1);
+    assert_eq!(
+        parse_native_trial_balance_with_currency(&damaged, FOREX_COMPANY, &forex_base()),
+        Err(NativeTrialBalanceError::InvalidAmount)
+    );
+}
+
+/// Every row of a several-currency read must name its currency.
+#[test]
+fn a_row_without_its_currency_is_refused() {
+    let capture = forex_with_currency();
+    let named = "<CURRENCYNAME TYPE=\"String\">I\u{20b9}</CURRENCYNAME>";
+    assert!(capture.contains(named), "captured CURRENCYNAME shape");
+    let missing = capture.replacen(named, "", 1);
+    assert_eq!(
+        parse_native_trial_balance_with_currency(&missing, FOREX_COMPANY, &forex_base()),
+        Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_currency_missing"
+        ))
+    );
+}

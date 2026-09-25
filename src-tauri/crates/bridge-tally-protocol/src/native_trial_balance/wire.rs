@@ -1,8 +1,10 @@
 //! Envelope and ledger-row admission for the native Trial Balance collection.
 use super::scalar::*;
 use super::{
-    NativeTrialBalance, NativeTrialBalanceAmount, NativeTrialBalanceError, NativeTrialBalanceRow,
+    CurrencyScopedTrialBalance, NativeTrialBalance, NativeTrialBalanceAmount,
+    NativeTrialBalanceError, NativeTrialBalanceRow,
 };
+use crate::native_outstandings::{classify_ledger_currencies, BaseCurrencyName};
 use crate::{
     native_ledger_guid_has_company_prefix, tolerant_xml::sanitize_invalid_numeric_references,
     PartyLedgerMasterFieldObservation,
@@ -20,6 +22,67 @@ pub fn parse_native_trial_balance(
     xml: &str,
     expected_company_guid: &str,
 ) -> Result<NativeTrialBalance, NativeTrialBalanceError> {
+    let rows = parse_envelope(xml, expected_company_guid, false)?
+        .into_iter()
+        .map(|row| admit_plain_row(row, expected_company_guid))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(NativeTrialBalance { rows })
+}
+
+/// Parses the Trial Balance of a book with several Currency masters, read with
+/// `CURRENCYNAME` in its `FETCH` (bridge#551). Every row must name its
+/// currency. A row kept in another currency is set aside by name, and so is a
+/// base-currency row with any value Tally wrote as a currency composite
+/// (`<amount> @ <rate> = <base amount>`): on the captured several-currency book
+/// a rupee ledger that a dollar invoice touched carries such values, at a
+/// derived rate. Neither kind has any value parsed. Only the remaining rows are
+/// read, validated and returned, so totals over `report` cover plain
+/// base-currency ledgers only and are not expected to balance.
+pub fn parse_native_trial_balance_with_currency(
+    xml: &str,
+    expected_company_guid: &str,
+    base: &BaseCurrencyName,
+) -> Result<CurrencyScopedTrialBalance, NativeTrialBalanceError> {
+    let raw = parse_envelope(xml, expected_company_guid, true)?;
+    let mut named = Vec::with_capacity(raw.len());
+    for row in &raw {
+        let currency = row.currency.as_deref().ok_or(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_currency_missing",
+        ))?;
+        named.push((row.name.as_str(), Some(currency)));
+    }
+    let classified = classify_ledger_currencies(base, named)
+        .map_err(|refusal| NativeTrialBalanceError::InvalidResponse(refusal.code()))?;
+    let foreign = classified
+        .foreign
+        .iter()
+        .map(|ledger| ledger.ledger.as_str())
+        .collect::<HashSet<_>>();
+    let mut rows = Vec::new();
+    let mut mixed = Vec::new();
+    for row in raw {
+        if foreign.contains(row.name.as_str()) {
+            continue;
+        }
+        if row.amounts().iter().any(|value| is_currency_composite(value)) {
+            mixed.push(row.name);
+            continue;
+        }
+        rows.push(admit_plain_row(row, expected_company_guid)?);
+    }
+    Ok(CurrencyScopedTrialBalance {
+        report: NativeTrialBalance { rows },
+        foreign_currency_ledgers: classified.foreign,
+        mixed_currency_ledgers: mixed,
+    })
+}
+
+/// The envelope and every ledger row, with each row's amounts still text.
+fn parse_envelope(
+    xml: &str,
+    expected_company_guid: &str,
+    with_currency: bool,
+) -> Result<Vec<RawRow>, NativeTrialBalanceError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(false);
@@ -100,7 +163,7 @@ pub fn parse_native_trial_balance(
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
                 {
-                    let row = parse_row(&mut reader, &element, expected_company_guid)?;
+                    let row = parse_row(&mut reader, &element, with_currency)?;
                     if !identities.insert(row.guid.to_ascii_lowercase()) {
                         return Err(NativeTrialBalanceError::InvalidResponse(
                             "trial_balance_duplicate_guid",
@@ -181,14 +244,33 @@ pub fn parse_native_trial_balance(
             "trial_balance_source_identity_missing",
         ));
     }
-    Ok(NativeTrialBalance { rows })
+    Ok(rows)
+}
+
+/// One ledger row as read: its amounts as text, each element's `TYPE` already
+/// checked, and `CURRENCYNAME` when the request fetched it.
+struct RawRow {
+    name: String,
+    guid: String,
+    parent: Option<String>,
+    opening: String,
+    debit: String,
+    credit: String,
+    closing: String,
+    currency: Option<String>,
+}
+
+impl RawRow {
+    fn amounts(&self) -> [&str; 4] {
+        [&self.opening, &self.debit, &self.credit, &self.closing]
+    }
 }
 
 fn parse_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-    expected_company_guid: &str,
-) -> Result<NativeTrialBalanceRow, NativeTrialBalanceError> {
+    with_currency: bool,
+) -> Result<RawRow, NativeTrialBalanceError> {
     let name = required_attribute(element, b"NAME", "trial_balance_name_missing")?;
     let mut guid = None;
     let mut parent = None;
@@ -196,6 +278,7 @@ fn parse_row(
     let mut debit = None;
     let mut credit = None;
     let mut closing = None;
+    let mut currency = None;
     loop {
         match reader
             .read_event()
@@ -212,24 +295,29 @@ fn parse_row(
                     read_element_text(reader, child.name())?,
                     "trial_balance_duplicate_parent",
                 )?,
+                b"CURRENCYNAME" if with_currency => set_once(
+                    &mut currency,
+                    read_element_text(reader, child.name())?,
+                    "trial_balance_duplicate_currency",
+                )?,
                 b"TBALOPENING" => set_once(
                     &mut opening,
-                    parse_amount(&child, read_element_text(reader, child.name())?)?,
+                    amount_text(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_opening",
                 )?,
                 b"DEBITTOTALS" => set_once(
                     &mut debit,
-                    parse_amount(&child, read_element_text(reader, child.name())?)?,
+                    amount_text(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_debit",
                 )?,
                 b"CREDITTOTALS" => set_once(
                     &mut credit,
-                    parse_amount(&child, read_element_text(reader, child.name())?)?,
+                    amount_text(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_credit",
                 )?,
                 b"TBALCLOSING" => set_once(
                     &mut closing,
-                    parse_amount(&child, read_element_text(reader, child.name())?)?,
+                    amount_text(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_closing",
                 )?,
                 _ => skip_subtree(reader)?,
@@ -238,24 +326,27 @@ fn parse_row(
                 b"PARENT" => {
                     set_once(&mut parent, String::new(), "trial_balance_duplicate_parent")?
                 }
+                b"CURRENCYNAME" if with_currency => {
+                    set_once(&mut currency, String::new(), "trial_balance_duplicate_currency")?
+                }
                 b"TBALOPENING" => set_once(
                     &mut opening,
-                    parse_amount(&child, String::new())?,
+                    amount_text(&child, String::new())?,
                     "trial_balance_duplicate_opening",
                 )?,
                 b"DEBITTOTALS" => set_once(
                     &mut debit,
-                    parse_amount(&child, String::new())?,
+                    amount_text(&child, String::new())?,
                     "trial_balance_duplicate_debit",
                 )?,
                 b"CREDITTOTALS" => set_once(
                     &mut credit,
-                    parse_amount(&child, String::new())?,
+                    amount_text(&child, String::new())?,
                     "trial_balance_duplicate_credit",
                 )?,
                 b"TBALCLOSING" => set_once(
                     &mut closing,
-                    parse_amount(&child, String::new())?,
+                    amount_text(&child, String::new())?,
                     "trial_balance_duplicate_closing",
                 )?,
                 _ => {}
@@ -269,20 +360,12 @@ fn parse_row(
             _ => {}
         }
     }
-    let guid = guid.ok_or(NativeTrialBalanceError::InvalidResponse(
-        "trial_balance_guid_missing",
-    ))?;
-    if !native_ledger_guid_has_company_prefix(&guid, expected_company_guid) {
-        return Err(NativeTrialBalanceError::InvalidResponse(
-            "trial_balance_company_guid_mismatch",
-        ));
-    }
-    let row = NativeTrialBalanceRow {
+    Ok(RawRow {
         name,
-        guid,
-        parent: parent
-            .map(PartyLedgerMasterFieldObservation::Returned)
-            .unwrap_or_default(),
+        guid: guid.ok_or(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_guid_missing",
+        ))?,
+        parent,
         opening: opening.ok_or(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_opening_missing",
         ))?,
@@ -295,6 +378,32 @@ fn parse_row(
         closing: closing.ok_or(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_closing_missing",
         ))?,
+        currency,
+    })
+}
+
+/// A row's identity and amounts, admitted exactly as the single-currency read
+/// always has: company-prefixed GUID, typed amounts, polarity and equation.
+fn admit_plain_row(
+    row: RawRow,
+    expected_company_guid: &str,
+) -> Result<NativeTrialBalanceRow, NativeTrialBalanceError> {
+    if !native_ledger_guid_has_company_prefix(&row.guid, expected_company_guid) {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_company_guid_mismatch",
+        ));
+    }
+    let row = NativeTrialBalanceRow {
+        name: row.name,
+        guid: row.guid,
+        parent: row
+            .parent
+            .map(PartyLedgerMasterFieldObservation::Returned)
+            .unwrap_or_default(),
+        opening: parse_amount_text(row.opening)?,
+        debit: parse_amount_text(row.debit)?,
+        credit: parse_amount_text(row.credit)?,
+        closing: parse_amount_text(row.closing)?,
     };
     validate_guid_suffix(&row.guid, expected_company_guid)?;
     validate_observed_movement_polarity(&row)?;

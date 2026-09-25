@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::fmt;
 mod scalar;
 mod wire;
-pub use wire::parse_native_trial_balance;
+pub use wire::{parse_native_trial_balance, parse_native_trial_balance_with_currency};
 
 /// One amount exactly as the native collection exposed it.
 ///
@@ -33,6 +33,19 @@ pub struct NativeTrialBalanceRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NativeTrialBalance {
     pub rows: Vec<NativeTrialBalanceRow>,
+}
+
+/// A several-currency book's Trial Balance (bridge#551): the plain
+/// base-currency rows, which alone are read, and the rows set aside by name.
+/// Totals over `report` cover plain base-currency ledgers only and are not
+/// expected to balance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrencyScopedTrialBalance {
+    pub report: NativeTrialBalance,
+    /// Ledgers kept in another currency, with their `CURRENCYNAME`.
+    pub foreign_currency_ledgers: Vec<crate::native_outstandings::ForeignCurrencyLedger>,
+    /// Base-currency ledgers with a value Tally wrote as a currency composite.
+    pub mixed_currency_ledgers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
