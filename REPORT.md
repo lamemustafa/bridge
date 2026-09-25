@@ -291,3 +291,22 @@ Line 668 is `native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]
 | node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
 | live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
 | tools cargo test --workspace | 0 | 57 passed |
+
+## 2026-09-25 17:14 UTC — lane-f/gold-docs-evidence: built 924796e: green
+
+- Head 7927967 (Lane F's merge of master a8324c6, with the JSONs on master's side; it replaces 1cde915). 0 behind. Reseal → **924796e** (the four pinned reference parts rehashed); `--verify` current. Its tree is byte-identical to my own discarded attempt on 1cde915 (merge 28eea71 + reseal e9888fe, which also had a clean Sonnet review and was never pushed).
+- Sonnet review of 924796e: no findings. All 280 pins match their bytes; pin list, claims and bridge_commit_sha are unchanged; a8324c6 is an ancestor.
+- Pushed as a fast-forward: `lane-f/gold-docs-evidence` 7927967..924796e.
+
+| Gate | Exit | Result |
+|---|---|---|
+| cargo fmt --check | 0 | clean |
+| bridge --lib (rfd/gtk3) | 101 | 1335 passed, 1 failed (known root-only db::encrypted), 6 ignored |
+| approval_seam_gate | 0 | 8 passed |
+| clippy --workspace --all-targets --features rfd/gtk3 -D warnings | 0 | 0 warnings |
+| pnpm install --frozen-lockfile | 0 | ok |
+| node --test scripts/*.test.mjs | 1 | 285 tests, 277 pass, 4 fail (known merge-driver pair only), 4 skipped |
+| live-read-boundary / byte-integrity / provenance | 0/0/0 | ok |
+| tools cargo test --workspace | 0 | 57 passed |
+
+- The lane-f queue is done on master a8324c6: 653 362904c, egress a9b9e4e, 626 f449833 and gold 924796e are all green and pushed. Next: lane-c/601d-wip.
