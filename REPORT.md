@@ -45,3 +45,16 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - a missing TB row reads as 0, as the reference's `map_or(0)` parity does;
   - opening + Σrows ≠ closing is not refused, because bankrec_paths deliberately tests a closing that doesn't tie.
 - Round-2 reviews (fresh Sonnet and Opus) running. Then freeze and run the full mutation list.
+
+## 2026-09-25 15:09 UTC — E2a round 2 (local, not pushed yet)
+
+- PR #682 (gate): every check green on f802d6f, and the tax-audit job ran and passed. Waiting on Lane D.
+- Round-2 Sonnet: no findings. Round-2 Opus: the refusals are sound and change no accepted figure, but 12 wrong implementations still passed every test. Two are P1: the match ignoring the day gap, and books ordered by GUID only. The rest are split-pass reuse, window and order, a charge pass over splits, and three reader gaps.
+- Fixed in 0502d6a:
+  - the split unit test now also runs a whole synthetic book, with rows competing for splits by date, index and reuse, and asserts every row's reason;
+  - more match assertions;
+  - a blank (space-only) charge term is refused;
+  - the module docs list the deliberate divergences (window outside FY, blank term, reader refusals).
+  - E2A-24..35 added. **All 35 E2A mutations killed** (--full, sampled). 336 tests pass; clippy and fmt clean. Still 6 tests added.
+- **For Lane D (P2, can't check here):** the reader now refuses a row whose `row` is not its 0-based position, or whose doc/account differs from the document's, plus negative, two-sided or out-of-period rows. The real statement adapter (`tae.adapters.bank_documents`) isn't in this repo, so I can't confirm it writes rows that way. If it numbers rows from 1, the real-book parity run will refuse every statement. It fails closed, but please check on the first local run.
+- A final Sonnet and Opus pass on 0502d6a is running. Then freeze and run the full list.
