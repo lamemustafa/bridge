@@ -2651,7 +2651,7 @@ impl TallyRuntime {
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         self.fetch_ledger_opening_with_evidence(config, identity, None, false)
             .await
-            .map(|read| (read.ledgers, read.evidence))
+            .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
