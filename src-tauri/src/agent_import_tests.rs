@@ -185,7 +185,6 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -354,7 +353,6 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
     });
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -457,7 +455,6 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -546,7 +543,6 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -719,7 +715,6 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -754,7 +749,6 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -840,7 +834,6 @@ fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -910,7 +903,6 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -974,7 +966,6 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let mut line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1045,7 +1036,6 @@ fn narration_tag_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1112,7 +1102,6 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     validate_payload(&input).expect("leading zeros satisfy the input contract");
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1172,7 +1161,6 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
     let input = payload();
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -2199,7 +2187,6 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
     });
     let line = ImportLedgerLine {
         ledger_identities: None,
-        ledger_twins: None,
         batch_id: "batch-dispatched-endpoint".into(),
         identity_scheme: Some(ImportIdentityScheme::BatchV1),
         amends_batch_id: None,
@@ -2722,12 +2709,15 @@ async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre
 // only, and write it so an XML reader recovers those bytes.
 
 #[test]
-fn a_ledger_name_may_end_in_a_line_break_and_nowhere_else() {
+fn a_ledger_name_may_end_in_one_crlf_and_nothing_else() {
     let input = captured_catalogue_payload();
+    // Only a single trailing CR LF has been observed to import onto a stored
+    // ledger; every other spelling of a line break stays refused.
     for (ledger, admitted) in [
         ("Bridge Nested Debtor WR4\r\n", true),
-        ("Bridge Nested Debtor WR4\n", true),
-        ("Bridge Nested Debtor WR4\r\n\r\n", true),
+        ("Bridge Nested Debtor WR4\n", false),
+        ("Bridge Nested Debtor WR4\r", false),
+        ("Bridge Nested Debtor WR4\r\n\r\n", false),
         ("Bridge\r\nNested Debtor WR4", false),
         ("Bridge Nested Debtor WR4\t", false),
         ("Bridge Nested Debtor WR4\u{1}\r\n", false),
@@ -2735,16 +2725,15 @@ fn a_ledger_name_may_end_in_a_line_break_and_nowhere_else() {
     ] {
         let mut changed = input.clone();
         changed.vouchers[0].entries[0].ledger = ledger.to_string();
-        assert_eq!(
-            validate_payload(&changed).is_ok(),
-            admitted,
-            "{ledger:?}"
-        );
+        assert_eq!(validate_payload(&changed).is_ok(), admitted, "{ledger:?}");
     }
 }
 
 fn requested_match(wanted: &str, catalogue: &[&str]) -> Value {
-    let catalogue = catalogue.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    let catalogue = catalogue
+        .iter()
+        .map(|name| name.to_string())
+        .collect::<Vec<_>>();
     let mut report = requested_master_report(
         &requested_masters(&[wanted.to_string()]).expect("admitted name"),
         &catalogue,
@@ -2773,7 +2762,10 @@ fn a_name_ending_in_a_line_break_binds_only_to_those_exact_bytes() {
     }
     // The plain name is unchanged: it still reaches a CR LF ledger only as a
     // near miss, for an operator to select.
-    assert_eq!(one_master_match("ACME", &["ACME\r\n"])["match_state"], "near_miss");
+    assert_eq!(
+        one_master_match("ACME", &["ACME\r\n"])["match_state"],
+        "near_miss"
+    );
 }
 
 #[test]
@@ -2796,9 +2788,11 @@ fn a_requested_report_keeps_the_order_names_were_requested_in() {
 }
 
 #[test]
-fn only_a_trailing_line_break_makes_a_live_spelling_importable() {
+fn only_one_trailing_crlf_makes_a_live_spelling_importable() {
     assert!(live_spelling_importable(0, "ACME\r\n"));
     assert!(live_spelling_importable(0, "ACME"));
+    assert!(!live_spelling_importable(0, "ACME\n"));
+    assert!(!live_spelling_importable(0, "ACME\r\n\r\n"));
     assert!(!live_spelling_importable(0, "ACME\r\nSecond Line"));
     assert!(!live_spelling_importable(0, "ACME\t"));
     assert!(!live_spelling_importable(0, "\r\n"));
@@ -2809,7 +2803,10 @@ fn a_ledger_line_break_is_written_as_character_references() {
     let mut input = captured_catalogue_payload();
     input.vouchers[0].entries[0].ledger = "Bridge Nested Debtor WR4\r\n".to_string();
     let xml = render_import_xml("Company", &input.vouchers, "bridge-batch");
-    assert!(!xml.contains("WR4\r") && !xml.contains("WR4\n"), "never raw");
+    assert!(
+        !xml.contains("WR4\r") && !xml.contains("WR4\n"),
+        "never raw"
+    );
     let written = xml
         .split("<LEDGERNAME>")
         .nth(1)
@@ -2824,41 +2821,86 @@ fn a_ledger_line_break_is_written_as_character_references() {
 }
 
 #[test]
-fn a_twin_differing_only_by_a_trailing_line_break_is_named_in_both_directions() {
+fn a_name_folding_equal_to_two_live_ledgers_is_reported_whichever_it_names() {
     let catalogue = [
         ("ACME\r\n", Some("Sundry Creditors")),
         ("ACME", Some("Sundry Debtors")),
         ("Other", Some("Sundry Debtors")),
         ("ACME Traders", Some("Sundry Debtors")),
+        ("Acme-Co", Some("Sundry Creditors")),
+        ("ACME CO", Some("Sundry Debtors")),
     ];
-    for (named, twin, named_parent, twin_parent) in [
-        ("ACME", "ACME\r\n", "Sundry Debtors", "Sundry Creditors"),
-        ("ACME\r\n", "ACME", "Sundry Creditors", "Sundry Debtors"),
+    let family = |names: &[(&str, &str)]| {
+        names
+            .iter()
+            .map(|(name, parent)| (name.to_string(), Some(parent.to_string())))
+            .collect::<Vec<_>>()
+    };
+    // Both directions of the trailing line break, and a case-and-dash pair:
+    // each is the same identity under the binding contract's fold.
+    for (requested, live) in [
+        (
+            "ACME",
+            family(&[("ACME\r\n", "Sundry Creditors"), ("ACME", "Sundry Debtors")]),
+        ),
+        (
+            "ACME\r\n",
+            family(&[("ACME\r\n", "Sundry Creditors"), ("ACME", "Sundry Debtors")]),
+        ),
+        (
+            "ACME CO",
+            family(&[
+                ("Acme-Co", "Sundry Creditors"),
+                ("ACME CO", "Sundry Debtors"),
+            ]),
+        ),
     ] {
-        let twins = line_break_twins(
-            &[named.to_string(), "Other".to_string()],
-            catalogue.iter().copied(),
-        );
         assert_eq!(
-            twins,
-            [LedgerTwin {
-                ledger: named.to_string(),
-                parent: Some(named_parent.to_string()),
-                twins: vec![TwinLedger {
-                    name: twin.to_string(),
-                    parent: Some(twin_parent.to_string()),
-                }],
+            folded_twins(&[requested.to_string()], catalogue.iter().copied()),
+            [FoldedTwins {
+                requested: requested.to_string(),
+                live,
             }],
-            "{named:?}"
-        );
-        let rendered = ledger_twins_json(&twins);
-        assert_eq!(rendered[0]["relation"], "differs_only_by_trailing_line_break");
-        assert_eq!(rendered[0]["parent"], named_parent);
-        assert_eq!(rendered[0]["twins"][0]["parent"], twin_parent);
-        assert_eq!(
-            rendered[0]["twins"][0]["name"][super::super::PARTY_NAME_MARKER].as_str(),
-            Some(twin)
+            "{requested:?}"
         );
     }
-    assert!(line_break_twins(&["Other".to_string()], catalogue.iter().copied()).is_empty());
+    for alone in ["Other", "ACME Traders"] {
+        assert!(
+            folded_twins(&[alone.to_string()], catalogue.iter().copied()).is_empty(),
+            "{alone}"
+        );
+    }
+}
+
+#[test]
+fn a_folded_twin_marks_the_report_unimportable_with_its_own_remedy() {
+    let names = ["ACME\r\n".to_string(), "Other".to_string()];
+    let catalogue = ["ACME\r\n", "ACME", "Other"].map(str::to_string);
+    let mut report =
+        requested_master_report(&requested_masters(&names).unwrap(), &catalogue).unwrap();
+    assert_eq!(report[0]["importable"], true, "exact before the twin check");
+    annotate_folded_twins(
+        &mut report,
+        &names,
+        [
+            ("ACME\r\n", Some("Sundry Creditors")),
+            ("ACME", None),
+            ("Other", None),
+        ]
+        .into_iter(),
+    );
+    assert_eq!(report[0]["importable"], false);
+    assert_eq!(report[0]["folded_twins"][0]["parent"], "Sundry Creditors");
+    assert_eq!(
+        report[0]["folded_twins"][1]["name"][super::super::PARTY_NAME_MARKER].as_str(),
+        Some("ACME")
+    );
+    assert!(report[1].get("folded_twins").is_none());
+    assert_eq!(report[1]["importable"], true);
+    let guidance = master_recovery_guidance(&report);
+    assert!(guidance.contains("folded_twins"), "{guidance}");
+    assert!(
+        !guidance.contains("character imports do not accept"),
+        "a twin is not a spelling problem: {guidance}"
+    );
 }

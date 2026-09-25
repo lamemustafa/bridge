@@ -9,8 +9,8 @@ use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
 };
 use bridge_tally_core::master_binding::{
-    self, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog, MasterClass,
-    SourceEntity,
+    self, identity_fold, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog,
+    MasterClass, SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::native_outstandings::parse_native_group_snapshot;
@@ -279,86 +279,78 @@ pub(super) struct ImportLedgerLine {
     /// existed: such a batch is refused for posting and must be rebuilt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ledger_identities: Option<Vec<BoundLedger>>,
-    /// Each named ledger with a live twin that differs from it only by a
-    /// trailing line break, as the build observed them (bridge#626). Absent
-    /// when there were none, and on every record built before this field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ledger_twins: Option<Vec<LedgerTwin>>,
 }
 
-/// A ledger a batch names, and the live ledgers whose stored names differ from
-/// its own only by a trailing run of CR and LF (bridge#626). Each binds by its
-/// exact bytes, so the build is not refused; they are named side by side, with
-/// their groups, because a reader of the names alone cannot tell them apart.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-struct LedgerTwin {
-    ledger: String,
-    parent: Option<String>,
-    twins: Vec<TwinLedger>,
+/// A requested name and every live ledger whose stored name folds equal to it
+/// under the binding contract's identity fold (case, whitespace including CR
+/// and LF, dashes, quotes), when there are at least two (bridge#626). Tally's
+/// import lookup also matches names loosely, and which of two such ledgers it
+/// would post to is not established, so a build naming a name like this is
+/// refused, whichever of the two it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FoldedTwins {
+    requested: String,
+    live: Vec<(String, Option<String>)>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-struct TwinLedger {
-    name: String,
-    parent: Option<String>,
-}
-
-/// The named ledgers that have a live twin differing only by a trailing line
-/// break, in name order.
-fn line_break_twins<'a>(
-    named: &[String],
+/// The requested names that fold equal to two or more live ledgers, in the
+/// order requested.
+fn folded_twins<'a>(
+    requested: &[String],
     catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
-) -> Vec<LedgerTwin> {
-    let mut by_base: BTreeMap<&str, Vec<(&str, Option<&str>)>> = BTreeMap::new();
+) -> Vec<FoldedTwins> {
+    let mut by_fold: BTreeMap<String, Vec<(&str, Option<&str>)>> = BTreeMap::new();
     for (name, parent) in catalogue {
-        by_base
-            .entry(without_trailing_line_break(name))
+        by_fold
+            .entry(identity_fold(name))
             .or_default()
             .push((name, parent));
     }
-    named
+    requested
         .iter()
-        .filter_map(|ledger| {
-            let family = by_base.get(without_trailing_line_break(ledger))?;
-            let parent = family
-                .iter()
-                .find(|(name, _)| name == ledger)
-                .and_then(|(_, parent)| parent.map(str::to_string));
-            let twins = family
-                .iter()
-                .filter(|(name, _)| name != ledger)
-                .map(|(name, parent)| TwinLedger {
-                    name: (*name).to_string(),
-                    parent: parent.map(str::to_string),
-                })
-                .collect::<Vec<_>>();
-            (!twins.is_empty()).then(|| LedgerTwin {
-                ledger: ledger.clone(),
-                parent,
-                twins,
+        .filter_map(|name| {
+            let live = by_fold
+                .get(&identity_fold(name))
+                .filter(|family| family.len() > 1)?;
+            Some(FoldedTwins {
+                requested: name.clone(),
+                live: live
+                    .iter()
+                    .map(|(name, parent)| ((*name).to_string(), parent.map(str::to_string)))
+                    .collect(),
             })
         })
         .collect()
 }
 
-const LEDGER_TWIN_WARNING: &str = "A ledger this batch names has a live twin whose stored name differs only by a trailing line break; see ledger_twins. Each binds by its exact bytes, so check in Tally that the group shown for the ledger named is the one intended before importing.";
-
-/// The `ledger_twins` field of a build result and of a verification.
-fn ledger_twins_json(twins: &[LedgerTwin]) -> Value {
+fn folded_live_ledgers_json(twins: &FoldedTwins) -> Value {
     json!(twins
+        .live
         .iter()
-        .map(|twin| json!({
-            "ledger": party_name(twin.ledger.clone()),
-            "parent": twin.parent,
-            "relation": "differs_only_by_trailing_line_break",
-            "twins": twin
-                .twins
-                .iter()
-                .map(|other| json!({"name": party_name(other.name.clone()), "parent": other.parent}))
-                .collect::<Vec<_>>(),
-        }))
+        .map(|(name, parent)| json!({"name": party_name(name.clone()), "parent": parent}))
         .collect::<Vec<_>>())
 }
+
+/// Marks each report entry whose requested name folds equal to two or more
+/// live ledgers with those ledgers and their groups. Such a name is not
+/// importable, whichever ledger it bound to.
+fn annotate_folded_twins<'a>(
+    report: &mut [Value],
+    requested: &[String],
+    catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) {
+    let twins = folded_twins(requested, catalogue);
+    for (entry, name) in report.iter_mut().zip(requested) {
+        if let Some(found) = twins.iter().find(|twins| &twins.requested == name) {
+            entry["folded_twins"] = folded_live_ledgers_json(found);
+            if entry.get("importable").is_some() {
+                entry["importable"] = json!(false);
+            }
+        }
+    }
+}
+
+const FOLDED_TWIN_NEXT_STEP: &str = "No file was written. Each ledger in ledger_twins has another live ledger whose name differs from it only by case, spacing, dashes or quotes, or a trailing line break. Tally's import also matches names loosely, and which of them it would post to is not established, so Bridge names neither. Have an operator rename one of each such pair in Tally so that no two ledgers fold equal, then run validate_masters and build again.";
 
 /// One ledger name and the GUID it was bound to at build time.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -508,15 +500,14 @@ impl Server {
         // catalogue, so verifying the company and reading its ledgers first
         // would spend two live round trips — and retain evidence of them — to
         // reach a failure that was decidable from the request alone.
-        let requested =
-            requested_masters(&ledgers.into_iter().map(str::to_string).collect::<Vec<_>>())
-                .map_err(ToolFailure::from)?;
+        let names = ledgers.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let requested = requested_masters(&names).map_err(ToolFailure::from)?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
-        let (catalogue, evidence) = self
-            .read_ledger_catalogue(&identity, &company.name)
+        let (catalogue, ledger_masters, _, evidence) = self
+            .read_import_ledger_catalogue(&identity, &company.name)
             .await
             .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
-        let report = requested_master_report(&requested, &catalogue)
+        let mut report = requested_master_report(&requested, &catalogue)
             // The catalogue read already succeeded, so its request/response
             // commitments belong in the failure too; attaching identity evidence
             // alone would omit a Tally read that actually happened.
@@ -526,6 +517,7 @@ impl Server {
                     evidence.clone(),
                 ))
             })?;
+        annotate_folded_twins(&mut report, &names, ledger_masters.parents());
         let hash = sha256_json(&catalogue);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
@@ -617,13 +609,33 @@ impl Server {
                 .await
                 .map(|(names, catalogue, _, evidence)| (names, catalogue, evidence))?;
             accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
-            let report = masters_for_payload(&payload, &catalogue)?;
+            let requested_names = requested_ledger_names(&payload);
+            let mut report = masters_for_payload(&payload, &catalogue)?;
+            annotate_folded_twins(&mut report, &requested_names, ledger_masters.parents());
             if report.iter().any(|value| value["match_state"] != "exact") {
                 return Ok(ToolOutcome {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                         "state":"refused", "reason":"masters_not_exact", "masters":report,
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
                         "next_step":master_recovery_guidance(&report)
+                    }}),
+                    evidence: accumulated.clone(),
+                    company_guid: Some(payload.company_guid),
+                    truncated: false,
+                });
+            }
+            let twins = folded_twins(&requested_names, ledger_masters.parents());
+            if !twins.is_empty() {
+                return Ok(ToolOutcome {
+                    payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
+                        "state":"refused", "reason":"ledger_has_folded_twin",
+                        "ledger_twins": twins.iter().map(|twins| json!({
+                            "requested": party_name(twins.requested.clone()),
+                            "relation": "equal_under_identity_fold",
+                            "live_ledgers": folded_live_ledgers_json(twins),
+                        })).collect::<Vec<_>>(),
+                        "catalogue_evidence_sha256":sha256_json(&catalogue),
+                        "next_step":FOLDED_TWIN_NEXT_STEP
                     }}),
                     evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
@@ -641,8 +653,6 @@ impl Server {
                     guid: guid.to_string(),
                 })
                 .collect::<Vec<_>>();
-            let ledger_twins =
-                line_break_twins(&requested_ledger_names(&payload), ledger_masters.parents());
             // Only a payload carrying a cash/bank voucher reads the group
             // collection, so a Journal-only batch keeps the request sequence its
             // own qualification was measured on.
@@ -820,7 +830,6 @@ impl Server {
                 pre_import_mark: mark,
                 vouchers: payload.vouchers,
                 ledger_identities: Some(build_binding),
-                ledger_twins: (!ledger_twins.is_empty()).then_some(ledger_twins),
             };
             let imports = self.imports_dir()?;
             let path = imports.join(format!("{batch_id}.xml"));
@@ -863,11 +872,6 @@ impl Server {
                     voucher.voucher_type.bank_shape().is_some() && voucher.entries.len() > 2
                 }),
             );
-            if line.ledger_twins.is_some() {
-                if let Some(list) = warnings.as_array_mut() {
-                    list.push(json!(LEDGER_TWIN_WARNING));
-                }
-            }
             let next_step = match &amendment {
                 Some(_) => {
                     if let Some(list) = warnings.as_array_mut() {
@@ -896,7 +900,6 @@ impl Server {
                     // is asked to compare it and must be able to see it.
                     "endpoint_origin": line.endpoint_origin,
                     "observed_profile": opening_profile.observed_profile,
-                    "ledger_twins": line.ledger_twins.as_deref().map(ledger_twins_json),
                     "warnings": warnings,
                     "next_step": next_step
                 }}),
@@ -1193,11 +1196,6 @@ impl Server {
                 None => None,
             };
             let mut proof = proof;
-            // Repeated from the build, so a twin named there cannot be missed
-            // between the build and the import.
-            if let Some(twins) = line.ledger_twins.as_deref() {
-                proof["ledger_twins"] = ledger_twins_json(twins);
-            }
             if let Some(masters) = &masters_after_post {
                 proof["masters_after_post"] = masters.clone();
             }
@@ -1996,7 +1994,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         for entry in &voucher.entries {
             if entry.ledger.trim().is_empty()
                 || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
-                || without_trailing_line_break(&entry.ledger)
+                || without_trailing_crlf(&entry.ledger)
                     .chars()
                     .any(char::is_control)
                 || reads_back_as_other_text(&entry.ledger)
@@ -2414,35 +2412,35 @@ fn masters_for_payload(
 enum RequestedMaster {
     /// Bound by the core's rules, which refuse every control character.
     Named(SourceEntity),
-    /// Ends in CR and LF, as some books store a ledger name; the core refuses
+    /// Ends in one CR LF, as some books store a ledger name; the core refuses
     /// that as input. Such a name is only ever bound byte for byte, to a live
     /// ledger holding exactly these bytes: no fold, candidate or identifier can
     /// select it, because the fold that would find it also finds its twin.
     ExactOnly(String),
 }
 
-/// A name without its trailing run of CR and LF. Only a trailing run has been
-/// observed to import onto the stored ledger (bridge#626); a line break
-/// anywhere else stays refused.
-fn without_trailing_line_break(name: &str) -> &str {
-    name.trim_end_matches(['\r', '\n'])
+/// A name without one trailing CR LF. Only that spelling has been observed to
+/// import onto a stored ledger (bridge#626); a lone CR or LF, a repeated CR LF
+/// or a line break anywhere else stays refused.
+fn without_trailing_crlf(name: &str) -> &str {
+    name.strip_suffix("\r\n").unwrap_or(name)
 }
 
 /// Whether a live catalogue name can be sent back as an import's ledger name:
-/// either the core admits it, or it is the core-admitted name plus a trailing
-/// line break, which `requested_masters` admits as exact-only.
+/// either the core admits it, or it is the core-admitted name plus one trailing
+/// CR LF, which `requested_masters` admits as exact-only.
 fn live_spelling_importable(position: usize, name: &str) -> bool {
-    SourceEntity::new(position, without_trailing_line_break(name)).is_ok()
+    SourceEntity::new(position, without_trailing_crlf(name)).is_ok()
 }
 
-/// [`source_entities`], admitting a name that ends in a line break as
+/// [`source_entities`], admitting a name that ends in one CR LF as
 /// [`RequestedMaster::ExactOnly`] when the rest of it passes the core's bounds.
 fn requested_masters(requested: &[String]) -> Result<Vec<RequestedMaster>, String> {
     let mut named = 0_usize;
     requested
         .iter()
         .map(|name| {
-            let base = without_trailing_line_break(name);
+            let base = without_trailing_crlf(name);
             let entity = SourceEntity::new(named, base)
                 .map_err(|error| error.safe_reason_code().to_string())?;
             if base.len() == name.len() {
@@ -2650,11 +2648,18 @@ fn master_recovery_guidance(report: &[Value]) -> String {
     // Said separately, because the remedy is the opposite one: this spelling
     // cannot be copied back at all, and no retry of this payload will post
     // against that ledger.
+    if report.iter().any(|master| {
+        master["importable"] == Value::Bool(false) && master.get("folded_twins").is_none()
+    }) {
+        guidance.push("One matched ledger is named with a character imports do not accept, so its exact_live_spelling cannot be sent back; have an operator rename it in Tally, then run validate_masters again.");
+    }
+    // Its own remedy: the spelling is admissible, but another live ledger folds
+    // equal to it, and Tally's loose import lookup could post to either (#626).
     if report
         .iter()
-        .any(|master| master["importable"] == Value::Bool(false))
+        .any(|master| master.get("folded_twins").is_some())
     {
-        guidance.push("One matched ledger is named with a character imports do not accept, so its exact_live_spelling cannot be sent back; have an operator rename it in Tally, then run validate_masters again.");
+        guidance.push("A requested ledger folds equal to another live ledger (folded_twins: the same name apart from case, spacing, dashes or quotes, or a trailing line break), and which of them Tally's import would post to is not established, so neither is importable; have an operator rename one of them in Tally, then run validate_masters again.");
     }
     if report
         .iter()

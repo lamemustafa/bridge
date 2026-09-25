@@ -1317,7 +1317,6 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
         voucher.voucher_number = None;
         let line = ImportLedgerLine {
             ledger_identities: None,
-            ledger_twins: None,
             endpoint_origin: None,
             identity_scheme: None,
             amends_batch_id: None,
@@ -1944,4 +1943,158 @@ fn a_multi_entry_voucher_with_a_repeated_ledger_pairs_as_a_multiset() {
         (bank, "-1000.00", "Yes"),
     ]);
     assert_ne!(actual_entry_fingerprint(&merged), expected);
+}
+
+// bridge#626 through the tools, over the captured `BRIDGE SHAPE LAB` catalogue,
+// which holds a ledger stored as `CRLF Supplier` plus CR LF.
+
+fn captured_shape_lab_catalogue() -> String {
+    utf16le(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-shape-lab-ledger-catalogue.utf16le.xml"
+    ))
+}
+
+/// The captured catalogue with `Chem Supplier 4` renamed `CRLF Supplier`, so
+/// the captured CR LF ledger gains a twin that folds equal to it. This is a
+/// test-local rewrite of captured bytes: it exercises Bridge's own refusal, and
+/// is no evidence of what Tally does with such a pair.
+fn shape_lab_catalogue_with_folded_twin() -> String {
+    let captured = captured_shape_lab_catalogue();
+    assert_eq!(
+        captured.matches("Chem Supplier 4").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = captured.replace("Chem Supplier 4", "CRLF Supplier");
+    assert_eq!(twinned.matches("CRLF Supplier").count(), 4);
+    twinned
+}
+
+/// The paired identity read, then the bracketed paired catalogue read, for
+/// `BRIDGE SHAPE LAB`: what validate_masters sends, and what build_import_xml
+/// sends after its mode probe.
+fn shape_lab_catalogue_plans(catalogue: &str) -> Vec<ScenarioPlan> {
+    let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SHAPE LAB\"><GUID>{SHAPE_LAB_GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
+    let xml = |body: &str| {
+        ScenarioPlan::new(Fixture::SyntheticXml(body.to_string()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
+    let status = || {
+        ScenarioPlan::new(Fixture::ProductStatus(
+            tally_protocol_simulator::ProductStatus::TallyPrime,
+        ))
+        .with_framing(ResponseFraming::ContentLength)
+    };
+    vec![
+        xml(&company),
+        status(),
+        xml(&company),
+        status(),
+        xml(&company),
+        xml(catalogue),
+        status(),
+        xml(catalogue),
+        status(),
+        xml(&company),
+    ]
+}
+
+fn marked(value: &Value) -> Option<&str> {
+    value[super::super::PARTY_NAME_MARKER].as_str()
+}
+
+#[tokio::test]
+async fn validate_masters_offers_a_captured_crlf_spelling_for_copying() {
+    let plans = shape_lab_catalogue_plans(&captured_shape_lab_catalogue());
+    let simulator = SequenceSimulator::spawn(plans.clone()).expect("shape lab plan");
+    let directory = tempfile::tempdir().unwrap();
+    let server = bank_server(directory.path(), simulator.address().port());
+    let outcome = server
+        .validate_masters(&json!({"company_guid":SHAPE_LAB_GUID,
+            "ledgers":["CRLF Supplier\r\n", "CRLF Supplier", "Cash"]}))
+        .await
+        .unwrap();
+    let masters = outcome.payload["result"]["masters"].as_array().unwrap();
+    assert_eq!(masters[0]["match_state"], "exact");
+    assert_eq!(masters[0]["importable"], true);
+    assert_eq!(
+        marked(&masters[0]["exact_live_spelling"]),
+        Some("CRLF Supplier\r\n")
+    );
+    assert!(masters[0].get("folded_twins").is_none());
+    // The plain name reaches the stored one only as a near miss.
+    assert_eq!(masters[1]["match_state"], "near_miss");
+    assert_eq!(masters[2]["match_state"], "exact");
+    assert_eq!(simulator.finish().unwrap().len(), plans.len());
+}
+
+#[tokio::test]
+async fn validate_masters_marks_both_spellings_of_a_folded_twin_unimportable() {
+    let plans = shape_lab_catalogue_plans(&shape_lab_catalogue_with_folded_twin());
+    let simulator = SequenceSimulator::spawn(plans).expect("shape lab plan");
+    let directory = tempfile::tempdir().unwrap();
+    let server = bank_server(directory.path(), simulator.address().port());
+    let outcome = server
+        .validate_masters(&json!({"company_guid":SHAPE_LAB_GUID,
+            "ledgers":["CRLF Supplier\r\n", "CRLF Supplier"]}))
+        .await
+        .unwrap();
+    let masters = outcome.payload["result"]["masters"].as_array().unwrap();
+    for master in masters {
+        assert_eq!(master["match_state"], "exact", "{master}");
+        assert_eq!(master["importable"], false, "{master}");
+        let twins = master["folded_twins"].as_array().unwrap();
+        let names = twins
+            .iter()
+            .filter_map(|twin| marked(&twin["name"]))
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 2, "{master}");
+        assert!(names.contains(&"CRLF Supplier\r\n") && names.contains(&"CRLF Supplier"));
+        assert!(twins
+            .iter()
+            .all(|twin| twin["parent"] == "Chemical Suppliers"));
+    }
+}
+
+#[tokio::test]
+async fn a_build_naming_either_spelling_of_a_folded_twin_is_refused_without_a_file() {
+    for ledger in ["CRLF Supplier\r\n", "CRLF Supplier"] {
+        let plans = [
+            mode_tests::licensed_import_probe(),
+            shape_lab_catalogue_plans(&shape_lab_catalogue_with_folded_twin()),
+        ]
+        .concat();
+        let simulator = SequenceSimulator::spawn(plans.clone()).expect("shape lab plan");
+        let directory = tempfile::tempdir().unwrap();
+        let server = bank_server(directory.path(), simulator.address().port());
+        let refused = server
+            .build_import_xml(&json!({"company_guid":SHAPE_LAB_GUID,"vouchers":[
+                {"bridge_txn_id":"txn-626","date":"2026-09-01","voucher_type":"Journal",
+                 "narration":"Folded twin check","entries":[
+                    {"ledger":ledger,"amount":"1.00","side":"Dr"},
+                    {"ledger":"Cash","amount":"1.00","side":"Cr"}]}]}))
+            .await
+            .unwrap();
+        let result = &refused.payload["result"];
+        assert_eq!(result["state"], "refused", "{ledger:?}");
+        assert_eq!(result["reason"], "ledger_has_folded_twin", "{ledger:?}");
+        let twins = result["ledger_twins"].as_array().unwrap();
+        assert_eq!(twins.len(), 1, "Cash has no twin");
+        assert_eq!(marked(&twins[0]["requested"]), Some(ledger));
+        assert_eq!(twins[0]["relation"], "equal_under_identity_fold");
+        assert_eq!(twins[0]["live_ledgers"].as_array().unwrap().len(), 2);
+        assert!(result["next_step"].as_str().unwrap().contains("rename"));
+        // Refused on the catalogue it read: nothing after it is sent, and no
+        // file or journal is written.
+        assert_eq!(simulator.finish().unwrap().len(), plans.len(), "{ledger:?}");
+        assert!(
+            !directory.path().join("imports").exists()
+                || std::fs::read_dir(directory.path().join("imports"))
+                    .unwrap()
+                    .next()
+                    .is_none(),
+            "{ledger:?}"
+        );
+    }
 }
