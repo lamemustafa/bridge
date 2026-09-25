@@ -1097,6 +1097,7 @@ mod through_the_tool {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let response = server.call_tool("ledger_masters", args).await;
         let requests = simulator.finish().unwrap().len();
@@ -1496,6 +1497,7 @@ mod through_the_tool {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let (client, source) = tokio::io::duplex(1 << 20);
         let (client_read, mut client_write) = tokio::io::split(client);
@@ -1676,6 +1678,7 @@ mod through_the_tool {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let frames = format!(
             "{}\n{}\n",

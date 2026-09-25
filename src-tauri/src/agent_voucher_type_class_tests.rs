@@ -609,6 +609,7 @@ mod through_the_tool {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let mut args = json!({"company_guid": COMPANY, "from": "20250701", "to": "20250731"});
         for (key, value) in filter.as_object().unwrap() {

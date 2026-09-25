@@ -228,6 +228,7 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     })
 }
 
@@ -696,6 +697,7 @@ async fn a_dispatch_admission_that_fails_sends_nothing() {
             redaction: crate::agent::Redaction::None,
             import_enabled: true,
             writes_enabled: true,
+            batch_post_enabled: false,
         });
         other.append_import_ledger(&changed).unwrap();
     });
