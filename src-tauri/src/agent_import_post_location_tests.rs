@@ -341,9 +341,9 @@ fn a_masters_comparison_without_exactly_one_target_row_says_nothing() {
 }
 
 /// The target's voucher mark is reported with its step, and whether the step
-/// is exactly what Tally reported creating; a gateway change to another
-/// voucher in the target within the interval makes it larger (protocol
-/// reference §11c.5).
+/// is exactly what Tally reported creating. The post's own alters or
+/// cancels, or any other change to a voucher in the target within the
+/// interval, make it larger (protocol reference §11c.5).
 #[test]
 fn the_target_step_is_reported_against_what_tally_reported_creating() {
     let step = |after: u64, created: Option<u64>| {
