@@ -1103,17 +1103,23 @@ mod through_the_tool {
         (response, requests)
     }
 
-    /// Identity, then the extent-bracketed currency read that returns the
-    /// captured two-Currency-master response (protocol reference §9.10a.1).
-    fn multi_currency_plans() -> Vec<ScenarioPlan> {
+    /// Identity, then the extent-bracketed currency read of a book with one
+    /// Currency master whose mailing name is not INR: the captured modern INR
+    /// response with only `MAILINGNAME` changed. Admission refuses it before
+    /// any master read. A book with several masters is no longer a refusal
+    /// case (bridge#551): the classified read goes on to identify its base.
+    fn foreign_base_currency_plans() -> Vec<ScenarioPlan> {
         let company = xml(companies());
         let extent = xml(include_str!(
             "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         )
         .to_owned());
-        let currency = xml(captured(include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
-        )));
+        let inr = captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        ));
+        let from = "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>";
+        assert_eq!(inr.matches(from).count(), 1);
+        let currency = xml(inr.replace(from, "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>"));
         let mut plans = identity_plans();
         plans.push(company.clone());
         pair(&mut plans, extent.clone());
@@ -1152,13 +1158,13 @@ mod through_the_tool {
     #[tokio::test]
     async fn currency_refusal_names_its_cause_beside_the_operation_code() {
         let (response, _) = call(
-            multi_currency_plans(),
+            foreign_base_currency_plans(),
             json!({"company_guid":GUID,"fields":"compliance"}),
         )
         .await;
         let error = refusal(&response);
         assert_eq!(error["code"], "party_ledger_master_read_failed");
-        assert_eq!(error["cause"], "company_base_currency_undetermined");
+        assert_eq!(error["cause"], "company_base_currency_not_inr");
     }
 
     #[tokio::test]
@@ -1194,16 +1200,13 @@ mod through_the_tool {
         // Control: the same refusal carries a cause at the default budget, so
         // its absence below is the budget rule and not a missing cause.
         let (response, _) = call(
-            multi_currency_plans(),
+            foreign_base_currency_plans(),
             json!({"company_guid":GUID,"fields":"compliance"}),
         )
         .await;
-        assert_eq!(
-            refusal(&response)["cause"],
-            "company_base_currency_undetermined"
-        );
+        assert_eq!(refusal(&response)["cause"], "company_base_currency_not_inr");
         let (response, _) = call_with_max_bytes(
-            multi_currency_plans(),
+            foreign_base_currency_plans(),
             json!({"company_guid":GUID,"fields":"compliance"}),
             REMEDIATION_MIN_RESPONSE_BUDGET - 1,
         )

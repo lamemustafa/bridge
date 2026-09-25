@@ -38,9 +38,9 @@ use crate::tally::validators::{
 pub use crate::tally::VerifiedCompanyIdentity;
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, ConnectionStatus,
-    EndpointKey, OutstandingsLoadResult, RuntimeTallyConnector,
-    SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyRuntime, TallySessionSnapshot,
-    TallyTelemetryPreviewExport, VerifiedCompanyIdentityError,
+    EndpointKey, OutstandingsLoadResult, RuntimeTallyConnector, SelectedReadScopeEvidence,
+    TallyCompany, TallyConfig, TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport,
+    VerifiedCompanyIdentityError,
 };
 use bridge_tally_core::{
     CapabilityFeatureId, CapabilityPackId, CapabilityState, CompanyRef as CoreCompanyRef,

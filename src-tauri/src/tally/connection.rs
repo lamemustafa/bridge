@@ -35,11 +35,11 @@ use bridge_tally_protocol::outstandings::{
 use bridge_tally_protocol::{
     native_outstandings::{
         parse_native_group_snapshot_with_evidence,
-        parse_native_ledger_snapshot_classified_for_company, parse_native_ledger_snapshot_for_company,
-        render_native_group_snapshot_request, render_native_ledger_export_request,
-        render_native_ledger_snapshot_request, render_native_voucher_export_request,
-        render_party_ledger_master_request, NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
-        NativeOutstandingsError,
+        parse_native_ledger_snapshot_classified_for_company,
+        parse_native_ledger_snapshot_for_company, render_native_group_snapshot_request,
+        render_native_ledger_export_request, render_native_ledger_snapshot_request,
+        render_native_voucher_export_request, render_party_ledger_master_request,
+        NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod, NativeOutstandingsError,
     },
     outstandings_shared::{
         parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
@@ -1373,8 +1373,11 @@ impl TallyClient {
                     (classified.base, classified.foreign)
                 }
                 None => (
-                    parse_native_ledger_snapshot_for_company(&balance_body, identity.company_guid())
-                        .map_err(party_ledger_master_balance_snapshot_error)?,
+                    parse_native_ledger_snapshot_for_company(
+                        &balance_body,
+                        identity.company_guid(),
+                    )
+                    .map_err(party_ledger_master_balance_snapshot_error)?,
                     Vec::new(),
                 ),
             };

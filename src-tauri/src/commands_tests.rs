@@ -40,7 +40,7 @@ use super::all_clients::{
     ClientGroupLabelMigrationPreparationError,
 };
 use super::{
-    company_sweep_result, establish_inr_currency, first_calendar_day_canary_window,
+    company_sweep_result, first_calendar_day_canary_window,
     party_ledger_master_currency_admission_error, party_ledger_master_runtime_command_error,
     portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
     tally_command_error, tally_runtime_command_error, verify_observed_company_tuple_from_companies,
@@ -53,8 +53,8 @@ use super::{
 #[cfg(unix)]
 use super::require_utf8_destination;
 use crate::tally::{
-    ConnectionStatus, OutstandingsLoadResult, TallyCompany,
-    TallyLedger, TallyProbeResult, TallyProduct,
+    ConnectionStatus, OutstandingsLoadResult, TallyCompany, TallyLedger, TallyProbeResult,
+    TallyProduct,
 };
 use bridge_tally_core::CapabilityProfile;
 use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
