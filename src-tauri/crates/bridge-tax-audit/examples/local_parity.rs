@@ -17,6 +17,9 @@
 //! `tds_tcs_26as` and `twentysixas_receipts`, a REQUIRED seventh argument `TRACES_DOCUMENTS_JSON`
 //! feeds the Form 26AS/AIS/TIS rows `parity/python_golden.py --emit-traces-documents` wrote from the
 //! reference's own adapters (client data: it stays on the machine that read it). For
+//! `bank_reconciliation`, a REQUIRED seventh argument `BANK_STATEMENT_JSON` feeds the statement
+//! `parity/python_golden.py --emit-bank-statement` wrote from the reference's own adapter (client
+//! data: it stays on the machine that read it). For
 //! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
 //! Profit & Loss report totals as caller data -- the file `parity/python_golden.py
 //! --emit-report-totals` wrote from the same read, so both sides tie against the same numbers;
@@ -259,12 +262,13 @@ fn main() -> ExitCode {
             "applicability_44ab",
             "tds_tcs_26as",
             "twentysixas_receipts",
+            "bank_reconciliation",
         ]
         .contains(&test_id.as_str())
     {
         return fail(
-            "a seventh argument applies to financial_statements, applicability_44ab, tds_tcs_26as \
-or twentysixas_receipts only",
+            "a seventh argument applies to financial_statements, applicability_44ab, tds_tcs_26as, \
+twentysixas_receipts or bank_reconciliation only",
         );
     }
     if report_json.is_none() && ["tds_tcs_26as", "twentysixas_receipts"].contains(&test_id.as_str())
@@ -272,6 +276,12 @@ or twentysixas_receipts only",
         return fail(format!(
             "{test_id} needs a seventh argument, the TRACES_DOCUMENTS_JSON the Python side read"
         ));
+    }
+    if report_json.is_none() && test_id == "bank_reconciliation" {
+        return fail(
+            "bank_reconciliation needs a seventh argument, the BANK_STATEMENT_JSON the Python side \
+read (parity/python_golden.py --emit-bank-statement)",
+        );
     }
     let mut caller = CallerData::default();
     if let Some(path) = report_json {
@@ -287,6 +297,9 @@ or twentysixas_receipts only",
         } else if test_id == "tds_tcs_26as" || test_id == "twentysixas_receipts" {
             bridge_tax_audit::documents::traces_documents_from_json(&parsed)
                 .map(|t| caller.traces = t)
+        } else if test_id == "bank_reconciliation" {
+            bridge_tax_audit::documents::bank_statement_from_json(&parsed)
+                .map(|t| caller.bank_statement = Some(t))
         } else {
             registry::turnover_inputs_from_json(&parsed).map(|t| caller.turnover_inputs = t)
         };
