@@ -177,6 +177,13 @@ mod listing {
         assert_eq!(result(&second)["totals"], result(&first)["totals"]);
         assert_eq!(result(&second)["read_at"], result(&first)["read_at"]);
         assert_eq!(one.requests(), total);
+        // Served from the snapshot, the page records only the reads it sent.
+        let bytes = |response: &Value| {
+            response["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap()
+        };
+        assert!(bytes(&second) < bytes(&first), "{second}");
 
         let whole = OneServer::spawn(first_page_plans(14));
         let all = whole

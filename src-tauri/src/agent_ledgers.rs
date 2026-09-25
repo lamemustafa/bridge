@@ -175,8 +175,8 @@ const EXCLUDED_SUBGROUPS_NAMED: usize = 20;
 ///   book-wide: a gap in a subtree unrelated to `group` is counted too,
 ///   because Bridge cannot tell whether `group` lies above the point where
 ///   the walk stopped.
-fn apply_group_filter(
-    rows: &mut Vec<Value>,
+fn apply_group_filter<Row: std::borrow::Borrow<Value>>(
+    rows: &mut Vec<Row>,
     scope: GroupScope,
     group: &str,
     index: &GroupIndex,
@@ -185,7 +185,7 @@ fn apply_group_filter(
     let mut excluded_groups = std::collections::BTreeSet::new();
     let mut unresolved = 0usize;
     rows.retain(|row| {
-        let parent = row["parent"].as_str();
+        let parent = row.borrow()["parent"].as_str();
         let chain = index.ancestry_chain(parent);
         let hop_names = chain
             .hops
@@ -237,8 +237,11 @@ fn basic_row(ledger: TallyLedger, opening_as_of: &TallyDate) -> Value {
 /// continuation page up to this old. A first page is always read fresh.
 const LISTING_SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// The most row bytes all listing snapshots may hold together (#630). The
-/// oldest snapshot is dropped first; a listing larger than this is not held.
+/// The most bytes all listing snapshots may hold together (#630), counted as
+/// their rows and frame serialized as JSON plus their groups' names, parents
+/// and reserved names. That is a proxy for the memory they take, not a bound
+/// on it: a parsed value takes more than its text. The oldest snapshot is
+/// dropped first; a listing larger than this is not held.
 const LISTING_SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// Which read a listing snapshot holds. A `basic` listing with a `group`
@@ -250,6 +253,30 @@ pub(super) enum ListingKind {
     BasicWithGroups,
     Compliance,
     TrialBalance { from: TallyDate, to: TallyDate },
+}
+
+/// A group collection held with a snapshot, and the bytes it counts toward
+/// the cap: its names, parents and reserved names.
+pub(super) struct HeldGroups {
+    index: GroupIndex,
+    bytes: usize,
+}
+
+impl HeldGroups {
+    pub(super) fn build(groups: Vec<bridge_tally_protocol::TallyNamedMaster>) -> Self {
+        let bytes = groups
+            .iter()
+            .map(|group| {
+                group.name.len()
+                    + group.parent.returned_text().map_or(0, str::len)
+                    + group.reserved_name.as_deref().map_or(0, str::len)
+            })
+            .sum();
+        Self {
+            index: GroupIndex::build(groups),
+            bytes,
+        }
+    }
 }
 
 /// One logical ledger listing, read once by its first page (#630). The rows
@@ -264,7 +291,7 @@ pub(super) struct ListingSnapshot {
     extent: bridge_tally_protocol::outstandings_shared::CompanyBookExtent,
     /// The rows, rendered but unfiltered, unpaged and unredacted.
     pub(super) rows: Arc<Vec<Value>>,
-    groups: Option<Arc<GroupIndex>>,
+    groups: Option<HeldGroups>,
     /// What a page reports besides its rows (a trial balance's period,
     /// currency and totals); null for a ledger listing.
     pub(super) frame: Value,
@@ -275,25 +302,26 @@ pub(super) struct ListingSnapshot {
 }
 
 impl ListingSnapshot {
-    /// A fresh read's snapshot, sized by its rendered rows.
+    /// A fresh read's snapshot, sized by its rendered rows, frame and groups.
     pub(super) fn new(
         identity: &VerifiedCompanyIdentity,
         kind: ListingKind,
         extent: bridge_tally_protocol::outstandings_shared::CompanyBookExtent,
         rows: Vec<Value>,
-        groups: Option<GroupIndex>,
+        groups: Option<HeldGroups>,
         frame: Value,
         evidence: Evidence,
     ) -> Self {
-        let bytes =
-            rows.iter().map(|row| row.to_string().len()).sum::<usize>() + frame.to_string().len();
+        let bytes = rows.iter().map(|row| row.to_string().len()).sum::<usize>()
+            + frame.to_string().len()
+            + groups.as_ref().map_or(0, |groups| groups.bytes);
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             company_guid: identity.company_guid().to_string(),
             kind,
             extent,
             rows: Arc::new(rows),
-            groups: groups.map(Arc::new),
+            groups,
             frame,
             evidence,
             read_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -335,9 +363,17 @@ impl Default for ListingSnapshots {
 }
 
 impl ListingSnapshots {
+    /// Drops every snapshot past the TTL, so an expired read is not only
+    /// skipped but no longer held.
+    fn purge_expired(&mut self) {
+        let ttl = self.ttl;
+        self.held.retain(|held| held.taken.elapsed() < ttl);
+    }
+
     /// Holds a first page's read, replacing any earlier one for the same
     /// company and kind, and evicting the oldest until the cap holds.
     fn hold(&mut self, snapshot: Arc<ListingSnapshot>) {
+        self.purge_expired();
         self.held.retain(|held| {
             !(held
                 .company_guid
@@ -363,20 +399,18 @@ impl ListingSnapshots {
     }
 
     /// The unexpired snapshot for this company and kind, if one is held.
-    fn current(&self, company_guid: &str, kind: &ListingKind) -> Option<Arc<ListingSnapshot>> {
+    fn current(&mut self, company_guid: &str, kind: &ListingKind) -> Option<Arc<ListingSnapshot>> {
+        self.purge_expired();
         self.held
             .iter()
-            .find(|held| {
-                held.company_guid.eq_ignore_ascii_case(company_guid)
-                    && held.kind == *kind
-                    && held.taken.elapsed() < self.ttl
-            })
+            .find(|held| held.company_guid.eq_ignore_ascii_case(company_guid) && held.kind == *kind)
             .cloned()
     }
 
     /// Drops every snapshot of a company, as a write through this server does
     /// before it returns.
     pub(super) fn drop_company(&mut self, company_guid: &str) {
+        self.purge_expired();
         self.held
             .retain(|held| !held.company_guid.eq_ignore_ascii_case(company_guid));
         #[cfg(test)]
@@ -417,15 +451,20 @@ impl Server {
                 (false, false) => ListingKind::Basic,
             };
             let reused = self
-                .continued_listing(&identity, &kind, offset, snapshot_id.as_deref())
+                .continued_listing(&identity, &kind, offset, snapshot_id.as_deref(), &mut evidence)
                 .await?;
+            // A page served from a snapshot records only what it sent: the
+            // identity and extent reads, not its first page's read again.
             let snapshot = match reused.clone() {
                 Some(held) => held,
-                None => self.hold_listing(self.read_ledger_listing(&identity, kind).await?)?,
+                None => {
+                    let fresh = self.hold_listing(self.read_ledger_listing(&identity, kind).await?)?;
+                    evidence = combine_evidence(evidence.clone(), fresh.evidence.clone());
+                    fresh
+                }
             };
-            evidence = combine_evidence(evidence.clone(), snapshot.evidence.clone());
-            let mut ledgers = snapshot.rows.as_ref().clone();
-            let group_filter = match (group.as_deref(), snapshot.groups.as_deref()) {
+            let mut ledgers = snapshot.rows.iter().collect::<Vec<_>>();
+            let group_filter = match (group.as_deref(), snapshot.groups.as_ref().map(|groups| &groups.index)) {
                 (Some(group), Some(index)) => Some(apply_group_filter(&mut ledgers, scope, group, index)),
                 (Some(_), None) => return Err("listing_snapshot_groups_missing".to_string().into()),
                 (None, _) => None,
@@ -435,7 +474,7 @@ impl Server {
                 .into_iter()
                 .skip(offset)
                 .take(limit)
-                .map(|ledger| redact_value(ledger, self.settings.redaction))
+                .map(|ledger| redact_value(ledger.clone(), self.settings.redaction))
                 .collect::<Vec<_>>();
             let truncated = offset.saturating_add(page.len()) < total;
             let mut result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
@@ -465,15 +504,17 @@ impl Server {
         kind: &ListingKind,
         offset: usize,
         snapshot_id: Option<&str>,
+        evidence: &mut Evidence,
     ) -> Result<Option<Arc<ListingSnapshot>>, ToolFailure> {
         if offset == 0 {
             return Ok(None);
         }
-        let extent = self
+        let (extent, read) = self
             .runtime
             .fetch_listing_extent(self.tally_config(), identity)
             .await
             .map_err(|error| ToolFailure::from_runtime("listing_extent_read_failed", error))?;
+        *evidence = combine_evidence(evidence.clone(), evidence_from_runtime_read(read));
         let held = self
             .listings
             .lock()
@@ -506,13 +547,17 @@ impl Server {
     }
 
     /// Drops every ledger listing snapshot of a company. Every write this
-    /// server dispatches calls it before returning, whatever the outcome.
+    /// server dispatches calls it before returning, whatever the outcome. A
+    /// write from anywhere else (the desktop app's own server, another MCP
+    /// process, Tally's screens) never reaches this store: a later page then
+    /// relies on the extent check alone.
     pub(super) fn drop_listing_snapshots(&self, company_guid: &str) {
-        // A poisoned store cannot serve a page either: `ledger_masters`
-        // refuses on the same lock, so nothing stale is served from it.
-        if let Ok(mut listings) = self.listings.lock() {
-            listings.drop_company(company_guid);
-        }
+        // Recovered even from a poisoned store: a drop that silently did
+        // nothing would let a snapshot outlive the write that made it stale.
+        self.listings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drop_company(company_guid);
     }
 
     /// One fresh read of a ledger listing: the rows unfiltered and unredacted,
@@ -534,7 +579,7 @@ impl Server {
                     })?;
                 // Built once per read, not per ledger: the same group
                 // collection classifies every row.
-                let group_index = GroupIndex::build(listing.groups);
+                let groups = HeldGroups::build(listing.groups);
                 let opening_as_of = listing.opening_as_of;
                 let gstin_as_of = tally_host_today();
                 let rows = listing
@@ -542,7 +587,7 @@ impl Server {
                     .into_iter()
                     .map(|record| {
                         let parent = record.ledger.parent.returned_text().map(str::to_string);
-                        let chain = group_index.ancestry_chain(parent.as_deref());
+                        let chain = groups.index.ancestry_chain(parent.as_deref());
                         let gstin = party_gstin_on(
                             record.ledger.party_gstin.returned_text(),
                             &record.fields.gst_registrations,
@@ -564,7 +609,7 @@ impl Server {
                         row
                     })
                     .collect::<Vec<_>>();
-                (rows, Some(group_index), listing.extent, listing.evidence)
+                (rows, Some(groups), listing.extent, listing.evidence)
             }
             ListingKind::BasicWithGroups => {
                 let (listing, groups) = self
@@ -582,7 +627,7 @@ impl Server {
                     .collect::<Vec<_>>();
                 (
                     rows,
-                    Some(GroupIndex::build(groups)),
+                    Some(HeldGroups::build(groups)),
                     listing.extent,
                     listing.evidence,
                 )

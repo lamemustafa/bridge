@@ -1427,18 +1427,33 @@ impl TallyClient {
         &self,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyBookExtent> {
+        self.fetch_company_book_extent_with_evidence(identity)
+            .await
+            .map(|(extent, _)| extent)
+    }
+
+    /// [`Self::fetch_company_book_extent`], with the evidence of its two reads.
+    pub(crate) async fn fetch_company_book_extent_with_evidence(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(CompanyBookExtent, RuntimeReadEvidence)> {
         let expectation = identity.company_book_extent_expectation()?;
         let company_name = ValidatedCompanyName::new(identity.display_name().to_owned())?;
         let request = ReadOnlyProfile::CompanyBookExtentV2 {
             company: &company_name,
         }
         .render();
-        let first = self.post_xml(request.clone()).await?;
+        let (first, first_bytes, first_sha256) =
+            self.post_xml_with_encoded_bytes(request.clone()).await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check between company extent reads failed")?;
-        let second = self.post_xml(request).await?;
+        let (second, second_bytes, second_sha256) =
+            self.post_xml_with_encoded_bytes(request.clone()).await?;
+        let evidence = RuntimeReadEvidence::single(&request, first_sha256, first_bytes).combine(
+            RuntimeReadEvidence::single(&request, second_sha256, second_bytes),
+        );
         self.http
             .get_status_decoded()
             .await
@@ -1455,7 +1470,7 @@ impl TallyClient {
         // would otherwise compare equal regardless of a mid-window master edit -- can never be
         // mistaken for a stable one. See `require_master_witness` for why.
         require_master_witness(&first)?;
-        Ok(first)
+        Ok((first, evidence))
     }
 
     /// Paired read for the native `TYPE=Data` bills reports and the ledger

@@ -2911,12 +2911,13 @@ impl TallyRuntime {
 
     /// The company's book extent, paired, inside the identity bracket: the one
     /// request a continuation page of a ledger listing sends before it is
-    /// served from the snapshot its first page read (#630).
+    /// served from the snapshot its first page read (#630). The evidence is
+    /// the extent pair's, which is all a page served from a snapshot reads.
     pub(crate) async fn fetch_listing_extent(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<CompanyBookExtent> {
+    ) -> anyhow::Result<(CompanyBookExtent, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -2927,9 +2928,11 @@ impl TallyRuntime {
                 let identity = identity.clone();
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
-                    let extent = client.fetch_company_book_extent(&identity).await?;
+                    let read = client
+                        .fetch_company_book_extent_with_evidence(&identity)
+                        .await?;
                     bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(extent)
+                    Ok(read)
                 }
             },
         )

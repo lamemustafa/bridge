@@ -11,7 +11,7 @@ impl Server {
         let to = bridge_tally_core::TallyDate::parse(to).map_err(|_| "invalid_date".to_string())?;
         let period = crate::tally::runtime::TrialBalancePeriod::new(from.clone(), to.clone())
             .map_err(|_| "invalid_date_range".to_string())?;
-        let (company, identity, prior) = self.verified_company(guid).await?;
+        let (company, identity, mut prior) = self.verified_company(guid).await?;
         let offset = arg_usize(args, "offset", 0)?;
         let limit =
             arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
@@ -21,7 +21,7 @@ impl Server {
         // listing's snapshot only while the book's extent, including ALTVCHID,
         // is unchanged (#630).
         let reused = self
-            .continued_listing(&identity, &kind, offset, snapshot_id.as_deref())
+            .continued_listing(&identity, &kind, offset, snapshot_id.as_deref(), &mut prior)
             .await
             .map_err(|failure| failure.with_prior_evidence(prior.clone()))?;
         let snapshot = match reused.clone() {
@@ -47,8 +47,7 @@ impl Server {
                         })
                     })
                     .collect::<Vec<_>>();
-                let mut read_evidence = evidence_from_runtime_read(read.evidence);
-                read_evidence.read_at = Some(read.read_at.clone());
+                let read_evidence = evidence_from_runtime_read(read.evidence);
                 let frame = json!({
                     "from": read.from, "to": read.to, "currency": read.currency,
                     "read_at": read.read_at, "totals": read.totals,
@@ -64,8 +63,12 @@ impl Server {
                 ))?
             }
         };
-        let mut evidence = combine_evidence(prior, snapshot.evidence.clone());
-        evidence.read_at = snapshot.evidence.read_at.clone();
+        // A page served from a snapshot records only what it sent: the
+        // identity and extent reads, not its first page's read again.
+        let evidence = match reused {
+            Some(_) => prior,
+            None => combine_evidence(prior, snapshot.evidence.clone()),
+        };
         let total = snapshot.rows.len();
         let rows = snapshot
             .rows

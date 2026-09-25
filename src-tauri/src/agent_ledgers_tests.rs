@@ -1230,18 +1230,130 @@ mod through_the_tool {
         }
     }
 
+    /// A page served from a snapshot records only the requests it sent: the
+    /// identity read and the extent pair, never its first page's read again.
+    #[tokio::test]
+    async fn a_page_served_from_a_snapshot_records_only_the_reads_it_sent() {
+        let bytes = |response: &Value| {
+            response["structuredContent"]["evidence"]["bytes"]
+                .as_u64()
+                .unwrap()
+        };
+        let mut plans = basic_plans();
+        plans.extend(continuation_plans(extent_with_master_mark(219)));
+        let one = OneServer::spawn(plans);
+        let first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let served = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&served)["reused"], true);
+        assert!(bytes(&served) < bytes(&first), "{served}");
+
+        // The extent pair is what it counts: an extent one character longer
+        // (a four-digit mark, UTF-16) costs 2 bytes more per read of the pair.
+        let mut plans = basic_plans_marked(2_200);
+        plans.extend(continuation_plans(extent_with_master_mark(2_200)));
+        let one = OneServer::spawn(plans);
+        let _first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let longer = one
+            .call(json!({"company_guid":GUID,"offset":4,"limit":4}))
+            .await;
+        assert_eq!(snapshot_of(&longer)["reused"], true);
+        assert_eq!(bytes(&longer), bytes(&served) + 4);
+    }
+
+    /// An expired snapshot is not only skipped but dropped the next time the
+    /// store is touched: by holding another listing, or by any write's drop.
+    #[tokio::test]
+    async fn an_expired_snapshot_is_no_longer_held_once_the_store_is_next_touched() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        one.server.listings.lock().unwrap().ttl = std::time::Duration::ZERO;
+        let _basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        assert_eq!(one.server.listings.lock().unwrap().held.len(), 1);
+        let _grouped = one
+            .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+            .await;
+        assert_eq!(
+            one.server.listings.lock().unwrap().held.len(),
+            1,
+            "holding the grouped listing dropped the expired basic one"
+        );
+        one.server
+            .drop_listing_snapshots("00000000-0000-0000-0000-000000000000");
+        assert!(
+            one.server.listings.lock().unwrap().held.is_empty(),
+            "a drop for another company still drops what has expired"
+        );
+        assert_eq!(one.requests(), total);
+    }
+
+    /// A write's drop still happens after the store's lock was poisoned: a
+    /// drop that did nothing would let a snapshot outlive the write.
+    #[tokio::test]
+    async fn a_write_drops_snapshots_even_from_a_poisoned_store() {
+        let one = OneServer::spawn(basic_plans());
+        let _first = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let listings = one.server.listings.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = listings.lock().unwrap();
+            panic!("poison the listing store");
+        })
+        .join();
+        assert!(one.server.listings.is_poisoned());
+        one.server.drop_listing_snapshots(GUID);
+        let store = one
+            .server
+            .listings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(store.held.is_empty());
+    }
+
+    /// A listing that holds the group collection counts it toward the byte
+    /// cap: the same rows with groups weigh more than without.
+    #[tokio::test]
+    async fn a_grouped_listing_counts_its_groups_toward_the_cap() {
+        let mut plans = basic_plans();
+        plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+        let one = OneServer::spawn(plans);
+        let _basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+        let _grouped = one
+            .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+            .await;
+        let store = one.server.listings.lock().unwrap();
+        let [basic, grouped] = store.held.as_slice() else {
+            panic!("two listings held");
+        };
+        assert_eq!(basic.rows, grouped.rows);
+        assert!(grouped.bytes > basic.bytes);
+    }
+
     /// The byte cap drops the oldest snapshot to make room for a newer one.
     #[tokio::test]
     async fn the_byte_cap_evicts_the_oldest_listing_first() {
+        // Each listing's size, measured on its own server first.
+        let sizes = {
+            let mut plans = basic_plans();
+            plans.extend(basic_plans_reading(period_opening(), Some(groups())));
+            let one = OneServer::spawn(plans);
+            let _basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
+            let _grouped = one
+                .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
+                .await;
+            let store = one.server.listings.lock().unwrap();
+            store.held.iter().map(|held| held.bytes).collect::<Vec<_>>()
+        };
         let mut plans = basic_plans();
         plans.extend(basic_plans_reading(period_opening(), Some(groups())));
         plans.extend(continuation_plans(extent_with_master_mark(219)));
         let total = plans.len();
         let one = OneServer::spawn(plans);
+        // Room for either listing, not both.
+        one.server.listings.lock().unwrap().max_bytes = sizes.iter().sum::<usize>() - 1;
         let basic = one.call(json!({"company_guid":GUID,"limit":4})).await;
-        let held = one.server.listings.lock().unwrap().held[0].bytes;
-        // Room for one listing of this size, not two.
-        one.server.listings.lock().unwrap().max_bytes = held + held / 2;
         let _grouped = one
             .call(json!({"company_guid":GUID,"limit":4,"group":"Sundry Debtors"}))
             .await;
@@ -1251,6 +1363,11 @@ mod through_the_tool {
             )
             .await;
         assert_eq!(refusal(&refused)["cause"], "snapshot_not_held");
+        assert_eq!(
+            one.server.listings.lock().unwrap().held.len(),
+            1,
+            "the newer listing is held"
+        );
         assert_eq!(one.requests(), total);
     }
 
