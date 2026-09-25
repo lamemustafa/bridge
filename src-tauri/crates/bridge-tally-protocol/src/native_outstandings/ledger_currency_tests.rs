@@ -489,3 +489,82 @@ fn with_exclusions_a_bill_of_an_unknown_party_refuses() {
         ))
     );
 }
+
+/// The compliance source's parse (bridge#551): the same classification of the
+/// FOREX capture, admitted only for the company every row's collection-level
+/// GUID names. Another company's GUID refuses before any row is classified.
+#[test]
+fn the_company_checked_classified_snapshot_admits_only_its_own_company() {
+    const FOREX_GUID: &str = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+    let unchecked = crate::native_outstandings::parse_native_ledger_snapshot_classified(
+        &forex_book(),
+        &forex_base(),
+    )
+    .unwrap();
+    let checked = crate::native_outstandings::parse_native_ledger_snapshot_classified_for_company(
+        &forex_book(),
+        FOREX_GUID,
+        &forex_base(),
+    )
+    .unwrap();
+    assert_eq!(checked, unchecked);
+    assert!(!checked.foreign.is_empty());
+    assert_eq!(
+        crate::native_outstandings::parse_native_ledger_snapshot_classified_for_company(
+            &forex_book(),
+            "61c6de69-1748-461c-ad3f-162cb949df9f",
+            &forex_base(),
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_response_company_guid_mismatch"
+        ))
+    );
+}
+
+/// The compliance snapshot of the book after a dollar invoice to a rupee party
+/// (captured 25 Sep, coherent with the compliance master): the dollar ledgers
+/// and the rupee ledgers with a composite balance are named, and only the
+/// plain rupee rows are parsed. The outstandings parse of the same bytes still
+/// refuses, on the first composite base balance.
+#[test]
+fn the_compliance_snapshot_sets_mixed_rupee_ledgers_aside_by_name() {
+    let snapshot = decode(include_bytes!(
+        "../../tests/fixtures/balance_snapshot_forex_live.utf16le.xml"
+    ));
+    let company = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+    let classified = crate::native_outstandings::parse_compliance_ledger_snapshot_for_company(
+        &snapshot,
+        company,
+        &forex_base(),
+    )
+    .unwrap();
+    let names = |rows: &[String]| rows.to_vec();
+    assert_eq!(
+        classified
+            .foreign
+            .iter()
+            .map(|ledger| ledger.ledger.clone())
+            .collect::<Vec<_>>(),
+        ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"]
+    );
+    assert_eq!(
+        names(&classified.mixed),
+        ["FX Party 01", "FX Sales", "Profit & Loss A/c"]
+    );
+    assert_eq!(
+        classified
+            .base
+            .iter()
+            .map(|row| row.name.as_str())
+            .collect::<Vec<_>>(),
+        ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]
+    );
+    assert!(matches!(
+        crate::native_outstandings::parse_native_ledger_snapshot_classified_for_company(
+            &snapshot,
+            company,
+            &forex_base(),
+        ),
+        Err(NativeOutstandingsError::ForeignCurrencyLedgerBalance { .. })
+    ));
+}

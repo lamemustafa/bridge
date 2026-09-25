@@ -436,8 +436,14 @@ async fn rejected_currency_retains_its_completed_pair_before_any_master_read() {
         let mut plans = vec![company.clone()];
         pair(&mut plans, extent.clone());
         pair(&mut plans, xml(faulty));
-        pair(&mut plans, extent);
-        plans.push(company);
+        // A response that does not parse is refused as soon as its pair is
+        // read, so the closing extent and identity reads are not sent; a
+        // parsed currency is admitted or refused only after them.
+        if !malformed {
+            pair(&mut plans, extent);
+            plans.push(company);
+        }
+        let total = plans.len();
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let error = TallyRuntime::default()
             .fetch_agent_party_ledger_masters_with_evidence(
@@ -463,7 +469,8 @@ async fn rejected_currency_retains_its_completed_pair_before_any_master_read() {
         }
         let evidence = &error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence;
         let observations = simulator.finish().unwrap();
-        assert_eq!(observations.len(), 14);
+        assert_eq!(observations.len(), total);
+        assert_eq!(total, if malformed { 9 } else { 14 });
         assert_eq!(evidence.request_sha256, observations[5].request_body_sha256);
         assert_eq!(evidence.response_sha256, sha256_hex(&encoded));
         assert_eq!(evidence.bytes, 2 * encoded.len());

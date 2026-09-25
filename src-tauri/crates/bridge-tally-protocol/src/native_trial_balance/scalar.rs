@@ -7,15 +7,24 @@ use quick_xml::{
     Reader,
 };
 
-pub(super) fn parse_amount(
+/// An amount element's text, once its `TYPE` is `Amount`. The text is parsed
+/// only for a row that is read ([`parse_amount_text`]); a row set aside keeps
+/// its values unparsed.
+pub(super) fn amount_text(
     element: &BytesStart<'_>,
     value: String,
-) -> Result<NativeTrialBalanceAmount, NativeTrialBalanceError> {
+) -> Result<String, NativeTrialBalanceError> {
     if required_attribute(element, b"TYPE", "trial_balance_amount_type_missing")? != "Amount" {
         return Err(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_amount_type_invalid",
         ));
     }
+    Ok(value)
+}
+
+pub(super) fn parse_amount_text(
+    value: String,
+) -> Result<NativeTrialBalanceAmount, NativeTrialBalanceError> {
     if value.is_empty() {
         Ok(NativeTrialBalanceAmount::PresentEmpty)
     } else {
@@ -23,6 +32,63 @@ pub(super) fn parse_amount(
             .map(NativeTrialBalanceAmount::Present)
             .map_err(|_| NativeTrialBalanceError::InvalidAmount)
     }
+}
+
+/// Whether `text` is a currency composite as Tally writes it:
+/// `<amount> @ <rate> = <base amount>`, for example
+/// `-$ 100.00 @ I\u{20b9} 201/$  = -I\u{20b9} 20100.00`. Each amount is an optional
+/// `-`, a symbol, one space and an ASCII decimal. The rate is a symbol, one
+/// space, then either a decimal or nothing, then `/` and a symbol: a captured
+/// Trial Balance closing had the empty form, `$ 0.00 @ I\u{20b9} /$  = I\u{20b9} 0.00`.
+/// Exactly one ` @ ` and one ` = `; anything else is not a composite, so a
+/// truncated or garbled value is refused as an invalid amount rather than set
+/// aside. It only classifies: no value is ever read from a composite.
+pub(crate) fn is_currency_composite(text: &str) -> bool {
+    let Some((foreign, rest)) = split_once_exact(text, " @ ") else {
+        return false;
+    };
+    let Some((rate, base)) = split_once_exact(rest, " = ") else {
+        return false;
+    };
+    is_symbol_amount(foreign) && is_rate(rate.trim_end_matches(' ')) && is_symbol_amount(base)
+}
+
+fn split_once_exact<'a>(text: &'a str, separator: &str) -> Option<(&'a str, &'a str)> {
+    let (left, right) = text.split_once(separator)?;
+    (!right.contains(separator)).then_some((left, right))
+}
+
+fn is_symbol_amount(text: &str) -> bool {
+    let text = text.strip_prefix('-').unwrap_or(text);
+    match text.split_once(' ') {
+        Some((symbol, amount)) => is_symbol(symbol) && is_ascii_decimal(amount),
+        None => false,
+    }
+}
+
+fn is_rate(text: &str) -> bool {
+    let Some((symbol, rest)) = text.split_once(' ') else {
+        return false;
+    };
+    let Some((number, per)) = rest.split_once('/') else {
+        return false;
+    };
+    is_symbol(symbol) && (number.is_empty() || is_ascii_decimal(number)) && is_symbol(per)
+}
+
+fn is_symbol(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|c| {
+            !c.is_whitespace() && !c.is_ascii_digit() && !matches!(c, '-' | '@' | '=' | '/')
+        })
+}
+
+fn is_ascii_decimal(text: &str) -> bool {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    !whole.is_empty()
+        && whole.bytes().all(|b| b.is_ascii_digit())
+        && fraction.bytes().all(|b| b.is_ascii_digit())
+        && (!fraction.is_empty() || !text.ends_with('.'))
 }
 
 pub(super) fn set_once<T>(

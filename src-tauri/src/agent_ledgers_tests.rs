@@ -1553,17 +1553,23 @@ mod through_the_tool {
         (response, requests)
     }
 
-    /// Identity, then the extent-bracketed currency read that returns the
-    /// captured two-Currency-master response (protocol reference §9.10a.1).
-    fn multi_currency_plans() -> Vec<ScenarioPlan> {
+    /// Identity, then the extent-bracketed currency read of a book with one
+    /// Currency master whose mailing name is not INR: the captured modern INR
+    /// response with only `MAILINGNAME` changed. Admission refuses it before
+    /// any master read. A book with several masters is no longer a refusal
+    /// case (bridge#551): the classified read goes on to identify its base.
+    fn foreign_base_currency_plans() -> Vec<ScenarioPlan> {
         let company = xml(companies());
         let extent = xml(include_str!(
             "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         )
         .to_owned());
-        let currency = xml(captured(include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
-        )));
+        let inr = captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        ));
+        let from = "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>";
+        assert_eq!(inr.matches(from).count(), 1);
+        let currency = xml(inr.replace(from, "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>"));
         let mut plans = identity_plans();
         plans.push(company.clone());
         pair(&mut plans, extent.clone());
@@ -1602,13 +1608,13 @@ mod through_the_tool {
     #[tokio::test]
     async fn currency_refusal_names_its_cause_beside_the_operation_code() {
         let (response, _) = call(
-            multi_currency_plans(),
+            foreign_base_currency_plans(),
             json!({"company_guid":GUID,"fields":"compliance"}),
         )
         .await;
         let error = refusal(&response);
         assert_eq!(error["code"], "party_ledger_master_read_failed");
-        assert_eq!(error["cause"], "company_base_currency_undetermined");
+        assert_eq!(error["cause"], "company_base_currency_not_inr");
     }
 
     #[tokio::test]
@@ -1644,16 +1650,13 @@ mod through_the_tool {
         // Control: the same refusal carries a cause at the default budget, so
         // its absence below is the budget rule and not a missing cause.
         let (response, _) = call(
-            multi_currency_plans(),
+            foreign_base_currency_plans(),
             json!({"company_guid":GUID,"fields":"compliance"}),
         )
         .await;
-        assert_eq!(
-            refusal(&response)["cause"],
-            "company_base_currency_undetermined"
-        );
+        assert_eq!(refusal(&response)["cause"], "company_base_currency_not_inr");
         let (response, _) = call_with_max_bytes(
-            multi_currency_plans(),
+            foreign_base_currency_plans(),
             json!({"company_guid":GUID,"fields":"compliance"}),
             REMEDIATION_MIN_RESPONSE_BUDGET - 1,
         )
@@ -1809,6 +1812,118 @@ mod through_the_tool {
         let error = refusal(&response);
         assert_eq!(error["code"], "ledger_export_invalid");
         assert_eq!(error["cause"], "native_ledger_group_changed");
+    }
+
+    /// bridge#551, through the tool on the several-currency book's captures:
+    /// the compliance read admits it through the classified base, returns its
+    /// plain rupee ledgers only, and names the three dollar ledgers and the
+    /// three rupee ledgers with a composite balance that it left out. The
+    /// extent, master, balance and group responses are one moment of the book
+    /// (FOREX_601D_CAPTURE_PROVENANCE); the currency and Company reads are the
+    /// committed 22 Sep captures, from before the C1 voucher, which added no
+    /// Currency master.
+    #[tokio::test]
+    async fn a_several_currency_book_returns_its_base_ledgers_and_names_the_rest() {
+        let forex = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+        let companies = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        )));
+        let extent = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_extents_forex_live.utf16le.xml"
+        )));
+        let fixture = |bytes: &[u8]| xml(captured(bytes));
+        let mut plans = Vec::new();
+        pair(&mut plans, companies.clone());
+        plans.push(companies.clone());
+        pair(&mut plans, extent.clone());
+        for source in [
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_live.utf16le.xml"
+            )),
+        ] {
+            pair(&mut plans, source);
+        }
+        pair(&mut plans, extent.clone());
+        plans.push(companies.clone());
+        plans.extend([status(), companies.clone(), companies.clone()]);
+        pair(&mut plans, extent.clone());
+        for source in [
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/compliance_master_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/balance_snapshot_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/group_snapshot_forex_live.utf16le.xml"
+            )),
+        ] {
+            pair(&mut plans, source);
+        }
+        pair(&mut plans, extent.clone());
+        plans.extend([companies.clone(), status(), companies.clone()]);
+        // A second page is served from the first page's snapshot: identity,
+        // then the bracketed extent pair only.
+        pair(&mut plans, companies.clone());
+        plans.push(companies.clone());
+        pair(&mut plans, extent);
+        plans.push(companies);
+        let total = plans.len();
+        let one = OneServer::spawn(plans);
+        let page = |offset: usize| json!({"company_guid":forex,"fields":"compliance","limit":2,"offset":offset});
+        let first = one.call(page(0)).await;
+        let second = one.call(page(2)).await;
+        assert_eq!(one.requests(), total);
+        let dollar = ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"];
+        let mut names = Vec::new();
+        for response in [&first, &second] {
+            let result = &response["structuredContent"]["result"];
+            names.extend(
+                items(response)
+                    .iter()
+                    .map(|row| row["name"].as_str().unwrap().to_string()),
+            );
+            assert_eq!(result["total"], 4);
+            assert_eq!(result["ledgers_scope"], "base_currency_ledgers_only");
+            // Rupee ledgers a dollar entry touched carry composite balances:
+            // set aside by name, never read.
+            let mixed = &result["base_currency_ledgers_mixed_excluded"];
+            assert_eq!(mixed["count"], 3);
+            assert_eq!(mixed["reason"], "mixed_currency_movement");
+            assert_eq!(
+                mixed["ledgers"],
+                json!(["FX Party 01", "FX Sales", "Profit & Loss A/c"])
+            );
+            let excluded = &result["foreign_currency_ledgers_excluded"];
+            assert_eq!(excluded["count"], 3);
+            let mut listed = excluded["ledgers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|ledger| {
+                    assert_eq!(ledger["currency"], "$");
+                    ledger["ledger"].as_str().unwrap().to_string()
+                })
+                .collect::<Vec<_>>();
+            listed.sort();
+            assert_eq!(listed, dollar);
+            // The composite opening on a dollar ledger is never read or shown.
+            assert!(!response.to_string().contains(" @ "), "{response}");
+        }
+        assert_eq!(
+            names,
+            ["BRIDGE INR DEBTOR A", "Cash", "FX Party 02", "FX Party 03"]
+        );
+        assert_eq!(
+            second["structuredContent"]["result"]["snapshot"]["reused"],
+            true
+        );
     }
 
     #[tokio::test]

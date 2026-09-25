@@ -38,9 +38,9 @@ use crate::tally::validators::{
 pub use crate::tally::VerifiedCompanyIdentity;
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, ConnectionStatus,
-    EndpointKey, OutstandingsCurrencyAssertion, OutstandingsLoadResult, RuntimeTallyConnector,
-    SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyRuntime, TallySessionSnapshot,
-    TallyTelemetryPreviewExport, VerifiedCompanyIdentityError,
+    EndpointKey, OutstandingsLoadResult, RuntimeTallyConnector, SelectedReadScopeEvidence,
+    TallyCompany, TallyConfig, TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport,
+    VerifiedCompanyIdentityError,
 };
 use bridge_tally_core::{
     CapabilityFeatureId, CapabilityPackId, CapabilityState, CompanyRef as CoreCompanyRef,
@@ -1856,18 +1856,23 @@ pub async fn export_party_ledger_master(
 ) -> Result<String, TallyCommandError> {
     let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
-    let currency_read = runtime
-        .detect_party_ledger_master_currency(request.config.clone(), &identity)
+    // The classified read admits a book with several Currency masters when
+    // Tally identifies an INR base (bridge#551).
+    let currency_assertion = runtime
+        .detect_classified_base_currency_with_extent(request.config.clone(), &identity)
         .await
-        .map_err(party_ledger_master_runtime_command_error)?;
-    let currency_assertion =
-        establish_inr_currency(currency_read.currency_count(), currency_read.is_inr())
-            .map_err(party_ledger_master_currency_admission_error)?;
-    let currency_assertion = currency_read.bind_party_ledger_master_assertion(currency_assertion);
+        .map_err(party_ledger_master_runtime_command_error)?
+        .admit_inr_classified()
+        .map_err(party_ledger_master_currency_admission_error)?
+        .into_compliance_assertion();
     let source = runtime
         .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
         .await
         .map_err(party_ledger_master_runtime_command_error)?;
+    party_ledger_master_withheld(
+        &source.foreign_currency_ledgers_excluded,
+        &source.mixed_currency_ledgers_excluded,
+    )?;
     let workbook = build_party_ledger_master_workbook(source)
         .map_err(|_| {
             party_ledger_master_local_export_error(
@@ -2112,22 +2117,77 @@ pub(crate) enum CompanySweepFailure {
     OutstandingsRead,
 }
 
-/// The INR admission rule of the party/ledger workbook boundary. A workbook can obtain this typed value
-/// only after `detect_base_currency` has read Tally's own Currency masters.
-fn establish_inr_currency(
-    currency_count: usize,
-    is_inr: bool,
-) -> Result<OutstandingsCurrencyAssertion, &'static str> {
-    if currency_count > 1 {
-        return Err("company_base_currency_undetermined");
+/// At most this many foreign-currency ledgers are named in a desktop refusal.
+const FOREIGN_LEDGERS_NAMED: usize = 5;
+
+/// The party/ledger workbook withheld because the company keeps ledgers in a
+/// currency other than its base (bridge#551), naming them.
+fn party_ledger_master_foreign_currency_error(
+    foreign: &[bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger],
+) -> TallyCommandError {
+    let named = foreign
+        .iter()
+        .take(FOREIGN_LEDGERS_NAMED)
+        .map(|ledger| format!("{} ({})", ledger.ledger, ledger.currency))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = foreign.len().saturating_sub(FOREIGN_LEDGERS_NAMED);
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    tally_command_error(
+        "party_ledger_master_foreign_currency_ledgers",
+        "Currency admission",
+        format!(
+            "Bridge withheld the party/ledger master: this company keeps ledgers in a currency other than its base currency ({named}{more}). A workbook without them would not describe the whole book, and their balances are not rupees."
+        ),
+        "after_change",
+        false,
+        "Do not retry the unchanged export. The agent connection's ledger_masters reads the base-currency ledgers and names the ones it leaves out.",
+    )
+}
+
+/// A workbook that silently omits ledgers is worse than none: the desktop
+/// withholds it and names the ledgers a several-currency read set aside, those
+/// kept in another currency first (bridge#551).
+fn party_ledger_master_withheld(
+    foreign: &[bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger],
+    mixed: &[String],
+) -> Result<(), TallyCommandError> {
+    if !foreign.is_empty() {
+        return Err(party_ledger_master_foreign_currency_error(foreign));
     }
-    if currency_count == 1 && !is_inr {
-        return Err("company_base_currency_not_inr");
+    if !mixed.is_empty() {
+        return Err(party_ledger_master_mixed_currency_error(mixed));
     }
-    if currency_count == 1 {
-        return Ok(OutstandingsCurrencyAssertion::Inr);
-    }
-    Err("company_currency_probe_failed")
+    Ok(())
+}
+
+fn party_ledger_master_mixed_currency_error(mixed: &[String]) -> TallyCommandError {
+    let named = mixed
+        .iter()
+        .take(FOREIGN_LEDGERS_NAMED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = mixed.len().saturating_sub(FOREIGN_LEDGERS_NAMED);
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    tally_command_error(
+        "party_ledger_master_mixed_currency_ledgers",
+        "Currency admission",
+        format!(
+            "Bridge withheld the party/ledger master: some base-currency ledgers hold balances Tally shows in another currency ({named}{more}). A workbook without them would not describe the whole book, and Bridge does not read those balances."
+        ),
+        "after_change",
+        false,
+        "Do not retry the unchanged export. The agent connection's ledger_masters reads the plain base-currency ledgers and names the ones it leaves out.",
+    )
 }
 
 /// One company of the sweep: its own classified currency read, the INR

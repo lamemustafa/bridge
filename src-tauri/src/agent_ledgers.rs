@@ -229,6 +229,62 @@ fn basic_row(ledger: TallyLedger, opening_as_of: &TallyDate) -> Value {
     })
 }
 
+/// At most this many excluded ledgers are named; `count` covers them all.
+/// The list is not paged with the rows, so it is bounded where it is built.
+const EXCLUDED_LEDGERS_NAMED: usize = 20;
+
+/// The foreign-currency ledgers a read left out: how many, and the first
+/// [`EXCLUDED_LEDGERS_NAMED`] with their currency. A ledger name is party
+/// data and is marked for redaction like every row's name.
+fn excluded_ledgers_json(
+    foreign: &[bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger],
+) -> Value {
+    json!({
+        "count": foreign.len(),
+        "ledgers": foreign
+            .iter()
+            .take(EXCLUDED_LEDGERS_NAMED)
+            .map(|ledger| json!({
+                "ledger": party_name(ledger.ledger.clone()),
+                "currency": ledger.currency,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// The base-currency ledgers a read left out because a balance of theirs is a
+/// currency composite: how many, the reason, and the first
+/// [`EXCLUDED_LEDGERS_NAMED`], each marked for redaction as party data.
+fn mixed_ledgers_json(mixed: &[String]) -> Value {
+    json!({
+        "count": mixed.len(),
+        "reason": "mixed_currency_movement",
+        "ledgers": mixed
+            .iter()
+            .take(EXCLUDED_LEDGERS_NAMED)
+            .map(|ledger| party_name(ledger.clone()))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// What a ledger listing reports besides its rows: for a book with several
+/// Currency masters, that some ledgers were set aside and which (bridge#551);
+/// otherwise nothing. Held in the listing's snapshot, so a page served from it
+/// reports the same (#630).
+fn currency_scope_frame(
+    foreign: &[bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger],
+    mixed: &[String],
+) -> Value {
+    if foreign.is_empty() && mixed.is_empty() {
+        return Value::Null;
+    }
+    json!({
+        "ledgers_scope": "base_currency_ledgers_only",
+        "foreign_currency_ledgers_excluded": excluded_ledgers_json(foreign),
+        "base_currency_ledgers_mixed_excluded": mixed_ledgers_json(mixed),
+    })
+}
+
 /// How long a ledger listing snapshot may serve its continuation pages
 /// (#630). A continuation page is served from the snapshot only while the
 /// book's extent, including `ALTMSTID` and `ALTVCHID`, is unchanged. Whether a
@@ -481,6 +537,14 @@ impl Server {
             if let Some(group_filter) = group_filter {
                 result["group_filter"] = group_filter;
             }
+            // A book with several Currency masters: its foreign-currency
+            // ledgers, and its rupee ledgers with a composite balance, are left
+            // out and named, never read as rupees (bridge#551).
+            if let Value::Object(frame) = &snapshot.frame {
+                for (key, value) in frame {
+                    result[key] = value.clone();
+                }
+            }
             result["snapshot"] = snapshot.describe(reused.is_some());
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
@@ -568,7 +632,7 @@ impl Server {
         identity: &VerifiedCompanyIdentity,
         kind: ListingKind,
     ) -> Result<ListingSnapshot, ToolFailure> {
-        let (rows, groups, extent, read_evidence) = match &kind {
+        let (rows, groups, extent, read_evidence, frame) = match &kind {
             ListingKind::Compliance => {
                 let listing = self
                     .runtime
@@ -609,7 +673,11 @@ impl Server {
                         row
                     })
                     .collect::<Vec<_>>();
-                (rows, Some(groups), listing.extent, listing.evidence)
+                let frame = currency_scope_frame(
+                    &listing.foreign_currency_ledgers_excluded,
+                    &listing.mixed_currency_ledgers_excluded,
+                );
+                (rows, Some(groups), listing.extent, listing.evidence, frame)
             }
             ListingKind::BasicWithGroups => {
                 let (listing, groups) = self
@@ -630,6 +698,7 @@ impl Server {
                     Some(HeldGroups::build(groups)),
                     listing.extent,
                     listing.evidence,
+                    Value::Null,
                 )
             }
             ListingKind::Basic => {
@@ -643,7 +712,7 @@ impl Server {
                     .into_iter()
                     .map(|ledger| basic_row(ledger, &listing.opening_as_of))
                     .collect::<Vec<_>>();
-                (rows, None, listing.extent, listing.evidence)
+                (rows, None, listing.extent, listing.evidence, Value::Null)
             }
             ListingKind::TrialBalance { .. } => {
                 return Err("listing_kind_not_a_ledger_listing".to_string().into());
@@ -655,7 +724,7 @@ impl Server {
             extent,
             rows,
             groups,
-            Value::Null,
+            frame,
             evidence_from_runtime_read(read_evidence),
         ))
     }

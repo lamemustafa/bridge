@@ -50,5 +50,7 @@ pub use wire::{
     parse_company_currency, parse_company_currency_name, parse_native_bill_rows,
     parse_native_group_snapshot, parse_native_group_snapshot_with_evidence,
     parse_native_ledger_snapshot, parse_native_ledger_snapshot_classified,
-    parse_native_ledger_snapshot_for_company, ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
+    parse_native_ledger_snapshot_classified_for_company, parse_native_ledger_snapshot_for_company,
+    ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
 };
+pub use wire::{parse_compliance_ledger_snapshot_for_company, ComplianceLedgerSnapshot};
