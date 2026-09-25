@@ -386,7 +386,7 @@ established. What has been observed on licensed 7.1 Gold is `verify_import`
 returning `posted_verified` for Bridge-built Payment, Receipt and Contra files
 sent over the gateway by a script rather than by this tool. That was verified
 on one book, and partial on a second where larger reads failed (bridge#485); see
-[reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md).
+[reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md).
 Native posts of a Payment, a Receipt, a Contra and a three-entry Receipt have
 been observed live on a synthetic Silver 7.1 company, each reading back
 `posted_verified` (ADR 0004, amended 2026-09-23).
