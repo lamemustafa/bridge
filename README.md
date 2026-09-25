@@ -63,7 +63,7 @@ With writing on:
   only after you approve that exact voucher in a dialog on your own machine.
   The assistant cannot approve it. Bridge then reads the voucher back so you
   can see what actually landed. You can also import a prepared file through
-  Tally yourself, and Bridge reads it back the same way.
+  Tally yourself; `verify_import` then reads that back.
 - **Posting has limits.** It creates no masters, posts no sales, purchase, tax
   or inventory entries, and never alters or deletes a voucher. A company with
   more than one currency defined is refused.
