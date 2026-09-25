@@ -415,9 +415,11 @@ const REVIEW_ENTRY: &str = "pub fn run_review_confirmation() -> bool {
 /// the review dialog would let "I reviewed it" approve a post, and passing a
 /// dialog other than the real one would approve with nobody asked. No stub
 /// test could see either: a stub is a script, not this code. Each entry
-/// point's whole body is pinned, so a swapped body is caught too, and nothing
-/// else in the file may call the shared answer. A call through a function
-/// pointer alias is outside what a text gate can see.
+/// point's whole body is pinned, so a swapped body is caught too, and no
+/// other `answer_with_token(` call may appear in the file. A text gate cannot
+/// see a call that does not spell that out, such as one through a function
+/// pointer, a parenthesised path `(answer_with_token)(…)`, or a `use … as`
+/// rename; the lib.rs mode arms, pinned above, are still the only way in.
 fn dialog_token_problems(source: &str) -> Vec<String> {
     let mut problems = Vec::new();
     for entry in [POST_ENTRY, REVIEW_ENTRY] {
@@ -463,6 +465,103 @@ fn each_dialog_answers_with_its_own_token() {
     ] {
         assert_ne!(broken, source);
         assert!(!dialog_token_problems(&broken).is_empty());
+    }
+}
+
+/// Where a click becomes the answer (#687). Each native dialog answers true
+/// only on its own positive button, and each parent's entry point runs the
+/// real dialog subprocess. Flip one comparison, relabel the post button
+/// "Cancel", or make `confirm` return `Ok(())`, and the dialog approves with
+/// nobody choosing to. No test can open a real window, so this text pins it.
+const DIALOG_ANSWER_PINS: [(&str, usize); 9] = [
+    ("const POST_LABEL: &str = \"Post voucher\";", 1),
+    (
+        "pub(crate) const REVIEW_BUTTON: &str = \"I reviewed it\";",
+        1,
+    ),
+    ("== rfd::MessageDialogResult::Custom(POST_LABEL.into())", 1),
+    (
+        "== rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())",
+        1,
+    ),
+    (
+        "MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
+        ) == IDYES",
+        2,
+    ),
+    (
+        "async fn confirm(preview: &str) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|_| \"import_approval_unavailable\")?;
+    confirm_with(&executable, preview).await
+}",
+        1,
+    ),
+    (
+        "async fn confirm_review(preview: &str) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|_| \"ack_review_unavailable\")?;
+    confirm_review_with(&executable, preview).await
+}",
+        1,
+    ),
+    (
+        "Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+        1,
+    ),
+    ("Ok(answer) if answer.token_matched => Ok(()),", 1),
+];
+
+fn dialog_answer_problems(source: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (pin, expected) in DIALOG_ANSWER_PINS {
+        if source.matches(pin).count() != expected {
+            problems.push(format!("expected {expected} of `{pin}`"));
+        }
+    }
+    problems
+}
+
+#[test]
+fn each_dialog_answers_only_on_its_positive_button() {
+    let source = read("src-tauri/src/tally/approved_import.rs");
+    assert_eq!(dialog_answer_problems(&source), Vec::<String>::new());
+    for broken in [
+        source.replacen(
+            "== rfd::MessageDialogResult::Custom(POST_LABEL.into())",
+            "!= rfd::MessageDialogResult::Custom(POST_LABEL.into())",
+            1,
+        ),
+        source.replacen(
+            "== rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())",
+            "!= rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())",
+            1,
+        ),
+        source.replacen(") == IDYES", ") != IDNO", 1),
+        source.replacen("MB_DEFBUTTON2", "MB_DEFBUTTON1", 1),
+        source.replacen("\"Post voucher\"", "\"Cancel\"", 1),
+        source.replacen("\"I reviewed it\"", "\"Cancel\"", 1),
+        source.replacen(
+            "confirm_with(&executable, preview).await\n}",
+            "let _ = (executable, preview);\n    Ok(())\n}",
+            1,
+        ),
+        source.replacen(
+            "confirm_review_with(&executable, preview).await\n}",
+            "let _ = (executable, preview);\n    Ok(())\n}",
+            1,
+        ),
+        source.replacen(
+            "Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+            "Ok(answer) if answer.exited_cleanly => Ok(()),",
+            1,
+        ),
+        source.replacen(
+            "Ok(answer) if answer.token_matched => Ok(()),",
+            "Ok(_) => Ok(()),",
+            1,
+        ),
+    ] {
+        assert_ne!(broken, source);
+        assert!(!dialog_answer_problems(&broken).is_empty());
     }
 }
 

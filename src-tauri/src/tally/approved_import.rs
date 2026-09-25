@@ -557,7 +557,8 @@ async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(),
         Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
         // A person's decline is no token and exit 1: `run_confirmation`
         // returns false. A clean exit without the token is never that; it is
-        // an executable that is not this dialog, such as one ignoring the flag.
+        // an executable that does not answer with this token, such as one
+        // ignoring the flag, or a build from before #635 whose dialog ran.
         Ok(answer) if answer.exited_cleanly => Err("import_approval_unavailable".into()),
         Ok(_) => Err("import_approval_declined".into()),
         Err(DialogFailure::Unavailable) => Err("import_approval_unavailable".into()),

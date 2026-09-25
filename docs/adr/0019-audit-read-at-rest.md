@@ -60,10 +60,10 @@ What Bridge does today:
   `src-tauri/src/tally/approved_import.rs`). Since #635 the parent does not take the
   child's exit status as the answer. It sends a fresh nonce on stdin and approves only when the child
   prints exactly the post token for that nonce and exits cleanly. `run_confirmation`'s doc comment
-  says it "Runs before Tokio starts, because macOS dialogs require the main thread". The child
-  shows a fixed approve/cancel `rfd::MessageDialog` over a bounded text preview (`show_review`).
-  On Windows it is a raw `MessageBoxW`, not `rfd`, because `rfd` there discards the custom button
-  labels (that file's own comment). This is
+  says it "Runs before Tokio starts, because macOS dialogs require the main thread". The post
+  child shows a fixed approve/cancel `rfd::MessageDialog` over a bounded text preview (`show_review`).
+  On Windows it is a raw `MessageBoxW`, not `rfd`, because `rfd` without common-controls-v6 discards the
+  custom button labels (that file's own comment). This is
   a real precedent for showing *some* native prompt from a process `bridge_mcp` controls, but it is
   not a general file dialog: every `rfd::FileDialog` call site on master — the save/open/folder
   picker `audit_read_export` would need — is reachable only from a `#[tauri::command]` taking Tauri

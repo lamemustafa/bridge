@@ -64,7 +64,7 @@ fn a_declined_dialog_writes_no_token() {
 }
 
 #[test]
-fn each_child_answers_with_the_prefix_it_is_given() {
+fn the_core_answers_with_the_prefix_it_is_given() {
     let (approved, output) = answer_as(
         REVIEW_TOKEN_PREFIX,
         |_| true,
