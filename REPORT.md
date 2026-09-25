@@ -126,3 +126,12 @@ Next: decide whether a code fix is in scope for items 3 and 4 in a separate bran
 - I have subscribed to PR #688 activity.
 
 Queue item 3: stopping here and waiting for Lane D.
+
+## Fri Sep 25 15:00:19 UTC 2026 — PR #688: first CI run red, fix pushed
+
+- On `1cc5b65`, `Workflow consistency` and `Frontend build` failed. Both ran Git 2.55.0, and `Required checks` failed as their roll-up. The failing test was the new wrong-trust control, `AssertionError: Missing expected exception`. On Git 2.55 a fetch that trusted a *different* path still succeeded. So that Git's `upload-pack` appears to serve a differently-owned source with no ownership check, while 2.43.0's refuses it.
+- **Correction to step 1.4 item 4:** master CI passing on 2.55 does *not* show that env trust reaches `upload-pack` there. It is consistent with 2.55 not checking at all. The 2.43.0 observations stand.
+- Fix `bdb8e53`, reviewed by Sonnet (no findings) before the push. The test now probes the host with a plain untrusted fetch that does not go through the helper. The wrong-trust refusal is asserted where the probe is refused, and recorded as `t.diagnostic` where it is served.
+- On 2.43.0: 20 tests, 17 pass, 3 fail (the item 3 group only).
+- Mutation results: trusting `*` fails the owner test; dropping `--upload-pack` fails both owner tests; forcing the served branch passes with the diagnostic.
+- PR body updated. CI re-runs on the push; I'm waiting on it.
