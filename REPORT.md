@@ -84,3 +84,9 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - PR #682: CI on 1b482dd completed with no failures.
 - Re-running on the same frozen head 6a1fad0 in 4 shards (`--full --jobs 4 --shard k/4`). Each shard's results and log are pushed to a scratch branch **`cloud/lane-e-e2a-shards`** (never to be merged) as the shard finishes, so another restart loses at most one shard. At the end I'll `--merge` them into `parity/mutation-results.json` on the E2a branch.
 - Before the restart the run had found no survivors except the five accepted ones (X11, X12, A04, A19, S08).
+
+## 2026-09-25 17:38 UTC — PR #682 merged; second restart; E2a shards 1–3 done
+
+- PR #682 was merged by Lane D. Afterwards an independent verification comment confirmed the -z fix. Its P3 (the ci.yml comment names only non-ASCII bytes) is not pushed, because it's a wording-only change.
+- The container restarted again at about 16:55 UTC. Shards 1–3 of the E2a full run had already finished and been pushed to `cloud/lane-e-e2a-shards`: 130/130, 130/130 and 130/130 pass, with X11 and S08 as their accepted survivors. Shard 4 was lost mid-run and has been restarted.
+- If shard 4 also can't finish here, then **E2a is frozen at 6a1fad0 and needs a branch run** for the last shard (or a nightly dispatch on `lane-e/e2a-bank-recon`). Shards 1–3 are on the scratch branch.
