@@ -1,0 +1,506 @@
+{
+ "comment": "bank_reconciliation: a books row with 41 statement rows in its window -- the split search is not run on a pool over 40, so the row stays a timing item and each statement row not_found; the window does not end on the FY end, so no Trial Balance closing is reported.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Indirect Expenses": null,
+  "Sales Accounts": null
+ },
+ "ledgers": [
+  {
+   "name": "Edge Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-bankrec_big_pool-000"
+  },
+  {
+   "name": "Customer A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bankrec_big_pool-001"
+  },
+  {
+   "name": "Supplier B",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bankrec_big_pool-002"
+  },
+  {
+   "name": "Bank Charges",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bankrec_big_pool-003"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-bankrec_big_pool-004"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Edge Bank",
+   "opening": 0,
+   "debit": 4100,
+   "credit": 0,
+   "closing": 4100
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "q01",
+   "date": "2025-06-15",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Edge Bank",
+     4100
+    ],
+    [
+     "Customer A",
+     -4100
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "bank_reconciliation"
+ ],
+ "bank_reconciliation_ledger": "Edge Bank",
+ "bank_statement": {
+  "doc_id": "bank:edge:big",
+  "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "account_ref": "XXXXXX0009",
+  "bank": "Invented Bank",
+  "period": {
+   "start": "2025-06-01",
+   "end": "2025-06-30"
+  },
+  "opening_balance_paise": 0,
+  "closing_balance_paise": 4100,
+  "rows": [
+   {
+    "doc": "bank:edge:big",
+    "row": 0,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-10",
+    "narration": "TINY CREDIT 0",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 100
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 1,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-11",
+    "narration": "TINY CREDIT 1",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 200
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 2,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-12",
+    "narration": "TINY CREDIT 2",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 300
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 3,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-13",
+    "narration": "TINY CREDIT 3",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 400
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 4,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-14",
+    "narration": "TINY CREDIT 4",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 500
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 5,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-15",
+    "narration": "TINY CREDIT 5",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 600
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 6,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-16",
+    "narration": "TINY CREDIT 6",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 700
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 7,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-17",
+    "narration": "TINY CREDIT 7",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 800
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 8,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-18",
+    "narration": "TINY CREDIT 8",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 900
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 9,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-19",
+    "narration": "TINY CREDIT 9",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1000
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 10,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-20",
+    "narration": "TINY CREDIT 10",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1100
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 11,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-10",
+    "narration": "TINY CREDIT 11",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1200
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 12,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-11",
+    "narration": "TINY CREDIT 12",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1300
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 13,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-12",
+    "narration": "TINY CREDIT 13",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1400
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 14,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-13",
+    "narration": "TINY CREDIT 14",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1500
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 15,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-14",
+    "narration": "TINY CREDIT 15",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1600
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 16,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-15",
+    "narration": "TINY CREDIT 16",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1700
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 17,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-16",
+    "narration": "TINY CREDIT 17",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1800
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 18,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-17",
+    "narration": "TINY CREDIT 18",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 1900
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 19,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-18",
+    "narration": "TINY CREDIT 19",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2000
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 20,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-19",
+    "narration": "TINY CREDIT 20",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2100
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 21,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-20",
+    "narration": "TINY CREDIT 21",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2200
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 22,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-10",
+    "narration": "TINY CREDIT 22",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2300
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 23,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-11",
+    "narration": "TINY CREDIT 23",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2400
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 24,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-12",
+    "narration": "TINY CREDIT 24",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2500
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 25,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-13",
+    "narration": "TINY CREDIT 25",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2600
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 26,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-14",
+    "narration": "TINY CREDIT 26",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2700
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 27,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-15",
+    "narration": "TINY CREDIT 27",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2800
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 28,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-16",
+    "narration": "TINY CREDIT 28",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 2900
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 29,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-17",
+    "narration": "TINY CREDIT 29",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3000
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 30,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-18",
+    "narration": "TINY CREDIT 30",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3100
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 31,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-19",
+    "narration": "TINY CREDIT 31",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3200
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 32,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-20",
+    "narration": "TINY CREDIT 32",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3300
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 33,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-10",
+    "narration": "TINY CREDIT 33",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3400
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 34,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-11",
+    "narration": "TINY CREDIT 34",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3500
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 35,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-12",
+    "narration": "TINY CREDIT 35",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3600
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 36,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-13",
+    "narration": "TINY CREDIT 36",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3700
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 37,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-14",
+    "narration": "TINY CREDIT 37",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3800
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 38,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-15",
+    "narration": "TINY CREDIT 38",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 3900
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 39,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-16",
+    "narration": "TINY CREDIT 39",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 4000
+   },
+   {
+    "doc": "bank:edge:big",
+    "row": 40,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-17",
+    "narration": "TINY CREDIT 40",
+    "debit_paise": 0,
+    "credit_paise": 100,
+    "balance_paise": 4100
+   }
+  ]
+ }
+}

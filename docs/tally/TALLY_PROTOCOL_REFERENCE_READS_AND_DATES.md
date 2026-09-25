@@ -89,8 +89,11 @@ after the voucher reads. Release and licence tier are returned facts, not an
 independent refusal. An unqualified product or mode must leave the prior proof
 and batch status unchanged. Positive historical readback remains available.
 Education Journal construction retains its day-1/day-2/day-31 date refusal;
-verification uses literal voucher bounds and returned-row validation. This is
-not a claim that Gold or another licensed release has completed live import
+verification uses literal voucher bounds and returned-row validation. On
+licensed 7.1 Gold, `verify_import` has returned `posted_verified` for
+Bridge-built Payment, Receipt and Contra batches sent over the gateway (§9.13's
+2026-09-25 correction: VERIFIED on one book, PARTIAL on a second). This is not a
+claim that native posting or another licensed release has completed live
 qualification, nor that Education was observed to reject a literal day-15
 predicate.
 

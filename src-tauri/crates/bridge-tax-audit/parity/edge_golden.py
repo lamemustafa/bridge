@@ -45,7 +45,10 @@ interest_ledger?}}, default {}), `shared_interest_ledgers` (default []) and `net
 default false: true sets the module's NET_REVERSALS switch, reaching the dormant reversal rule in `run` and
 in the module invariant alike); and for `partners_40b_194t`: `entity_type` as for `tds_payees`, `partners`
 ({key: {capital_ledgers, interest_ledger?, remuneration_ledger?}}, default {}) and `deed` (a table such as
-{interest_rate_bp}, absent meaning none).
+{interest_rate_bp}, absent meaning none); and for `bank_reconciliation`: `bank_statement` (an invented
+statement in the shape `parity/python_golden.py --emit-bank-statement` writes), `bank_reconciliation_ledger`
+and `bank_charge_terms` (default []); the statement's rows also feed the module invariant, as the
+reference's pack sets `eng.bank`.
 """
 from __future__ import annotations
 
@@ -61,14 +64,15 @@ STATUS = ("regular", "optional", "cancelled", "postdated")
 def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
+    from tae.adapters.bank_documents import BankStatementDoc
     from tae.adapters.traces_documents import AisRow, TisRow
-    from tae.audit_tests import (book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
+    from tae.audit_tests import (bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
                                  ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1,
                                  statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts)
     from tae.model import Form26ASRow
     from tae.config import load_rules
-    from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
-                           VoucherStatus)
+    from tae.model import (BankStatementRow, Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period,
+                           TBRow, Voucher, VoucherStatus)
     from tae.parity import canonical
 
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -152,7 +156,23 @@ def main() -> int:
     bkq = spec.get("book_keeping_quality", {})
     bkq_tax = {ledger: head for head, ledgers in bkq.get("tax_ledgers", {}).items() for ledger in ledgers}
 
+    def bank_reconciliation_run():
+        # As tae/pack.py: the statement is caller data, and eng.bank carries its rows for BANK-1.
+        bs = spec["bank_statement"]
+        rows = tuple(BankStatementRow(**{**r, "txn_date": date.fromisoformat(r["txn_date"])}) for r in bs["rows"])
+        statement = BankStatementDoc(
+            doc_id=bs["doc_id"], source_sha256=bs["source_sha256"], account_ref=bs["account_ref"],
+            bank=bs["bank"], period=Period(date.fromisoformat(bs["period"]["start"]),
+                                           date.fromisoformat(bs["period"]["end"])),
+            opening_balance_paise=bs["opening_balance_paise"], closing_balance_paise=bs["closing_balance_paise"],
+            rows=rows)
+        eng.bank = list(rows)
+        return bank_reconciliation, bank_reconciliation.run(
+            eng, rules, statement, spec["bank_reconciliation_ledger"],
+            bank_charge_narration_terms=set(spec.get("bank_charge_terms", [])))
+
     runners = {
+        "bank_reconciliation": bank_reconciliation_run,
         "book_keeping_quality": lambda: (book_keeping_quality, book_keeping_quality.run(
             eng, rules, cash, set(bkq.get("payment_channel_debtors", [])), bkq_tax,
             set(bkq.get("gst_payment_ledgers", [])), list(bkq.get("reissue_narration_terms", [])),
