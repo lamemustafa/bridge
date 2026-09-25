@@ -402,6 +402,63 @@ pub(super) fn select_voucher_rows(
     })
 }
 
+/// A voucher type from the book's voucher-type masters (bridge#664).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct BookVoucherType {
+    pub(super) name: String,
+    pub(super) guid: Option<String>,
+}
+
+impl BookVoucherType {
+    pub(super) fn json(&self) -> Value {
+        json!({"name": self.name, "guid": self.guid})
+    }
+}
+
+/// `None` when some type in the book carries `name`, compared as Tally
+/// resolves type names (ASCII case ignored, protocol reference §8.2e).
+/// Otherwise every type in the book, nearest name first, so a bounded list
+/// still leads with the likeliest intended one.
+pub(super) fn unknown_voucher_type<'a>(
+    name: &str,
+    book: &'a [BookVoucherType],
+) -> Option<Vec<&'a BookVoucherType>> {
+    if book.iter().any(|kind| kind.name.eq_ignore_ascii_case(name)) {
+        return None;
+    }
+    let wanted = name.to_ascii_lowercase().chars().collect::<Vec<_>>();
+    let mut ranked = book
+        .iter()
+        .map(|kind| {
+            (
+                edit_distance(&wanted, &kind.name.to_ascii_lowercase()),
+                kind,
+            )
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|(left, a), (right, b)| left.cmp(right).then_with(|| a.name.cmp(&b.name)));
+    Some(ranked.into_iter().map(|(_, kind)| kind).collect())
+}
+
+/// Levenshtein distance between `wanted` and `other`, over characters.
+fn edit_distance(wanted: &[char], other: &str) -> usize {
+    let mut previous = (0..=wanted.len()).collect::<Vec<_>>();
+    for (row, found) in other.chars().enumerate() {
+        let mut current = Vec::with_capacity(previous.len());
+        current.push(row + 1);
+        for (column, expected) in wanted.iter().enumerate() {
+            let substitution = previous[column] + usize::from(*expected != found);
+            current.push(
+                substitution
+                    .min(previous[column + 1] + 1)
+                    .min(current[column] + 1),
+            );
+        }
+        previous = current;
+    }
+    previous[wanted.len()]
+}
+
 #[cfg(test)]
 #[path = "agent_voucher_type_class_tests.rs"]
 mod tests;

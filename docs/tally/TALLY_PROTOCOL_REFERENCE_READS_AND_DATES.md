@@ -593,6 +593,14 @@ measured for ASCII letters only; non-ASCII case folding is unmeasured.
 - An unknown `$$` function omits its element from every row, rather than returning `No`. A reader
   must treat a missing element as a refusal.
 
+**Telling an unknown name from an empty one** (committed, 2026-09-25, same book, bridge#664). The
+native `List of VoucherTypes` collection (the sync connector's request) returned every one of the
+book's 35 types in 45,776 bytes: the reserved types, the renamed ones under their new names, the
+user types and the children, each with its company-prefixed GUID. It is committed as
+`native-voucher-types-reads-lab`. Because the class functions answer `No` for a name no type
+carries (the first trap above), `vouchers` reads this list once when a `voucher_type` name selected
+no row, and refuses a name no type carries (ASCII case ignored) as `unknown_voucher_type`.
+
 **Not measured:**
 - grandchild types (a child of a child);
 - whether a voucher type copied into the book from another company keeps a foreign GUID prefix.

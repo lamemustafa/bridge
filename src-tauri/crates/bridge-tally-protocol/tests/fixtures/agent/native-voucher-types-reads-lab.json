@@ -1,0 +1,12 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver response to the native List of VoucherTypes collection (render_native_voucher_type_export_request, as the sync connector and the vouchers unknown-name check send it) from the disposable BRIDGE READS LAB book, the same book as native-vouchers-renamed-purchase-class (bridge#664)",
+  "observed_date": "2026-09-25",
+  "fixture_bytes": 45776,
+  "fixture_sha256": "a6fd04b6a37d08fafb575b482e87009c9b7228a4800bce793fab2856db257357",
+  "request_utf8_sha256": "d4bc468862fa593f7ca764f879dbc6fb5f6154cdf94c404575ee04cf32e6697f",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 35,
+  "transformation": "none; byte-identical to the response file",
+  "provenance_limit": "One book's voucher-type masters: the predefined types, the renamed PURCHASE A/C and PAYMENT A/C, the user types Purchase (under Attendance) and Purchase Local, and synthetic LA Child types. Every row's GUID carries this company's prefix, so a foreign-prefix type is not exercised here. The types were renamed and created by gateway import, not in Tally's screens.",
+  "sensitivity_review": "Disposable synthetic lab book; company name is not in the file; synthetic type names; no customer data or credentials."
+}
