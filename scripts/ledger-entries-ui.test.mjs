@@ -40,8 +40,10 @@ test("desktop command invokes the one shared selected-voucher operation", async 
   assert.match(agent, /pub\(crate\) async fn desktop_selected_vouchers[\s\S]*?vouchers::selected_voucher_operation_for_verified\([\s\S]*?&server/);
   assert.match(commands, /fetch_selected_ledger_entries[\s\S]*?desktop_selected_vouchers/);
   // The voucher source read is bounded before it is sent (protocol reference
-  // §11c); `read_entry_wildcard_window` renders `render_agent_vouchers` for it.
-  assert.match(vouchers, /read_ledger_catalogue[\s\S]*?read_entry_wildcard_window[\s\S]*?read_ledger_catalogue/);
+  // §11c); `read_entry_window_shaped` renders `render_agent_vouchers` for it,
+  // and a type filter alone switches it to the class-resolving shape (#625).
+  assert.match(vouchers, /read_ledger_catalogue[\s\S]*?read_entry_window_shaped[\s\S]*?read_ledger_catalogue/);
+  assert.match(vouchers, /type_selector\.is_some\(\) \{\s*VoucherReadShape::ClassEntryWildcard\s*\} else \{\s*VoucherReadShape::EntryWildcard/);
   assert.match(vouchers, /fn read_entry_wildcard_window[\s\S]*?VoucherReadShape::EntryWildcard/);
   assert.match(vouchers, /filter_voucher_rows_for_ledger[\s\S]*?skip\(offset\)[\s\S]*?take\(limit\)/);
 });

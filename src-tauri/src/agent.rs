@@ -74,6 +74,9 @@ use read_profiles::*;
 #[path = "agent_voucher_window.rs"]
 mod voucher_window;
 use voucher_window::*;
+#[path = "agent_voucher_type_class.rs"]
+mod voucher_type_class;
+use voucher_type_class::*;
 #[path = "agent_movement_math.rs"]
 mod movement_math;
 use movement_math::*;
@@ -400,6 +403,18 @@ struct ToolFailure {
     /// then names the configured endpoint, so a wrong or reset port is visible
     /// instead of reading as a Tally data problem.
     unanswered: Option<Unanswered>,
+    /// The voucher types a type-filter refusal is about, so a caller can pick
+    /// one (bridge#625, bridge#664). Boxed to keep the refusal small on every
+    /// other path.
+    candidates: Option<Box<Candidates>>,
+}
+
+/// The types a refusal offers instead, and the name the caller asked for when
+/// that name matched none (bridge#664).
+#[derive(Debug)]
+struct Candidates {
+    requested: Option<String>,
+    items: Vec<Value>,
 }
 
 /// A compliance read refused on its size before the master request was sent:
@@ -503,6 +518,7 @@ impl From<String> for ToolFailure {
             window_timings: None,
             read_size: None,
             unanswered: None,
+            candidates: None,
         }
     }
 }
@@ -749,6 +765,7 @@ impl ToolFailure {
             window_timings: None,
             read_size: read_size_refusal(&error).map(Box::new),
             unanswered: unanswered_cause(&error),
+            candidates: None,
         }
     }
 
@@ -858,6 +875,7 @@ impl Server {
                 window_timings,
                 read_size,
                 unanswered,
+                candidates,
             }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
@@ -924,6 +942,21 @@ impl Server {
                 {
                     if let Ok(endpoint) = endpoint_origin(&self.settings.endpoint) {
                         error["endpoint"] = json!(endpoint);
+                    }
+                }
+                // The list grows with the window, so it is kept only within a
+                // quarter of the response budget, like `window` below: the
+                // refusal code must survive the byte cap.
+                if let Some(candidates) = candidates {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        if let Some(requested) = &candidates.requested {
+                            error["requested"] = json!(requested);
+                        }
+                        let fields =
+                            candidate_fields(&candidates.items, self.settings.max_bytes / 4);
+                        for (key, value) in fields {
+                            error[key] = value;
+                        }
                     }
                 }
                 if let Some(counts) = counts {
@@ -1516,6 +1549,25 @@ fn add_decimal(left: &str, right: &str) -> Result<String, String> {
     left.checked_add(&right)
         .map(|value| value.as_str().to_string())
         .map_err(|_| "voucher_amount_invalid".to_string())
+}
+
+/// A refusal's `candidates`: the longest prefix whose serialised size fits
+/// `budget`, the full count, and whether any were left out.
+fn candidate_fields(candidates: &[Value], budget: usize) -> [(&'static str, Value); 3] {
+    let mut used = 0;
+    let kept = candidates
+        .iter()
+        .take_while(|candidate| {
+            used += candidate.to_string().len();
+            used <= budget
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    [
+        ("candidates_total", json!(candidates.len())),
+        ("candidates_truncated", json!(kept.len() < candidates.len())),
+        ("candidates", json!(kept)),
+    ]
 }
 
 fn redact_tool_response(tool: &str, value: Value, redaction: Redaction) -> Value {

@@ -144,6 +144,9 @@ base revision.
 <a id="82d-a-ledgers-currencyname-is-the-name-of-the-currency-master-it-is-kept-in--verified-2026-09-23-tallyprime-71-synthetic-and-client-derived-books"></a>
 
 [8.2d A ledger's `CURRENCYNAME` is the NAME of the Currency master it is kept in — **VERIFIED 2026-09-23; TallyPrime 7.1, synthetic and client-derived books**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#82d-a-ledgers-currencyname-is-the-name-of-the-currency-master-it-is-kept-in--verified-2026-09-23-tallyprime-71-synthetic-and-client-derived-books)
+<a id="82e-a-voucher-types-class-comes-from-tallys-class-functions-not-its-display-name--verified-2026-09-24-tallyprime-71-one-synthetic-book"></a>
+
+[8.2e A voucher type's class comes from Tally's class functions, not its display name — **VERIFIED 2026-09-24; TallyPrime 7.1, one synthetic book**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#82e-a-voucher-types-class-comes-from-tallys-class-functions-not-its-display-name--verified-2026-09-24-tallyprime-71-one-synthetic-book)
 <a id="83-gst-duty-head--the-vocabulary-is-irregular-and-taxtype-qualifies-it--verified-2026-09-12-single-instance"></a>
 
 [8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#83-gst-duty-head--the-vocabulary-is-irregular-and-taxtype-qualifies-it--verified-2026-09-12-single-instance)
