@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "a8b79edcf3fe2b50cb5b068fdc4d12d26aca15afc4dc73d45f971b5a8cd536b0"
+      "sha256": "d68058e9bacac277537048b1c7ec316f3c8a06eff4b4acd17a1887f6e831213c"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "d75d470279ee3eec6e4a637221752a7fb0fdb58becd201e631436d45d683bbf2"
+  "manifest_sha256": "94b9a012b89d2060bfc6bad42de3df56e97ba2c8424499651a5a0679c08a5e7a"
 }

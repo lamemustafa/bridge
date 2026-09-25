@@ -464,8 +464,9 @@ async fn race_an_intent_during_approval(
 async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
     let raced = Uuid::new_v4();
     let (response, observed, post_at, intents) = race_an_intent_during_approval(raced, raced).await;
-    // A refusal inside the queue still reads as an unknown outcome (#656),
-    // though nothing was sent: the journal and the request count show that.
+    // A refusal under the admission lock still reads as an unknown outcome
+    // (#711), though nothing was sent: the journal and the request count show
+    // that.
     assert_eq!(
         response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
         "{response}"
