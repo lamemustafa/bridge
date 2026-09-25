@@ -42,7 +42,7 @@ use bridge_tally_protocol::{
     },
     outstandings_shared::{
         parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
-        DateBoundaryProfile,
+        DateBoundaryProfile, OutstandingsError,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
@@ -136,6 +136,15 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
         #[source]
         source: anyhow::Error,
     },
+    /// The company's master-alteration mark, an upper bound on its ledgers,
+    /// puts the estimated master response over the budget, so no ledger
+    /// request was sent (#637). Numbers only.
+    #[error("Tally compliance master read is estimated beyond Bridge's response budget")]
+    TooLarge {
+        master_alter_id: u64,
+        estimated_bytes: u64,
+        budget_bytes: u64,
+    },
 }
 
 impl PartyLedgerMasterSourceValidationError {
@@ -158,8 +167,86 @@ impl PartyLedgerMasterSourceValidationError {
             Self::BalanceCompanyIdentityUnverified => "balance_company_identity_unverified",
             Self::GroupCompanyIdentityUnverified => "group_company_identity_unverified",
             Self::MasterResponseInvalid { .. } => "master_response_invalid",
+            Self::TooLarge { .. } => "ledger_masters_too_large",
         }
     }
+}
+
+/// Bytes one ledger is estimated to add to the compliance master response
+/// (#637). UNVERIFIED: the only observation is a field session on a book of
+/// about 9,500 ledgers (2026-09-24) that read about 35.6 MB over about 44 s
+/// before it was abandoned. That exceeds both the 32 MiB response cap and the
+/// 20 s request deadline, so it spans more than one request, most likely both
+/// halves of the paired master read. Attributing the whole 35.6 MB to one
+/// master response (about 3.75 KB per ledger) overstates it, probably about
+/// twofold, and the budget's margin rests on that overstatement. To be
+/// replaced by a measurement on a synthetic large book (#668).
+const COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED: u64 = 3_750;
+
+/// The largest estimated compliance master response Bridge will request
+/// (#637). UNVERIFIED: 0.8 MB/s is that book's 35.6 MB over about 44 s,
+/// averaged over more than one request, so 16 MB is about one 20 s request at
+/// that average, right at the deadline. A basic ledger read of about 22 MB
+/// completed on the same book in 7-11 s. To be replaced by a measurement on a
+/// synthetic large book (#668).
+const COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED: u64 = 16_000_000;
+
+/// A compliance master response estimate for a ledger count, or an upper
+/// bound on one, and whether it
+/// fits the budget. An estimate exactly at the budget fits: the budget is the
+/// largest response Bridge will request, not the first it refuses. Takes its
+/// figures as arguments so the boundary is tested exactly, whatever the
+/// measured constants become.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComplianceEstimate {
+    estimated_bytes: u64,
+    fits: bool,
+}
+
+fn compliance_estimate(count: u64, bytes_per_ledger: u64, budget_bytes: u64) -> ComplianceEstimate {
+    let estimated_bytes = count.saturating_mul(bytes_per_ledger);
+    ComplianceEstimate {
+        estimated_bytes,
+        fits: estimated_bytes <= budget_bytes,
+    }
+}
+
+/// [`compliance_estimate`] at the two UNVERIFIED constants.
+fn compliance_estimate_unverified(count: u64) -> ComplianceEstimate {
+    compliance_estimate(
+        count,
+        COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED,
+        COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
+    )
+}
+
+/// Refuses a compliance read before any ledger request is sent when the
+/// company's master-alteration mark (`ALTMSTID`, from the opening extent)
+/// cannot bound the master response within the budget (#637). The extent read
+/// already fails closed without the mark (`require_master_witness`).
+///
+/// The mark is an UPPER BOUND on ledgers, not a count: every master of every
+/// type (stock items, units, groups and the rest) raises it, and so does every
+/// alteration. It bounds the ledger count on the assumption that every ledger
+/// holds its own distinct `ALTERID`, no greater than the mark; deletions only
+/// loosen it. PARTIAL: that held on every captured company with both an extent
+/// and a ledger capture (8 small lab companies, 6-88 ledgers against marks of
+/// 213-328, not captured at the same moment), which is not a proof. So a book
+/// with fewer ledgers than the bound may be refused; a precise count that
+/// computes no balances waits on a measurement (#668). If the assumption is
+/// ever false, a book this admits is read as it was before #637.
+fn admit_compliance_master_read(
+    master_alter_id: u64,
+) -> Result<(), PartyLedgerMasterSourceValidationError> {
+    let estimate = compliance_estimate_unverified(master_alter_id);
+    if !estimate.fits {
+        return Err(PartyLedgerMasterSourceValidationError::TooLarge {
+            master_alter_id,
+            estimated_bytes: estimate.estimated_bytes,
+            budget_bytes: COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
+        });
+    }
+    Ok(())
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -1202,6 +1289,13 @@ impl TallyClient {
         let mut evidence = RuntimeReadEvidence::empty();
         let result = async {
             let opening_extent = self.fetch_company_book_extent(identity).await?;
+            // Sized before any ledger request is sent (#637).
+            admit_compliance_master_read(
+                opening_extent
+                    .master_alter_id_high_water()
+                    .ok_or(OutstandingsError::MasterWitnessAbsent)?
+                    .get(),
+            )?;
             let currency = currency_assertion.require_opening_extent(&opening_extent)?;
             let master_period = NativeLedgerExportPeriod::new(
                 boundary_profile,
