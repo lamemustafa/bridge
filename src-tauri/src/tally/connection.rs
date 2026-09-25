@@ -42,7 +42,7 @@ use bridge_tally_protocol::{
     },
     outstandings_shared::{
         parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
-        DateBoundaryProfile,
+        DateBoundaryProfile, OutstandingsError,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
@@ -145,12 +145,6 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
         estimated_bytes: u64,
         budget_bytes: u64,
     },
-    /// The opening extent carried no master-alteration mark, so the compliance
-    /// read could not be sized and was not sent (#637).
-    #[error(
-        "Tally company extent omitted the master-alteration mark the compliance read is sized by"
-    )]
-    MasterMarkMissing,
 }
 
 impl PartyLedgerMasterSourceValidationError {
@@ -174,7 +168,6 @@ impl PartyLedgerMasterSourceValidationError {
             Self::GroupCompanyIdentityUnverified => "group_company_identity_unverified",
             Self::MasterResponseInvalid { .. } => "master_response_invalid",
             Self::TooLarge { .. } => "ledger_masters_too_large",
-            Self::MasterMarkMissing => "company_master_mark_missing",
         }
     }
 }
@@ -229,7 +222,8 @@ fn compliance_estimate_unverified(count: u64) -> ComplianceEstimate {
 
 /// Refuses a compliance read before any ledger request is sent when the
 /// company's master-alteration mark (`ALTMSTID`, from the opening extent)
-/// cannot bound the master response within the budget (#637), or is absent.
+/// cannot bound the master response within the budget (#637). The extent read
+/// already fails closed without the mark (`require_master_witness`).
 ///
 /// The mark is an UPPER BOUND on ledgers, not a count: every master of every
 /// type (stock items, units, groups and the rest) raises it, and so does every
@@ -242,11 +236,8 @@ fn compliance_estimate_unverified(count: u64) -> ComplianceEstimate {
 /// computes no balances waits on a measurement (#668). If the assumption is
 /// ever false, a book this admits is read as it was before #637.
 fn admit_compliance_master_read(
-    master_alter_id: Option<u64>,
+    master_alter_id: u64,
 ) -> Result<(), PartyLedgerMasterSourceValidationError> {
-    let Some(master_alter_id) = master_alter_id else {
-        return Err(PartyLedgerMasterSourceValidationError::MasterMarkMissing);
-    };
     let estimate = compliance_estimate_unverified(master_alter_id);
     if !estimate.fits {
         return Err(PartyLedgerMasterSourceValidationError::TooLarge {
@@ -1302,7 +1293,8 @@ impl TallyClient {
             admit_compliance_master_read(
                 opening_extent
                     .master_alter_id_high_water()
-                    .map(|mark| mark.get()),
+                    .ok_or(OutstandingsError::MasterWitnessAbsent)?
+                    .get(),
             )?;
             let currency = currency_assertion.require_opening_extent(&opening_extent)?;
             let master_period = NativeLedgerExportPeriod::new(

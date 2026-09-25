@@ -1841,14 +1841,13 @@ async fn capability_probe_marks_presentation_equivalent_guid_siblings_ambiguous(
 }
 
 /// The refusal admits a master mark whose estimate fits and refuses one more,
-/// carrying the numbers it refused on; a missing mark refuses too, since the
-/// read cannot be sized (#637).
+/// carrying the numbers it refused on (#637).
 #[test]
 fn the_compliance_read_admits_a_mark_within_budget_and_refuses_one_more() {
     let limit = super::COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED
         / super::COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED;
-    assert!(super::admit_compliance_master_read(Some(limit)).is_ok());
-    match super::admit_compliance_master_read(Some(limit + 1)) {
+    assert!(super::admit_compliance_master_read(limit).is_ok());
+    match super::admit_compliance_master_read(limit + 1) {
         Err(super::PartyLedgerMasterSourceValidationError::TooLarge {
             master_alter_id,
             estimated_bytes,
@@ -1866,15 +1865,6 @@ fn the_compliance_read_admits_a_mark_within_budget_and_refuses_one_more() {
         }
         other => panic!("expected a size refusal, got {other:?}"),
     }
-    let missing = super::admit_compliance_master_read(None);
-    assert!(matches!(
-        missing,
-        Err(super::PartyLedgerMasterSourceValidationError::MasterMarkMissing)
-    ));
-    assert_eq!(
-        missing.unwrap_err().safe_code(),
-        "company_master_mark_missing"
-    );
 }
 
 /// The budget boundary itself, at figures that land exactly on it (#637): an
