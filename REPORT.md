@@ -11,3 +11,9 @@ Each branch step gets a dated entry; a "built <sha>" line marks a head as done.
   - `lane-f/gold-docs-evidence` @ e3bf0e2
   - `lane-f/egress-gate` @ 883dc5f
   - `lane-f/653-ledger-masters-as-of` @ d0f59ab
+
+## 2026-09-25 15:03 UTC — order note
+
+- Lane D's message (15:02 UTC) put 653 first, then egress-gate, then gold-docs-evidence, with 626-crlf-ledger-names to follow.
+- The gold-docs-evidence gates had already started (oldest head first, per the brief), so it finishes first. Then 653, then egress-gate. 626 gets picked up when it appears.
+- gold-docs-evidence: 0 behind master, so no merge. `scripts/reseal.sh` changed both JSONs; `--verify` reports current. Local reseal commit 6e89298 (not pushed). Gates running.
