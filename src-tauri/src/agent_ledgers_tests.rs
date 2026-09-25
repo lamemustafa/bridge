@@ -1364,6 +1364,90 @@ mod through_the_tool {
         assert_eq!(error["cause"], "native_ledger_group_changed");
     }
 
+    /// bridge#551, through the tool on the several-currency book's captures:
+    /// the compliance read admits it through the classified base, returns its
+    /// rupee ledgers only, and names the three dollar ledgers it left out. The
+    /// extent, master, balance and group responses are one moment of the book
+    /// (FOREX_601D_CAPTURE_PROVENANCE); the currency and Company reads are the
+    /// committed 22 Sep captures, from before the C1 voucher, which added no
+    /// Currency master.
+    #[tokio::test]
+    async fn a_several_currency_book_returns_its_base_ledgers_and_names_the_rest() {
+        let forex = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+        let companies = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        )));
+        let extent = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_extents_forex_live.utf16le.xml"
+        )));
+        let fixture = |bytes: &[u8]| xml(captured(bytes));
+        let mut plans = Vec::new();
+        pair(&mut plans, companies.clone());
+        plans.push(companies.clone());
+        pair(&mut plans, extent.clone());
+        for source in [
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_originalname_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/company_currencyname_live.utf16le.xml"
+            )),
+        ] {
+            pair(&mut plans, source);
+        }
+        pair(&mut plans, extent.clone());
+        plans.push(companies.clone());
+        plans.extend([status(), companies.clone(), companies.clone()]);
+        pair(&mut plans, extent.clone());
+        for source in [
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/compliance_master_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/balance_snapshot_forex_live.utf16le.xml"
+            )),
+            fixture(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/group_snapshot_forex_live.utf16le.xml"
+            )),
+        ] {
+            pair(&mut plans, source);
+        }
+        pair(&mut plans, extent);
+        plans.extend([companies.clone(), status(), companies]);
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":forex,"fields":"compliance"})).await;
+        assert_eq!(requests, total);
+        let result = &response["structuredContent"]["result"];
+        let names = items(&response)
+            .iter()
+            .map(|row| row["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let dollar = ["BRIDGE FX DEBTOR A", "FX USD Debtor 01", "FX USD Debtor 02"];
+        assert_eq!(names.len(), 7, "{names:?}");
+        assert!(names.iter().all(|name| !dollar.contains(&name.as_str())), "{names:?}");
+        assert_eq!(result["total"], 7);
+        assert_eq!(result["ledgers_scope"], "base_currency_ledgers_only");
+        let excluded = &result["foreign_currency_ledgers_excluded"];
+        assert_eq!(excluded["count"], 3);
+        let mut listed = excluded["ledgers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|ledger| {
+                assert_eq!(ledger["currency"], "$");
+                ledger["ledger"].as_str().unwrap().to_string()
+            })
+            .collect::<Vec<_>>();
+        listed.sort();
+        assert_eq!(listed, dollar);
+        // The composite opening on a dollar ledger is never read or shown.
+        assert!(!response.to_string().contains(" @ "), "{response}");
+    }
+
     #[tokio::test]
     async fn compliance_rows_carry_the_chain_resolved_from_the_captured_groups() {
         let plans = compliance_plans(masters(), balances());
