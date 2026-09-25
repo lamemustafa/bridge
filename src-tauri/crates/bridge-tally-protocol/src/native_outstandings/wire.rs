@@ -31,7 +31,7 @@ use crate::tolerant_xml::{
 };
 use crate::{PartyLedgerMasterFieldObservation, TallyNamedMaster};
 
-use super::date::{parse_native_display_date, NativeDisplayDateRole};
+use super::date::{parse_native_bill_date, parse_native_due_date};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
 
 struct PendingBillRow {
@@ -45,8 +45,9 @@ struct PendingBillRow {
 }
 
 /// Parses the flat Bills Receivable/Payable response into fully resolved
-/// rows. The pinned book window resolves their two-digit display dates (see
-/// [`super::date::parse_native_display_date`]).
+/// rows. The pinned book window resolves each bill date's two-digit year, and
+/// the bill date its due date's (see [`super::date::parse_native_bill_date`]
+/// and [`super::date::parse_native_due_date`]).
 pub fn parse_native_bill_rows(
     xml: &str,
     books_from: &bridge_tally_primitives::TallyDate,
@@ -250,18 +251,8 @@ fn finalize_bill_row(
             "bills_fixed_row_missing_billoverdue",
         ));
     }
-    let bill_date = parse_native_display_date(
-        &row.bill_date_raw,
-        books_from,
-        as_of,
-        NativeDisplayDateRole::BillDate,
-    )?;
-    let due_date = parse_native_display_date(
-        &due_date_raw,
-        books_from,
-        as_of,
-        NativeDisplayDateRole::DueDate,
-    )?;
+    let bill_date = parse_native_bill_date(&row.bill_date_raw, books_from, as_of)?;
+    let due_date = parse_native_due_date(&due_date_raw, &bill_date)?;
     Ok(NativeBillRow {
         party: row.party,
         reference: row.reference,
@@ -419,10 +410,59 @@ fn is_currency_qualified_numeric(value: &str) -> bool {
 pub fn parse_native_ledger_snapshot(
     xml: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
-    Ok(parse_native_ledger_snapshot_rows(xml)?
+    parse_native_ledger_snapshot_rows(xml)?
         .into_iter()
-        .map(|row| row.entry)
-        .collect())
+        .map(ParsedLedgerSnapshotRow::into_entry)
+        .collect()
+}
+
+/// A ledger snapshot split by each ledger's own currency (bridge#551;
+/// TALLY_PROTOCOL_REFERENCE §8.2d).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedLedgerSnapshot {
+    /// Ledgers kept in the base currency, balances parsed.
+    pub base: Vec<LedgerSnapshotEntry>,
+    /// Ledgers kept in another currency, in read order. Their balances are not
+    /// parsed: a foreign balance is a composite display string, and a zero one
+    /// is a plain `0.00` that would pass for the base.
+    pub foreign: Vec<super::ForeignCurrencyLedger>,
+    /// Base ledgers whose `CURRENCYNAME` was absent or empty, on a book with one
+    /// Currency master (see [`super::LedgerCurrencies::unobserved`]).
+    pub unobserved: usize,
+}
+
+/// Parses a native ledger snapshot and classifies every ledger by its own
+/// `CURRENCYNAME` against `base` before parsing any balance, so that a
+/// foreign ledger is excluded rather than refusing the read. Refuses as
+/// [`NativeOutstandingsError::LedgerCurrency`] when the classification does.
+/// Ledger names are unique within a Tally company, so a foreign ledger is
+/// identified by its name.
+pub fn parse_native_ledger_snapshot_classified(
+    xml: &str,
+    base: &super::BaseCurrencyName,
+) -> Result<ClassifiedLedgerSnapshot, NativeOutstandingsError> {
+    let rows = parse_native_ledger_snapshot_rows(xml)?;
+    let classified = super::classify_ledger_currencies(
+        base,
+        rows.iter()
+            .map(|row| (row.name.as_str(), row.currency_name.as_deref())),
+    )
+    .map_err(NativeOutstandingsError::LedgerCurrency)?;
+    let foreign_names = classified
+        .foreign
+        .iter()
+        .map(|ledger| ledger.ledger.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let base_rows = rows
+        .into_iter()
+        .filter(|row| !foreign_names.contains(row.name.as_str()))
+        .map(ParsedLedgerSnapshotRow::into_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ClassifiedLedgerSnapshot {
+        base: base_rows,
+        foreign: classified.foreign,
+        unobserved: classified.unobserved,
+    })
 }
 
 /// Parses a native ledger snapshot only when Tally's collection-level compute
@@ -449,7 +489,10 @@ pub fn parse_native_ledger_snapshot_for_company(
             "ledger_response_company_guid_missing",
         ));
     }
-    Ok(entries.into_iter().map(|row| row.entry).collect())
+    entries
+        .into_iter()
+        .map(ParsedLedgerSnapshotRow::into_entry)
+        .collect()
 }
 
 fn parse_native_ledger_snapshot_rows(
@@ -819,6 +862,8 @@ fn parse_ledger_row(
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
+    // Outer option: the element was seen; inner: it held text.
+    let mut currency_name: Option<Option<String>> = None;
     let mut response_company_guid = None;
     let mut response_company_guid_seen = false;
     loop {
@@ -848,7 +893,10 @@ fn parse_ledger_row(
                                 "ledger_duplicate_closing_balance",
                             ));
                         }
-                        closing_balance = Some(parse_ledger_closing_balance(text.trim(), &name)?);
+                        // Parsed once the row's currency is known: a foreign
+                        // ledger's composite balance is excluded, not refused,
+                        // by the classified parse.
+                        closing_balance = Some(text.trim().to_string());
                     }
                     b"OPENINGBALANCE" => {
                         let text = read_element_text(reader, child.name())?;
@@ -857,7 +905,7 @@ fn parse_ledger_row(
                                 "ledger_duplicate_opening_balance",
                             ));
                         }
-                        opening_balance = Some(parse_ledger_amount(text.trim())?);
+                        opening_balance = Some(text.trim().to_string());
                     }
                     b"ISBILLWISEON" => {
                         let text = read_element_text(reader, child.name())?;
@@ -867,6 +915,19 @@ fn parse_ledger_row(
                             ));
                         }
                         bill_wise_on = Some(parse_tally_boolean(&text)?);
+                    }
+                    b"CURRENCYNAME" => {
+                        // Verbatim, like PARENT: compared by exact codepoint
+                        // with the base master's NAME (`I₹`, `Rs.`).
+                        let text = read_element_identifier_text(reader, child.name())?;
+                        if currency_name.is_some() {
+                            return Err(NativeOutstandingsError::InvalidResponse(
+                                "ledger_duplicate_currency_name",
+                            ));
+                        }
+                        // Emptiness is judged on the trimmed view, as for
+                        // PARENT; the retained value is verbatim.
+                        currency_name = Some((!text.trim().is_empty()).then_some(text));
                     }
                     b"BRIDGECOMPANYGUID" => {
                         let text = read_element_text(reader, child.name())?;
@@ -878,6 +939,13 @@ fn parse_ledger_row(
                         response_company_guid = (!text.is_empty()).then_some(text);
                     }
                     _ => skip_subtree(reader)?,
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"CURRENCYNAME") => {
+                if currency_name.replace(None).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "ledger_duplicate_currency_name",
+                    ));
                 }
             }
             Event::Empty(child)
@@ -903,26 +971,49 @@ fn parse_ledger_row(
         }
     }
     Ok(ParsedLedgerSnapshotRow {
-        entry: LedgerSnapshotEntry {
-            name,
-            parent: parent.flatten(),
-            closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-                "ledger_closing_balance_missing",
-            ))?,
-            opening_balance: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-                "ledger_opening_balance_missing",
-            ))?,
-            bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
-                "ledger_bill_wise_flag_missing",
-            ))?,
-        },
+        name,
+        parent: parent.flatten(),
+        closing_text: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+            "ledger_closing_balance_missing",
+        ))?,
+        opening_text: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+            "ledger_opening_balance_missing",
+        ))?,
+        bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
+            "ledger_bill_wise_flag_missing",
+        ))?,
+        currency_name: currency_name.flatten(),
         response_company_guid,
     })
 }
 
+/// One ledger row with its balances still as Tally's text, so that a foreign
+/// ledger can be classified before its composite balance is parsed.
 struct ParsedLedgerSnapshotRow {
-    entry: LedgerSnapshotEntry,
+    name: String,
+    parent: Option<String>,
+    closing_text: String,
+    opening_text: String,
+    bill_wise_on: bool,
+    currency_name: Option<String>,
     response_company_guid: Option<String>,
+}
+
+impl ParsedLedgerSnapshotRow {
+    /// The row with its balances parsed. A composite closing balance refuses as
+    /// [`NativeOutstandingsError::ForeignCurrencyLedgerBalance`], as before.
+    fn into_entry(self) -> Result<LedgerSnapshotEntry, NativeOutstandingsError> {
+        let closing_balance = parse_ledger_closing_balance(&self.closing_text, &self.name)?;
+        let opening_balance = parse_ledger_amount(&self.opening_text)?;
+        Ok(LedgerSnapshotEntry {
+            name: self.name,
+            parent: self.parent,
+            closing_balance,
+            opening_balance,
+            bill_wise_on: self.bill_wise_on,
+            currency_name: self.currency_name,
+        })
+    }
 }
 
 fn skip_subtree(reader: &mut Reader<&[u8]>) -> Result<(), NativeOutstandingsError> {
@@ -1072,15 +1163,23 @@ fn read_element_text(
         .to_string())
 }
 
-use super::model::CompanyCurrency;
+use super::model::{CompanyCurrency, CurrencyMaster};
 
-/// Parses the company currency collection.
+/// Parses the company currency collection into the company's currency
+/// ([`CompanyCurrency::from_masters`]).
+pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutstandingsError> {
+    Ok(CompanyCurrency::from_masters(&parse_currency_masters(xml)?))
+}
+
+/// Parses the company currency collection into its masters, in read order.
 ///
 /// Ordinary (non-inverted) `STATUS` applies here -- this is a `Collection`
 /// request, not one of the flat `Data` reports. Rows are read only from
 /// `<DATA>`, because the same `CMPINFO` counter block that inflates a naive
 /// ledger scan also carries a bare `<CURRENCY>0</CURRENCY>`.
-pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutstandingsError> {
+pub(crate) fn parse_currency_masters(
+    xml: &str,
+) -> Result<Vec<CurrencyMaster>, NativeOutstandingsError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
@@ -1159,50 +1258,42 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         ));
     }
 
-    let currency_count = rows.len();
-    let CurrencyRow {
-        symbol,
-        mailing_name,
-        decimal_places,
-    } = rows.into_iter().next().unwrap_or_default();
-    // Only a single defined currency lets this read name the BASE currency.
-    // "Rs." is shared by several currencies, so only the observed Indian
-    // mailing identity is authoritative enough to put ₹ before real money.
-    let is_inr = currency_count == 1
-        && (mailing_name.eq_ignore_ascii_case("Indian Rupees")
-            || mailing_name.eq_ignore_ascii_case("INR"));
-
-    Ok(CompanyCurrency {
-        symbol,
-        mailing_name,
-        currency_count,
-        decimal_places,
-        is_inr,
-    })
-}
-
-#[derive(Default)]
-struct CurrencyRow {
-    symbol: String,
-    mailing_name: String,
-    decimal_places: u8,
+    Ok(rows)
 }
 
 fn parse_currency_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<CurrencyRow, NativeOutstandingsError> {
+) -> Result<CurrencyMaster, NativeOutstandingsError> {
     validate_row_attributes(element, "currency_row_malformed_attributes")?;
     let symbol = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("currency_name_missing"),
     )?;
     let mut mailing_name = None;
     let mut decimal_places = None;
+    let mut original_name = None;
     loop {
         match reader
             .read_event()
             .map_err(|_| NativeOutstandingsError::InvalidResponse("currency_xml_malformed"))?
         {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"ORIGINALNAME") => {
+                // Untrimmed: the base is matched to the company's
+                // CURRENCYNAME character for character (§9.10a.2).
+                let text = read_element_identifier_text(reader, child.name())?;
+                if original_name.replace(text).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_original_name",
+                    ));
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"ORIGINALNAME") => {
+                if original_name.replace(String::new()).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_original_name",
+                    ));
+                }
+            }
             Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
                 let text = read_element_text(reader, child.name())?;
                 if mailing_name.replace(text).is_some() {
@@ -1244,8 +1335,9 @@ fn parse_currency_row(
             _ => {}
         }
     }
-    Ok(CurrencyRow {
-        symbol,
+    Ok(CurrencyMaster {
+        name: symbol,
+        original_name,
         mailing_name: mailing_name.unwrap_or_default(),
         decimal_places: decimal_places.ok_or(NativeOutstandingsError::InvalidResponse(
             "currency_decimal_places_missing",

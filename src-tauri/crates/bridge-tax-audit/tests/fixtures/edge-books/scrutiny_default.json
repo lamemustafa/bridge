@@ -1,0 +1,63 @@
+{
+ "comment": "ledger_scrutiny with no [ledger_scrutiny] rules table: the reference's own Rs 50,000 default and its 'local prototype default' definition text.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Petty Cash Box": "Cash-in-Hand"
+ },
+ "ledgers": [
+  {
+   "name": "Repairs",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-repairs"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-suspense"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Repairs",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "v1",
+   "date": "2025-06-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Repairs",
+     100
+    ],
+    [
+     "Suspense",
+     -100
+    ]
+   ]
+  }
+ ],
+ "rules_without": [
+  "ledger_scrutiny"
+ ],
+ "tests": [
+  "ledger_scrutiny"
+ ]
+}

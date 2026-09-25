@@ -4,9 +4,11 @@ use super::*;
 
 #[test]
 fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
+    // Only the marked form is the root (`TALLY_PROTOCOL_REFERENCE.md`
+    // §1.1(d)); a bare `Primary` names a group.
     for root in [
         format!("{TALLY_SANITIZED_ROOT_MARKER} Primary"),
-        "Primary".to_string(),
+        format!(" {TALLY_SANITIZED_ROOT_MARKER}  primary "),
     ] {
         let groups = [TallyNamedMaster {
             name: "Sundry Debtors".to_string(),
@@ -19,6 +21,7 @@ fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
             closing_balance: Some(ExactDecimal::zero()),
             opening_balance: ExactDecimal::zero(),
             bill_wise_on: false,
+            currency_name: None,
         }];
         compute_residuals(&[], &[], &ledgers, NativeGroupSnapshot::Complete(&groups))
             .expect("shared reserved-root forms must terminate group ancestry");
@@ -26,7 +29,9 @@ fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
 
     let groups = [TallyNamedMaster {
         name: "Sundry Debtors".to_string(),
-        parent: crate::PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+        parent: crate::PartyLedgerMasterFieldObservation::Returned(format!(
+            "{TALLY_SANITIZED_ROOT_MARKER} Primary"
+        )),
         reserved_name: Some("Sundry Debtors".to_string()),
     }];
     for parent in [
@@ -39,6 +44,7 @@ fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
             closing_balance: Some(ExactDecimal::zero()),
             opening_balance: ExactDecimal::zero(),
             bill_wise_on: false,
+            currency_name: None,
         }];
 
         assert!(matches!(

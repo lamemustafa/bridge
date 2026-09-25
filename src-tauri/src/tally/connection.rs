@@ -42,7 +42,7 @@ use bridge_tally_protocol::{
     },
     outstandings_shared::{
         parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
-        DateBoundaryProfile,
+        DateBoundaryProfile, OutstandingsError,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
@@ -136,6 +136,117 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
         #[source]
         source: anyhow::Error,
     },
+    /// The company's master-alteration mark, an upper bound on its ledgers,
+    /// puts the estimated master response over the budget, so no ledger
+    /// request was sent (#637). Numbers only.
+    #[error("Tally compliance master read is estimated beyond Bridge's response budget")]
+    TooLarge {
+        master_alter_id: u64,
+        estimated_bytes: u64,
+        budget_bytes: u64,
+    },
+}
+
+impl PartyLedgerMasterSourceValidationError {
+    /// A stable, data-free name for this refusal, safe to return to an agent.
+    pub(crate) fn safe_code(&self) -> &'static str {
+        match self {
+            Self::MasterPeriod => "master_period_unsupported",
+            Self::BalancePeriod => "balance_period_unsupported",
+            Self::MasterGuid => "master_guid_missing",
+            Self::MasterId => "master_id_missing",
+            Self::MasterAlterId => "master_alter_id_missing",
+            Self::MasterOpeningBalance => "master_opening_balance_missing",
+            Self::DuplicateMasterIdentity => "duplicate_master_identity",
+            Self::BalanceMissingMasterLedger => "balance_missing_master_ledger",
+            Self::OpeningBalancesDisagreed => "opening_balances_disagreed",
+            Self::BalanceLedgerAbsentFromMasterEvidence => {
+                "balance_ledger_absent_from_master_evidence"
+            }
+            Self::DuplicateBalanceDisplayKey => "duplicate_balance_display_key",
+            Self::BalanceCompanyIdentityUnverified => "balance_company_identity_unverified",
+            Self::GroupCompanyIdentityUnverified => "group_company_identity_unverified",
+            Self::MasterResponseInvalid { .. } => "master_response_invalid",
+            Self::TooLarge { .. } => "ledger_masters_too_large",
+        }
+    }
+}
+
+/// Bytes one ledger is estimated to add to the compliance master response
+/// (#637). UNVERIFIED: the only observation is a field session on a book of
+/// about 9,500 ledgers (2026-09-24) that read about 35.6 MB over about 44 s
+/// before it was abandoned. That exceeds both the 32 MiB response cap and the
+/// 20 s request deadline, so it spans more than one request, most likely both
+/// halves of the paired master read. Attributing the whole 35.6 MB to one
+/// master response (about 3.75 KB per ledger) overstates it, probably about
+/// twofold, and the budget's margin rests on that overstatement. To be
+/// replaced by a measurement on a synthetic large book (#668).
+const COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED: u64 = 3_750;
+
+/// The largest estimated compliance master response Bridge will request
+/// (#637). UNVERIFIED: 0.8 MB/s is that book's 35.6 MB over about 44 s,
+/// averaged over more than one request, so 16 MB is about one 20 s request at
+/// that average, right at the deadline. A basic ledger read of about 22 MB
+/// completed on the same book in 7-11 s. To be replaced by a measurement on a
+/// synthetic large book (#668).
+const COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED: u64 = 16_000_000;
+
+/// A compliance master response estimate for a ledger count, or an upper
+/// bound on one, and whether it
+/// fits the budget. An estimate exactly at the budget fits: the budget is the
+/// largest response Bridge will request, not the first it refuses. Takes its
+/// figures as arguments so the boundary is tested exactly, whatever the
+/// measured constants become.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComplianceEstimate {
+    estimated_bytes: u64,
+    fits: bool,
+}
+
+fn compliance_estimate(count: u64, bytes_per_ledger: u64, budget_bytes: u64) -> ComplianceEstimate {
+    let estimated_bytes = count.saturating_mul(bytes_per_ledger);
+    ComplianceEstimate {
+        estimated_bytes,
+        fits: estimated_bytes <= budget_bytes,
+    }
+}
+
+/// [`compliance_estimate`] at the two UNVERIFIED constants.
+fn compliance_estimate_unverified(count: u64) -> ComplianceEstimate {
+    compliance_estimate(
+        count,
+        COMPLIANCE_MASTER_BYTES_PER_LEDGER_UNVERIFIED,
+        COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
+    )
+}
+
+/// Refuses a compliance read before any ledger request is sent when the
+/// company's master-alteration mark (`ALTMSTID`, from the opening extent)
+/// cannot bound the master response within the budget (#637). The extent read
+/// already fails closed without the mark (`require_master_witness`).
+///
+/// The mark is an UPPER BOUND on ledgers, not a count: every master of every
+/// type (stock items, units, groups and the rest) raises it, and so does every
+/// alteration. It bounds the ledger count on the assumption that every ledger
+/// holds its own distinct `ALTERID`, no greater than the mark; deletions only
+/// loosen it. PARTIAL: that held on every captured company with both an extent
+/// and a ledger capture (8 small lab companies, 6-88 ledgers against marks of
+/// 213-328, not captured at the same moment), which is not a proof. So a book
+/// with fewer ledgers than the bound may be refused; a precise count that
+/// computes no balances waits on a measurement (#668). If the assumption is
+/// ever false, a book this admits is read as it was before #637.
+fn admit_compliance_master_read(
+    master_alter_id: u64,
+) -> Result<(), PartyLedgerMasterSourceValidationError> {
+    let estimate = compliance_estimate_unverified(master_alter_id);
+    if !estimate.fits {
+        return Err(PartyLedgerMasterSourceValidationError::TooLarge {
+            master_alter_id,
+            estimated_bytes: estimate.estimated_bytes,
+            budget_bytes: COMPLIANCE_MASTER_RESPONSE_BUDGET_BYTES_UNVERIFIED,
+        });
+    }
+    Ok(())
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -147,6 +258,8 @@ pub(crate) enum PairedReadValidationError {
     NativeLedgerCollection,
     #[error("Tally company book changed during native ledger read")]
     NativeLedgerExtent,
+    #[error("Tally group hierarchy changed between paired reads beside a ledger read")]
+    NativeLedgerGroup,
     #[error("Tally ledger master changed between paired reads")]
     PartyLedgerMaster,
     #[error("Tally ledger balances changed between paired reads")]
@@ -163,6 +276,25 @@ pub(crate) enum PairedReadValidationError {
     CurrencyExtent,
     #[error("Tally company changed between the currency read and the master read")]
     CurrencyToMasterExtent,
+}
+
+impl PairedReadValidationError {
+    /// A stable, data-free name for this refusal, safe to return to an agent.
+    pub(crate) fn safe_code(&self) -> &'static str {
+        match self {
+            Self::NativeLedgerCollection => "native_ledger_collection_changed",
+            Self::NativeLedgerExtent => "native_ledger_extent_changed",
+            Self::NativeLedgerGroup => "native_ledger_group_changed",
+            Self::PartyLedgerMaster => "party_ledger_master_changed",
+            Self::PartyLedgerBalance => "party_ledger_balance_changed",
+            Self::PartyLedgerGroup => "party_ledger_group_changed",
+            Self::PartyLedgerExtent => "party_ledger_extent_changed",
+            Self::CompanyBookExtent => "company_book_extent_changed",
+            Self::CurrencyMaster => "currency_master_changed",
+            Self::CurrencyExtent => "currency_extent_changed",
+            Self::CurrencyToMasterExtent => "currency_to_master_extent_changed",
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -187,9 +319,22 @@ pub(crate) enum LedgerOpeningCoverageRead {
     Drifted,
 }
 
+/// An HTTP response entity kept byte for byte, with its decoded text.
+#[derive(Debug, Clone)]
+pub(crate) struct RawTallyResponse {
+    pub(crate) text: String,
+    pub(crate) encoded_body: Vec<u8>,
+    pub(crate) encoded_sha256: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("Tally native report changed between paired reads")]
 pub(crate) struct NativeReportPairDrift;
+
+impl NativeReportPairDrift {
+    /// A stable, data-free name for this refusal, safe to return to an agent.
+    pub(crate) const SAFE_CODE: &'static str = "native_report_pair_changed";
+}
 
 /// Tags a failure as coming from one of the two POST responses inside
 /// `fetch_native_report_paired_with_evidence` -- the paired native report
@@ -353,9 +498,10 @@ impl GatewayProductModeEvidence {
     fn from_observation(
         observation: bridge_tally_protocol::CompanyGatewayCapabilityObservation,
     ) -> Self {
-        // `IsEducationalMode=Yes` has not been captured from a live Education
-        // instance: that inference is the complement of the observed licensed
-        // response (`No`, `IsSilver=Yes`), not a second live observation.
+        // Observed live on 22 Sep 2026 (a TallyPrime 7.1 lab instance in
+        // Education): `EDUMODE=Yes` with `SILVER=Yes` and `GOLD=No`. Education
+        // still reports Silver, so the mode is read from `EDUMODE` first, and
+        // no licence tier is inferred when it is set (bridge#581).
         let mode = if observation.educational_mode {
             Some("Education".to_string())
         } else if observation.silver || observation.gold {
@@ -1007,10 +1153,27 @@ impl TallyClient {
     pub(crate) async fn fetch_companies_with_wire_evidence(
         &self,
     ) -> anyhow::Result<(Vec<TallyCompany>, RuntimeReadEvidence)> {
+        self.fetch_companies_observing_education_mode()
+            .await
+            .map(|(companies, evidence, _)| (companies, evidence))
+    }
+
+    /// As [`Self::fetch_companies_with_wire_evidence`], also returning whether
+    /// the same `CompanyListV2` response may come from an Education-mode
+    /// endpoint: by the full capability observation, or by any `EDUMODE` field
+    /// saying anything but `No` when that observation does not parse. No
+    /// further request is made.
+    pub(crate) async fn fetch_companies_observing_education_mode(
+        &self,
+    ) -> anyhow::Result<(Vec<TallyCompany>, RuntimeReadEvidence, bool)> {
         let mut evidence = RuntimeReadEvidence::empty();
         let xml = self
             .post_probe_xml(ReadOnlyProfile::CompanyListV2.render(), &mut evidence)
             .await?;
+        let education = parse_company_gateway_capability_observation(&xml)
+            .map(|observation| observation.educational_mode)
+            .unwrap_or(false)
+            || bridge_tally_protocol::company_list_may_be_in_educational_mode(&xml);
         let discovered = xml_parser::parse_companies_from_collection(&xml)
             .map_err(|error| with_read_evidence(error, evidence.clone()))?;
         let companies = normalize_discovered_companies(discovered).map_err(|_| {
@@ -1021,7 +1184,7 @@ impl TallyClient {
                 evidence.clone(),
             )
         })?;
-        Ok((companies, evidence))
+        Ok((companies, evidence, education))
     }
 
     /// Re-enumerates the trusted `Company` collection, then proves one
@@ -1126,6 +1289,13 @@ impl TallyClient {
         let mut evidence = RuntimeReadEvidence::empty();
         let result = async {
             let opening_extent = self.fetch_company_book_extent(identity).await?;
+            // Sized before any ledger request is sent (#637).
+            admit_compliance_master_read(
+                opening_extent
+                    .master_alter_id_high_water()
+                    .ok_or(OutstandingsError::MasterWitnessAbsent)?
+                    .get(),
+            )?;
             let currency = currency_assertion.require_opening_extent(&opening_extent)?;
             let master_period = NativeLedgerExportPeriod::new(
                 boundary_profile,
@@ -1464,6 +1634,77 @@ impl TallyClient {
         }
         .await;
         result.map_err(|error| super::runtime::with_read_evidence(error, evidence))
+    }
+
+    /// One XML POST whose HTTP response entity is kept byte for byte, for
+    /// audit_read, which seals those bytes rather than a re-encoding of the
+    /// decoded text. The entity is what the transport received after chunked
+    /// framing is removed; content encodings other than identity are refused.
+    /// The decoded text is returned beside it for admission.
+    pub(crate) async fn post_xml_raw(&self, xml: String) -> anyhow::Result<RawTallyResponse> {
+        let response = self.http.post_xml(xml).await?;
+        self.record_observed_body_bytes(response.encoded_bytes());
+        self.record_observed_encoding(response.encoding());
+        let encoded_body = response.encoded_body().to_vec();
+        let encoded_sha256 = sha256_hex(&encoded_body);
+        Ok(RawTallyResponse {
+            text: response.into_text(),
+            encoded_body,
+            encoded_sha256,
+        })
+    }
+
+    /// [`Self::post_xml_raw`] twice, with the same health checks as
+    /// [`Self::fetch_native_report_paired_with_evidence`], admitted only when
+    /// the two response entities are byte-identical. On drift both completed
+    /// bodies are accounted for and neither is released, and the refusal is
+    /// returned before the trailing health check, so a drift is never reported
+    /// as that check's failure.
+    pub(crate) async fn post_xml_raw_paired(
+        &self,
+        xml: String,
+    ) -> anyhow::Result<RawTallyResponse> {
+        let first = self.post_xml_raw(xml.clone()).await?;
+        let mut evidence = RuntimeReadEvidence::single(
+            &xml,
+            first.encoded_sha256.clone(),
+            first.encoded_body.len(),
+        );
+        let result = async {
+            self.http
+                .get_status_decoded()
+                .await
+                .context("Tally health check between paired audit reads failed")?;
+            let second = self.post_xml_raw(xml.clone()).await?;
+            if second.encoded_body == first.encoded_body {
+                evidence.bytes = evidence.bytes.saturating_add(second.encoded_body.len());
+            } else {
+                evidence = evidence.clone().combine(RuntimeReadEvidence::single(
+                    &xml,
+                    second.encoded_sha256.clone(),
+                    second.encoded_body.len(),
+                ));
+            }
+            if second.encoded_body != first.encoded_body {
+                return Err(NativeReportPairDrift.into());
+            }
+            self.http
+                .get_status_decoded()
+                .await
+                .context("Tally health check after paired audit reads failed")?;
+            Ok(())
+        }
+        .await;
+        result.map_err(|error| super::runtime::with_read_evidence(error, evidence))?;
+        Ok(first)
+    }
+
+    /// The smallest request Tally answers: its status page. Used to learn
+    /// whether a responder that was left building an abandoned response has
+    /// finished; it proves nothing else.
+    pub(crate) async fn status_probe(&self) -> anyhow::Result<()> {
+        self.http.get_status_decoded().await?;
+        Ok(())
     }
 
     #[cfg(feature = "voucher-scan")]
@@ -2021,4 +2262,4 @@ fn detect_product(text: &str) -> TallyProduct {
 
 #[cfg(test)]
 #[path = "connection_tests.rs"]
-mod tests;
+pub(crate) mod tests;

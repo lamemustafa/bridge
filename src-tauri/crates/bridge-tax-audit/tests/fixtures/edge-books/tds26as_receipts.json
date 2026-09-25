@@ -1,0 +1,333 @@
+{
+ "comment": "twentysixas_receipts: a customer's supply amount compared with the books' billed value through Sales, Debit Note and Credit Note vouchers (a Journal's Sales line is not billing), within Re 1 not a finding; its interest under a lower-case, spaced section ('194 a') compared with income credited on its vouchers, one paisa over Re 1 a finding; another section counted, not compared; a 194-I party with nothing in the books; an alias to a ledger missing from the book (TR-4 on both sides); an unaliased TAN and a Part VI row ignored; a Sales voucher without a number. An empty alias is not a party: its row is ignored.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null,
+  "Indirect Incomes": null,
+  "Direct Incomes": null
+ },
+ "ledgers": [
+  {
+   "name": "Customer A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_receipts-000"
+  },
+  {
+   "name": "Customer B",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_receipts-001"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-tds26as_receipts-002"
+  },
+  {
+   "name": "Interest Income",
+   "chain": [
+    "Indirect Incomes"
+   ],
+   "guid": "edge-tds26as_receipts-003"
+  },
+  {
+   "name": "Job Work",
+   "chain": [
+    "Direct Incomes"
+   ],
+   "guid": "edge-tds26as_receipts-004"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_receipts-005"
+  },
+  {
+   "name": "TDS Receivable",
+   "chain": [
+    "Loans & Advances (Asset)",
+    "Current Assets"
+   ],
+   "guid": "edge-tds26as_receipts-006"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Customer A",
+   "opening": 0,
+   "debit": 1085000,
+   "credit": 1020000,
+   "closing": 65000
+  },
+  {
+   "ledger": "Customer B",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Sales",
+   "opening": 0,
+   "debit": 20000,
+   "credit": 1055000,
+   "closing": -1035000
+  },
+  {
+   "ledger": "Interest Income",
+   "opening": 0,
+   "debit": 0,
+   "credit": 25000,
+   "closing": -25000
+  },
+  {
+   "ledger": "Job Work",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000,
+   "closing": -5000
+  },
+  {
+   "ledger": "Bank",
+   "opening": 0,
+   "debit": 1000000,
+   "credit": 0,
+   "closing": 1000000
+  },
+  {
+   "ledger": "TDS Receivable",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "r01",
+   "date": "2025-05-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer A",
+     1000000
+    ],
+    [
+     "Sales",
+     -1000000
+    ]
+   ],
+   "party": "Customer A",
+   "number": ""
+  },
+  {
+   "guid": "r02",
+   "date": "2025-06-10",
+   "base_type": "Debit Note",
+   "lines": [
+    [
+     "Customer A",
+     50000
+    ],
+    [
+     "Sales",
+     -50000
+    ]
+   ],
+   "party": "Customer A"
+  },
+  {
+   "guid": "r03",
+   "date": "2025-07-10",
+   "base_type": "Credit Note",
+   "lines": [
+    [
+     "Sales",
+     20000
+    ],
+    [
+     "Customer A",
+     -20000
+    ]
+   ],
+   "party": "Customer A"
+  },
+  {
+   "guid": "r04",
+   "date": "2025-08-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     5000
+    ],
+    [
+     "Sales",
+     -5000
+    ]
+   ],
+   "party": "Customer A"
+  },
+  {
+   "guid": "r05",
+   "date": "2025-09-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     30000
+    ],
+    [
+     "Interest Income",
+     -25000
+    ],
+    [
+     "Job Work",
+     -5000
+    ]
+   ],
+   "party": "Customer A"
+  },
+  {
+   "guid": "r06",
+   "date": "2025-10-10",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     1000000
+    ],
+    [
+     "Customer A",
+     -1000000
+    ]
+   ],
+   "party": "Customer A"
+  }
+ ],
+ "tests": [
+  "tds_tcs_26as",
+  "twentysixas_receipts"
+ ],
+ "tds_ledgers": [
+  "TDS Receivable"
+ ],
+ "tcs_ledgers": [],
+ "advance_tax_ledgers": [],
+ "deductor_aliases": {
+  "TAN-EDGE-A": "Customer A",
+  "TAN-EDGE-B": "Customer B",
+  "TAN-EDGE-G": "Ghost Customer",
+  "TAN-EDGE-E": ""
+ },
+ "form26as": [
+  {
+   "doc": "form26as:edge",
+   "row": 1,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "194C",
+   "txn_date": "2025-05-31",
+   "amount_paise": 1030100,
+   "tax_paise": 20602
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 2,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "194 a",
+   "txn_date": "2025-09-30",
+   "amount_paise": 30101,
+   "tax_paise": 3010
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 3,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "194N",
+   "txn_date": "2025-10-31",
+   "amount_paise": 5000000,
+   "tax_paise": 100000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 4,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-B",
+   "section": "194-I",
+   "txn_date": "2025-11-30",
+   "amount_paise": 600000,
+   "tax_paise": 60000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 5,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-G",
+   "section": "194C",
+   "txn_date": "2025-12-31",
+   "amount_paise": 400000,
+   "tax_paise": 8000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 6,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-Z",
+   "section": "194C",
+   "txn_date": "2025-12-31",
+   "amount_paise": 900000,
+   "tax_paise": 18000
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 7,
+   "part": "VI",
+   "deductor_tan": "TAN-EDGE-A",
+   "section": "206C(1H)",
+   "txn_date": "2025-12-31",
+   "amount_paise": 900000,
+   "tax_paise": 900
+  },
+  {
+   "doc": "form26as:edge",
+   "row": 8,
+   "part": "I",
+   "deductor_tan": "TAN-EDGE-E",
+   "section": "194C",
+   "txn_date": "2025-10-15",
+   "amount_paise": 800000,
+   "tax_paise": 8000
+  }
+ ],
+ "ais": [],
+ "tis": []
+}

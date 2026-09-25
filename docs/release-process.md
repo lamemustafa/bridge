@@ -19,10 +19,11 @@ and macOS. A smoke bundle is not a production release.
 Any change to a pinned file requires a deliberate compatibility-surface reseal
 before the claim gate can pass. That includes `package.json`,
 `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and either workflow — and it is
-not only dependency updates. **`docs/tally/TALLY_PROTOCOL_REFERENCE.md` is a
-pinned source too, so a documentation-only edit to it stales its digest and
-fails the gate.** Nothing in a docs diff suggests a compatibility gate is
-involved, and PRs have failed CI for exactly this.
+not only dependency updates. **The canonical `docs/tally/TALLY_PROTOCOL_REFERENCE.md`
+index and each part it declares must be pinned sources, so a documentation-only edit to either
+stales its digest and fails the gate. Adding or removing a declared part also changes the pin
+list and uses the `--pins-changed` sequence below.** Nothing in a docs diff suggests a
+compatibility gate is involved, and PRs have failed CI for exactly this.
 
 Run these from `tools`, in order, **with the pinned toolchain**. A Homebrew
 `rustc` earlier on `PATH` shadows rustup, and this project pins the version in

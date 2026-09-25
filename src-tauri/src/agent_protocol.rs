@@ -59,6 +59,7 @@ where
         }
         let mut egress = None;
         let mut recovery_batch_id = None;
+        let mut input_failed = None;
         let result = match method {
             "initialize" if initialized => Err("already_initialized".to_string()),
             "initialize" if id.is_none() => continue,
@@ -98,7 +99,26 @@ where
                             &mut reader, &mut framer, &mut pending,
                             stdout,
                         ).await?
-                    } else { Some(server.call_tool_response(name, arguments.clone()).await) };
+                    } else {
+                        let cancellation = tokio_util::sync::CancellationToken::new();
+                        let outcome = await_read(
+                            crate::tally::runtime::TOOL_CANCELLATION.scope(
+                                cancellation.clone(),
+                                server.call_tool_response(name, arguments.clone()),
+                            ),
+                            InFlightRead {
+                                id: id.as_ref().expect("tool requests have IDs"),
+                                cancellation: &cancellation,
+                                cancellable: !name.starts_with("lab_import_"),
+                            },
+                            &server,
+                            &mut reader, &mut framer, &mut pending,
+                            stdout,
+                        )
+                        .await;
+                        input_failed = outcome.input_failed;
+                        Some(outcome.response)
+                    };
                     match response {
                         Some(tool_response) => {
                             recovery_batch_id = tool_response.recovery_batch_id;
@@ -138,6 +158,9 @@ where
                 method == "tools/call",
             )
             .await?;
+        }
+        if let Some(error) = input_failed {
+            return Err(error);
         }
     }
     Ok(())
@@ -465,8 +488,9 @@ where
                     .await,
                     Err(error) => return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await,
                 };
-                if let Some(target) = cancellation_target(&frame) {
-                    if target == *request.id {
+                match service_frame_in_flight(server, stdout, pending, request.id, frame, true).await {
+                    Ok(InFlightFrame::Serviced) => {}
+                    Ok(InFlightFrame::CancelsInFlight) => {
                         if phase == PostPhase::Draining {
                             continue;
                         }
@@ -480,38 +504,9 @@ where
                             }
                             _ => {}
                         }
-                        continue;
                     }
-                    if let Err(error) = cancel_queued_request(server, stdout, pending, &target).await {
-                        return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await;
-                    }
-                    continue;
+                    Err(error) => return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await,
                 }
-                if let Some(ping) = frame.as_ref().ok()
-                    .and_then(|text| parse_request(text.clone()).ok())
-                    .filter(|request| request["method"] == "ping")
-                {
-                    if let Some(ping_id) = ping.get("id") {
-                        let result = if request_id_fits_response_cap(ping_id, server.settings.max_bytes) {
-                            finish_response(server, stdout, ping_id.clone(), Ok(json!({})), None, None, false).await
-                        } else {
-                            refuse_pending_frame(server, stdout, frame).await
-                        };
-                        if let Err(error) = result {
-                            return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await;
-                        }
-                    }
-                    continue;
-                }
-                let queued_bytes: usize = pending.iter().filter_map(|frame| frame.as_ref().ok()).map(String::len).sum();
-                let size = frame.as_ref().map_or(0, String::len);
-                if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {
-                    if let Err(error) = refuse_pending_frame(server, stdout, frame).await {
-                        return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await;
-                    }
-                    continue;
-                }
-                pending.push_back(frame);
             }
             // Keep servicing framed input while a concurrent admission holds
             // the durable snapshot lock. In particular, a ping must not wait
@@ -524,6 +519,162 @@ where
                 }
             }
             response = &mut future, if phase != PostPhase::Classifying => return Ok(Some(response)),
+        }
+    }
+}
+
+/// What a frame read while a tool call is in flight asks of that call.
+enum InFlightFrame {
+    /// A `notifications/cancelled` naming the call in flight.
+    CancelsInFlight,
+    /// Anything else, already answered, queued or refused here.
+    Serviced,
+}
+
+/// Frames `await_post` holds for later before it refuses more, and the count at
+/// which `await_read` stops reading input until the call ends. A read does not
+/// apply `post_import`'s 5 MB total, so what it holds is bounded by eight frames
+/// of at most `MAX_REQUEST_BYTES` each (about 40 MB).
+const PENDING_FRAME_LIMIT: usize = 8;
+
+// A frame read while a tool call runs: a cancellation of a queued request is
+// answered now (left behind its request, it would start that request first); a
+// ping is answered now; anything else is queued. `refuse_when_full` keeps
+// `post_import`'s bounds (refuse past eight frames or 5 MB); a read instead stops
+// reading input once the queue is full, so the pipe holds the rest as it did
+// before input was watched at all, and no request is refused for waiting.
+async fn service_frame_in_flight<W: AsyncWrite + Unpin>(
+    server: &Server,
+    stdout: &mut W,
+    pending: &mut std::collections::VecDeque<Frame>,
+    in_flight: &Value,
+    frame: Frame,
+    refuse_when_full: bool,
+) -> Result<InFlightFrame, String> {
+    if let Some(target) = cancellation_target(&frame) {
+        if target == *in_flight {
+            return Ok(InFlightFrame::CancelsInFlight);
+        }
+        cancel_queued_request(server, stdout, pending, &target).await?;
+        return Ok(InFlightFrame::Serviced);
+    }
+    if let Some(ping) = frame
+        .as_ref()
+        .ok()
+        .and_then(|text| parse_request(text.clone()).ok())
+        .filter(|request| request["method"] == "ping")
+    {
+        if let Some(ping_id) = ping.get("id") {
+            if request_id_fits_response_cap(ping_id, server.settings.max_bytes) {
+                finish_response(
+                    server,
+                    stdout,
+                    ping_id.clone(),
+                    Ok(json!({})),
+                    None,
+                    None,
+                    false,
+                )
+                .await?;
+            } else {
+                refuse_pending_frame(server, stdout, frame).await?;
+            }
+        }
+        return Ok(InFlightFrame::Serviced);
+    }
+    let queued_bytes: usize = pending
+        .iter()
+        .filter_map(|frame| frame.as_ref().ok())
+        .map(String::len)
+        .sum();
+    let size = frame.as_ref().map_or(0, String::len);
+    if refuse_when_full
+        && (pending.len() >= PENDING_FRAME_LIMIT
+            || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES)
+    {
+        refuse_pending_frame(server, stdout, frame).await?;
+        return Ok(InFlightFrame::Serviced);
+    }
+    pending.push_back(frame);
+    Ok(InFlightFrame::Serviced)
+}
+
+// Keep receiving input while a tool other than `post_import` runs (#554). A
+// `notifications/cancelled` naming this call withdraws it: the tool's queued
+// operations stop before the next one starts (never during one, since
+// abandoning a request does not stop Tally), and the call is answered as
+// withdrawn. A read either completes or is refused; a withdrawal never yields
+// part of one. A closed input is NOT a withdrawal: a client may write its
+// requests, close its side and still read the answers, so the call runs to
+// completion as before and the session ends after it. An input that fails to
+// read leaves nobody to answer, so the call stops before its next operation.
+struct InFlightRead<'a> {
+    id: &'a Value,
+    cancellation: &'a tokio_util::sync::CancellationToken,
+    /// False for the lab write tools: a withdrawal after a batch is written
+    /// would refuse its mandatory readback, so they are never withdrawn.
+    cancellable: bool,
+}
+
+/// How `await_read` ended: the call's own response, and whether the input
+/// failed while it ran (the session then ends once the response is written).
+struct ReadOutcome {
+    response: ToolResponse,
+    input_failed: Option<String>,
+}
+
+async fn await_read<R, W, F>(
+    future: F,
+    call: InFlightRead<'_>,
+    server: &Server,
+    reader: &mut R,
+    framer: &mut Framer,
+    pending: &mut std::collections::VecDeque<Frame>,
+    stdout: &mut W,
+) -> ReadOutcome
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+    F: std::future::Future<Output = ToolResponse>,
+{
+    tokio::pin!(future);
+    let withdraw = || {
+        if call.cancellable {
+            call.cancellation.cancel();
+        }
+    };
+    loop {
+        tokio::select! {
+            // The call first: one that is already done (a local tool) answers
+            // before any later frame is read, so responses keep request order
+            // and a terminal receipt failure still ends the session before
+            // another request is served. Input is serviced only while it waits.
+            biased;
+            response = &mut future => return ReadOutcome { response, input_failed: None },
+            // Past the queue limit, input is left in the pipe until the call ends.
+            frame = framer.read(reader, MAX_REQUEST_BYTES), if pending.len() < PENDING_FRAME_LIMIT => {
+                let interruption = match frame {
+                    Ok(Some(frame)) => match service_frame_in_flight(server, stdout, pending, call.id, frame, false).await {
+                        Ok(InFlightFrame::Serviced) => continue,
+                        Ok(InFlightFrame::CancelsInFlight) => {
+                            withdraw();
+                            continue;
+                        }
+                        Err(error) => error,
+                    },
+                    // Closed input: finish the call; the session loop then ends.
+                    Ok(None) => {
+                        return ReadOutcome { response: future.as_mut().await, input_failed: None }
+                    }
+                    Err(error) => error,
+                };
+                // The input failed: stop before the next operation, let the one
+                // in flight finish, answer it (the output may still work), and
+                // then end the session.
+                withdraw();
+                let response = future.as_mut().await;
+                return ReadOutcome { response, input_failed: Some(interruption) };
+            }
         }
     }
 }

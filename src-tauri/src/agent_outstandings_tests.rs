@@ -38,3 +38,48 @@ fn opposing_unallocated_direction_is_preserved_and_only_gross_exposure_is_ranked
     assert_eq!(billed["receivable"], "100");
     assert_eq!(billed["payable"], "0");
 }
+
+/// bridge#551: a currency refusal names its ledger on the MCP result, masked
+/// like any party name; a reason without a ledger carries none.
+#[test]
+fn a_withheld_result_names_its_ledger_under_redaction() {
+    let mut reason =
+        crate::tally::OutstandingsPartialReason::code("ledger_currency_base_unmatched");
+    reason.foreign_currency_ledger_name = Some("Synthetic FX Debtor".to_string());
+    let plain = partial_payload(&reason, Redaction::None);
+    assert_eq!(plain["partial_reason"], "ledger_currency_base_unmatched");
+    assert_eq!(plain["ledger"], "Synthetic FX Debtor");
+    let masked = partial_payload(&reason, Redaction::MaskParties);
+    assert_eq!(masked["ledger"], json!(mask("Synthetic FX Debtor")));
+    assert_ne!(masked["ledger"], "Synthetic FX Debtor");
+    let unnamed = partial_payload(
+        &crate::tally::OutstandingsPartialReason::code("native_bills_report_drifted"),
+        Redaction::MaskParties,
+    );
+    assert_eq!(
+        unnamed,
+        json!({"state":"partial","partial_reason":"native_bills_report_drifted"})
+    );
+}
+
+/// bridge#551: the foreign-balance refusal, which predates the currency
+/// classification, names its ledger on the MCP result through the same
+/// party-name redaction.
+#[test]
+fn the_foreign_balance_refusal_names_its_ledger_under_redaction() {
+    let reason = crate::tally::OutstandingsPartialReason::foreign_currency_ledger_balance(
+        "Synthetic FX Debtor".to_string(),
+    );
+    let plain = partial_payload(&reason, Redaction::None);
+    assert_eq!(
+        plain,
+        json!({
+            "state": "partial",
+            "partial_reason": "company_foreign_currency_ledger_balance",
+            "ledger": "Synthetic FX Debtor",
+        })
+    );
+    let masked = partial_payload(&reason, Redaction::MaskParties);
+    assert_eq!(masked["ledger"], json!(mask("Synthetic FX Debtor")));
+    assert_ne!(masked["ledger"], "Synthetic FX Debtor");
+}

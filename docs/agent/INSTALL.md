@@ -54,12 +54,19 @@ actually on.
 4. Save the extension settings and restart Claude Desktop if its tools are not
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
-Journal preparation and posting are available by default. Every new posting
-requires your approval in a separate Bridge dialog. Turn off **Allow Journal posting**
-in the extension settings for a read-only connector.
+Voucher file preparation and bank-statement parsing are available by default;
+they write nothing to Tally. **Voucher posting is off by default** while two
+known limits remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher (bridge#574). And Bridge cannot delete or roll back a voucher it
+has posted, so a wrong post must be corrected by hand in Tally (bridge#579).
+Turning on **Allow voucher posting (Journal, Payment, Receipt, Contra)** in the
+extension settings adds posting; every new posting still requires your approval in a separate Bridge
+dialog. Leave it off unless you accept those risks. If you installed an earlier
+version, check the setting: an earlier default may still be saved as on.
 
-Native posting currently accepts one Journal with existing ledgers and no supplied
-voucher number. Tally assigns the number. Bridge uses a private request identity
+Native posting currently accepts one Journal, Payment, Receipt or Contra with
+existing ledgers and no supplied voucher number. A Payment, Receipt or Contra is
+refused if any of its ledgers, or their groups, moved since the file was built
+so that a bank or cash leg no longer classifies as it did. Tally assigns the number. Bridge uses a private request identity
 for the native attempt; the selected XML file stays unchanged. Do not manually
 import a file and then post it through Bridge: if the original Journal was edited,
 Bridge may be unable to recognize that earlier business event.

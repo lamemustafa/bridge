@@ -1,0 +1,3319 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "trial_balance",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "1430e3c5655e7b13",
+  "population_note_text": "Tally's own Trial Balance export for the period; no voucher is re-read here.",
+  "figures": [
+    {
+      "id": "trial_balance.ledger_rows_count",
+      "value": 46,
+      "unit": "count",
+      "definition_sha256_16": "799f3a578b67bb08",
+      "definition_text": "Ledgers with any opening, movement or closing in the period.",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.tb_closing_005964f1",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Shop Rent",
+          "label": "Shop Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_0081c196",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": "Office Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_026540de",
+      "value": 3200000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Northgate Transport Carrier",
+          "label": "Northgate Transport Carrier"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_02bb9e3a",
+      "value": -1234500,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": "Harbour Mill Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_0988e024",
+      "value": 1170000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Riverside Traders",
+          "label": "Riverside Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_0bffdb38",
+      "value": -49800,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unmapped Holding",
+          "label": "Unmapped Holding"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_0e92aeee",
+      "value": 750000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest to Partners",
+          "label": "Interest to Partners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_136920fc",
+      "value": 29200000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Purchases - Hardware",
+          "label": "Purchases - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_192cf253",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": "Office Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_1b74b091",
+      "value": -1200000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Job Work Income",
+          "label": "Job Work Income"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_1fd9a51e",
+      "value": 20500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cobalt Fittings",
+          "label": "Cobalt Fittings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_20cc34e7",
+      "value": 3500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Coastal Freight Carriers",
+          "label": "Coastal Freight Carriers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_2d3194aa",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Round Off",
+          "label": "Round Off"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_30551600",
+      "value": -750000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Partner Capital - A",
+          "label": "Partner Capital - A"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_3359ea10",
+      "value": -6500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": "Factory Machine"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_33be525c",
+      "value": 2400000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": "GST Payable"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_43102175",
+      "value": 15000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": "Reception Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_46272f6e",
+      "value": -6935052,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": "Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_47e6776c",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": "Hardware Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_4a5f34d9",
+      "value": 800000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Staff Advances",
+          "label": "Staff Advances"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_5075b85b",
+      "value": -62800000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Owner Capital",
+          "label": "Owner Capital"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_5a1b90a4",
+      "value": 27300000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": "Lakeview Bank Current A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_690d194d",
+      "value": 365550,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Electricity",
+          "label": "Electricity"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_6ff124a6",
+      "value": -60599999,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Comfort Furnishings",
+          "label": "Comfort Furnishings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_7870e48c",
+      "value": 1234500,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Quarry Lane Stores",
+          "label": "Quarry Lane Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_7eb35440",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Freight Inward",
+          "label": "Freight Inward"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_82c191a9",
+      "value": -2500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": "Ridge Bank OD A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_9275dd88",
+      "value": -21000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_977bdd42",
+      "value": -5000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sunrise NBFC Loan",
+          "label": "Sunrise NBFC Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_a98ff567",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ashwood Traders",
+          "label": "Ashwood Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_a9fd9709",
+      "value": -3650000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_ae83ca68",
+      "value": 55000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Machinery Disposal Proceeds",
+          "label": "Machinery Disposal Proceeds"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_b5ae2beb",
+      "value": -21038432,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_bb7e7b30",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Highway Motors Loan",
+          "label": "Highway Motors Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_bec7c3d4",
+      "value": -20000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Fairfield Textiles",
+          "label": "Fairfield Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_c40af84a",
+      "value": 3500001,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Bayside Cargo Logistics",
+          "label": "Bayside Cargo Logistics"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_c74bb59c",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": "Depreciation A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_c9fe11d8",
+      "value": 18500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_d12d0157",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": "Delivery Van"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_d8ef1e6c",
+      "value": 1400000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Meadow Supplies",
+          "label": "Meadow Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_e192a3e6",
+      "value": -29750000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales - Hardware",
+          "label": "Sales - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_e2a05323",
+      "value": 1000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": "Packing Material Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_f412381f",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": "Showroom Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_f46622c1",
+      "value": -20000000,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Union Textiles",
+          "label": "Union Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_f5609e95",
+      "value": -76543,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": "Counter Till"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_fb086ea8",
+      "value": -185025,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest Received",
+          "label": "Interest Received"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_005964f1",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Shop Rent",
+          "label": "Shop Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_0081c196",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": "Office Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_026540de",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Northgate Transport Carrier",
+          "label": "Northgate Transport Carrier"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_02bb9e3a",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": "Harbour Mill Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_0988e024",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Riverside Traders",
+          "label": "Riverside Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_0bffdb38",
+      "value": 49800,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unmapped Holding",
+          "label": "Unmapped Holding"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_0e92aeee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest to Partners",
+          "label": "Interest to Partners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_136920fc",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Purchases - Hardware",
+          "label": "Purchases - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_192cf253",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": "Office Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_1b74b091",
+      "value": 1200000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Job Work Income",
+          "label": "Job Work Income"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_1fd9a51e",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cobalt Fittings",
+          "label": "Cobalt Fittings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_20cc34e7",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Coastal Freight Carriers",
+          "label": "Coastal Freight Carriers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_2d3194aa",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Round Off",
+          "label": "Round Off"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_30551600",
+      "value": 750000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Partner Capital - A",
+          "label": "Partner Capital - A"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_3359ea10",
+      "value": 59500000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": "Factory Machine"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_33be525c",
+      "value": 3500000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": "GST Payable"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_43102175",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": "Reception Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_46272f6e",
+      "value": 111685052,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": "Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_47e6776c",
+      "value": 500000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": "Hardware Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_4a5f34d9",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Staff Advances",
+          "label": "Staff Advances"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_5075b85b",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Owner Capital",
+          "label": "Owner Capital"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_5a1b90a4",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": "Lakeview Bank Current A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_690d194d",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Electricity",
+          "label": "Electricity"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_6ff124a6",
+      "value": 60599999,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Comfort Furnishings",
+          "label": "Comfort Furnishings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_7870e48c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Quarry Lane Stores",
+          "label": "Quarry Lane Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_7eb35440",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Freight Inward",
+          "label": "Freight Inward"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_82c191a9",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": "Ridge Bank OD A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_9275dd88",
+      "value": 21000000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_977bdd42",
+      "value": 5000000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sunrise NBFC Loan",
+          "label": "Sunrise NBFC Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_a98ff567",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ashwood Traders",
+          "label": "Ashwood Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_a9fd9709",
+      "value": 9450000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_ae83ca68",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Machinery Disposal Proceeds",
+          "label": "Machinery Disposal Proceeds"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_b5ae2beb",
+      "value": 24423457,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_bb7e7b30",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Highway Motors Loan",
+          "label": "Highway Motors Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_bec7c3d4",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Fairfield Textiles",
+          "label": "Fairfield Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_c40af84a",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Bayside Cargo Logistics",
+          "label": "Bayside Cargo Logistics"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_c74bb59c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": "Depreciation A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_c9fe11d8",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_d12d0157",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": "Delivery Van"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_d8ef1e6c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Meadow Supplies",
+          "label": "Meadow Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_e192a3e6",
+      "value": 29750000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales - Hardware",
+          "label": "Sales - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_e2a05323",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": "Packing Material Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_f412381f",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": "Showroom Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_f46622c1",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Union Textiles",
+          "label": "Union Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_f5609e95",
+      "value": 400000,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": "Counter Till"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_fb086ea8",
+      "value": 185025,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest Received",
+          "label": "Interest Received"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_005964f1",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Shop Rent",
+          "label": "Shop Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_0081c196",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": "Office Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_026540de",
+      "value": 3200000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Northgate Transport Carrier",
+          "label": "Northgate Transport Carrier"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_02bb9e3a",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": "Harbour Mill Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_0988e024",
+      "value": 1170000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Riverside Traders",
+          "label": "Riverside Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_0bffdb38",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unmapped Holding",
+          "label": "Unmapped Holding"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_0e92aeee",
+      "value": 750000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest to Partners",
+          "label": "Interest to Partners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_136920fc",
+      "value": 29200000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Purchases - Hardware",
+          "label": "Purchases - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_192cf253",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": "Office Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_1b74b091",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Job Work Income",
+          "label": "Job Work Income"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_1fd9a51e",
+      "value": 20500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cobalt Fittings",
+          "label": "Cobalt Fittings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_20cc34e7",
+      "value": 3500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Coastal Freight Carriers",
+          "label": "Coastal Freight Carriers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_2d3194aa",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Round Off",
+          "label": "Round Off"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_30551600",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Partner Capital - A",
+          "label": "Partner Capital - A"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_3359ea10",
+      "value": 8000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": "Factory Machine"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_33be525c",
+      "value": 5900000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": "GST Payable"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_43102175",
+      "value": 15000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": "Reception Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_46272f6e",
+      "value": 104250000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": "Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_47e6776c",
+      "value": 7500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": "Hardware Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_4a5f34d9",
+      "value": 800000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Staff Advances",
+          "label": "Staff Advances"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_5075b85b",
+      "value": 1200000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Owner Capital",
+          "label": "Owner Capital"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_5a1b90a4",
+      "value": 14800000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": "Lakeview Bank Current A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_690d194d",
+      "value": 365050,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Electricity",
+          "label": "Electricity"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_6ff124a6",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Comfort Furnishings",
+          "label": "Comfort Furnishings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_7870e48c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Quarry Lane Stores",
+          "label": "Quarry Lane Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_7eb35440",
+      "value": 450000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Freight Inward",
+          "label": "Freight Inward"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_82c191a9",
+      "value": 7500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": "Ridge Bank OD A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_9275dd88",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_977bdd42",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sunrise NBFC Loan",
+          "label": "Sunrise NBFC Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_a98ff567",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ashwood Traders",
+          "label": "Ashwood Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_a9fd9709",
+      "value": 7300000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_ae83ca68",
+      "value": 55000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Machinery Disposal Proceeds",
+          "label": "Machinery Disposal Proceeds"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_b5ae2beb",
+      "value": 1385025,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_bb7e7b30",
+      "value": 2500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Highway Motors Loan",
+          "label": "Highway Motors Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_bec7c3d4",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Fairfield Textiles",
+          "label": "Fairfield Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_c40af84a",
+      "value": 3500001,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Bayside Cargo Logistics",
+          "label": "Bayside Cargo Logistics"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_c74bb59c",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": "Depreciation A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_c9fe11d8",
+      "value": 18500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_d12d0157",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": "Delivery Van"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_d8ef1e6c",
+      "value": 1400000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Meadow Supplies",
+          "label": "Meadow Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_e192a3e6",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales - Hardware",
+          "label": "Sales - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_e2a05323",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": "Packing Material Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_f412381f",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": "Showroom Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_f46622c1",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Union Textiles",
+          "label": "Union Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_f5609e95",
+      "value": 323457,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": "Counter Till"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_fb086ea8",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest Received",
+          "label": "Interest Received"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_005964f1",
+      "value": "Indirect Expenses > Shop Running Costs",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Shop Rent",
+          "label": "Shop Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_0081c196",
+      "value": "Fixed Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": "Office Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_026540de",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Northgate Transport Carrier",
+          "label": "Northgate Transport Carrier"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_02bb9e3a",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": "Harbour Mill Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_0988e024",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Riverside Traders",
+          "label": "Riverside Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_0bffdb38",
+      "value": "Legacy Holding",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unmapped Holding",
+          "label": "Unmapped Holding"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_0e92aeee",
+      "value": "Indirect Expenses",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest to Partners",
+          "label": "Interest to Partners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_136920fc",
+      "value": "Purchase Accounts",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Purchases - Hardware",
+          "label": "Purchases - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_192cf253",
+      "value": "Fixed Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": "Office Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_1b74b091",
+      "value": "Direct Incomes",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Job Work Income",
+          "label": "Job Work Income"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_1fd9a51e",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cobalt Fittings",
+          "label": "Cobalt Fittings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_20cc34e7",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Coastal Freight Carriers",
+          "label": "Coastal Freight Carriers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_2d3194aa",
+      "value": "Indirect Expenses",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Round Off",
+          "label": "Round Off"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_30551600",
+      "value": "Capital Account",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Partner Capital - A",
+          "label": "Partner Capital - A"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_3359ea10",
+      "value": "Fixed Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": "Factory Machine"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_33be525c",
+      "value": "Current Liabilities > Duties & Taxes",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": "GST Payable"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_43102175",
+      "value": "Fixed Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": "Reception Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_46272f6e",
+      "value": "Current Assets > Cash-in-Hand",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": "Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_47e6776c",
+      "value": "Current Assets > Stock-in-Hand",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": "Hardware Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_4a5f34d9",
+      "value": "Current Assets > Loans & Advances (Asset)",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Staff Advances",
+          "label": "Staff Advances"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_5075b85b",
+      "value": "Capital Account",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Owner Capital",
+          "label": "Owner Capital"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_5a1b90a4",
+      "value": "Current Assets > Bank Accounts",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": "Lakeview Bank Current A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_690d194d",
+      "value": "Indirect Expenses",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Electricity",
+          "label": "Electricity"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_6ff124a6",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Comfort Furnishings",
+          "label": "Comfort Furnishings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_7870e48c",
+      "value": "Current Assets > Sundry Debtors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Quarry Lane Stores",
+          "label": "Quarry Lane Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_7eb35440",
+      "value": "Direct Expenses > Carriage Inward",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Freight Inward",
+          "label": "Freight Inward"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_82c191a9",
+      "value": "Loans (Liability) > Bank OD A/c",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": "Ridge Bank OD A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_9275dd88",
+      "value": "Current Assets > Sundry Debtors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_977bdd42",
+      "value": "Loans (Liability)",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sunrise NBFC Loan",
+          "label": "Sunrise NBFC Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_a98ff567",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ashwood Traders",
+          "label": "Ashwood Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_a9fd9709",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_ae83ca68",
+      "value": "Current Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Machinery Disposal Proceeds",
+          "label": "Machinery Disposal Proceeds"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_b5ae2beb",
+      "value": "Current Assets > Sundry Debtors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_bb7e7b30",
+      "value": "Loans (Liability) > Unsecured Loans",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Highway Motors Loan",
+          "label": "Highway Motors Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_bec7c3d4",
+      "value": "Current Assets > Sundry Debtors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Fairfield Textiles",
+          "label": "Fairfield Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_c40af84a",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Bayside Cargo Logistics",
+          "label": "Bayside Cargo Logistics"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_c74bb59c",
+      "value": "Indirect Expenses",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": "Depreciation A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_c9fe11d8",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_d12d0157",
+      "value": "Fixed Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": "Delivery Van"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_d8ef1e6c",
+      "value": "Indirect Expenses > Shop Running Costs",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Meadow Supplies",
+          "label": "Meadow Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_e192a3e6",
+      "value": "Sales Accounts",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales - Hardware",
+          "label": "Sales - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_e2a05323",
+      "value": "Current Assets > Stock-in-Hand",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": "Packing Material Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_f412381f",
+      "value": "Fixed Assets",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": "Showroom Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_f46622c1",
+      "value": "Current Assets > Sundry Debtors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Union Textiles",
+          "label": "Union Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_f5609e95",
+      "value": "Current Assets > Cash-in-Hand > Counter Cash",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": "Counter Till"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_fb086ea8",
+      "value": "Indirect Incomes",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest Received",
+          "label": "Interest Received"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_005964f1",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Shop Rent",
+          "label": "Shop Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_0081c196",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": "Office Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_026540de",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Northgate Transport Carrier",
+          "label": "Northgate Transport Carrier"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_02bb9e3a",
+      "value": -1234500,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": "Harbour Mill Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_0988e024",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Riverside Traders",
+          "label": "Riverside Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_0bffdb38",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unmapped Holding",
+          "label": "Unmapped Holding"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_0e92aeee",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest to Partners",
+          "label": "Interest to Partners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_136920fc",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Purchases - Hardware",
+          "label": "Purchases - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_192cf253",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": "Office Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_1b74b091",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Job Work Income",
+          "label": "Job Work Income"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_1fd9a51e",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cobalt Fittings",
+          "label": "Cobalt Fittings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_20cc34e7",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Coastal Freight Carriers",
+          "label": "Coastal Freight Carriers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_2d3194aa",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Round Off",
+          "label": "Round Off"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_30551600",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Partner Capital - A",
+          "label": "Partner Capital - A"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_3359ea10",
+      "value": 45000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": "Factory Machine"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_33be525c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": "GST Payable"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_43102175",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": "Reception Computers"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_46272f6e",
+      "value": 500000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": "Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_47e6776c",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Hardware Stock",
+          "label": "Hardware Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_4a5f34d9",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Staff Advances",
+          "label": "Staff Advances"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_5075b85b",
+      "value": -64000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Owner Capital",
+          "label": "Owner Capital"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_5a1b90a4",
+      "value": 15000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": "Lakeview Bank Current A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_690d194d",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Electricity",
+          "label": "Electricity"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_6ff124a6",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Comfort Furnishings",
+          "label": "Comfort Furnishings"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_7870e48c",
+      "value": 1234500,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Quarry Lane Stores",
+          "label": "Quarry Lane Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_7eb35440",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Freight Inward",
+          "label": "Freight Inward"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_82c191a9",
+      "value": -4000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": "Ridge Bank OD A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_9275dd88",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harborview Textiles",
+          "label": "Harborview Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_977bdd42",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sunrise NBFC Loan",
+          "label": "Sunrise NBFC Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_a98ff567",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ashwood Traders",
+          "label": "Ashwood Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_a9fd9709",
+      "value": -1500000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": "Tidewater Fasteners"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_ae83ca68",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Machinery Disposal Proceeds",
+          "label": "Machinery Disposal Proceeds"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_b5ae2beb",
+      "value": 2000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Pinecrest Builders",
+          "label": "Pinecrest Builders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_bb7e7b30",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Highway Motors Loan",
+          "label": "Highway Motors Loan"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_bec7c3d4",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Fairfield Textiles",
+          "label": "Fairfield Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_c40af84a",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Bayside Cargo Logistics",
+          "label": "Bayside Cargo Logistics"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_c74bb59c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": "Depreciation A/c"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_c9fe11d8",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": "Metro Hardware Distributors"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_d12d0157",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": "Delivery Van"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_d8ef1e6c",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Meadow Supplies",
+          "label": "Meadow Supplies"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_e192a3e6",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Sales - Hardware",
+          "label": "Sales - Hardware"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_e2a05323",
+      "value": 1000000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Packing Material Stock",
+          "label": "Packing Material Stock"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_f412381f",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": "Showroom Furniture"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_f46622c1",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Union Textiles",
+          "label": "Union Textiles"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_f5609e95",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": "Counter Till"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_fb086ea8",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Interest Received",
+          "label": "Interest Received"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.total_closing",
+      "value": 700,
+      "unit": "paise",
+      "definition_sha256_16": "0e551969baf93db4",
+      "definition_text": "Sum of closings (Dr positive); equals the opening difference when the period's entries balance.",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.total_credit",
+      "value": 376493333,
+      "unit": "paise",
+      "definition_sha256_16": "c26cae3f33447f4c",
+      "definition_text": "Sum of the credit column as Tally exports it.",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.total_debit",
+      "value": 383493533,
+      "unit": "paise",
+      "definition_sha256_16": "8e595340031a8442",
+      "definition_text": "Sum of the debit column as Tally exports it (a Stock-in-Hand ledger's column can carry stock values that do not move its closing, so this need not equal the credit column).",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.total_opening",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "e9f4abadf9015380",
+      "definition_text": "Sum of openings (Dr positive); non-zero is Tally's 'Difference in opening balances'.",
+      "evidence": []
+    }
+  ],
+  "findings": [],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "trial_balance.check_invariants"
+  ],
+  "module_invariant_violations": [
+    {
+      "invariant": "trial_balance.check_invariants",
+      "subject": "trial_balance",
+      "detail": "TB-2: the period's movements (closing less opening) sum to 700 paise, not zero"
+    }
+  ]
+}

@@ -79,11 +79,15 @@ impl LazyTallyMirror {
 pub fn run_journal_confirmation_child_from_args(
     mut args: impl Iterator<Item = String>,
 ) -> Option<i32> {
-    if args.next().as_deref() == Some("--confirm-journal") && args.next().is_none() {
-        Some(if agent::run_confirmation() { 0 } else { 1 })
-    } else {
-        None
+    let confirmed = match args.next().as_deref() {
+        Some("--confirm-journal") => agent::run_confirmation as fn() -> bool,
+        Some("--confirm-review") => agent::run_review_confirmation,
+        _ => return None,
+    };
+    if args.next().is_some() {
+        return None;
     }
+    Some(if confirmed() { 0 } else { 1 })
 }
 
 pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
@@ -95,6 +99,7 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
         .manage(source_draft::SourceDraftLifecycleGuard::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
+        .manage(reports::outstandings_working_paper_store::PartyStatementSourceStore::default())
         .manage(reports::trial_balance_store::TrialBalanceExportStore::default())
         .manage(sync::coordinator::SnapshotCoordinator::default())
         .setup(|app| {

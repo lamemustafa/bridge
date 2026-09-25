@@ -1,0 +1,3778 @@
+[
+ {
+  "id": "M01",
+  "by": "reviewer",
+  "what": "tb sort: chain not reversed",
+  "file": "src/trial_balance.rs",
+  "from": "Some(l) => l.chain.iter().rev().map(|g| display_name(g)).collect(),",
+  "to": "Some(l) => l.chain.iter().map(|g| display_name(g)).collect(),"
+ },
+ {
+  "id": "M02",
+  "by": "reviewer",
+  "what": "tb sort: absent ledger sorts first",
+  "file": "src/trial_balance.rs",
+  "from": "None => vec![\"~\"],",
+  "to": "None => vec![\"\"],"
+ },
+ {
+  "id": "M03",
+  "by": "reviewer",
+  "what": "tb: closing-only row skipped",
+  "file": "src/trial_balance.rs",
+  "from": "&& t.credit_paise == 0 && t.closing_paise == 0",
+  "to": "&& t.credit_paise == 0"
+ },
+ {
+  "id": "M04",
+  "by": "reviewer",
+  "what": "tb: display_name identity",
+  "file": "src/trial_balance.rs",
+  "from": "reserved_value(text).unwrap_or(text)",
+  "to": "text"
+ },
+ {
+  "id": "M05",
+  "by": "reviewer",
+  "what": "tb: empty chain shows empty",
+  "file": "src/trial_balance.rs",
+  "from": "Some(l) if !l.chain.is_empty() => l",
+  "to": "Some(l) => l"
+ },
+ {
+  "id": "M06",
+  "by": "reviewer",
+  "what": "stl: debit-only stale",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "if tb.debit_paise == 0 && tb.credit_paise == 0 {",
+  "to": "if tb.debit_paise == 0 {"
+ },
+ {
+  "id": "M07",
+  "by": "reviewer",
+  "what": "stl1: zero lines count as touched",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "            if l.amount_paise != 0 {\n                touched",
+  "to": "            if true {\n                touched"
+ },
+ {
+  "id": "M08",
+  "by": "reviewer",
+  "what": "ls: window 8 days",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "civil_day_number(&period.to) - (LAST_DAYS_OF_YEAR_WINDOW - 1)",
+  "to": "civil_day_number(&period.to) - LAST_DAYS_OF_YEAR_WINDOW"
+ },
+ {
+  "id": "M09",
+  "by": "reviewer",
+  "what": "ls: zero cash line is a cash leg",
+  "file": "src/ledger_scrutiny.rs",
+  "from": ".any(|l| cash.contains(&l.ledger) && l.amount_paise != 0);",
+  "to": ".any(|l| cash.contains(&l.ledger));"
+ },
+ {
+  "id": "M10",
+  "by": "reviewer",
+  "what": "ls: cash share flag strictly over 30%",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "if bp >= CASH_SHARE_NOTABLE_BP {",
+  "to": "if bp > CASH_SHARE_NOTABLE_BP {"
+ },
+ {
+  "id": "M11",
+  "by": "reviewer",
+  "what": "ls: journal_only ignores non-journal",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "!d.journal.is_empty() && d.non_journal.is_empty()",
+  "to": "!d.journal.is_empty()"
+ },
+ {
+  "id": "M12",
+  "by": "reviewer",
+  "what": "ls: zero-net voucher skips journal marking",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if v.base_type == JOURNAL_BASE_TYPE {\n                row.journal",
+  "to": "            if net == 0 { continue; }\n            if v.base_type == JOURNAL_BASE_TYPE {\n                row.journal"
+ },
+ {
+  "id": "M13",
+  "by": "reviewer",
+  "what": "ls: contra-nature <= 0",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "let contra_nature = closing < 0;",
+  "to": "let contra_nature = closing <= 0;"
+ },
+ {
+  "id": "M14",
+  "by": "reviewer",
+  "what": "ls: cash share 1 decimal",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "format!(\"cash share {:.2}%\", bp as f64 / 100.0)",
+  "to": "format!(\"cash share {:.1}%\", bp as f64 / 100.0)"
+ },
+ {
+  "id": "M15",
+  "by": "reviewer",
+  "what": "cbi: receipts leg any nonzero",
+  "file": "src/cash_book_integrity.rs",
+  "from": "(cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise > 0)",
+  "to": "(cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise != 0)"
+ },
+ {
+  "id": "M16",
+  "by": "reviewer",
+  "what": "cbi: receipts ignore bank",
+  "file": "src/cash_book_integrity.rs",
+  "from": "(cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise > 0)",
+  "to": "cash.contains(&l.ledger) && l.amount_paise > 0)"
+ },
+ {
+  "id": "M17",
+  "by": "reviewer",
+  "what": "cbi: journal cash leg any nonzero",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".any(|l| cash.contains(&l.ledger) && l.amount_paise < 0)",
+  "to": ".any(|l| cash.contains(&l.ledger) && l.amount_paise != 0)"
+ },
+ {
+  "id": "M18",
+  "by": "reviewer",
+  "what": "cbi: own-account narration not upper-cased",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let text = upper(&v.narration);",
+  "to": "let text = v.narration.clone();"
+ },
+ {
+  "id": "M19",
+  "by": "reviewer",
+  "what": "cbi: own-account any base type",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            if v.base_type != \"Contra\" {\n                continue;\n            }\n",
+  "to": ""
+ },
+ {
+  "id": "M20",
+  "by": "reviewer",
+  "what": "cbi: own-account withdrawal sign flipped",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            if c > 0 {\n                out_v.push((v, c));\n            } else if c < 0 {",
+  "to": "            if c < 0 {\n                out_v.push((v, c));\n            } else if c > 0 {"
+ },
+ {
+  "id": "M21",
+  "by": "reviewer",
+  "what": "cbi: empty terms kept",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|t| !t.is_empty())\n",
+  "to": "\n"
+ },
+ {
+  "id": "M22",
+  "by": "reviewer",
+  "what": "cbi: opening evidence unfiltered",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|(_, t)| t.opening_paise != 0)\n",
+  "to": "\n"
+ },
+ {
+  "id": "M23",
+  "by": "reviewer",
+  "what": "cbi: unnarrated uses raw emptiness",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|(v, _)| py_strip(&v.narration).is_empty())",
+  "to": ".filter(|(v, _)| v.narration.is_empty())"
+ },
+ {
+  "id": "M24",
+  "by": "reviewer",
+  "what": "cbi: narration key ASCII-only upper (retargeted to support::py_upper, which the narration key now uses) (retargeted to support::py_upper, which the narration key now uses)",
+  "file": "src/support.rs",
+  "from": "            } else {\n                c.to_uppercase().collect()\n            };",
+  "to": "            } else {\n                vec![c.to_ascii_uppercase()]\n            };"
+ },
+ {
+  "id": "M25",
+  "by": "reviewer",
+  "what": "cbi: repeated needs 3",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|g| g.len() > 1)",
+  "to": ".filter(|g| g.len() > 2)"
+ },
+ {
+  "id": "M26",
+  "by": "reviewer",
+  "what": "cbi2: fires on zero closing",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if closing.is_some_and(|c| c < 0) && f.value == Value::Int(0) {",
+  "to": "if closing.is_some_and(|c| c <= 0) && f.value == Value::Int(0) {"
+ },
+ {
+  "id": "M27",
+  "by": "reviewer",
+  "what": "cbi: worst case counts days <= 0",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let worst_neg = walk.iter().filter(|d| d.worst < 0).count();",
+  "to": "let worst_neg = walk.iter().filter(|d| d.worst <= 0).count();"
+ },
+ {
+  "id": "M28",
+  "by": "reviewer",
+  "what": "cbi: best-case evidence only lowest day",
+  "file": "src/cash_book_integrity.rs",
+  "from": "        let best_vouchers: Vec<&Voucher> = best_neg\n            .iter()",
+  "to": "        let best_vouchers: Vec<&Voucher> = lowest\n            .iter()"
+ },
+ {
+  "id": "M29",
+  "by": "reviewer",
+  "what": "narration: unstripped",
+  "file": "src/book.rs",
+  "from": "narration: v.child_text(\"NARRATION\").to_string(),",
+  "to": "narration: v.child(\"NARRATION\").map_or(String::new(), |c| c.text.clone()),"
+ },
+ {
+  "id": "M30",
+  "by": "reviewer",
+  "what": "lsc1: no tolerance",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "> i128::from(tb_debit) + i128::from(LSC1_TOL_PAISE)",
+  "to": "> i128::from(tb_debit)"
+ },
+ {
+  "id": "M31",
+  "by": "reviewer",
+  "what": "stl: ledgers without TB row counted active",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "            let Some(tb) = book.tb.get(name) else {\n                continue;\n            };",
+  "to": "            let zero = TbRow { opening_paise: 0, debit_paise: 0, credit_paise: 0, closing_paise: 1000 };\n            let tb = book.tb.get(name).unwrap_or(Box::leak(Box::new(zero)));"
+ },
+ {
+  "id": "M32",
+  "by": "reviewer",
+  "what": "tb1: invariant compares opening",
+  "file": "src/trial_balance.rs",
+  "from": "            if c != t.closing_paise {",
+  "to": "            if c != t.opening_paise + t.debit_paise - t.credit_paise {"
+ },
+ {
+  "id": "B01",
+  "by": "author",
+  "what": "TB: zero rows not skipped",
+  "file": "src/trial_balance.rs",
+  "from": "        if t.opening_paise == 0 && t.debit_paise == 0 && t.credit_paise == 0 && t.closing_paise == 0\n        {\n            continue;\n        }",
+  "to": ""
+ },
+ {
+  "id": "B02",
+  "by": "author",
+  "what": "TB: chain shown parent-first",
+  "file": "src/trial_balance.rs",
+  "from": "            Some(l) if !l.chain.is_empty() => l\n                .chain\n                .iter()\n                .rev()",
+  "to": "            Some(l) if !l.chain.is_empty() => l\n                .chain\n                .iter()"
+ },
+ {
+  "id": "B03",
+  "by": "author",
+  "what": "TB-2: movement sign flipped",
+  "file": "src/trial_balance.rs",
+  "from": "            let m = c.checked_sub(o)",
+  "to": "            let m = o.checked_sub(c)"
+ },
+ {
+  "id": "B04",
+  "by": "author",
+  "what": "STL: active boundary >=",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "> ACTIVE_TOL_PAISE {",
+  "to": ">= ACTIVE_TOL_PAISE {"
+ },
+ {
+  "id": "B05",
+  "by": "author",
+  "what": "STL: stale ignores credit",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "if tb.debit_paise == 0 && tb.credit_paise == 0 {",
+  "to": "if tb.debit_paise == 0 {"
+ },
+ {
+  "id": "B06",
+  "by": "author",
+  "what": "STL-1 disabled",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "                Some(name) if touched.contains(name.as_str()) => out.push(",
+  "to": "                Some(name) if false && touched.contains(name.as_str()) => out.push("
+ },
+ {
+  "id": "B07",
+  "by": "author",
+  "what": "LS: window 8 days",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "const LAST_DAYS_OF_YEAR_WINDOW: i64 = 7;",
+  "to": "const LAST_DAYS_OF_YEAR_WINDOW: i64 = 8;"
+ },
+ {
+  "id": "B08",
+  "by": "author",
+  "what": "LS: cash paid includes credits",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if net > 0 && has_cash_leg {",
+  "to": "            if has_cash_leg {"
+ },
+ {
+  "id": "B09",
+  "by": "author",
+  "what": "LS: large boundary >=",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if abs > large_entry_paise {",
+  "to": "            if abs >= large_entry_paise {"
+ },
+ {
+  "id": "B10",
+  "by": "author",
+  "what": "LSC-1 tolerance widened",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "        if i128::from(reported) > i128::from(tb_debit) + i128::from(LSC1_TOL_PAISE) {",
+  "to": "        if i128::from(reported) > i128::from(tb_debit) + i128::from(LSC1_TOL_PAISE) + 100_000_000 {"
+ },
+ {
+  "id": "B11",
+  "by": "author",
+  "what": "CBI: worst case uses receipts",
+  "file": "src/cash_book_integrity.rs",
+  "from": "        let worst = bal.checked_sub(outflow)",
+  "to": "        let worst = bal.checked_sub(inflow)"
+ },
+ {
+  "id": "B12",
+  "by": "author",
+  "what": "CBI: lowest takes the last minimum",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            Some(a) if a.close <= d.close => Some(a),",
+  "to": "            Some(a) if a.close < d.close => Some(a),"
+ },
+ {
+  "id": "B13",
+  "by": "author",
+  "what": "CBI: narration whitespace not collapsed",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            .split(is_py_space)",
+  "to": "            .split(' ')"
+ },
+ {
+  "id": "B14",
+  "by": "author",
+  "what": "CBI: expense credits read debits",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            if l.amount_paise < 0 && under_expense(book, &l.ledger) {",
+  "to": "            if l.amount_paise > 0 && under_expense(book, &l.ledger) {"
+ },
+ {
+  "id": "B15",
+  "by": "author",
+  "what": "CBI-2 disabled",
+  "file": "src/cash_book_integrity.rs",
+  "from": "        if closing.is_some_and(|c| c < 0) && f.value == Value::Int(0) {",
+  "to": "        if false {"
+ },
+ {
+  "id": "B16",
+  "by": "author",
+  "what": "Book: narration not parsed",
+  "file": "src/book.rs",
+  "from": "            narration: v.child_text(\"NARRATION\").to_string(),",
+  "to": "            narration: String::new(),"
+ },
+ {
+  "id": "B17",
+  "by": "author",
+  "what": "LS: always the configured-table text",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "        if rules.ledger_scrutiny_large_entry_paise.is_some() {",
+  "to": "        if true {"
+ },
+ {
+  "id": "B18",
+  "by": "author",
+  "what": "LS: 30% boundary exclusive",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if bp >= CASH_SHARE_NOTABLE_BP {",
+  "to": "            if bp > CASH_SHARE_NOTABLE_BP {"
+ },
+ {
+  "id": "B19",
+  "by": "author",
+  "what": "LS: window first day exclusive",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if v.date >= start {",
+  "to": "            if v.date > start {"
+ },
+ {
+  "id": "B20",
+  "by": "author",
+  "what": "LS: window clamped to the period",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "civil_day_number(&period.to) - (LAST_DAYS_OF_YEAR_WINDOW - 1)",
+  "to": "civil_day_number(&period.to).max(civil_day_number(&period.from) + LAST_DAYS_OF_YEAR_WINDOW - 1) - (LAST_DAYS_OF_YEAR_WINDOW - 1)"
+ },
+ {
+  "id": "X01",
+  "by": "reviewer",
+  "what": "cbi: terms not de-duplicated",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let terms: BTreeSet<String> = own_account_terms",
+  "to": "let terms: Vec<String> = own_account_terms"
+ },
+ {
+  "id": "X02",
+  "by": "reviewer",
+  "what": "cbi: matching Contra with no cash leg counted as deposit",
+  "file": "src/cash_book_integrity.rs",
+  "from": "} else if c < 0 {",
+  "to": "} else {"
+ },
+ {
+  "id": "X03",
+  "by": "reviewer",
+  "what": "cbi: part 5 any base type",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if v.base_type != \"Journal\"\n            || !v",
+  "to": "if false\n            || !v"
+ },
+ {
+  "id": "X04",
+  "by": "reviewer",
+  "what": "cbi: part 5 zero expense line counted",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if l.amount_paise > 0 && under_expense(book, &l.ledger) {",
+  "to": "if l.amount_paise >= 0 && under_expense(book, &l.ledger) {"
+ },
+ {
+  "id": "X05",
+  "by": "reviewer",
+  "what": "cbi: part 4 zero expense line counted",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if l.amount_paise < 0 && under_expense(book, &l.ledger) {",
+  "to": "if l.amount_paise <= 0 && under_expense(book, &l.ledger) {"
+ },
+ {
+  "id": "X06",
+  "by": "reviewer",
+  "what": "cbi: VERSION 2",
+  "file": "src/cash_book_integrity.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X07",
+  "by": "reviewer",
+  "what": "ls: VERSION 2",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X08",
+  "by": "reviewer",
+  "what": "ls: cash leg must be a credit",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "cash.contains(&l.ledger) && l.amount_paise != 0",
+  "to": "cash.contains(&l.ledger) && l.amount_paise < 0"
+ },
+ {
+  "id": "X09",
+  "by": "reviewer",
+  "what": "ls: large compares signed net",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "if abs > large_entry_paise {",
+  "to": "if net > large_entry_paise {"
+ },
+ {
+  "id": "X10",
+  "by": "reviewer",
+  "what": "support: tag lookup over TB rows",
+  "file": "src/support.rs",
+  "from": "for name in book.ledgers.keys() {",
+  "to": "for name in book.tb.keys() {"
+ },
+ {
+  "id": "X11",
+  "by": "reviewer",
+  "what": "cbi: add wraps on overflow",
+  "file": "src/cash_book_integrity.rs",
+  "from": "a.checked_add(b).ok_or_else(overflow)",
+  "to": "Ok(a.wrapping_add(b))"
+ },
+ {
+  "id": "X12",
+  "by": "reviewer",
+  "what": "support: overflow message",
+  "file": "src/support.rs",
+  "from": "{test_id}: a total overflowed i64 paise",
+  "to": "{test_id}: overflow"
+ },
+ {
+  "id": "X13",
+  "by": "reviewer",
+  "what": "cbi: ignore the Payment/other-type terms guard via lower-case (retargeted to support::py_upper) (retargeted to support::py_upper)",
+  "file": "src/support.rs",
+  "from": "            } else {\n                c.to_uppercase().collect()\n            };",
+  "to": "            } else {\n                c.to_lowercase().collect()\n            };"
+ },
+ {
+  "id": "X14",
+  "by": "reviewer",
+  "what": "stl: VERSION 2",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X15",
+  "by": "reviewer",
+  "what": "tb: VERSION 2",
+  "file": "src/trial_balance.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X16",
+  "by": "reviewer",
+  "what": "cbi: CBI-1 check removed",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if f.value != Value::Int(tb_sum) {",
+  "to": "if false && f.value != Value::Int(tb_sum) {"
+ },
+ {
+  "id": "X17",
+  "by": "reviewer",
+  "what": "ls: LSC-1 unresolved tag silently skipped",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "let Some(name) = tag_to_name.get(tag) else {\n            out.push(",
+  "to": "let Some(name) = tag_to_name.get(tag) else {\n            continue;\n            #[allow(unreachable_code)]\n            out.push("
+ },
+ {
+  "id": "X18",
+  "by": "reviewer",
+  "what": "cbi: part 4 ignores cash (bank only)",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".any(|l| (cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise > 0)",
+  "to": ".any(|l| bank.contains(&l.ledger) && l.amount_paise > 0)"
+ },
+ {
+  "id": "X19",
+  "by": "reviewer",
+  "what": "support: label uses number even when empty",
+  "file": "src/support.rs",
+  "from": "let num = if v.number.is_empty() {",
+  "to": "let num = if v.number.is_empty() && false {"
+ },
+ {
+  "id": "X20",
+  "by": "reviewer",
+  "what": "cbi: own_account_terms accepts a table as no terms",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let Some(raw) = raw else {\n        return Ok(Vec::new());\n    };",
+  "to": "let Some(raw) = raw.filter(|r| !r.is_table()) else {\n        return Ok(Vec::new());\n    };"
+ },
+ {
+  "id": "X21",
+  "by": "reviewer",
+  "what": "support: label uses base type",
+  "file": "src/support.rs",
+  "from": "format!(\"{} {} on {}\", v.vtype, num",
+  "to": "format!(\"{} {} on {}\", v.base_type, num"
+ },
+ {
+  "id": "X22",
+  "by": "reviewer",
+  "what": "cbi: evidence not de-duplicated",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let refs: BTreeSet<(String, String)> = vouchers",
+  "to": "let refs: Vec<(String, String)> = vouchers"
+ },
+ {
+  "id": "X23",
+  "by": "reviewer",
+  "what": "cbi: walk keeps zero-net days",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if amt == 0 {\n            continue;\n        }",
+  "to": "if amt == 0 && false {\n            continue;\n        }"
+ },
+ {
+  "id": "X24",
+  "by": "reviewer",
+  "what": "tb: sort key uses raw chain names",
+  "file": "src/trial_balance.rs",
+  "from": "Some(l) => l.chain.iter().rev().map(|g| display_name(g)).collect(),",
+  "to": "Some(l) => l.chain.iter().rev().map(|g| g.as_str()).collect(),"
+ },
+ {
+  "id": "U01",
+  "by": "author",
+  "what": "py_upper ignores the Unicode 15.1 exception list",
+  "file": "src/support.rs",
+  "from": "            let keep = UPPER_UNCHANGED.binary_search(&u32::from(c)).is_ok();",
+  "to": "            let keep = false;"
+ },
+ {
+  "id": "F01",
+  "by": "author",
+  "what": "compare ignores repeated figure/finding ids",
+  "file": "src/compare.rs",
+  "from": "            if !seen.insert(id.to_string()) {",
+  "to": "            if !seen.insert(id.to_string()) && false {"
+ },
+ {
+  "id": "F02",
+  "by": "author",
+  "what": "compare ignores unknown keys",
+  "file": "src/compare.rs",
+  "from": "            for k in map.keys().filter(|k| !allowed.contains(&k.as_str())) {",
+  "to": "            for k in map.keys().filter(|_| false) {"
+ },
+ {
+  "id": "F03",
+  "by": "author",
+  "what": "registry find matches a prefix",
+  "file": "src/registry.rs",
+  "from": "    PORTED.iter().find(|t| t.id == id)",
+  "to": "    PORTED.iter().find(|t| t.id.starts_with(id))"
+ },
+ {
+  "id": "F04",
+  "by": "author",
+  "what": "a mistyped closing stock is read as none",
+  "file": "src/registry.rs",
+  "from": "    let closing_stock_paise = match &v[\"closing_stock_paise\"] {",
+  "to": "    let closing_stock_paise = match &serde_json::Value::Null {"
+ },
+ {
+  "id": "F05",
+  "by": "author",
+  "what": "py_isspace is Rust's whitespace",
+  "file": "src/support.rs",
+  "from": "    c.is_whitespace() || ('\\u{1c}'..='\\u{1f}').contains(&c)",
+  "to": "    c.is_whitespace()"
+ },
+ {
+  "id": "F06",
+  "by": "author",
+  "what": "GUID tag trims instead of Python strip",
+  "file": "src/ledger_ids.rs",
+  "from": "    crate::support::py_lower(crate::support::py_strip(guid))",
+  "to": "    crate::support::py_lower(guid.trim())"
+ },
+ {
+  "id": "F07",
+  "by": "author",
+  "what": "binding keys a master GUID unstripped",
+  "file": "src/binding.rs",
+  "from": "        let g = crate::support::py_strip(&m.guid);",
+  "to": "        let g = m.guid.as_str();"
+ },
+ {
+  "id": "F08",
+  "by": "author",
+  "what": "binding looks a configured GUID up case-sensitively",
+  "file": "src/binding.rs",
+  "from": ".get(&crate::support::py_lower(guid))",
+  "to": ".get(guid)"
+ },
+ {
+  "id": "T01",
+  "by": "author",
+  "what": "py_lower ignores final sigma",
+  "file": "src/support.rs",
+  "from": "            out.push(if final_sigma(&chars, i) {",
+  "to": "            out.push(if false && final_sigma(&chars, i) {"
+ },
+ {
+  "id": "T02",
+  "by": "author",
+  "what": "py_isalnum is Rust's is_alphanumeric",
+  "file": "src/support.rs",
+  "from": "    c.is_alphanumeric() && !in_ranges(&text_tables::NOT_PY_ALNUM, c)",
+  "to": "    c.is_alphanumeric()"
+ },
+ {
+  "id": "T03",
+  "by": "author",
+  "what": "re.I without Python's extra folds",
+  "file": "src/support.rs",
+  "from": "    text_tables::PY_CI_EXTRA\n        .iter()",
+  "to": "    text_tables::PY_CI_EXTRA[..0]\n        .iter()"
+ },
+ {
+  "id": "T04",
+  "by": "author",
+  "what": "\\s? uses Rust's whitespace",
+  "file": "src/support.rs",
+  "from": "            (chars.get(at).is_some_and(|&c| py_isspace(c)) && matches_at(chars, at + 1, rest))",
+  "to": "            (chars.get(at).is_some_and(|&c| c.is_whitespace()) && matches_at(chars, at + 1, rest))"
+ },
+ {
+  "id": "T05",
+  "by": "author",
+  "what": "\\b ignores the character before",
+  "file": "src/support.rs",
+  "from": "            let before = at > 0 && py_is_word(chars[at - 1]);",
+  "to": "            let before = false;"
+ },
+ {
+  "id": "T06",
+  "by": "author",
+  "what": "re.I folds only for a capital pattern letter",
+  "file": "src/support.rs",
+  "from": "        .any(|(l, cps)| *l == up && cps.contains(&u32::from(c)))",
+  "to": "        .any(|(l, cps)| *l == p && cps.contains(&u32::from(c)))"
+ },
+ {
+  "id": "T07",
+  "by": "author",
+  "what": "a NOT_PY_ALNUM range shifted by one",
+  "file": "src/text_tables.rs",
+  "from": "    (0x0345, 0x0345),",
+  "to": "    (0x0346, 0x0346),"
+ },
+ {
+  "id": "A01",
+  "by": "author",
+  "what": "bucket edge 15 moved to 14",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    if age_days <= 15 {",
+  "to": "    if age_days <= 14 {"
+ },
+ {
+  "id": "A02",
+  "by": "author",
+  "what": "bucket edge 45 moved to 46",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    } else if age_days <= 45 {",
+  "to": "    } else if age_days <= 46 {"
+ },
+ {
+  "id": "A03",
+  "by": "author",
+  "what": "bucket edge 90 moved to 89",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    } else if age_days <= 90 {",
+  "to": "    } else if age_days <= 89 {"
+ },
+ {
+  "id": "A04",
+  "by": "author",
+  "what": "same-day payments before bills",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "sorted.sort_by_key(|&(day, amt)| (day, amt > 0));",
+  "to": "sorted.sort_by_key(|&(day, amt)| (day, amt < 0));"
+ },
+ {
+  "id": "A05",
+  "by": "author",
+  "what": "a bill ignores the advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            let used = mag.min(advance);",
+  "to": "            let used = 0;"
+ },
+ {
+  "id": "A06",
+  "by": "author",
+  "what": "an overpayment is dropped, not carried as an advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            advance = advance.checked_add(pay).ok_or_else(overflow)?;",
+  "to": "            advance = advance.checked_add(0).ok_or_else(overflow)?;"
+ },
+ {
+  "id": "A07",
+  "by": "author",
+  "what": "an opening debit is not an advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        advance = opening_paise;",
+  "to": "        advance = 0;"
+ },
+ {
+  "id": "A08",
+  "by": "author",
+  "what": "the opening lot stays tracked after it is paid off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    lots.pop_front();\n                    opening_live = false;",
+  "to": "                    lots.pop_front();"
+ },
+ {
+  "id": "A09",
+  "by": "author",
+  "what": "age measured without the acceptance lag",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            let age = as_of - shift(lot.day, lag)?;",
+  "to": "            let age = as_of - lot.day;"
+ },
+ {
+  "id": "A10",
+  "by": "author",
+  "what": "over-45 is at-or-over",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if age > over_45_days {",
+  "to": "            if age >= over_45_days {"
+ },
+ {
+  "id": "A11",
+  "by": "author",
+  "what": "over-15 is at-or-over",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if age > over_15_days {\n                creditor_over_15",
+  "to": "            if age >= over_15_days {\n                creditor_over_15"
+ },
+ {
+  "id": "A12",
+  "by": "author",
+  "what": "opening lot not removed from the clause 22 view",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let creditor_over_45_clause22 = creditor_over_45 - opening_over_45;",
+  "to": "        let creditor_over_45_clause22 = creditor_over_45;"
+ },
+ {
+  "id": "A13",
+  "by": "author",
+  "what": "opening lot age without the lag",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let opening_age = as_of - shift(period_start, lag)?;",
+  "to": "        let opening_age = as_of - period_start;"
+ },
+ {
+  "id": "A14",
+  "by": "author",
+  "what": "trader counted as applicable",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    matches!(classification, \"micro\" | \"small\")",
+  "to": "    matches!(classification, \"micro\" | \"small\" | \"trader\")"
+ },
+ {
+  "id": "A15",
+  "by": "author",
+  "what": "unknown total uses the 45-day view",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            unknown_classification_total = add(unknown_classification_total, creditor_over_15)?;",
+  "to": "            unknown_classification_total = add(unknown_classification_total, creditor_over_45)?;"
+ },
+ {
+  "id": "A16",
+  "by": "author",
+  "what": "post-year breach at-or-over",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    if settled_days > over_15_days {",
+  "to": "                    if settled_days >= over_15_days {"
+ },
+ {
+  "id": "A17",
+  "by": "author",
+  "what": "post-year settlement ignores the lag",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    let settled_days = settled_day - shift(res.day, lag)?;",
+  "to": "                    let settled_days = settled_day - res.day;"
+ },
+ {
+  "id": "A18",
+  "by": "author",
+  "what": "post-year payments not sorted by date",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    sorted.sort_by_key(|&(day, _)| day);",
+  "to": "    sorted.sort_by_key(|&(_, amt)| amt);"
+ },
+ {
+  "id": "A19",
+  "by": "author",
+  "what": "a partly settled lot's remainder not pending",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    if res.remaining_paise > 0 {",
+  "to": "                    if res.remaining_paise > i64::MAX - 1 {"
+ },
+ {
+  "id": "A20",
+  "by": "author",
+  "what": "MSMED interest counts credit lines too",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if l.amount_paise > 0 && params.mse_interest_ledgers.contains(&l.ledger) {",
+  "to": "            if l.amount_paise != 0 && params.mse_interest_ledgers.contains(&l.ledger) {"
+ },
+ {
+  "id": "A21",
+  "by": "author",
+  "what": "zero-amount lines walked",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if l.amount_paise == 0 {\n                continue;\n            }\n            if let Some(ls)",
+  "to": "            if let Some(ls)"
+ },
+ {
+  "id": "A22",
+  "by": "author",
+  "what": "AGE-1 tie tolerance widened",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    let tol_paise: i128 = 100;",
+  "to": "    let tol_paise: i128 = 1_000;"
+ },
+ {
+  "id": "A23",
+  "by": "author",
+  "what": "AGE-1 ignores the advance",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let signed_recon = advance - recon;",
+  "to": "        let signed_recon = -recon;"
+ },
+ {
+  "id": "A24",
+  "by": "author",
+  "what": "AGE-1 nil/debit branch off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if recon != 0 {",
+  "to": "            if recon < 0 {"
+ },
+ {
+  "id": "A25",
+  "by": "author",
+  "what": "26(i)(A) evidence not de-duplicated",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if !evidence.contains(&e) {\n                evidence.push(e);\n            }",
+  "to": "            evidence.push(e);"
+ },
+ {
+  "id": "A26",
+  "by": "author",
+  "what": "clause 22(ii) counts unknown creditors",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if applicable(classification) {\n            clause22_ii_total",
+  "to": "        if classification != \"medium\" {\n            clause22_ii_total"
+ },
+ {
+  "id": "A27",
+  "by": "author",
+  "what": "creditor groups dropped at binding",
+  "file": "src/binding.rs",
+  "from": "            &list_at(raw, &[\"roles\", \"creditor_groups\"])?,",
+  "to": "            &Vec::<String>::new(),"
+ },
+ {
+  "id": "A28",
+  "by": "author",
+  "what": "legacy creditor names not bound",
+  "file": "src/binding.rs",
+  "from": "        let bound = lbinder.bind_list(&names, LEGACY_PATH_LABEL)?;",
+  "to": "        let bound = names.clone();"
+ },
+ {
+  "id": "A29",
+  "by": "author",
+  "what": "supplier classification dropped at binding",
+  "file": "src/binding.rs",
+  "from": "        table_at(raw, &[\"creditor_ageing_43bh\", \"supplier_classification\"])?,",
+  "to": "        None,"
+ },
+ {
+  "id": "A30",
+  "by": "author",
+  "what": "a groups source resolves nothing",
+  "file": "src/lib.rs",
+  "from": "            Ok(book.ledgers_under_any(groups))",
+  "to": "            Ok(book.ledgers_under_any(&groups[..0]))"
+ },
+ {
+  "id": "A31",
+  "by": "author",
+  "what": "no-TB-row count off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    if !no_tb_row.is_empty() {",
+  "to": "    if no_tb_row.len() > 1_000 {"
+ },
+ {
+  "id": "A32",
+  "by": "author",
+  "what": "lag note always plural",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if lag == 1 { \"\" } else { \"s\" }",
+  "to": "        \"s\""
+ },
+ {
+  "id": "S01",
+  "by": "author",
+  "what": "on-time is strictly before the due date",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if pdate <= lot.due_day_number {",
+  "to": "            if pdate < lot.due_day_number {"
+ },
+ {
+  "id": "S02",
+  "by": "author",
+  "what": "opening lot due in the period's own first month",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            due_day_number: due_date(month_of(period_start - 1), due_day)?,",
+  "to": "            due_day_number: due_date(month_of(period_start), due_day)?,"
+ },
+ {
+  "id": "S03",
+  "by": "author",
+  "what": "December rolls into month 13",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if m == 12 {\n        (y + 1, 1)",
+  "to": "    if m == 13 {\n        (y + 1, 1)"
+ },
+ {
+  "id": "S04",
+  "by": "author",
+  "what": "payments walked in line order, not date order",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    payments.sort_by_key(|&(d, _)| d);",
+  "to": "    payments.sort_by_key(|&(_, a)| a);"
+ },
+ {
+  "id": "S05",
+  "by": "author",
+  "what": "an unmatched advance is dropped",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            unmatched_advance = unmatched_advance\n                .checked_add(remaining_pay)",
+  "to": "            unmatched_advance = unmatched_advance\n                .checked_add(0)"
+ },
+ {
+  "id": "S06",
+  "by": "author",
+  "what": "the opening lot is not seeded",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if opening_paise > 0 {\n        lots.push(ContributionLot {",
+  "to": "    if opening_paise > i64::MAX - 1 {\n        lots.push(ContributionLot {"
+ },
+ {
+  "id": "S07",
+  "by": "author",
+  "what": "not-visible is at-or-after the period end",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if l.due_day_number > period_end {",
+  "to": "        if l.due_day_number >= period_end {"
+ },
+ {
+  "id": "S08",
+  "by": "author",
+  "what": "26(i)(A) walk: same-day payments before bills",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    sorted.sort_by_key(|&(d, amt)| (d, amt > 0));",
+  "to": "    sorted.sort_by_key(|&(d, amt)| (d, amt < 0));"
+ },
+ {
+  "id": "S09",
+  "by": "author",
+  "what": "26(i)(A) opening remainder left in 26(i)(B)",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    let opening_unpaid_remainder = opening_lot.as_ref().map_or(0, |l| l.remaining_paise);",
+  "to": "    let opening_unpaid_remainder = 0;"
+ },
+ {
+  "id": "S10",
+  "by": "author",
+  "what": "TDS payable treated as a s.43B sum",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if NOT_S43B_NATURES.contains(&nature) {\n            continue;",
+  "to": "        if NOT_S43B_NATURES.contains(&\"none\") {\n            continue;"
+ },
+ {
+  "id": "S11",
+  "by": "author",
+  "what": "RCM note dropped",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if RCM_NATURES.contains(&nature) {",
+  "to": "        if RCM_NATURES.contains(&\"none\") {"
+ },
+ {
+  "id": "S12",
+  "by": "author",
+  "what": "pass-through note dropped",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if PASS_THROUGH_NATURES.contains(&nature) {",
+  "to": "        if PASS_THROUGH_NATURES.contains(&\"none\") {"
+ },
+ {
+  "id": "S13",
+  "by": "author",
+  "what": "coverage: PF employer does not count",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "const PF_NATURES: [&str; 2] = [\"pf_employer\", \"pf_employee\"];",
+  "to": "const PF_NATURES: [&str; 2] = [\"pf_employee\", \"pf_employee\"];"
+ },
+ {
+  "id": "S14",
+  "by": "author",
+  "what": "coverage without salary ledgers",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if salary_expense_ledgers.is_empty() {\n        return;",
+  "to": "    if salary_expense_ledgers.len() > 1_000 {\n        return;"
+ },
+ {
+  "id": "S15",
+  "by": "author",
+  "what": "zero-amount lines counted",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if l.amount_paise == 0 || !ledgers.contains(l.ledger.as_str()) {",
+  "to": "            if !ledgers.contains(l.ledger.as_str()) {"
+ },
+ {
+  "id": "S16",
+  "by": "author",
+  "what": "S43B-1 tie tolerance widened",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    let tol_paise: i128 = 100;",
+  "to": "    let tol_paise: i128 = 1_000;"
+ },
+ {
+  "id": "S17",
+  "by": "author",
+  "what": "S43B-1 ignores payments",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        let derived_closing = opening_r + charged_r - paid_r;",
+  "to": "        let derived_closing = opening_r + charged_r;"
+ },
+ {
+  "id": "S18",
+  "by": "author",
+  "what": "the rules' own s.43B authority ignored",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        Some((a, st)) => (a.as_str(), st.as_str()),",
+  "to": "        Some(_) => (DEFAULT_S43B_AUTHORITY, DEFAULT_S43B_STATUS),"
+ },
+ {
+  "id": "S19",
+  "by": "author",
+  "what": "the rules' own due day ignored",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    let due_day = rules.s36_1_va_due_day.unwrap_or(DEFAULT_S36_1_VA_DUE_DAY);",
+  "to": "    let due_day = DEFAULT_S36_1_VA_DUE_DAY - 1;"
+ },
+ {
+  "id": "S20",
+  "by": "author",
+  "what": "a ledger with no TB row not counted",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            .filter(|n| !book.tb.contains_key(*n))",
+  "to": "            .filter(|n| n.is_empty())"
+ },
+ {
+  "id": "S21",
+  "by": "author",
+  "what": "late payments counted on time",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "                lot.paid_late_paise += take;",
+  "to": "                lot.paid_on_time_paise += take;"
+ },
+ {
+  "id": "S22",
+  "by": "author",
+  "what": "nature_by_ledger dropped at binding",
+  "file": "src/binding.rs",
+  "from": "        table_at(raw, &[\"statutory_dues\", \"nature_by_ledger\"])?,",
+  "to": "        None,"
+ },
+ {
+  "id": "S23",
+  "by": "author",
+  "what": "salary ledgers dropped at binding",
+  "file": "src/binding.rs",
+  "from": "        &list_at(raw, &[\"statutory_dues\", \"salary_expense_ledgers\"])?,",
+  "to": "        &Vec::<String>::new(),"
+ },
+ {
+  "id": "S24",
+  "by": "author",
+  "what": "s36_1_va due day read from the wrong key",
+  "file": "src/rules.rs",
+  "from": "                Some(t) => Some(int_in(t, \"s36_1_va\", \"due_day\")?),",
+  "to": "                Some(t) => Some(int_in(t, \"s36_1_va\", \"due_day\").unwrap_or(16)),"
+ },
+ {
+  "id": "S25",
+  "by": "author",
+  "what": "a nature ledger missing from the TB still sums",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if let Some(t) = book.tb.get(*n) {\n                opening = opening",
+  "to": "            if let Some(t) = book.tb.get(*n).or(book.tb.values().next()) {\n                opening = opening"
+ },
+ {
+  "id": "R01",
+  "by": "reviewer-opus",
+  "what": "post-year: a settled lot is revisited and its settled day overwritten",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if *lot <= 0 {\n                continue;\n            }\n            let take = pay.min(*lot);",
+  "to": "            let take = pay.min(*lot);"
+ },
+ {
+  "id": "R02",
+  "by": "reviewer-opus",
+  "what": "post-year: a negative payment is walked",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            if pay <= 0 {\n                break;\n            }\n            if *lot <= 0 {",
+  "to": "            if pay == 0 {\n                break;\n            }\n            if *lot <= 0 {"
+ },
+ {
+  "id": "R03",
+  "by": "reviewer-opus",
+  "what": "post-year: settled paise overwritten, not accumulated",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "            out[i].settled_paise += take;",
+  "to": "            out[i].settled_paise = take;"
+ },
+ {
+  "id": "R04",
+  "by": "reviewer-opus",
+  "what": "over-45 creditor count counts every creditor",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if creditor_over_45 > 0 {\n            over_45_creditor_count += 1;",
+  "to": "        if creditor_over_45 >= 0 {\n            over_45_creditor_count += 1;"
+ },
+ {
+  "id": "R05",
+  "by": "reviewer-opus",
+  "what": "unknown finding raised for medium/trader/not_registered too",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        } else if classification == \"unknown\" && (creditor_over_45 > 0 || creditor_over_15 > 0) {",
+  "to": "        } else if (creditor_over_45 > 0 || creditor_over_15 > 0) {"
+ },
+ {
+  "id": "R06",
+  "by": "reviewer-opus",
+  "what": "duplicate-GUID voucher keeps the first, not the last",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "                    vs.insert(v.guid.as_str(), *v);",
+  "to": "                    vs.entry(v.guid.as_str()).or_insert(*v);"
+ },
+ {
+  "id": "R07",
+  "by": "reviewer-opus",
+  "what": "AGE-1 exceeds-abs branch off",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        } else if recon > -closing_paise {",
+  "to": "        } else if recon > -closing_paise + 1_000_000_000 {"
+ },
+ {
+  "id": "R08",
+  "by": "reviewer-opus",
+  "what": "26(i)(A) opening candidate counts non-applicable creditors",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        if applicable(classification) && opening_remaining > 0 {",
+  "to": "        if classification != \"medium\" && opening_remaining > 0 {"
+ },
+ {
+  "id": "R09",
+  "by": "reviewer-opus",
+  "what": "no-TB-row creditor takes zero opening even when row exists",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        let opening_paise = tb_row.map_or(0, |t| t.opening_paise);",
+  "to": "        let opening_paise = tb_row.map_or(0, |t| t.opening_paise.min(0));"
+ },
+ {
+  "id": "R10",
+  "by": "reviewer-opus",
+  "what": "S43B-1 opening mismatch branch off",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            if reported != opening_r {",
+  "to": "            if reported != opening_r && false {"
+ },
+ {
+  "id": "R11",
+  "by": "reviewer-opus",
+  "what": "S43B-1 closing mismatch branch off",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if value != closing_r {",
+  "to": "        if value != closing_r && false {"
+ },
+ {
+  "id": "R12",
+  "by": "reviewer-opus",
+  "what": "S43B-1 no-ledger-evidence branch off",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if ledgers.is_empty() {\n            out.push(",
+  "to": "        if ledgers.len() > 1_000 {\n            out.push("
+ },
+ {
+  "id": "R13",
+  "by": "reviewer-opus",
+  "what": "a negative (debit) opening is seeded as a lot",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    if opening_paise > 0 {\n        lots.push(ContributionLot {",
+  "to": "    if opening_paise != 0 {\n        lots.push(ContributionLot {"
+ },
+ {
+  "id": "R14",
+  "by": "reviewer-opus",
+  "what": "the opening lot is dated two days before the period start",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            due_day_number: due_date(month_of(period_start - 1), due_day)?,",
+  "to": "            due_day_number: due_date(month_of(period_start - 2), due_day)?,"
+ },
+ {
+  "id": "R15",
+  "by": "reviewer-opus",
+  "what": "deductions grouped by the month of the day before",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            let e = charges.entry(month_of(d)).or_insert(0);",
+  "to": "            let e = charges.entry(month_of(d - 1)).or_insert(0);"
+ },
+ {
+  "id": "R16",
+  "by": "reviewer-opus",
+  "what": "26(i)(A) payment evidence includes credit-only vouchers",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "                .any(|l| ledgers.contains(l.ledger.as_str()) && l.amount_paise > 0)",
+  "to": "                .any(|l| ledgers.contains(l.ledger.as_str()) && l.amount_paise != 0)"
+ },
+ {
+  "id": "R17",
+  "by": "reviewer-opus",
+  "what": "coverage: any-of becomes all-of",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if natures.iter().any(|n| mapped.contains(n)) {",
+  "to": "        if natures.iter().all(|n| mapped.contains(n)) {"
+ },
+ {
+  "id": "R18",
+  "by": "reviewer-opus",
+  "what": "not-visible and visible-unpaid swap for lots due on the period end",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "        if l.due_day_number > period_end {\n            not_visible",
+  "to": "        if l.due_day_number > period_end - 1 {\n            not_visible"
+ },
+ {
+  "id": "R19",
+  "by": "reviewer-opus",
+  "what": "the opening lot is included in this year's on-time/late totals",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "    for l in lots.iter().filter(|l| l.month.is_some()) {",
+  "to": "    for l in lots.iter() {"
+ },
+ {
+  "id": "R20",
+  "by": "reviewer-opus",
+  "what": "a nature's closing ignores the second ledger",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "                closing = closing.checked_sub(t.closing_paise).ok_or_else(overflow)?;",
+  "to": "                closing = t.closing_paise.checked_neg().ok_or_else(overflow)?;"
+ },
+ {
+  "id": "R21",
+  "by": "reviewer-opus",
+  "what": "voucher evidence keeps the first of a duplicate GUID",
+  "file": "src/statutory_dues_43b.rs",
+  "from": "            out.vouchers.insert(v.guid.as_str(), *v);",
+  "to": "            out.vouchers.entry(v.guid.as_str()).or_insert(*v);"
+ },
+ {
+  "id": "R22",
+  "by": "reviewer-opus",
+  "what": "walk: an opening lot of zero is pushed",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "    if opening_paise < 0 {\n        lots.push_back(Lot {",
+  "to": "    if opening_paise <= 0 {\n        lots.push_back(Lot {"
+ },
+ {
+  "id": "A33",
+  "by": "author",
+  "what": "a table location's keys are not rebound",
+  "file": "src/binding.rs",
+  "from": ".map(|(orig, bound)| (bound, table[&orig].clone()))",
+  "to": ".map(|(orig, _bound)| (orig.clone(), table[&orig].clone()))"
+ },
+ {
+  "id": "A34",
+  "by": "author",
+  "what": "int() of a boolean is always 1",
+  "file": "src/lib.rs",
+  "from": "        toml::Value::Boolean(b) => Ok(i64::from(*b)),",
+  "to": "        toml::Value::Boolean(_) => Ok(1),"
+ },
+ {
+  "id": "A35",
+  "by": "author",
+  "what": "int() of a float rounds instead of truncating",
+  "file": "src/lib.rs",
+  "from": "            let t = f.trunc();",
+  "to": "            let t = f.round();"
+ },
+ {
+  "id": "A36",
+  "by": "author",
+  "what": "int() of a string accepts a doubled or edge underscore (in py_int_str since the string reader moved there)",
+  "file": "src/support.rs",
+  "from": ".all(|g| !g.is_empty() && g.bytes().all(|b| b.is_ascii_digit()));",
+  "to": ".all(|g| g.bytes().all(|b| b.is_ascii_digit()));"
+ },
+ {
+  "id": "A37",
+  "by": "author",
+  "what": "the lag's date range excludes 9999-12-31",
+  "file": "src/creditor_ageing_43bh.rs",
+  "from": "        .filter(|d| (MIN_DAY..=MAX_DAY).contains(d))",
+  "to": "        .filter(|d| (MIN_DAY..MAX_DAY).contains(d))"
+ },
+ {
+  "id": "A38",
+  "by": "author",
+  "what": "a non-table [creditor_ageing_43bh] runs",
+  "file": "src/lib.rs",
+  "from": "            \"[creditor_ageing_43bh] is not a table\".to_string(),\n        ));",
+  "to": "            \"[creditor_ageing_43bh] is not a table\".to_string(),\n        )).or(Ok(serde_json::Value::Null));"
+ },
+ {
+  "id": "S26",
+  "by": "author",
+  "what": "a non-table [statutory_dues] is not flagged",
+  "file": "src/binding.rs",
+  "from": "        not_a_table: raw.get(\"statutory_dues\").is_some_and(|v| !v.is_table()),",
+  "to": "        not_a_table: false,"
+ },
+ {
+  "id": "P01",
+  "by": "author",
+  "what": "POP-5 blank GUIDs not reported",
+  "file": "src/invariants.rs",
+  "from": "    if let Some(blank) = guid_counts.get(\"\") {",
+  "to": "    if let Some(blank) = guid_counts.get(\"never\") {"
+ },
+ {
+  "id": "P02",
+  "by": "author",
+  "what": "POP-5 repeats need three",
+  "file": "src/invariants.rs",
+  "from": "        if !guid.is_empty() && *count > 1 {",
+  "to": "        if !guid.is_empty() && *count > 2 {"
+ },
+ {
+  "id": "P03",
+  "by": "author",
+  "what": "POP-5 counts excluded vouchers too",
+  "file": "src/invariants.rs",
+  "from": "    for v in &population {\n        *guid_counts",
+  "to": "    for v in &book.vouchers {\n        *guid_counts"
+ },
+ {
+  "id": "P04",
+  "by": "author",
+  "what": "POP-5 not listed as evaluated",
+  "file": "src/invariants.rs",
+  "from": "            \"ID-1\", \"POP-0\", \"POP-1\", \"POP-2\", \"POP-3\", \"POP-5\", \"MAP-0\", \"MAP-1\",\n        ],",
+  "to": "            \"ID-1\", \"POP-0\", \"POP-1\", \"POP-2\", \"POP-3\", \"MAP-0\", \"MAP-1\",\n        ],"
+ },
+ {
+  "id": "C1-01",
+  "by": "author (Lane C)",
+  "what": "Contra not skipped",
+  "file": "src/tds_payees.rs",
+  "from": "if v.base_type == \"Contra\" {",
+  "to": "if v.base_type == \"Contra-never\" {"
+ },
+ {
+  "id": "C1-02",
+  "by": "author (Lane C)",
+  "what": "an empty nature maps the ledger",
+  "file": "src/tds_payees.rs",
+  "from": ".filter(|n| !n.is_empty())",
+  "to": ".filter(|_| true)"
+ },
+ {
+  "id": "C1-03",
+  "by": "author (Lane C)",
+  "what": "a Sales Accounts line is not a goods invoice",
+  "file": "src/tds_payees.rs",
+  "from": "&[PURCHASE_ACCOUNTS_GROUP, SALES_ACCOUNTS_GROUP],",
+  "to": "&[PURCHASE_ACCOUNTS_GROUP],"
+ },
+ {
+  "id": "C1-04",
+  "by": "author (Lane C)",
+  "what": "goods bucket takes the absolute amount",
+  "file": "src/tds_payees.rs",
+  "from": ".push(l.amount_paise);",
+  "to": ".push(l.amount_paise.abs());"
+ },
+ {
+  "id": "C1-05",
+  "by": "author (Lane C)",
+  "what": "goods bucket only for the first nature",
+  "file": "src/tds_payees.rs",
+  "from": "for (key, amounts) in &expense_lines {",
+  "to": "for (key, amounts) in expense_lines.iter().take(1) {"
+ },
+ {
+  "id": "C1-06",
+  "by": "author (Lane C)",
+  "what": "a debit line is a payee",
+  "file": "src/tds_payees.rs",
+  "from": "                l.amount_paise < 0\n",
+  "to": "                l.amount_paise != 0\n"
+ },
+ {
+  "id": "C1-07",
+  "by": "author (Lane C)",
+  "what": "a mapped expense ledger's credit is a payee",
+  "file": "src/tds_payees.rs",
+  "from": "                    && !expense_ledgers_here.contains(l.ledger.as_str())\n",
+  "to": ""
+ },
+ {
+  "id": "C1-08",
+  "by": "author (Lane C)",
+  "what": "a Duties & Taxes credit is a payee",
+  "file": "src/tds_payees.rs",
+  "from": "                    && !under_any(book, &l.ledger, &[DUTIES_TAXES_GROUP])\n",
+  "to": ""
+ },
+ {
+  "id": "C1-09",
+  "by": "author (Lane C)",
+  "what": "multi-nature credit attributed to the first nature only",
+  "file": "src/tds_payees.rs",
+  "from": "for key in expense_lines.keys() {",
+  "to": "for key in expense_lines.keys().take(1) {"
+ },
+ {
+  "id": "C1-10",
+  "by": "author (Lane C)",
+  "what": "a cash credit is a named payee",
+  "file": "src/tds_payees.rs",
+  "from": "&[CASH_GROUP, BANK_GROUPS[0], BANK_GROUPS[1]],",
+  "to": "&[BANK_GROUPS[0], BANK_GROUPS[1]],"
+ },
+ {
+  "id": "C1-11",
+  "by": "author (Lane C)",
+  "what": "an overdraft credit is a named payee",
+  "file": "src/tds_payees.rs",
+  "from": "&[CASH_GROUP, BANK_GROUPS[0], BANK_GROUPS[1]],",
+  "to": "&[CASH_GROUP, BANK_GROUPS[0]],"
+ },
+ {
+  "id": "C1-12",
+  "by": "author (Lane C)",
+  "what": "payee_aliases ignored",
+  "file": "src/tds_payees.rs",
+  "from": "                        .get(&l.ledger)\n",
+  "to": "                        .get(\"\")\n"
+ },
+ {
+  "id": "C1-13",
+  "by": "author (Lane C)",
+  "what": "one voucher's credits not summed (last line wins)",
+  "file": "src/tds_payees.rs",
+  "from": "*slot = slot.checked_add(amount).ok_or_else(|| overflow(TEST_ID))?;",
+  "to": "*slot = amount;"
+ },
+ {
+  "id": "C1-14",
+  "by": "author (Lane C)",
+  "what": "max single is the aggregate",
+  "file": "src/tds_payees.rs",
+  "from": "let max_single = row.by_voucher.values().copied().max().unwrap_or(0);",
+  "to": "let max_single = credited;"
+ },
+ {
+  "id": "C1-15",
+  "by": "author (Lane C)",
+  "what": "months keyed by year",
+  "file": "src/tds_payees.rs",
+  "from": "format!(\"{}-{}\", &s[0..4], &s[4..6])",
+  "to": "format!(\"{}-01\", &s[0..4])"
+ },
+ {
+  "id": "C1-16",
+  "by": "author (Lane C)",
+  "what": "194C aggregate at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": "s.credited > s194c.aggregate_paise ||",
+  "to": "s.credited >= s194c.aggregate_paise ||"
+ },
+ {
+  "id": "C1-17",
+  "by": "author (Lane C)",
+  "what": "194C single sum at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": "|| s.max_single > s194c.single_sum_paise",
+  "to": "|| s.max_single >= s194c.single_sum_paise"
+ },
+ {
+  "id": "C1-18",
+  "by": "author (Lane C)",
+  "what": "194-I month at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": ".is_some_and(|m| *m > per_month_limit)",
+  "to": ".is_some_and(|m| *m >= per_month_limit)"
+ },
+ {
+  "id": "C1-19",
+  "by": "author (Lane C)",
+  "what": "194-I tests the year, not the month",
+  "file": "src/tds_payees.rs",
+  "from": "                    s.months\n                        .values()\n                        .max()\n                        .is_some_and(|m| *m > per_month_limit)",
+  "to": "                    s.credited > per_month_limit"
+ },
+ {
+  "id": "C1-20",
+  "by": "author (Lane C)",
+  "what": "194J at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": "s.credited > s194j_limit",
+  "to": "s.credited >= s194j_limit"
+ },
+ {
+  "id": "C1-21",
+  "by": "author (Lane C)",
+  "what": "unmapped 194J is threshold-tested",
+  "file": "src/tds_payees.rs",
+  "from": "                    s.credited > 0\n",
+  "to": "                    s.credited > s194j_limit\n"
+ },
+ {
+  "id": "C1-22",
+  "by": "author (Lane C)",
+  "what": "an unrecognised 194J category is used as written",
+  "file": "src/tds_payees.rs",
+  "from": "Some(Some(cat)) if CATEGORIES_194J.contains(&cat.as_str()) => cat.clone(),",
+  "to": "Some(Some(cat)) => cat.clone(),"
+ },
+ {
+  "id": "C1-23",
+  "by": "author (Lane C)",
+  "what": "the default-limit text is never added",
+  "file": "src/tds_payees.rs",
+  "from": "if nature == \"194J\" && !is_unmapped_194j && s194j_is_default {",
+  "to": "if false {"
+ },
+ {
+  "id": "C1-24",
+  "by": "author (Lane C)",
+  "what": "turnover at the threshold makes a deductor",
+  "file": "src/tds_payees.rs",
+  "from": "Some(t) if t > threshold => \"deductor\",",
+  "to": "Some(t) if t >= threshold => \"deductor\","
+ },
+ {
+  "id": "C1-25",
+  "by": "author (Lane C)",
+  "what": "entity type matched ignoring case",
+  "file": "src/tds_payees.rs",
+  "from": "if entity_type == \"individual\" || entity_type == \"huf\" {",
+  "to": "if entity_type.eq_ignore_ascii_case(\"individual\") || entity_type == \"huf\" {"
+ },
+ {
+  "id": "C1-26",
+  "by": "author (Lane C)",
+  "what": "a HUF is always a deductor",
+  "file": "src/tds_payees.rs",
+  "from": "if entity_type == \"individual\" || entity_type == \"huf\" {",
+  "to": "if entity_type == \"individual\" {"
+ },
+ {
+  "id": "C1-27",
+  "by": "author (Lane C)",
+  "what": "TDS ledgers matched case-sensitively",
+  "file": "src/tds_payees.rs",
+  "from": "py_lower(name).contains(\"tds\")",
+  "to": "name.contains(\"tds\")"
+ },
+ {
+  "id": "C1-28",
+  "by": "author (Lane C)",
+  "what": "TDS ledgers counted outside Duties & Taxes",
+  "file": "src/tds_payees.rs",
+  "from": "l.under(DUTIES_TAXES_GROUP) && py_lower(name)",
+  "to": "py_lower(name)"
+ },
+ {
+  "id": "C1-29",
+  "by": "author (Lane C)",
+  "what": "unmapped category uses the credited fact key",
+  "file": "src/tds_payees.rs",
+  "from": "\"unmapped_category_credited\"",
+  "to": "\"credited\""
+ },
+ {
+  "id": "C1-30",
+  "by": "author (Lane C)",
+  "what": "unmapped finding is needs_document",
+  "file": "src/tds_payees.rs",
+  "from": "                    Confidence::JudgementRequired\n                } else {\n                    Confidence::NeedsDocument",
+  "to": "                    Confidence::NeedsDocument\n                } else {\n                    Confidence::NeedsDocument"
+ },
+ {
+  "id": "C1-31",
+  "by": "author (Lane C)",
+  "what": "row id hashed without its prefix",
+  "file": "src/tds_payees.rs",
+  "from": "let h = hash8(&format!(\"{prefix}:{}\", stable_ledger_tag(book, entity)?));",
+  "to": "let h = hash8(&stable_ledger_tag(book, entity)?);"
+ },
+ {
+  "id": "C1-32",
+  "by": "author (Lane C)",
+  "what": ":g scientific notation from 1e7",
+  "file": "src/tds_payees.rs",
+  "from": "if (-4..6).contains(&exponent) {",
+  "to": "if (-4..7).contains(&exponent) {"
+ },
+ {
+  "id": "C1-33",
+  "by": "author (Lane C)",
+  "what": "[tds] turnover dropped",
+  "file": "src/lib.rs",
+  "from": "                    previous_year_turnover_paise,\n",
+  "to": "                    previous_year_turnover_paise: None,\n"
+ },
+ {
+  "id": "C1-34",
+  "by": "author (Lane C)",
+  "what": "payee_aliases keys not bound",
+  "file": "src/binding.rs",
+  "from": "        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;\n",
+  "to": ""
+ },
+ {
+  "id": "C1-35",
+  "by": "author (Lane C)",
+  "what": "[s194j] never read",
+  "file": "src/rules.rs",
+  "from": "            s194j_aggregate_paise: optional(\"s194j\")",
+  "to": "            s194j_aggregate_paise: optional(\"s194j-absent\")"
+ },
+ {
+  "id": "C1-36",
+  "by": "author (Lane C)",
+  "what": "tds_payees parity floor raised above the synthetic dump's 30 figures (proves the registry enforces the floor; lowering it is not observable by design, a floor only refuses)",
+  "file": "src/registry.rs",
+  "from": "        id: \"tds_payees\",\n        min_figures: 30,",
+  "to": "        id: \"tds_payees\",\n        min_figures: 31,"
+ },
+ {
+  "id": "C1-37",
+  "by": "author (Lane C)",
+  "what": "payee_aliases bound but the old keys kept",
+  "file": "src/binding.rs",
+  "from": "        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;",
+  "to": "        let _ = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;"
+ },
+ {
+  "id": "C1-38",
+  "by": "author (Lane C)",
+  "what": "194J categories bound but the old keys kept",
+  "file": "src/binding.rs",
+  "from": "        t.s194j_category_by_ledger = lbinder.rebind_map(",
+  "to": "        let _ = lbinder.rebind_map("
+ },
+ {
+  "id": "C1-39",
+  "by": "author (Lane C)",
+  "what": "duplicate figure id not refused",
+  "file": "src/tds_payees.rs",
+  "from": "            if r.figures.iter().any(|f| f.id == row_figure) {",
+  "to": "            if false {"
+ },
+ {
+  "id": "C1-40",
+  "by": "author (Lane C)",
+  "what": "[tds_payees] never read",
+  "file": "src/lib.rs",
+  "from": "                    .get(\"tds_payees\")\n",
+  "to": "                    .get(\"tds_payees-absent\")\n"
+ },
+ {
+  "id": "E1A-01",
+  "by": "author",
+  "what": "top-level entries never preferred over nested",
+  "file": "src/book.rs",
+  "from": "let chosen = if top.is_empty() {",
+  "to": "let chosen = if !top.is_empty() {"
+ },
+ {
+  "id": "E1A-02",
+  "by": "author",
+  "what": "IN/OUT lists never replace the others",
+  "file": "src/book.rs",
+  "from": "    if !io_present {\n",
+  "to": "    if true || !io_present {\n"
+ },
+ {
+  "id": "E1A-03",
+  "by": "author",
+  "what": "an IN/OUT list naming no item still counts as present",
+  "file": "src/book.rs",
+  "from": ".any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));",
+  "to": ".any(|(tag, _)| v.children_named(tag).next().is_some());"
+ },
+ {
+  "id": "E1A-04",
+  "by": "author",
+  "what": "IN and OUT directions swapped",
+  "file": "src/book.rs",
+  "from": "(\"INVENTORYENTRIESIN.LIST\", 1),",
+  "to": "(\"INVENTORYENTRIESIN.LIST\", -1),"
+ },
+ {
+  "id": "E1A-05",
+  "by": "author",
+  "what": "an IN/OUT line keeps its RATE",
+  "file": "src/book.rs",
+  "from": "                rate_paise: None,\n                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),",
+  "to": "                rate_paise: rate_paise(ie.child_text(\"RATE\"), part)?,\n                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),"
+ },
+ {
+  "id": "E1A-06",
+  "by": "author",
+  "what": "quantity always from ACTUALQTY",
+  "file": "src/book.rs",
+  "from": "\"\" => ie.child_text(\"ACTUALQTY\"),\n                billed => billed,",
+  "to": "\"\" => ie.child_text(\"ACTUALQTY\"),\n                _ => ie.child_text(\"ACTUALQTY\"),"
+ },
+ {
+  "id": "E1A-07",
+  "by": "author",
+  "what": "qty_field_present needs both elements",
+  "file": "src/book.rs",
+  "from": "qty_field_present: ie.child(\"BILLEDQTY\").is_some()\n                    || ie.child(\"ACTUALQTY\").is_some(),",
+  "to": "qty_field_present: ie.child(\"BILLEDQTY\").is_some()\n                    && ie.child(\"ACTUALQTY\").is_some(),"
+ },
+ {
+  "id": "E1A-08",
+  "by": "author",
+  "what": "inventory amount not flipped",
+  "file": "src/book.rs",
+  "from": "                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: None,",
+  "to": "                amount_paise: paise(ie.child_text(\"AMOUNT\"), part)?,\n                direction: None,"
+ },
+ {
+  "id": "E1A-09",
+  "by": "author",
+  "what": "a top-level entry naming no item is kept",
+  "file": "src/book.rs",
+  "from": "            .children_named(\"ALLINVENTORYENTRIES.LIST\")\n            .filter(names_item)",
+  "to": "            .children_named(\"ALLINVENTORYENTRIES.LIST\")\n            .filter(|_| true)"
+ },
+ {
+  "id": "E1A-10",
+  "by": "author",
+  "what": "a nested allocation naming no item is kept",
+  "file": "src/book.rs",
+  "from": "                .flat_map(|le| le.children_named(\"INVENTORYALLOCATIONS.LIST\"))\n                .filter(names_item)",
+  "to": "                .flat_map(|le| le.children_named(\"INVENTORYALLOCATIONS.LIST\"))\n                .filter(|_| true)"
+ },
+ {
+  "id": "E1A-11",
+  "by": "author",
+  "what": "digits-and-commas run shortest first",
+  "file": "src/book.rs",
+  "from": "for len in (0..=longest).rev() {",
+  "to": "for len in 0..=longest {"
+ },
+ {
+  "id": "E1A-12",
+  "by": "author",
+  "what": "commas not part of the number",
+  "file": "src/book.rs",
+  "from": "let longest = run(body, |c| c.is_ascii_digit() || *c == ',');",
+  "to": "let longest = run(body, |c| c.is_ascii_digit());"
+ },
+ {
+  "id": "E1A-13",
+  "by": "author",
+  "what": "no leading minus sign",
+  "file": "src/book.rs",
+  "from": "        if sign && chars.get(at) != Some(&'-') {",
+  "to": "        if sign {"
+ },
+ {
+  "id": "E1A-14",
+  "by": "author",
+  "what": "rate searched, not anchored",
+  "file": "src/book.rs",
+  "from": "    let Some(end) = number_match_end(&chars, start) else {\n        return Ok(None);\n    };",
+  "to": "    let Some((start, end)) = (start..chars.len()).find_map(|at| number_match_end(&chars, at).map(|e| (at, e))) else {\n        return Ok(None);\n    };"
+ },
+ {
+  "id": "E1A-15",
+  "by": "author",
+  "what": "a leading-dot rate not given its zero",
+  "file": "src/book.rs",
+  "from": "let zero = if body.starts_with('.') { \"0\" } else { \"\" };",
+  "to": "let zero = \"\";"
+ },
+ {
+  "id": "E1A-16",
+  "by": "author",
+  "what": "non-ASCII digits read, not refused",
+  "file": "src/book.rs",
+  "from": ".any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))",
+  "to": ".any(|_| false)"
+ },
+ {
+  "id": "E1A-17",
+  "by": "author",
+  "what": "an empty MASTERID kept as Some(\"\")",
+  "file": "src/book.rs",
+  "from": "masterid: (!masterid.is_empty()).then(|| masterid.to_string()),",
+  "to": "masterid: Some(masterid.to_string()),"
+ },
+ {
+  "id": "E1A-18",
+  "by": "author",
+  "what": "default status Regular",
+  "file": "src/book.rs",
+  "from": "            status: VoucherStatus::Unknown,\n            lines: Vec::new(),",
+  "to": "            status: VoucherStatus::Regular,\n            lines: Vec::new(),"
+ },
+ {
+  "id": "E1A-R01",
+  "by": "reviewer",
+  "what": "io_present consults only the IN list",
+  "file": "src/book.rs",
+  "from": ".any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));",
+  "to": ".take(1).any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));"
+ },
+ {
+  "id": "E1A-R02",
+  "by": "reviewer",
+  "what": "io_present consults only the OUT list",
+  "file": "src/book.rs",
+  "from": ".any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));",
+  "to": ".skip(1).any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));"
+ },
+ {
+  "id": "E1A-R03",
+  "by": "reviewer",
+  "what": "zero put before the sign on a leading-dot rate",
+  "file": "src/book.rs",
+  "from": "paise(&format!(\"{sign}{zero}{body}\"), part)",
+  "to": "paise(&format!(\"{zero}{sign}{body}\"), part)"
+ },
+ {
+  "id": "E1A-R04",
+  "by": "reviewer",
+  "what": "leading-dot test on the signed lexeme",
+  "file": "src/book.rs",
+  "from": "let zero = if body.starts_with('.') {",
+  "to": "let zero = if lexeme.starts_with('.') {"
+ },
+ {
+  "id": "E1A-R05",
+  "by": "reviewer",
+  "what": "quantity parsed at f32 precision",
+  "file": "src/book.rs",
+  "from": "        .parse::<f64>()\n        .map(Some)",
+  "to": "        .parse::<f32>()\n        .map(|f| Some(f64::from(f)))"
+ },
+ {
+  "id": "E1A-R06",
+  "by": "reviewer",
+  "what": "non-ASCII refusal narrowed to Arabic-Indic digits",
+  "file": "src/book.rs",
+  "from": ".any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))",
+  "to": ".any(|c| ('\\u{660}'..='\\u{669}').contains(&c))"
+ },
+ {
+  "id": "E1A-R10",
+  "by": "reviewer",
+  "what": "rate refusal dropped, quantity refusal kept",
+  "file": "src/book.rs",
+  "from": "    refuse_non_ascii_digits(text, \"a rate\", part)?;\n",
+  "to": "\n"
+ },
+ {
+  "id": "E1A-R11",
+  "by": "reviewer",
+  "what": "quantity refusal dropped, rate refusal kept",
+  "file": "src/book.rs",
+  "from": "    refuse_non_ascii_digits(text, \"a quantity\", part)?;\n",
+  "to": "\n"
+ },
+ {
+  "id": "E1A-R13",
+  "by": "reviewer",
+  "what": "nested allocations read from every ledger-entry depth, not only the voucher's own",
+  "file": "src/book.rs",
+  "from": "            v.children_named(\"ALLLEDGERENTRIES.LIST\")\n                .flat_map",
+  "to": "            v.descendants_named(\"ALLLEDGERENTRIES.LIST\")\n                .into_iter()\n                .flat_map"
+ },
+ {
+  "id": "E1A-R14",
+  "by": "reviewer",
+  "what": "the digits after the dot must be two or more",
+  "file": "src/book.rs",
+  "from": "                if digits > 0 {",
+  "to": "                if digits > usize::from(dot) {"
+ },
+ {
+  "id": "E1A-R15",
+  "by": "reviewer",
+  "what": "inventory skipped on a non-regular voucher",
+  "file": "src/book.rs",
+  "from": "        let inventory = inventory_lines(v, part)?;",
+  "to": "        let inventory = if matches!(status, VoucherStatus::Regular) { inventory_lines(v, part)? } else { Vec::new() };"
+ },
+ {
+  "id": "E1A-19",
+  "by": "author",
+  "what": "refusal widened back to every numeric character",
+  "file": "src/book.rs",
+  "from": ".any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))",
+  "to": ".any(|c| !c.is_ascii() && c.is_numeric())"
+ },
+ {
+  "id": "E1A-S01",
+  "by": "reviewer",
+  "what": "IN/OUT branch AMOUNT not flipped (paise instead of flip)",
+  "file": "src/book.rs",
+  "from": "                qty: quantity(ie.child_text(\"ACTUALQTY\"), part)?,\n                rate_paise: None,\n                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),",
+  "to": "                qty: quantity(ie.child_text(\"ACTUALQTY\"), part)?,\n                rate_paise: None,\n                amount_paise: paise(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),"
+ },
+ {
+  "id": "E1A-S02",
+  "by": "reviewer",
+  "what": "IN/OUT branch qty_field_present forced to always true",
+  "file": "src/book.rs",
+  "from": "                direction: Some(direction),\n                qty_field_present: ie.child(\"ACTUALQTY\").is_some(),",
+  "to": "                direction: Some(direction),\n                qty_field_present: true,"
+ },
+ {
+  "id": "Q01",
+  "by": "author",
+  "what": "quote chosen as \" whenever the text holds a '",
+  "file": "src/support.rs",
+  "from": "    let quote = if text.contains('\\'') && !text.contains('\"') {",
+  "to": "    let quote = if text.contains('\\'') {"
+ },
+ {
+  "id": "Q02",
+  "by": "author",
+  "what": "the backslash left unescaped",
+  "file": "src/support.rs",
+  "from": "            _ if c == quote || c == '\\\\' => {",
+  "to": "            _ if c == quote => {"
+ },
+ {
+  "id": "Q03",
+  "by": "author",
+  "what": "a tab escaped as \\x09",
+  "file": "src/support.rs",
+  "from": "            '\\t' => out.push_str(\"\\\\t\"),\n",
+  "to": ""
+ },
+ {
+  "id": "Q04",
+  "by": "author",
+  "what": "U+001F kept (the control bound one short)",
+  "file": "src/support.rs",
+  "from": "            _ if cp < 0x20 || cp == 0x7f => {",
+  "to": "            _ if cp < 0x1f || cp == 0x7f => {"
+ },
+ {
+  "id": "Q05",
+  "by": "author",
+  "what": "every non-ASCII character kept",
+  "file": "src/support.rs",
+  "from": "            _ if cp < 0x7f || py_isprintable(c) => out.push(c),",
+  "to": "            _ if cp < 0x7f || cp > 0x7f => out.push(c),"
+ },
+ {
+  "id": "Q06",
+  "by": "author",
+  "what": "U+00A0..U+00FF escaped as \\u00hh (the \\x bound cut at U+009F)",
+  "file": "src/support.rs",
+  "from": "            _ if cp <= 0xff => {",
+  "to": "            _ if cp <= 0x9f => {"
+ },
+ {
+  "id": "Q07",
+  "by": "author",
+  "what": "U+FFFF escaped as \\U0000ffff",
+  "file": "src/support.rs",
+  "from": "            _ if cp <= 0xffff => {",
+  "to": "            _ if cp < 0xffff => {"
+ },
+ {
+  "id": "Q08",
+  "by": "author",
+  "what": "upper-case hex in \\u escapes",
+  "file": "src/support.rs",
+  "from": "                let _ = write!(out, \"\\\\u{cp:04x}\");",
+  "to": "                let _ = write!(out, \"\\\\u{cp:04X}\");"
+ },
+ {
+  "id": "Q09",
+  "by": "author",
+  "what": "isprintable ignores the table",
+  "file": "src/support.rs",
+  "from": "    !in_ranges(&text_tables::PY_NOT_PRINTABLE, c)",
+  "to": "    !c.is_control()"
+ },
+ {
+  "id": "Q10",
+  "by": "author",
+  "what": "isprintable treats the space separators as printable",
+  "file": "src/support.rs",
+  "from": "    !in_ranges(&text_tables::PY_NOT_PRINTABLE, c)",
+  "to": "    !in_ranges(&text_tables::PY_NOT_PRINTABLE, c) || c.is_whitespace()"
+ },
+ {
+  "id": "C2-01",
+  "by": "author (Lane C)",
+  "what": "Part VI rows read as Part I",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        if a.part != \"I\" {\n            continue;\n        }\n        let Some(party)",
+  "to": "        if a.part == \"none\" {\n            continue;\n        }\n        let Some(party)"
+ },
+ {
+  "id": "C2-02",
+  "by": "author (Lane C)",
+  "what": "an empty alias is a party",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            .filter(|p| !p.is_empty())\n        else {",
+  "to": "            .filter(|_| true)\n        else {"
+ },
+ {
+  "id": "C2-03",
+  "by": "author (Lane C)",
+  "what": "section spaces kept",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "    py_upper(&section.replace(' ', \"\"))",
+  "to": "    py_upper(section)"
+ },
+ {
+  "id": "C2-04",
+  "by": "author (Lane C)",
+  "what": "section case kept",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "    py_upper(&section.replace(' ', \"\"))",
+  "to": "    section.replace(' ', \"\")"
+ },
+ {
+  "id": "C2-05",
+  "by": "author (Lane C)",
+  "what": "a Debit Note is not billing",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "const BILLED_TYPES: [&str; 3] = [\"Sales\", \"Debit Note\", \"Credit Note\"];",
+  "to": "const BILLED_TYPES: [&str; 2] = [\"Sales\", \"Credit Note\"];"
+ },
+ {
+  "id": "C2-06",
+  "by": "author (Lane C)",
+  "what": "Direct Incomes not income",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "const INCOME_GROUPS: [&str; 2] = [\"Direct Incomes\", \"Indirect Incomes\"];",
+  "to": "const INCOME_GROUPS: [&str; 1] = [\"Indirect Incomes\"];"
+ },
+ {
+  "id": "C2-07",
+  "by": "author (Lane C)",
+  "what": "the Re 1 tolerance is inclusive",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            if diff.checked_abs().ok_or_else(|| overflow(TEST_ID))? > TOL_PAISE {",
+  "to": "            if diff.checked_abs().ok_or_else(|| overflow(TEST_ID))? >= TOL_PAISE {"
+ },
+ {
+  "id": "C2-08",
+  "by": "author (Lane C)",
+  "what": "books amount not negated",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            let amount = l\n                .amount_paise\n                .checked_neg()\n                .ok_or_else(|| overflow(TEST_ID))?;",
+  "to": "            let amount = l.amount_paise;"
+ },
+ {
+  "id": "C2-09",
+  "by": "author (Lane C)",
+  "what": "voucher label falls back to the GUID",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        &format!(\"{} {} on {}\", v.vtype, v.number, iso(&v.date)),",
+  "to": "        &crate::support::voucher_label(v),"
+ },
+ {
+  "id": "C2-10",
+  "by": "author (Lane C)",
+  "what": "TR-4 not checked",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        let Some(party) = party.filter(|p| book.ledgers.contains_key(*p)) else {",
+  "to": "        let Some(party) = party.filter(|_| true) else {"
+ },
+ {
+  "id": "C2-11",
+  "by": "author (Lane C)",
+  "what": "TR-2 part not checked",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            if a.part != \"I\" {\n                out.push",
+  "to": "            if a.part == \"none\" {\n                out.push"
+ },
+ {
+  "id": "C2-12",
+  "by": "author (Lane C)",
+  "what": "Part VI read as TDS",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        \"VI\" => Some(\"tcs\"),",
+  "to": "        \"VI\" => Some(\"tds\"),"
+ },
+ {
+  "id": "C2-13",
+  "by": "author (Lane C)",
+  "what": "match tolerance exclusive",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let cat = if gap <= TOL_PAISE {",
+  "to": "        let cat = if gap < TOL_PAISE {"
+ },
+ {
+  "id": "C2-14",
+  "by": "author (Lane C)",
+  "what": "a party-less voucher never attributed",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                Some(only) if others.len() == 1 && alias_targets.contains(only) => {",
+  "to": "                Some(only) if false && alias_targets.contains(only) => {"
+ },
+ {
+  "id": "C2-15",
+  "by": "author (Lane C)",
+  "what": "a party-less voucher attributed to any single ledger",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                Some(only) if others.len() == 1 && alias_targets.contains(only) => {",
+  "to": "                Some(only) if others.len() == 1 => {"
+ },
+ {
+  "id": "C2-16",
+  "by": "author (Lane C)",
+  "what": "a zero role line makes a claim",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                .any(|l| role.contains(&l.ledger) && l.amount_paise != 0)",
+  "to": "                .any(|l| role.contains(&l.ledger))"
+ },
+ {
+  "id": "C2-17",
+  "by": "author (Lane C)",
+  "what": "different period tests only the latest date",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if agg.max_date.as_str() < period.from.as_str() || agg.min_date.as_str() > period.to.as_str() {",
+  "to": "    if agg.max_date.as_str() < period.from.as_str() {"
+ },
+ {
+  "id": "C2-18",
+  "by": "author (Lane C)",
+  "what": "an empty alias still has no alias",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if alias.is_none() {\n        return REASON_26AS_NO_ALIAS;",
+  "to": "    if alias.is_none_or(String::is_empty) {\n        return REASON_26AS_NO_ALIAS;"
+ },
+ {
+  "id": "C2-19",
+  "by": "author (Lane C)",
+  "what": "books-only period tests any voucher",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if row.vouchers.iter().all(outside) {",
+  "to": "    if row.vouchers.iter().any(outside) {"
+ },
+ {
+  "id": "C2-20",
+  "by": "author (Lane C)",
+  "what": "rows of one party not folded",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        folded += rows.len() - 1;",
+  "to": "        folded += 0;"
+ },
+ {
+  "id": "C2-21",
+  "by": "author (Lane C)",
+  "what": "combined note dropped",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let together = if rows.len() > 1 {",
+  "to": "        let together = if rows.len() > 99 {"
+ },
+ {
+  "id": "C2-22",
+  "by": "author (Lane C)",
+  "what": "alias not shown by repr",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                py_repr_str(alias)\n",
+  "to": "                alias\n"
+ },
+ {
+  "id": "C2-23",
+  "by": "author (Lane C)",
+  "what": "TCS capitalisation reads any voucher type",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        if v.base_type != \"Purchase\" || !matched_tcs_parties.contains(v.party_field.as_str()) {",
+  "to": "        if !matched_tcs_parties.contains(v.party_field.as_str()) {"
+ },
+ {
+  "id": "C2-24",
+  "by": "author (Lane C)",
+  "what": "TCS capitalisation ignores the Fixed Assets test",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        if !fixed_asset {\n            continue;\n        }",
+  "to": "        if !fixed_asset && false {\n            continue;\n        }"
+ },
+ {
+  "id": "C2-25",
+  "by": "author (Lane C)",
+  "what": "books sales not negated",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    let books_sales = movement_under(\"Sales Accounts\")?\n        .checked_neg()\n        .ok_or_else(|| overflow(TEST_ID))?;",
+  "to": "    let books_sales = movement_under(\"Sales Accounts\")?;"
+ },
+ {
+  "id": "C2-26",
+  "by": "author (Lane C)",
+  "what": "advance tax uses credit",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "            .filter_map(|n| book.tb.get(n))\n            .map(|t| t.debit_paise),\n    )?;\n    fig(\n        &mut r,\n        \"books_advance_tax_paise\",",
+  "to": "            .filter_map(|n| book.tb.get(n))\n            .map(|t| t.credit_paise),\n    )?;\n    fig(\n        &mut r,\n        \"books_advance_tax_paise\","
+ },
+ {
+  "id": "C2-27",
+  "by": "author (Lane C)",
+  "what": "the always-stated PAN-view scope-limit finding dropped",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    });\n    Ok(r)\n}",
+  "to": "    });\n    r.findings.pop();\n    Ok(r)\n}"
+ },
+ {
+  "id": "C2-28",
+  "by": "author (Lane C)",
+  "what": "a repeated figure id not refused",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if r.figures.iter().any(|f| f.id == id) {",
+  "to": "    if false {"
+ },
+ {
+  "id": "C2-29",
+  "by": "author (Lane C)",
+  "what": "TT-1 folded rows not counted",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let got = matched + differs + only_26as + folded;",
+  "to": "        let got = matched + differs + only_26as;"
+ },
+ {
+  "id": "C2-30",
+  "by": "author (Lane C)",
+  "what": "TT-4 part not checked",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                    Some(d) if d.part != part => out.push(format!(",
+  "to": "                    Some(d) if d.part == \"none\" => out.push(format!("
+ },
+ {
+  "id": "C2-31",
+  "by": "author (Lane C)",
+  "what": "TT-3 recomputed from credits",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                .filter_map(|n| book.tb.get(*n))\n                .map(|t| t.debit_paise),",
+  "to": "                .filter_map(|n| book.tb.get(*n))\n                .map(|t| t.credit_paise),"
+ },
+ {
+  "id": "C2-32",
+  "by": "author (Lane C)",
+  "what": "[tds_tcs_26as] never read",
+  "file": "src/lib.rs",
+  "from": "            .get(\"tds_tcs_26as\")\n            .map(|t| -> Result<Tds26asConfig> {",
+  "to": "            .get(\"tds_tcs_26as-absent\")\n            .map(|t| -> Result<Tds26asConfig> {"
+ },
+ {
+  "id": "C2-33",
+  "by": "author (Lane C)",
+  "what": "alias values not bound",
+  "file": "src/binding.rs",
+  "from": "                    lbinder.bind_one(ledger, \"tds_tcs_26as.deductor_aliases\")?,",
+  "to": "                    ledger.clone(),"
+ },
+ {
+  "id": "C2-34",
+  "by": "author (Lane C)",
+  "what": "PARTYLEDGERNAME not read",
+  "file": "src/book.rs",
+  "from": "            party_field: v.child_text(\"PARTYLEDGERNAME\").to_string(),",
+  "to": "            party_field: String::new(),"
+ },
+ {
+  "id": "C2-35",
+  "by": "author (Lane C)",
+  "what": "tds_tcs_26as parity floor lowered below the 30 figures it always emits",
+  "file": "src/registry.rs",
+  "from": "        id: \"tds_tcs_26as\",\n        min_figures: 30,",
+  "to": "        id: \"tds_tcs_26as\",\n        min_figures: 29,"
+ },
+ {
+  "id": "C2-36",
+  "by": "author (Lane C)",
+  "what": "TR-1 sum against its own rows not checked",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        if int(&fig.value) != Some(total) {",
+  "to": "        if false && int(&fig.value) != Some(total) {"
+ },
+ {
+  "id": "C2-37",
+  "by": "author (Lane C)",
+  "what": "TR-1 unresolved evidence not reported",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "                out.push(format!(\n                    \"TR-1: {fid} evidence {} does not resolve to a Form 26AS row\",",
+  "to": "                drop(format!(\n                    \"TR-1: {fid} evidence {} does not resolve to a Form 26AS row\","
+ },
+ {
+  "id": "C2-38",
+  "by": "author (Lane C)",
+  "what": "TR-3 a row claimed twice not reported",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "                if *prior != fid {",
+  "to": "                if *prior == fid {"
+ },
+ {
+  "id": "C2-39",
+  "by": "author (Lane C)",
+  "what": "TR-4 recomputed books amount not compared",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        if int(&fig.value) != Some(recomputed) {",
+  "to": "        if false && int(&fig.value) != Some(recomputed) {"
+ },
+ {
+  "id": "C2-40",
+  "by": "author (Lane C)",
+  "what": "TT-1 books-side partition not checked",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let got = matched + differs + only_books;",
+  "to": "        let got = claim_total;"
+ },
+ {
+  "id": "C2-41",
+  "by": "author (Lane C)",
+  "what": "TT-2 unclassified counts not checked",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "            if f.value != Value::Int(0) {",
+  "to": "            if f.value == Value::Undefined {"
+ },
+ {
+  "id": "C2-42",
+  "by": "author (Lane C)",
+  "what": "a missing [tds_tcs_26as] key not refused",
+  "file": "src/lib.rs",
+  "from": "    if let Some(key) = bound.tds_tcs_26as_missing {",
+  "to": "    if let Some(key) = bound.tds_tcs_26as_missing.filter(|_| false) {"
+ },
+ {
+  "id": "E1B-01",
+  "by": "author",
+  "what": "lag over 30 includes 30",
+  "file": "src/book_keeping_quality.rs",
+  "from": "*lag > LAG_OVER_DAYS)",
+  "to": "*lag >= LAG_OVER_DAYS)"
+ },
+ {
+  "id": "E1B-02",
+  "by": "author",
+  "what": "clock keeps the earliest sale date",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Some(c) if *c >= v.date => c,",
+  "to": "Some(c) if *c <= v.date => c,"
+ },
+ {
+  "id": "E1B-03",
+  "by": "author",
+  "what": "equal MASTERIDs reversed",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    ordered.sort_by_key(|(mid, _)| *mid); // stable, as Python's sort",
+  "to": "    ordered.reverse();\n    ordered.sort_by_key(|(mid, _)| *mid);"
+ },
+ {
+  "id": "E1B-04",
+  "by": "author",
+  "what": "after-last-sale includes the last sale",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|(mid, _)| *mid > last)",
+  "to": ".filter(|(mid, _)| *mid >= last)"
+ },
+ {
+  "id": "E1B-06",
+  "by": "author",
+  "what": "a repeated GUID keeps its first lag",
+  "file": "src/book_keeping_quality.rs",
+  "from": "lag.insert(v.guid.as_str(), (days, *v));",
+  "to": "lag.entry(v.guid.as_str()).or_insert((days, *v));"
+ },
+ {
+  "id": "E1B-07",
+  "by": "author",
+  "what": "receipt window ends at 2 days",
+  "file": "src/book_keeping_quality.rs",
+  "from": "const RECEIPT_MATCH_MAX_DAYS: i64 = 3;",
+  "to": "const RECEIPT_MATCH_MAX_DAYS: i64 = 2;"
+ },
+ {
+  "id": "E1B-08",
+  "by": "author",
+  "what": "receipt window starts a day early",
+  "file": "src/book_keeping_quality.rs",
+  "from": "const RECEIPT_MATCH_MIN_DAYS: i64 = 0;",
+  "to": "const RECEIPT_MATCH_MIN_DAYS: i64 = -1;"
+ },
+ {
+  "id": "E1B-09",
+  "by": "author",
+  "what": "a receipt can match twice",
+  "file": "src/book_keeping_quality.rs",
+  "from": "                used.insert(rguid);\n",
+  "to": ""
+ },
+ {
+  "id": "E1B-10",
+  "by": "author",
+  "what": "invoices matched by GUID, not date",
+  "file": "src/book_keeping_quality.rs",
+  "from": "ordered.sort_by(|a, b| (&a.1.date, a.0).cmp(&(&b.1.date, b.0)));\n    let mut used",
+  "to": "ordered.sort_by(|a, b| a.0.cmp(b.0));\n    let mut used"
+ },
+ {
+  "id": "E1B-11",
+  "by": "author",
+  "what": "purchase rate takes a negative quantity",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            if q > 0.0 {\n                let e = amt",
+  "to": "            if q != 0.0 {\n                let e = amt"
+ },
+ {
+  "id": "E1B-12",
+  "by": "author",
+  "what": "purchase rate uses the signed amount",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".checked_add(a.checked_abs().ok_or_else(overflow)?)",
+  "to": ".checked_add(a)"
+ },
+ {
+  "id": "E1B-13",
+  "by": "author",
+  "what": "cash line classified before the channel line",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    if debits.iter().any(|l| debtors.contains(*l)) {\n        0\n    } else if debits.iter().any(|l| cash.contains(*l)) {\n        1",
+  "to": "    if debits.iter().any(|l| cash.contains(*l)) {\n        1\n    } else if debits.iter().any(|l| debtors.contains(*l)) {\n        0"
+ },
+ {
+  "id": "E1B-14",
+  "by": "author",
+  "what": "int below float compared inexactly",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        i128::from(sale) <= f\n",
+  "to": "        i128::from(sale) < f\n"
+ },
+ {
+  "id": "E1B-15",
+  "by": "author",
+  "what": "cost rounded half away from zero",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let r = x.round_ties_even();",
+  "to": "let r = x.round();"
+ },
+ {
+  "id": "E1B-16",
+  "by": "author",
+  "what": "a zero-quantity sale line priced",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if r == 0.0 || q <= 0.0 {",
+  "to": "if r == 0.0 || q < 0.0 {"
+ },
+ {
+  "id": "E1B-17",
+  "by": "author",
+  "what": "a stock ledger counted per line",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let touched: BTreeSet<&String> = v",
+  "to": "let touched: Vec<&String> = v"
+ },
+ {
+  "id": "E1B-18",
+  "by": "author",
+  "what": "GST head sums debit, not closing",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".map(|l| book.tb.get(*l).map_or(0, |t| t.closing_paise)),",
+  "to": ".map(|l| book.tb.get(*l).map_or(0, |t| t.debit_paise)),"
+ },
+ {
+  "id": "E1B-19",
+  "by": "author",
+  "what": "re-issue narration not upper-cased",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        let narration = support::py_upper(&v.narration);\n        if terms_upper",
+  "to": "        let narration = v.narration.clone();\n        if terms_upper"
+ },
+ {
+  "id": "E1B-20",
+  "by": "author",
+  "what": "a write-off keeps its last line, not the sum of its lines",
+  "file": "src/book_keeping_quality.rs",
+  "from": "row.1 = row.1.checked_add(amt).ok_or_else(overflow)?;",
+  "to": "row.1 = amt;"
+ },
+ {
+  "id": "E1B-21",
+  "by": "author",
+  "what": "write-off debtor must be directly under Sundry Debtors",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".is_some_and(|led| led.under(SUNDRY_DEBTORS_GROUP))",
+  "to": ".is_some_and(|led| led.parent == SUNDRY_DEBTORS_GROUP)"
+ },
+ {
+  "id": "E1B-22",
+  "by": "author",
+  "what": "contra direction sign inverted",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if narration.contains(keyword) && (cash_net > 0) != (expected_sign > 0) {",
+  "to": "if narration.contains(keyword) && (cash_net > 0) == (expected_sign > 0) {"
+ },
+ {
+  "id": "E1B-23",
+  "by": "author",
+  "what": "contra keywords matched case-sensitively",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        let narration = support::py_upper(&v.narration);\n        for (keyword",
+  "to": "        let narration = v.narration.clone();\n        for (keyword"
+ },
+ {
+  "id": "E1B-24",
+  "by": "author",
+  "what": "BKQ-1 tolerance widened",
+  "file": "src/book_keeping_quality.rs",
+  "from": "const TOL_PAISE: i64 = 100;",
+  "to": "const TOL_PAISE: i64 = 1000;"
+ },
+ {
+  "id": "E1B-25",
+  "by": "author",
+  "what": "BKQ-1 checks touched ledgers instead",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if fig.value != Value::Int(0) {",
+  "to": "if fig.value == Value::Int(0) {"
+ },
+ {
+  "id": "E1B-26",
+  "by": "author",
+  "what": "invoices counted per year, not month",
+  "file": "src/book_keeping_quality.rs",
+  "from": "*per_month.entry(&v.date.as_str()[..6]).or_default() += 1;",
+  "to": "*per_month.entry(&v.date.as_str()[..4]).or_default() += 1;"
+ },
+ {
+  "id": "E1B-27",
+  "by": "author",
+  "what": "next-day count takes same-day",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|lag| **lag == 1)",
+  "to": ".filter(|lag| **lag <= 1)"
+ },
+ {
+  "id": "E1B-28",
+  "by": "author",
+  "what": "comparison margin always claimed available",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let comparison_available = named.lines > 0 && named.sales_paise != 0;",
+  "to": "let comparison_available = named.lines > 0;"
+ },
+ {
+  "id": "E1B-30",
+  "by": "author",
+  "what": "slug separators not collapsed",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        } else if !in_run {\n            out.push('_');",
+  "to": "        } else {\n            out.push('_');"
+ },
+ {
+  "id": "E1B-31",
+  "by": "author",
+  "what": "payment-channel receipts include Sales",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        if v.base_type == SALES_BASE_TYPE {\n            continue;\n        }\n        let credit",
+  "to": "        let credit"
+ },
+ {
+  "id": "E1B-32",
+  "by": "author",
+  "what": "gross value counts every line",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|l| l.amount_paise > 0)\n            .map(|l| l.amount_paise),\n    )\n}",
+  "to": ".map(|l| l.amount_paise.abs()),\n    )\n}"
+ },
+ {
+  "id": "E1B-O01",
+  "by": "reviewer",
+  "what": "receipts tried in GUID order, not (date, GUID)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        list.sort_unstable();\n",
+  "to": ""
+ },
+ {
+  "id": "E1B-O03",
+  "by": "reviewer",
+  "what": "invoice ties broken by descending GUID",
+  "file": "src/book_keeping_quality.rs",
+  "from": "ordered.sort_by(|a, b| (&a.1.date, a.0).cmp(&(&b.1.date, b.0)));\n    let mut used",
+  "to": "ordered.sort_by(|a, b| a.1.date.cmp(&b.1.date).then(b.0.cmp(a.0)));\n    let mut used"
+ },
+ {
+  "id": "E1B-O04",
+  "by": "reviewer",
+  "what": "purchase quantities accumulated in reverse population order",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    let mut qty: BTreeMap<&str, f64> = BTreeMap::new();\n    for v in pop {",
+  "to": "    let mut qty: BTreeMap<&str, f64> = BTreeMap::new();\n    for v in pop.iter().rev() {"
+ },
+ {
+  "id": "E1B-O05",
+  "by": "reviewer",
+  "what": "sale costs accumulated after rounding each",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        b.cost_paise += cost;",
+  "to": "        b.cost_paise += cost.round();"
+ },
+ {
+  "id": "E1B-O07",
+  "by": "reviewer",
+  "what": "re-issue terms not upper-cased",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".map(|t| support::py_upper(t))",
+  "to": ".map(|t| t.clone())"
+ },
+ {
+  "id": "E1B-O08",
+  "by": "reviewer",
+  "what": "invoice amount counts credit lines too",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".filter(|l| debtors.contains(&l.ledger) && l.amount_paise > 0)",
+  "to": ".filter(|l| debtors.contains(&l.ledger) && l.amount_paise != 0)"
+ },
+ {
+  "id": "E1B-O09",
+  "by": "reviewer",
+  "what": "sales lag themselves",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            });\n            continue;\n        }\n        let Some(c) = clock",
+  "to": "            });\n        }\n        let Some(c) = clock"
+ },
+ {
+  "id": "E1B-O10",
+  "by": "reviewer",
+  "what": "BKQ-1 boundary moved to >= 100",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if movement.checked_abs().ok_or_else(overflow)? > TOL_PAISE {",
+  "to": "if movement.checked_abs().ok_or_else(overflow)? >= TOL_PAISE {"
+ },
+ {
+  "id": "E1B-O11",
+  "by": "reviewer",
+  "what": "write-off ledger debit accepts a zero line",
+  "file": "src/book_keeping_quality.rs",
+  "from": "inputs.writeoff_discount_ledgers.contains(&l.ledger) && l.amount_paise > 0)",
+  "to": "inputs.writeoff_discount_ledgers.contains(&l.ledger) && l.amount_paise >= 0)"
+ },
+ {
+  "id": "E1B-O12",
+  "by": "reviewer",
+  "what": "zero debtor lines kept as write-offs",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            if l.amount_paise >= 0 {\n                continue;\n            }\n            if book",
+  "to": "            if l.amount_paise > 0 {\n                continue;\n            }\n            if book"
+ },
+ {
+  "id": "E1B-O13",
+  "by": "reviewer",
+  "what": "a zero net cash Contra is not skipped",
+  "file": "src/book_keeping_quality.rs",
+  "from": "        if cash_net == 0 {\n            continue;\n        }\n",
+  "to": ""
+ },
+ {
+  "id": "E1B-O14",
+  "by": "reviewer",
+  "what": "payment ledger movement reads credit",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Value::Int(tb.map_or(0, |t| t.debit_paise)),",
+  "to": "Value::Int(tb.map_or(0, |t| t.credit_paise)),"
+ },
+ {
+  "id": "E1B-O15",
+  "by": "reviewer",
+  "what": "GST finding needs either head or payment",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if !head_facts.is_empty() && !payment_facts.is_empty() {",
+  "to": "if !head_facts.is_empty() || !payment_facts.is_empty() {"
+ },
+ {
+  "id": "E1B-O16",
+  "by": "reviewer",
+  "what": "margin section needs lines only",
+  "file": "src/book_keeping_quality.rs",
+  "from": "if pc.lines > 0 && pc.sales_paise != 0 {",
+  "to": "if pc.lines > 0 {"
+ },
+ {
+  "id": "E1B-O17",
+  "by": "reviewer",
+  "what": "per-month min and max swapped",
+  "file": "src/book_keeping_quality.rs",
+  "from": "per_month.values().min(), per_month.values().max()",
+  "to": "per_month.values().max(), per_month.values().min()"
+ },
+ {
+  "id": "E1B-O18",
+  "by": "reviewer",
+  "what": "matched evidence cites every invoice",
+  "file": "src/book_keeping_quality.rs",
+  "from": "            evidence(&within3, |d| d.0),",
+  "to": "            evidence(&invoices, |d| d.0),"
+ },
+ {
+  "id": "E1B-O19",
+  "by": "reviewer",
+  "what": "unparseable count emitted when zero",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    if eo.unparseable > 0 {",
+  "to": "    if eo.unparseable >= 0 {"
+ },
+ {
+  "id": "E1B-O21",
+  "by": "reviewer",
+  "what": "contra hash truncated to 10 hex",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".take(6)\n        .map(|b| format!(\"{b:02x}\"))",
+  "to": ".take(5)\n        .map(|b| format!(\"{b:02x}\"))"
+ },
+ {
+  "id": "E1B-O22",
+  "by": "reviewer",
+  "what": "named and cash buckets swapped",
+  "file": "src/book_keeping_quality.rs",
+  "from": "let [pc, _, named] = margin_buckets",
+  "to": "let [pc, named, _] = margin_buckets"
+ },
+ {
+  "id": "E1B-O23",
+  "by": "reviewer",
+  "what": "write-off cited by a non-voucher id, as before the reference's fix",
+  "file": "src/book_keeping_quality.rs",
+  "from": "EvidenceRef::with_label(\"voucher\", &guid, &label)",
+  "to": "EvidenceRef::with_label(\"voucher\", &format!(\"{guid}:row\"), &label)"
+ },
+ {
+  "id": "E1B-O24",
+  "by": "reviewer",
+  "what": "tax head ledgers not bound by identity",
+  "file": "src/binding.rs",
+  "from": "let bound = lbinder.bind_list(&names_at(names, &location)?, &location)?;",
+  "to": "let bound = names_at(names, &location)?;"
+ },
+ {
+  "id": "E1B-O25",
+  "by": "reviewer",
+  "what": "payment_channel_debtors not bound by identity",
+  "file": "src/binding.rs",
+  "from": "            *slot = Some(lbinder.bind_list(&names_at(value, &location)?, &location)?);",
+  "to": "            *slot = Some(if key == \"payment_channel_debtors\" { names_at(value, &location)? } else { lbinder.bind_list(&names_at(value, &location)?, &location)? });"
+ },
+ {
+  "id": "E1B-O29",
+  "by": "reviewer",
+  "what": "stock ledgers from the direct parent only",
+  "file": "src/book_keeping_quality.rs",
+  "from": "    let stock_ledgers = book.ledgers_under_any(&[STOCK_GROUP.to_string()]);",
+  "to": "    let stock_ledgers: BTreeSet<String> = book.ledgers.values().filter(|l| l.parent == STOCK_GROUP).map(|l| l.name.clone()).collect();"
+ },
+ {
+  "id": "E1B-37",
+  "by": "author",
+  "what": "write-off citations not deduplicated",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".collect::<BTreeSet<(String, String)>>()\n            .into_iter()",
+  "to": ".collect::<Vec<(String, String)>>()\n            .into_iter()"
+ },
+ {
+  "id": "E1B-38",
+  "by": "author",
+  "what": "the debtor dropped from a write-off citation's label",
+  "file": "src/book_keeping_quality.rs",
+  "from": "format!(\"{}, {debtor}\", support::voucher_label(v)),",
+  "to": "support::voucher_label(v),"
+ },
+ {
+  "id": "E1B-39",
+  "by": "author",
+  "what": "write-off rows keyed by debtor alone, not voucher position and debtor",
+  "file": "src/book_keeping_quality.rs",
+  "from": ".entry((n, l.ledger.clone()))",
+  "to": ".entry((0, l.ledger.clone()))"
+ },
+ {
+  "id": "LB-01",
+  "by": "author (Lane B)",
+  "what": "a loan's interest_ledger not bound",
+  "file": "src/binding.rs",
+  "from": "                let name = lbinder.bind_one(name, &location)?;",
+  "to": "                let name = name.to_string();"
+ },
+ {
+  "id": "LB-02",
+  "by": "author (Lane B)",
+  "what": "shared_interest_ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "&[\"loans\", \"shared_interest_ledgers\"]",
+  "to": "&[\"loans\", \"shared_interest_ledgers_off\"]"
+ },
+ {
+  "id": "LB-03",
+  "by": "author (Lane B)",
+  "what": "the bound interest ledger not written back",
+  "file": "src/binding.rs",
+  "from": "                t.insert(\"interest_ledger\".to_string(), toml::Value::from(name));",
+  "to": "                let _ = name;"
+ },
+ {
+  "id": "LB-04",
+  "by": "author (Lane B)",
+  "what": "a non-string interest_ledger not refused as malformed",
+  "file": "src/binding.rs",
+  "from": "                let name = v.as_str().ok_or_else(|| {",
+  "to": "                let name = v.as_str().or(Some(\"5\")).ok_or_else(|| {"
+ },
+ {
+  "id": "LB-05",
+  "by": "author (Lane B)",
+  "what": "a [loans.loan_ledgers] that is not a table not refused",
+  "file": "src/binding.rs",
+  "from": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"])?;",
+  "to": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"]).unwrap_or(None);"
+ },
+ {
+  "id": "D1-01",
+  "by": "author (Lane B)",
+  "what": "cash counter-line not read as cash",
+  "file": "src/loans_interest.rs",
+  "from": "    if counter.iter().any(|l| cash.contains(*l)) {",
+  "to": "    if counter.iter().any(|l| cash.contains(*l) && false) {"
+ },
+ {
+  "id": "D1-02",
+  "by": "author (Lane B)",
+  "what": "Journal mode not recognised",
+  "file": "src/loans_interest.rs",
+  "from": "    } else if base_type == \"Journal\" {",
+  "to": "    } else if base_type == \"journal\" {"
+ },
+ {
+  "id": "D1-03",
+  "by": "author (Lane B)",
+  "what": "a repaid journal coded J instead of I",
+  "file": "src/loans_interest.rs",
+  "from": "        (\"journal\", \"repaid\") => \"I\",",
+  "to": "        (\"journal\", \"repaid\") => \"J\","
+ },
+ {
+  "id": "D1-04",
+  "by": "author (Lane B)",
+  "what": "an interest journal needs only to include the interest ledger",
+  "file": "src/loans_interest.rs",
+  "from": "        if interest_ledger.is_some_and(|il| only(&others, il)) {",
+  "to": "        if interest_ledger.is_some_and(|il| others.contains(il)) {"
+ },
+ {
+  "id": "D1-05",
+  "by": "author (Lane B)",
+  "what": "Contra vouchers bucketed on a loan",
+  "file": "src/loans_interest.rs",
+  "from": "        if v.base_type == \"Contra\" || !v.lines.iter().any(|l| l.ledger == loan_ledger) {",
+  "to": "        if !v.lines.iter().any(|l| l.ledger == loan_ledger) {"
+ },
+ {
+  "id": "D1-06",
+  "by": "author (Lane B)",
+  "what": "a debit opening walked as a negative outstanding",
+  "file": "src/loans_interest.rs",
+  "from": "    let mut principal = opening_outstanding.max(0);",
+  "to": "    let mut principal = opening_outstanding;"
+ },
+ {
+  "id": "D1-07",
+  "by": "author (Lane B)",
+  "what": "interest credited leaves the breach balance unmoved",
+  "file": "src/loans_interest.rs",
+  "from": "        breach = breach_prior + sign * amount;",
+  "to": "        breach = breach_prior;"
+ },
+ {
+  "id": "D1-08",
+  "by": "author (Lane B)",
+  "what": "a repayment's reporting window read from its own amount only",
+  "file": "src/loans_interest.rs",
+  "from": "                prior.max(amt) >= limit_269\n",
+  "to": "                amt >= limit_269\n"
+ },
+ {
+  "id": "D1-09",
+  "by": "author (Lane B)",
+  "what": "a repayment's breach test ignores interest credited",
+  "file": "src/loans_interest.rs",
+  "from": "                row.prior_breach.max(amt) >= limit_269",
+  "to": "                prior.max(amt) >= limit_269"
+ },
+ {
+  "id": "D1-10",
+  "by": "author (Lane B)",
+  "what": "the s.269SS/269T flag ignores the breach-exempt lenders",
+  "file": "src/loans_interest.rs",
+  "from": "                && !exempt_269.contains(lender_type);",
+  "to": "                ;"
+ },
+ {
+  "id": "D1-11",
+  "by": "author (Lane B)",
+  "what": "reporting-exempt lenders reported in Clause 31",
+  "file": "src/loans_interest.rs",
+  "from": "        if reporting_exempt_269.contains(lender_type) {",
+  "to": "        if reporting_exempt_269.contains(lender_type) && false {"
+ },
+ {
+  "id": "D1-12",
+  "by": "author (Lane B)",
+  "what": "s.194A fires for a non-deductor",
+  "file": "src/loans_interest.rs",
+  "from": "            && status == \"deductor\"",
+  "to": "            && status != \"unknown\""
+ },
+ {
+  "id": "D1-13",
+  "by": "author (Lane B)",
+  "what": "the reversal rule switched on by default",
+  "file": "src/loans_interest.rs",
+  "from": "pub const NET_REVERSALS: bool = false;",
+  "to": "pub const NET_REVERSALS: bool = true;"
+ },
+ {
+  "id": "D1-14",
+  "by": "author (Lane B)",
+  "what": "a paired loan's interest journals counted on the shared ledger",
+  "file": "src/loans_interest.rs",
+  "from": "            if cited.contains(&at) || v.base_type == \"Contra\" {",
+  "to": "            if v.base_type == \"Contra\" {"
+ },
+ {
+  "id": "D1-15",
+  "by": "author (Lane B)",
+  "what": "a credit may reverse a debit on its own voucher",
+  "file": "src/loans_interest.rs",
+  "from": "                    && dat != cat\n",
+  "to": "                    && true\n"
+ },
+ {
+  "id": "D1-16",
+  "by": "author (Lane B)",
+  "what": "LOAN-1 tolerance widened a thousandfold",
+  "file": "src/loans_interest.rs",
+  "from": "        if diff.abs() > tol {",
+  "to": "        if diff.abs() > tol * 1000 {"
+ },
+ {
+  "id": "D1-17",
+  "by": "author (Lane B)",
+  "what": "LOAN-2 (A) blind to small interest lines",
+  "file": "src/loans_interest.rs",
+  "from": "            if on_interest != 0 {",
+  "to": "            if on_interest.abs() > 1_000_000 {"
+ },
+ {
+  "id": "D1-18",
+  "by": "author (Lane B)",
+  "what": "LOAN-3 never marks a longer list",
+  "file": "src/loans_interest.rs",
+  "from": "                if debits.len() > 5 { \" ...\" } else { \"\" }",
+  "to": "                if debits.len() > 6 { \" ...\" } else { \"\" }"
+ },
+ {
+  "id": "D1-19",
+  "by": "author (Lane B)",
+  "what": "a repeated row figure id not refused",
+  "file": "src/loans_interest.rs",
+  "from": "            if r.figures\n                .iter()\n",
+  "to": "            if false && r.figures\n                .iter()\n"
+ },
+ {
+  "id": "D1-20",
+  "by": "author (Lane B)",
+  "what": "a [loans] that is not a table not refused",
+  "file": "src/lib.rs",
+  "from": "    if bound.loans.not_a_table {",
+  "to": "    if bound.loans.not_a_table && false {"
+ },
+ {
+  "id": "D1-21",
+  "by": "author (Lane B)",
+  "what": "LOAN-3 recomputation ignores the switch",
+  "file": "src/loans_interest.rs",
+  "from": "!net_reversals || is_receipt(&pop[*n].base_type)",
+  "to": "is_receipt(&pop[*n].base_type)"
+ },
+ {
+  "id": "Y01",
+  "by": "author",
+  "what": "the no-party bucket cited as a ledger (EVID-1)",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "    if ledger_name == UNIDENTIFIED_PARTY {",
+  "to": "    if false {"
+ },
+ {
+  "id": "Y02",
+  "by": "author",
+  "what": "the no-party row ref loses its label",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "EvidenceRef::with_label(\"row\", UNIDENTIFIED_PARTY_ROW, UNIDENTIFIED_PARTY)",
+  "to": "EvidenceRef::new(\"row\", UNIDENTIFIED_PARTY_ROW)"
+ },
+ {
+  "id": "Y03",
+  "by": "author",
+  "what": "the s.269ST receipt leg cites a ledger again",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st/{rid}\"),",
+  "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st/{rid}\"),"
+ },
+ {
+  "id": "Y04",
+  "by": "author",
+  "what": "the s.269ST payment leg cites a ledger again",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),",
+  "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),"
+ },
+ {
+  "id": "SB-01",
+  "by": "author (Lane B)",
+  "what": "rupees: western grouping (thousands only)",
+  "file": "src/support.rs",
+  "from": "        while head.len() > 2 {",
+  "to": "        while head.len() > 3 {"
+ },
+ {
+  "id": "SB-02",
+  "by": "author (Lane B)",
+  "what": "rupees: paise written without zero padding",
+  "file": "src/support.rs",
+  "from": "format!(\"{sign}₹{grouped}.{frac:02}\")",
+  "to": "format!(\"{sign}₹{grouped}.{frac}\")"
+ },
+ {
+  "id": "SB-03",
+  "by": "author (Lane B)",
+  "what": "rupees: ASCII hyphen for a negative amount",
+  "file": "src/support.rs",
+  "from": "let sign = if paise < 0 { \"−\" } else { \"\" };",
+  "to": "let sign = if paise < 0 { \"-\" } else { \"\" };"
+ },
+ {
+  "id": "SB-04",
+  "by": "author (Lane B)",
+  "what": "40a3: s.40A(3) limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "rupees(i128::from(limit_40a3))",
+  "to": "limit_40a3"
+ },
+ {
+  "id": "SB-05",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269ST receipt limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "\n            rupees(i128::from(limit_269st))",
+  "to": "\n            limit_269st"
+ },
+ {
+  "id": "SB-06",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269ST payment threshold back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "limit_269st_text = rupees(i128::from(limit_269st))",
+  "to": "limit_269st_text = limit_269st"
+ },
+ {
+  "id": "SB-07",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269SS/269T candidate limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "rupees(i128::from(limit_ss_t))",
+  "to": "limit_ss_t"
+ },
+ {
+  "id": "SB-08",
+  "by": "author (Lane B)",
+  "what": "depreciation: cash on a flagged addition back in paise",
+  "file": "src/depreciation.rs",
+  "from": "rupees(i128::from(row.cash_paise)),",
+  "to": "row.cash_paise,"
+ },
+ {
+  "id": "SB-09",
+  "by": "author (Lane B)",
+  "what": "loans_interest: s.269SS/269T limit back in paise",
+  "file": "src/loans_interest.rs",
+  "from": "limit_269_text = rupees(limit_269)",
+  "to": "limit_269_text = limit_269"
+ },
+ {
+  "id": "PI-01",
+  "by": "author (Lane B)",
+  "what": "py_int_str: str.isspace() strip instead of int()'s own whitespace",
+  "file": "src/support.rs",
+  "from": "let t = ascii.trim_matches(|c| matches!(c, ' ' | '\\t' | '\\n' | '\\u{b}' | '\\u{c}' | '\\r'));",
+  "to": "let t = ascii.trim_matches(py_isspace);"
+ },
+ {
+  "id": "PI-02",
+  "by": "author (Lane B)",
+  "what": "py_int_str: non-ASCII decimal digits refused",
+  "file": "src/support.rs",
+  "from": "} else if let Some(d) = py_decimal_value(c) {",
+  "to": "} else if let Some(d) = py_decimal_value(c).filter(|_| false) {"
+ },
+ {
+  "id": "PI-03",
+  "by": "author (Lane B)",
+  "what": "py_int_str: digit limit one too high",
+  "file": "src/support.rs",
+  "from": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS + 1 {"
+ },
+ {
+  "id": "PI-04",
+  "by": "author (Lane B)",
+  "what": "py_int_str: digit limit counts underscores",
+  "file": "src/support.rs",
+  "from": "if digits.clone().count() > PY_INT_MAX_STR_DIGITS {",
+  "to": "if body.len() > PY_INT_MAX_STR_DIGITS {"
+ },
+ {
+  "id": "PI-05",
+  "by": "author (Lane B)",
+  "what": "py_int_str: i64::MIN refused",
+  "file": "src/support.rs",
+  "from": "0i64.checked_sub_unsigned(magnitude)\n            .ok_or(PyIntError::OutOfRange)",
+  "to": "i64::try_from(magnitude).map(|m| -m).map_err(|_| PyIntError::OutOfRange)"
+ },
+ {
+  "id": "PI-06",
+  "by": "author (Lane B)",
+  "what": "py_int_str: overflow reported as not an int",
+  "file": "src/support.rs",
+  "from": ".ok_or(PyIntError::OutOfRange)?;",
+  "to": ".ok_or(PyIntError::Invalid)?;"
+ },
+ {
+  "id": "PI-07",
+  "by": "author (Lane B)",
+  "what": "py_decimal_value: offset not reduced modulo 10",
+  "file": "src/support.rs",
+  "from": ".and_then(|(lo, _)| u8::try_from((cp - lo) % 10).ok())",
+  "to": ".and_then(|(lo, _)| u8::try_from(cp - lo).ok())"
+ },
+ {
+  "id": "PI-08",
+  "by": "author (Lane B)",
+  "what": "py_int: an out-of-range float reported as not an int",
+  "file": "src/lib.rs",
+  "from": "            } else {\n                Err(PyIntError::OutOfRange)\n            }",
+  "to": "            } else {\n                Err(PyIntError::Invalid)\n            }"
+ },
+ {
+  "id": "D2-01",
+  "by": "author (Lane B)",
+  "what": "rules: an entity type without s194t read as applying",
+  "file": "src/rules.rs",
+  "from": "            .unwrap_or(false))",
+  "to": "            .unwrap_or(true))"
+ },
+ {
+  "id": "D2-02",
+  "by": "author (Lane B)",
+  "what": "rules: no [entity] table read as no entry",
+  "file": "src/rules.rs",
+  "from": "            .ok_or_else(|| AuditError::Config(\"rules: no [entity] table\".to_string()))",
+  "to": "            .map_or(Ok(None), Ok)"
+ },
+ {
+  "id": "D2-03",
+  "by": "author (Lane B)",
+  "what": "binding: partner capital ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "        (\"capital_ledgers\", true),\n",
+  "to": ""
+ },
+ {
+  "id": "D2-04",
+  "by": "author (Lane B)",
+  "what": "binding: partner remuneration ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "        (\"remuneration_ledger\", false),\n",
+  "to": ""
+ },
+ {
+  "id": "D2-05",
+  "by": "author (Lane B)",
+  "what": "binding: an empty partner interest ledger kept for financial_statements",
+  "file": "src/binding.rs",
+  "from": "(!name.is_empty()).then(|| (k.clone(), name.to_string()))",
+  "to": "true.then(|| (k.clone(), name.to_string()))"
+ },
+ {
+  "id": "D2-06",
+  "by": "author (Lane B)",
+  "what": "partners: a day in debit counts",
+  "file": "src/partners_40b_194t.rs",
+  "from": "        if economic > 0 {",
+  "to": "        if economic != 0 {"
+ },
+ {
+  "id": "D2-07",
+  "by": "author (Lane B)",
+  "what": "partners: an event applies the day after its date",
+  "file": "src/partners_40b_194t.rs",
+  "from": "while idx < events.len() && events[idx].0 <= day {",
+  "to": "while idx < events.len() && events[idx].0 < day {"
+ },
+ {
+  "id": "D2-08",
+  "by": "author (Lane B)",
+  "what": "partners: remuneration wins a voucher carrying both ledgers",
+  "file": "src/partners_40b_194t.rs",
+  "from": "            if is_interest {",
+  "to": "            if is_interest && !is_remuneration {"
+ },
+ {
+  "id": "D2-09",
+  "by": "author (Lane B)",
+  "what": "partners: a capital ledger named twice counts its opening once",
+  "file": "src/partners_40b_194t.rs",
+  "from": "    let opening_paise = p\n        .capital_ledgers\n        .iter()\n        .filter_map(|n| book.tb.get(n))",
+  "to": "    let opening_paise = capital\n        .iter()\n        .filter_map(|n| book.tb.get(*n))"
+ },
+ {
+  "id": "D2-10",
+  "by": "author (Lane B)",
+  "what": "partners: the higher of deed and statutory rate",
+  "file": "src/partners_40b_194t.rs",
+  "from": "|d| d.min(s40b_rate)",
+  "to": "|d| d.max(s40b_rate)"
+ },
+ {
+  "id": "D2-11",
+  "by": "author (Lane B)",
+  "what": "partners: s.194T at the limit is a finding",
+  "file": "src/partners_40b_194t.rs",
+  "from": "if subject_paise > i128::from(tds_limit_paise) {",
+  "to": "if subject_paise >= i128::from(tds_limit_paise) {"
+ },
+ {
+  "id": "D2-12",
+  "by": "author (Lane B)",
+  "what": "partners: a TDS ledger anywhere counts as seen",
+  "file": "src/partners_40b_194t.rs",
+  "from": ".is_some_and(|led| led.under(DUTIES_TAXES_GROUP))",
+  "to": ".is_some_and(|_led| true)"
+ },
+ {
+  "id": "D2-13",
+  "by": "author (Lane B)",
+  "what": "partners: both applicability keys required",
+  "file": "src/partners_40b_194t.rs",
+  "from": "let applicable = s194t_on || s40b_rate > 0;",
+  "to": "let applicable = s194t_on && s40b_rate > 0;"
+ },
+ {
+  "id": "MI-01",
+  "by": "author (Lane B)",
+  "what": "masterid_int: an unparseable MASTERID read as 0 (was E1B-05)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Err(support::PyIntError::Invalid) => Ok(None),",
+  "to": "Err(support::PyIntError::Invalid) => Ok(Some(0)),"
+ },
+ {
+  "id": "MI-02",
+  "by": "author (Lane B)",
+  "what": "masterid_int: a negative MASTERID read as positive (was E1B-O20)",
+  "file": "src/book_keeping_quality.rs",
+  "from": "Ok(n) => Ok(Some(n)),",
+  "to": "Ok(n) => Ok(Some(n.abs())),"
+ },
+ {
+  "id": "PI-09",
+  "by": "author (Lane B)",
+  "what": "py_int_str: the minus sign dropped",
+  "file": "src/support.rs",
+  "from": "Some(b'-') => (true, &t[1..]),",
+  "to": "Some(b'-') => (false, &t[1..]),"
+ },
+ {
+  "id": "PC-01",
+  "by": "author (Lane B)",
+  "what": "partners: a figure-tag collision is never detected (keyed by the partner key)",
+  "file": "src/partners_40b_194t.rs",
+  "from": "tags.insert(tag.clone(), key)",
+  "to": "tags.insert(key.to_string(), key)"
+ },
+ {
+  "id": "FX1-01",
+  "by": "author",
+  "what": "Rust's whitespace set in place of Python's (U+001C..U+001F)",
+  "file": "src/book.rs",
+  "from": "(0..s.len()).filter(|&i| xml::is_py_space(s[i]))",
+  "to": "(0..s.len()).filter(|&i| s[i].is_whitespace())"
+ },
+ {
+  "id": "FX1-02",
+  "by": "author",
+  "what": "the text not stripped before matching",
+  "file": "src/book.rs",
+  "from": "let s: Vec<char> = xml::py_strip(text).chars().collect();",
+  "to": "let s: Vec<char> = text.chars().collect();"
+ },
+ {
+  "id": "FX1-03",
+  "by": "author",
+  "what": "the ` @ ` separator not checked",
+  "file": "src/book.rs",
+  "from": "        && is_at(second, \" @ \")\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-04",
+  "by": "author",
+  "what": "the ` = ` separator not checked",
+  "file": "src/book.rs",
+  "from": "        && is_at(equals, \" = \")\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-05",
+  "by": "author",
+  "what": "an empty rate text between the separators accepted",
+  "file": "src/book.rs",
+  "from": "&& equals > second + 3",
+  "to": "&& equals >= second + 3"
+ },
+ {
+  "id": "FX1-06",
+  "by": "author",
+  "what": "a newline in the rate text accepted",
+  "file": "src/book.rs",
+  "from": "        && !s[second + 3..equals].contains(&'\\n')\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-07",
+  "by": "author",
+  "what": "a carriage return read as `.`'s one exclusion",
+  "file": "src/book.rs",
+  "from": "contains(&'\\n')",
+  "to": "contains(&'\\r')"
+ },
+ {
+  "id": "FX1-08",
+  "by": "author",
+  "what": "an end whose run before the space is empty accepted",
+  "file": "src/book.rs",
+  "from": "if space == 0 || s[space] != ' ' {",
+  "to": "if s[space] != ' ' {"
+ },
+ {
+  "id": "FX1-09",
+  "by": "author",
+  "what": "any whitespace char accepted as an end's space",
+  "file": "src/book.rs",
+  "from": "if space == 0 || s[space] != ' ' {",
+  "to": "if space == 0 {"
+ },
+ {
+  "id": "FX1-10",
+  "by": "author",
+  "what": "a leading minus not allowed on a number",
+  "file": "src/book.rs",
+  "from": "let number = number.strip_prefix(&['-']).unwrap_or(number);",
+  "to": ""
+ },
+ {
+  "id": "FX1-11",
+  "by": "author",
+  "what": "a number ending in its dot accepted",
+  "file": "src/book.rs",
+  "from": "                && dot + 1 < number.len()\n",
+  "to": "\n"
+ },
+ {
+  "id": "FX1-12",
+  "by": "author",
+  "what": "commas accepted after the dot",
+  "file": "src/book.rs",
+  "from": "&& number[dot + 1..].iter().all(digit)",
+  "to": "&& number[dot + 1..].iter().all(digit_or_comma)"
+ },
+ {
+  "id": "FX1-13",
+  "by": "author",
+  "what": "commas refused before the dot",
+  "file": "src/book.rs",
+  "from": "number[..dot].iter().all(digit_or_comma)",
+  "to": "number[..dot].iter().all(digit)"
+ },
+ {
+  "id": "FX1-14",
+  "by": "author",
+  "what": "a number with no dot allowed to end in a comma",
+  "file": "src/book.rs",
+  "from": "None => number.iter().all(digit_or_comma) && number.last().is_some_and(digit),",
+  "to": "None => number.iter().all(digit_or_comma) && !number.is_empty(),"
+ },
+ {
+  "id": "FX1-15",
+  "by": "author",
+  "what": "commas refused in a number with no dot",
+  "file": "src/book.rs",
+  "from": "None => number.iter().all(digit_or_comma) && number.last().is_some_and(digit),",
+  "to": "None => number.iter().all(digit) && number.last().is_some_and(digit),"
+ },
+ {
+  "id": "FX1-16",
+  "by": "author",
+  "what": "ASCII digits only, not Python's `\\d`",
+  "file": "src/book.rs",
+  "from": "let digit = |c: &char| crate::support::py_is_decimal(*c);",
+  "to": "let digit = |c: &char| c.is_ascii_digit();"
+ },
+ {
+  "id": "FX1-17",
+  "by": "author",
+  "what": "names kept in scan order with repeats, not sorted once each",
+  "file": "src/book.rs",
+  "from": "let names: BTreeSet<&str> = names.into_iter().collect();",
+  "to": "let names: Vec<&str> = names.into_iter().collect();"
+ },
+ {
+  "id": "FX1-18",
+  "by": "author",
+  "what": "the part label dropped from the refusal",
+  "file": "src/book.rs",
+  "from": "\"{part}: foreign-currency amounts on {} ledger(s)",
+  "to": "\"foreign-currency amounts on {} ledger(s)"
+ },
+ {
+  "id": "FX1-19",
+  "by": "author",
+  "what": "a ledger master's opening not scanned",
+  "file": "src/book.rs",
+  "from": ".filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": ".filter(|_| false)"
+ },
+ {
+  "id": "FX1-20",
+  "by": "author",
+  "what": "a nameless ledger master named by its empty name",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),",
+  "to": "            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))\n            .filter_map(|l| l.attr(\"NAME\")),"
+ },
+ {
+  "id": "FX1-21",
+  "by": "author",
+  "what": "TBALOPENING not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];"
+ },
+ {
+  "id": "FX1-22",
+  "by": "author",
+  "what": "TBALCLOSING not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALOPENING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];"
+ },
+ {
+  "id": "FX1-23",
+  "by": "author",
+  "what": "DEBITTOTALS not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"CREDITTOTALS\"];"
+ },
+ {
+  "id": "FX1-24",
+  "by": "author",
+  "what": "CREDITTOTALS not scanned",
+  "file": "src/book.rs",
+  "from": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\", \"CREDITTOTALS\"];",
+  "to": "let fields = [\"TBALOPENING\", \"TBALCLOSING\", \"DEBITTOTALS\"];"
+ },
+ {
+  "id": "FX1-25",
+  "by": "author",
+  "what": "the trial balance's refusal discarded",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),\n    )?;",
+  "to": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),\n    )\n    .ok();"
+ },
+ {
+  "id": "FX1-26",
+  "by": "author",
+  "what": "voucher ledger lines not scanned",
+  "file": "src/book.rs",
+  "from": "named_by(\"ALLLEDGERENTRIES.LIST\", \"LEDGERNAME\").chain(",
+  "to": "named_by(\"ALLLEDGERENTRIES.LIST\", \"LEDGERNAME\").filter(|_| false).chain("
+ },
+ {
+  "id": "FX1-27",
+  "by": "author",
+  "what": "a nameless voucher ledger line not named",
+  "file": "src/book.rs",
+  "from": ".map(move |e| e.child_text(name))",
+  "to": ".map(move |e| e.child_text(name))\n            .filter(|n| !n.is_empty())"
+ },
+ {
+  "id": "FX1-28",
+  "by": "author",
+  "what": "ALLINVENTORYENTRIES.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"ALLINVENTORYENTRIES.LIST\",\n    \"INVENTORYALLOCATIONS.LIST\",",
+  "to": "    \"-\",\n    \"INVENTORYALLOCATIONS.LIST\","
+ },
+ {
+  "id": "FX1-29",
+  "by": "author",
+  "what": "INVENTORYALLOCATIONS.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"INVENTORYALLOCATIONS.LIST\",\n    \"INVENTORYENTRIESIN.LIST\",",
+  "to": "    \"-\",\n    \"INVENTORYENTRIESIN.LIST\","
+ },
+ {
+  "id": "FX1-30",
+  "by": "author",
+  "what": "INVENTORYENTRIESIN.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"INVENTORYENTRIESIN.LIST\",\n    \"INVENTORYENTRIESOUT.LIST\",\n];",
+  "to": "    \"-\",\n    \"INVENTORYENTRIESOUT.LIST\",\n];"
+ },
+ {
+  "id": "FX1-31",
+  "by": "author",
+  "what": "INVENTORYENTRIESOUT.LIST not scanned",
+  "file": "src/book.rs",
+  "from": "    \"INVENTORYENTRIESOUT.LIST\",\n];",
+  "to": "    \"-\",\n];"
+ },
+ {
+  "id": "FX1-32",
+  "by": "author",
+  "what": "only lists directly under a voucher scanned",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(list)\n            .into_iter()\n            .filter(|e| is_foreign_amount(e.child_text(\"AMOUNT\")))",
+  "to": "        root.descendants_named(\"VOUCHER\")\n            .into_iter()\n            .flat_map(move |v| v.children_named(list))\n            .filter(|e| is_foreign_amount(e.child_text(\"AMOUNT\")))"
+ },
+ {
+  "id": "FX1-33",
+  "by": "reviewer",
+  "what": "overlapping separators: `!=` in place of `>`",
+  "file": "src/book.rs",
+  "from": "        && equals > second + 3\n",
+  "to": "        && equals != second + 3\n"
+ },
+ {
+  "id": "FX1-34",
+  "by": "reviewer",
+  "what": "voucher-scan names not stripped",
+  "file": "src/book.rs",
+  "from": ".map(move |e| e.child_text(name))",
+  "to": ".map(move |e| e.child(name).map_or(\"\", |c| c.text.as_str()))"
+ },
+ {
+  "id": "FX1-35",
+  "by": "reviewer",
+  "what": "ledger scan reads only direct children of the root",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(\"LEDGER\")\n            .into_iter()\n            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": "        root.children_named(\"LEDGER\")\n            .filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))"
+ },
+ {
+  "id": "FX1-36",
+  "by": "reviewer",
+  "what": "TB nameless row named by its empty name",
+  "file": "src/book.rs",
+  "from": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\").filter(|n| !n.is_empty())),",
+  "to": "            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))\n            .filter_map(|l| l.attr(\"NAME\")),"
+ },
+ {
+  "id": "FX1-37",
+  "by": "reviewer",
+  "what": "only U+001C added to Rust whitespace, not U+001D..U+001F",
+  "file": "src/book.rs",
+  "from": "(0..s.len()).filter(|&i| xml::is_py_space(s[i]))",
+  "to": "(0..s.len()).filter(|&i| s[i].is_whitespace() || s[i] == '\\u{1c}')"
+ },
+ {
+  "id": "FX1-38",
+  "by": "reviewer",
+  "what": "ledger scan reads any OPENINGBALANCE child, not the first",
+  "file": "src/book.rs",
+  "from": ".filter(|l| is_foreign_amount(l.child_text(\"OPENINGBALANCE\")))",
+  "to": ".filter(|l| l.children_named(\"OPENINGBALANCE\").any(|c| is_foreign_amount(&c.text)))"
+ },
+ {
+  "id": "FX1-39",
+  "by": "author",
+  "what": "the trial-balance scan reads only direct children of the root",
+  "file": "src/book.rs",
+  "from": "        root.descendants_named(\"LEDGER\")\n            .into_iter()\n            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))",
+  "to": "        root.children_named(\"LEDGER\")\n            .filter(|l| fields.iter().any(|f| is_foreign_amount(l.child_text(f))))"
+ },
+ {
+  "id": "E2B-01",
+  "by": "author",
+  "what": "the voucher reference read from VOUCHERNUMBER",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.child_text(\"VOUCHERNUMBER\").to_string(),"
+ },
+ {
+  "id": "E2B-02",
+  "by": "author",
+  "what": "the voucher reference not stripped",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.child(\"REFERENCE\").map_or(String::new(), |r| r.text.clone()),"
+ },
+ {
+  "id": "E2B-03",
+  "by": "author",
+  "what": "the voucher reference never read",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: String::new(),"
+ },
+ {
+  "id": "E2B-04",
+  "by": "author",
+  "what": "a mistyped edge-book reference read as empty",
+  "file": "tests/edge_books.rs",
+  "from": "reference: typed(v, \"reference\", false, \"text\", |r| {\n                    r.as_str().map(str::to_string)\n                })\n                .unwrap_or_default(),",
+  "to": "reference: v[\"reference\"].as_str().unwrap_or_default().to_string(),"
+ },
+ {
+  "id": "E2B-05",
+  "by": "reviewer",
+  "what": "the voucher reference read from any descendant, not a direct child",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.descendants_named(\"REFERENCE\").first().map_or(\"\", |r| xml::py_strip(&r.text)).to_string(),"
+ },
+ {
+  "id": "E2B-06",
+  "by": "reviewer",
+  "what": "the voucher reference stripped with Rust's `trim`, not Python's `str.strip()`",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.child(\"REFERENCE\").map_or(String::new(), |r| r.text.trim().to_string()),"
+ },
+ {
+  "id": "E2B-07",
+  "by": "reviewer",
+  "what": "the `&#4;` marker dropped from the voucher reference",
+  "file": "src/book.rs",
+  "from": "reference: v.child_text(\"REFERENCE\").to_string(),",
+  "to": "reference: v.child_text(\"REFERENCE\").trim_start_matches(\"\\u{fffd}#4;\").to_string(),"
+ }
+]

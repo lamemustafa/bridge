@@ -15,6 +15,7 @@ const firstPartyRustPackages = new Set([
   "bridge-tally-primitives",
   "bridge-tally-protocol",
   "bridge-tally-transport",
+  "bridge-tax-audit",
   "tally-protocol-simulator",
 ]);
 

@@ -362,3 +362,25 @@ async fn incomplete_receipt_log_stops_session_but_preserves_durable_batch_recove
 
 #[path = "agent_protocol_evidence_tests.rs"]
 mod evidence_tests;
+
+#[tokio::test]
+async fn a_call_already_done_is_answered_before_a_later_frame() {
+    // `voucher_schema` needs no Tally read, so it is done on its first poll.
+    // The ping behind it must not overtake its answer: the call in flight is
+    // polled before input is read. Repeated because an unbiased select would
+    // pass by chance about half the time.
+    for _ in 0..20 {
+        let directory = tempfile::tempdir().unwrap();
+        let responses = session(
+            server(directory.path()),
+            &[
+                initialize("2025-06-18"),
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"voucher_schema"}}),
+                json!({"jsonrpc":"2.0","id":3,"method":"ping"}),
+            ],
+        )
+        .await;
+        let ids: Vec<Value> = responses.iter().map(|value| value["id"].clone()).collect();
+        assert_eq!(ids, vec![json!(1), json!(2), json!(3)]);
+    }
+}

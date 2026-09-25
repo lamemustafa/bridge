@@ -6,7 +6,9 @@ use bridge_tally_core::{
     ReadWindow, RequestContext, SourceIdentity, TallyConnector, TallyDate, TallyError,
     CORE_ACCOUNTING_SCHEMA_VERSION,
 };
-use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
+use bridge_tally_protocol::xml_read_profiles::{
+    ReadOnlyProfile, ValidatedCompanyName, EDUCATION_REPORT_FAMILY_UNSUPPORTED,
+};
 use bridge_tally_protocol::{
     native_outstandings::{
         render_native_group_snapshot_request, render_native_ledger_export_request,
@@ -422,6 +424,22 @@ impl RuntimeTallyConnector {
         self.verify_snapshot_identity_from_companies(&companies)
     }
 
+    /// As [`Self::verify_snapshot_identity`], also returning whether the same
+    /// company-list response reports Education mode. No further request.
+    async fn verify_snapshot_identity_observing_mode(
+        &self,
+    ) -> Result<(VerifiedCompanyIdentity, bool), TallyError> {
+        let (companies, education) = self
+            .runtime
+            .fetch_companies_observing_education_mode(self.config.clone())
+            .await
+            .map_err(map_transport_error)?;
+        Ok((
+            self.verify_snapshot_identity_from_companies(&companies)?,
+            education,
+        ))
+    }
+
     async fn verify_closing_snapshot_identity(
         &self,
         opening: &VerifiedCompanyIdentity,
@@ -544,7 +562,21 @@ impl TallyConnector for RuntimeTallyConnector {
         let validation_company_guid = expected_company_guid.clone();
         let validation_from = expected_from.clone();
         let validation_to = expected_to.clone();
-        let identity = self.verify_snapshot_identity().await?;
+        let (identity, education) = self.verify_snapshot_identity_observing_mode().await?;
+        // The period report is a custom report whose TDL Education answers with
+        // a blocking dialog on the Tally screen (bridge#45). Either this
+        // identity read or the run's own probe reporting Education refuses it
+        // before it is sent; the run records the tie-out as unavailable.
+        let probed_education = *self
+            .snapshot_boundary_profile
+            .read()
+            .map_err(|_| invalid_data("snapshot_boundary_profile_unavailable"))?
+            == Some(DateBoundaryProfile::EducationRestricted);
+        if education || probed_education {
+            return Err(TallyError::Unsupported {
+                code: EDUCATION_REPORT_FAMILY_UNSUPPORTED.to_string(),
+            });
+        }
         let xml = self
             .post_xml_validated(
                 tdl_engine::ledger_period_balances_request(

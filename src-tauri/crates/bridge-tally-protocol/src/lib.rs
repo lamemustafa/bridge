@@ -5,6 +5,16 @@
 //! qualification evidence requires Tally application `STATUS=1`; interactive
 //! company discovery additionally accepts one strict, direct report shape for
 //! documented compatibility.
+//!
+//! Tally's responses carry numeric character references that XML 1.0 forbids,
+//! `&#4;` above all. Before its native collection parsers read a response, this
+//! crate marks each one with [`mark_forbidden_numeric_references`]: the
+//! reference becomes the literal text U+FFFD `#` *n* `;` (so `&#4; Primary`
+//! reads as [`TALLY_SANITIZED_ROOT_MARKER`] followed by ` Primary`), and a
+//! U+FFFD already in the text that could be mistaken for a marker becomes
+//! U+FFFD `#65533;`, which keeps the rewrite reversible. Raw characters are not
+//! touched. The rule is recorded in `docs/tally/TALLY_PROTOCOL_REFERENCE.md`
+//! §1.1(d).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -15,11 +25,14 @@ use quick_xml::{events::Event, name::QName, Reader};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Admission of the tally-read v1 `company` part (audit_read plan step 3).
+pub mod audit_company_part;
 #[cfg(feature = "bills-native-outstandings-probe")]
 pub mod bills_native_outstandings_probe;
 #[cfg(feature = "bills-payments-observation-parser")]
 pub mod bills_payments_observation;
 pub mod group_ancestry;
+pub mod gst_registration;
 mod import_outcome;
 #[cfg(feature = "india-tax-observation-parser")]
 pub mod india_tax_observation;
@@ -71,6 +84,7 @@ pub use text_encoding::{
     validate_tally_xml_response_content_type, DecodedTallyText, ExpectedTallyTextEncoding,
     StreamDecodedTallyText, TallyTextDecodeError, TallyTextEncoding, TallyTextStreamDecoder,
 };
+pub use tolerant_xml::mark_forbidden_numeric_references;
 
 pub const BRIDGE_LEDGER_EXPORT_SCHEMA: &str = "bridge.tally.ledgers/1";
 pub const BRIDGE_LEDGER_WRITE_READBACK_SCHEMA: &str = "bridge.tally.ledger-write-readback/1";
@@ -83,22 +97,26 @@ pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 
 /// The sanitized representation of Tally's U+0004 metadata prefix.
 ///
-/// `tolerant_xml` produces this exact form for an illegal `&#4;` reference;
-/// literal U+FFFD source text remains distinguishable as `U+FFFD#65533;`.
+/// [`mark_forbidden_numeric_references`] produces this exact form for an
+/// illegal `&#4;` reference; literal U+FFFD source text that could collide with
+/// it remains distinguishable as `U+FFFD#65533;`.
 pub const TALLY_SANITIZED_ROOT_MARKER: &str = "\u{fffd}#4;";
 
-/// Whether Tally text names the reserved top-level root.
+/// Whether decoded Tally text names the reserved top-level root.
 ///
-/// Tally may prefix its `Primary` root with the sanitized U+0004 metadata
-/// marker. The marker also occurs on non-root metadata, so it is removed only
-/// before comparing the complete remaining token to `Primary`.
+/// Tally writes its root as `&#4; Primary`, and every Bridge decoder reads
+/// that as [`TALLY_SANITIZED_ROOT_MARKER`] followed by ` Primary`
+/// (`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §1.1(d)). Only that marked form
+/// is the root: after trimming, the text must start with the marker, and the
+/// rest, trimmed again, must be `Primary` (ASCII case ignored). A bare
+/// `Primary` names a group a user called that, and a chain walks through it
+/// like any other group. The marker also prefixes Tally's other reserved
+/// values (`&#4; Resave`, `&#4; Not Applicable`), which are not the root.
 pub fn is_tally_reserved_root(value: &str) -> bool {
-    let value = value.trim();
-    let value = value
+    value
+        .trim()
         .strip_prefix(TALLY_SANITIZED_ROOT_MARKER)
-        .unwrap_or(value)
-        .trim();
-    value.eq_ignore_ascii_case("primary")
+        .is_some_and(|rest| rest.trim().eq_ignore_ascii_case("primary"))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -693,6 +711,59 @@ fn parse_company_gateway_capability_row(
     })
 }
 
+/// Whether a `CompanyListV2` response may come from an Education-mode endpoint:
+/// some `EDUMODE` field says anything other than `No`, including `Yes`, an
+/// empty field or an unrecognised value.
+///
+/// Deliberately looser than [`parse_company_gateway_capability_observation`],
+/// which fails the whole observation when any product or licence field is
+/// empty, missing or inconsistent. A caller that restricts reads in Education
+/// mode must not have that restriction switched off by a field it cannot parse,
+/// so for this one question an uncertain `EDUMODE` counts as Education. A
+/// response with no `EDUMODE` field at all returns `false`: nothing in it
+/// speaks to the mode. A live Education instance was observed on 22 Sep 2026
+/// reporting `EDUMODE=Yes` alongside `SILVER=Yes` and `GOLD=No` (bridge#581).
+///
+/// Only fields inside the collection's `DATA` are read, as the strict parser
+/// reads rows only beneath `ENVELOPE/BODY/DATA/COLLECTION`: the `DESC/CMPINFO`
+/// counter block is never taken for a company row.
+pub fn company_list_may_be_in_educational_mode(xml: &str) -> bool {
+    let mut reader = configured_reader(xml);
+    let mut path = Vec::<Vec<u8>>::new();
+    loop {
+        let in_data = path.iter().any(|name| name.as_slice() == b"DATA");
+        match reader.read_event() {
+            Ok(Event::Start(element))
+                if in_data && element.name().as_ref().eq_ignore_ascii_case(b"EDUMODE") =>
+            {
+                let licensed = reader
+                    .read_text(element.name())
+                    .ok()
+                    .and_then(|text| {
+                        text.decode()
+                            .ok()
+                            .map(|text| text.trim().eq_ignore_ascii_case("no"))
+                    })
+                    .unwrap_or(false);
+                if !licensed {
+                    return true;
+                }
+            }
+            Ok(Event::Empty(element))
+                if in_data && element.name().as_ref().eq_ignore_ascii_case(b"EDUMODE") =>
+            {
+                return true;
+            }
+            Ok(Event::Start(element)) => path.push(element.name().as_ref().to_ascii_uppercase()),
+            Ok(Event::End(_)) => {
+                path.pop();
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+    }
+}
+
 fn parse_gateway_yes_no(value: &str, label: &str) -> anyhow::Result<bool> {
     if value.eq_ignore_ascii_case("yes") {
         Ok(true)
@@ -726,9 +797,14 @@ fn parse_named_master_source_records(
     schema: &str,
     object_type: &str,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
-    validate_export_response(xml)?;
-    let evidence = scan_export_evidence(xml)?;
-    let mut reader = configured_reader(xml);
+    // Mark forbidden references before anything reads the text, as the native
+    // collection parsers do (§1.1(d)), so `&#4; Primary` reads as the marker
+    // and not as a raw U+0004. Row hashes still attest the original bytes.
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let text = sanitized.as_str();
+    validate_export_response(text)?;
+    let evidence = scan_export_evidence(text)?;
+    let mut reader = configured_reader(text);
     let mut path = Vec::<Vec<u8>>::new();
     let mut records = Vec::new();
     loop {
@@ -753,8 +829,8 @@ fn parse_named_master_source_records(
                     identity_kind,
                     identities,
                     alter_id,
-                    raw_source_sha256: source_fragment_sha256(
-                        xml,
+                    raw_source_sha256: source_fragment_sha256_from_sanitized(
+                        &sanitized,
                         record_start,
                         reader.buffer_position() as usize,
                     )?,
@@ -780,8 +856,8 @@ fn parse_named_master_source_records(
                     identity_kind,
                     identities,
                     alter_id: attr_value(&reader, &element, b"ALTERID"),
-                    raw_source_sha256: source_fragment_sha256(
-                        xml,
+                    raw_source_sha256: source_fragment_sha256_from_sanitized(
+                        &sanitized,
                         record_start,
                         reader.buffer_position() as usize,
                     )?,

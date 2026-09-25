@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 /dist
 /src-tauri/target
+/src-tauri/crates/bridge-tax-audit/target
 /tools/target
 /packaging/mcpb/bin/
 /packaging/mcpb/stage/

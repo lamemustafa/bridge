@@ -16,6 +16,8 @@
 //! every value this tool returns is exploratory, not a qualified claim.
 
 use super::*;
+use bridge_tally_protocol::native_outstandings::NativeLedgerExportPeriod;
+use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -27,7 +29,7 @@ use std::path::PathBuf;
 // the same private-item-visible-to-descendant-module path this file itself
 // uses for `agent.rs`'s items.
 #[path = "agent_lab_import.rs"]
-mod import;
+pub(super) mod import;
 pub(super) use import::{lab_import_masters, lab_import_vouchers};
 
 // ---------------------------------------------------------------------------
@@ -243,10 +245,11 @@ async fn lab_post_read(
     server: &Server,
     identity: &VerifiedCompanyIdentity,
     tool: &str,
-    request: String,
+    request: ReadRequest,
 ) -> Result<(String, Evidence), ToolFailure> {
-    let (response, evidence) = server.post_read(identity, request.clone()).await?;
-    persist_lab_exchange(server, tool, &request, &response)
+    let request_xml = request.as_str().to_string();
+    let (response, evidence) = server.post_read(identity, request).await?;
+    persist_lab_exchange(server, tool, &request_xml, &response)
         .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
     Ok((response, evidence))
 }
@@ -256,7 +259,7 @@ async fn lab_post_read(
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-enum LabMasterKind {
+pub(super) enum LabMasterKind {
     Unit,
     Godown,
     StockGroup,
@@ -297,14 +300,94 @@ impl LabMasterKind {
     }
 }
 
-fn render_lab_master_collection(company: &str, kind: LabMasterKind) -> Result<String, String> {
+/// Reads masters in the company's own book-start period, with the endpoint's
+/// date-boundary profile observed live on both sides of the read.
+///
+/// A master's `OPENINGBALANCE` (a ledger's opening amount, a stock item's
+/// opening quantity) is the opening of the period the request loads. With no
+/// `SVFROMDATE` Tally uses its loaded display period, so on a company whose
+/// display period is not its first, an undated read reports a later
+/// period's opening: a correct write reads back as a mismatch and a wrong one
+/// can match (protocol reference §5.5; bridge#568).
+///
+/// The period is `SVFROMDATE = SVTODATE = BOOKSFROM` of the verified
+/// identity, and callers supply only the renderer, so no call site can send
+/// another period. As in the production ledger export, a cached status call
+/// is not admission: the licence mode is observed immediately before the
+/// read (an unobserved mode refuses), Education refuses a book start it would
+/// not honour instead of widening it, and a mode that changed by the end of
+/// the read refuses the read.
+pub(super) async fn lab_dated_master_read(
+    server: &Server,
+    identity: &VerifiedCompanyIdentity,
+    tool: &str,
+    render: impl FnOnce(&NativeLedgerExportPeriod) -> Result<ReadRequest, String>,
+) -> Result<(String, Evidence), ToolFailure> {
+    let (opening_boundary, mut evidence) = observe_lab_boundary(server).await?;
+    let request = book_start_period(opening_boundary, identity.books_from_yyyymmdd())
+        .and_then(|period| render(&period))
+        .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+    let (xml, read_evidence) = lab_post_read(server, identity, tool, request)
+        .await
+        .map_err(|failure| failure.with_prior_evidence(evidence.clone()))?;
+    evidence = combine_evidence(evidence, read_evidence);
+    let (closing_boundary, closing_evidence) = observe_lab_boundary(server)
+        .await
+        .map_err(|failure| failure.with_prior_evidence(evidence.clone()))?;
+    evidence = combine_evidence(evidence, closing_evidence);
+    if closing_boundary != opening_boundary {
+        return Err(
+            ToolFailure::from("lab_master_period_boundary_changed".to_string())
+                .with_prior_evidence(evidence),
+        );
+    }
+    Ok((xml, evidence))
+}
+
+/// The endpoint's date-boundary profile, observed now, by the runtime's own
+/// admission rule for opening balances.
+async fn observe_lab_boundary(
+    server: &Server,
+) -> Result<(DateBoundaryProfile, Evidence), ToolFailure> {
+    let (probe, wire) = server
+        .runtime
+        .probe_with_wire_evidence(server.tally_config())
+        .await
+        .map_err(|error| ToolFailure::from_runtime("lab_master_period_unobserved", error))?;
+    let evidence = evidence_from_runtime_read(wire);
+    let boundary =
+        crate::tally::runtime::observed_opening_boundary(&probe.profile).map_err(|_| {
+            ToolFailure::from("lab_master_period_unobserved".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+    Ok((boundary, evidence))
+}
+
+/// The book start as both bounds of a master read, admitted by `boundary`.
+fn book_start_period(
+    boundary: DateBoundaryProfile,
+    books_from_yyyymmdd: &str,
+) -> Result<NativeLedgerExportPeriod, String> {
+    let books_from = bridge_tally_core::TallyDate::parse(books_from_yyyymmdd.to_string())
+        .map_err(|_| "lab_master_period_invalid".to_string())?;
+    NativeLedgerExportPeriod::new(boundary, books_from.clone(), books_from)
+        .map_err(|_| "lab_master_period_unsupported".to_string())
+}
+
+pub(super) fn render_lab_master_collection(
+    company: &str,
+    kind: LabMasterKind,
+    period: &NativeLedgerExportPeriod,
+) -> Result<String, String> {
     let company = ValidatedCompanyName::new(company.to_string())
         .map_err(|_| "company_name_invalid".to_string())?;
     let object_type = kind.tally_type();
     let name = format!("Bridge Lab {object_type}s");
     Ok(format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{name}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="{name}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{name}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{}</SVFROMDATE><SVTODATE TYPE="Date">{}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="{name}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         xml_escape(company.as_str()),
+        period.from().as_str(),
+        period.to().as_str(),
         kind.fetch_fields()
     ))
 }
@@ -378,6 +461,8 @@ fn parse_lab_master_rows(
     xml: &str,
     row_tag: &str,
 ) -> Result<Vec<BTreeMap<String, String>>, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let row_tag = row_tag.to_ascii_uppercase();
     let mut reader = quick_xml::Reader::from_str(xml);
@@ -561,6 +646,8 @@ const BATCH_PREFIX: [&str; 7] = [
 /// (`agent_voucher_parse.rs`). Rows carry a lower-case `date` field so the
 /// shared `window_honoured` check can be reused unmodified.
 fn parse_lab_inventory_vouchers(xml: &str) -> Result<Vec<Value>, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
@@ -719,10 +806,11 @@ pub(super) async fn lab_read_inventory(
     let result: Result<ToolOutcome, ToolFailure> = async {
         let mut masters = serde_json::Map::new();
         for kind in LabMasterKind::ALL {
-            let request = render_lab_master_collection(identity.display_name(), kind)
-                .map_err(ToolFailure::from)?;
             let (xml, read_evidence) =
-                lab_post_read(server, &identity, "lab_read_inventory.masters", request).await?;
+                lab_dated_master_read(server, &identity, "lab_read_inventory.masters", |period| {
+                    lab_master_collection_read(identity.display_name(), kind, period)
+                })
+                .await?;
             evidence = combine_evidence(evidence.clone(), read_evidence);
             let rows = parse_lab_master_rows(&xml, kind.tally_type())
                 .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
@@ -733,7 +821,7 @@ pub(super) async fn lab_read_inventory(
             masters.insert(kind.result_key().to_string(), Value::Array(items));
         }
 
-        let voucher_request = render_agent_lab_inventory_vouchers(identity.display_name(), &from, &to)
+        let voucher_request = lab_inventory_vouchers_read(identity.display_name(), &from, &to)
             .map_err(ToolFailure::from)?;
         let (voucher_xml, voucher_evidence) = lab_post_read(
             server,
@@ -844,6 +932,24 @@ mod tests {
 </ALLINVENTORYENTRIES.LIST></VOUCHER>\
 </COLLECTION></DATA></BODY></ENVELOPE>"
             .to_string()
+    }
+
+    #[test]
+    fn inventory_voucher_text_reads_a_forbidden_reference_as_the_marker() {
+        // No captured inventory voucher exists, so the captured atom
+        // `&#4; Not Applicable` (GSTCLASS in the entry-wildcard capture) is
+        // placed in this synthetic envelope's GODOWNNAME. It must read as the
+        // marked form every other Bridge reader produces (§1.1(d)), not U+0004.
+        let xml = synthetic_inventory_voucher_collection().replacen(
+            "Main Godown",
+            "&#4; Not Applicable",
+            1,
+        );
+        let rows = parse_lab_inventory_vouchers(&xml).expect("parses");
+        assert_eq!(
+            rows[0]["inventory_entries"][0]["godown"],
+            json!("\u{fffd}#4; Not Applicable")
+        );
     }
 
     #[test]
@@ -1332,11 +1438,197 @@ mod tests {
         }
     }
 
+    fn book_start(yyyymmdd: &str) -> NativeLedgerExportPeriod {
+        let date = bridge_tally_core::TallyDate::parse(yyyymmdd.to_string()).unwrap();
+        NativeLedgerExportPeriod::new(DateBoundaryProfile::ModeAgnostic, date.clone(), date)
+            .unwrap()
+    }
+
     #[test]
     fn render_lab_master_collection_carries_the_exact_company_name() {
-        let request =
-            render_lab_master_collection("BRIDGE CORPUS GST", LabMasterKind::StockItem).unwrap();
+        let request = render_lab_master_collection(
+            "BRIDGE CORPUS GST",
+            LabMasterKind::StockItem,
+            &book_start("20240401"),
+        )
+        .unwrap();
         assert!(request.contains("<SVCURRENTCOMPANY>BRIDGE CORPUS GST</SVCURRENTCOMPANY>"));
         assert!(request.contains("<TYPE>StockItem</TYPE>"));
+    }
+
+    /// Drives [`lab_dated_master_read`] against the protocol simulator with a
+    /// captured licensed company list: the live probe, the identity brackets,
+    /// the paired read and the closing probe, in the order the runtime sends
+    /// them. The read's request hash proves the dispatched request is the one
+    /// rendered for the identity's own book start.
+    async fn drive_dated_read(
+        company_xml: String,
+        closing_company_xml: String,
+    ) -> (Result<(String, Evidence), ToolFailure>, Vec<String>, String) {
+        use tally_protocol_simulator::{
+            Fixture, ProductStatus, ResponseFraming, ScenarioPlan, WireEncoding,
+        };
+        let companies =
+            bridge_tally_protocol::parse_companies_from_collection(&company_xml).unwrap();
+        let observed = companies
+            .iter()
+            .find(|row| row.guid.as_deref() == Some("61c6de69-1748-461c-ad3f-162cb949df9f"))
+            .unwrap();
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            observed.name.clone(),
+            observed.guid.clone().unwrap(),
+            observed.company_number.clone().unwrap(),
+            observed.books_from.clone().unwrap(),
+            &companies,
+        )
+        .unwrap();
+        let xml = |text: String| {
+            ScenarioPlan::new(Fixture::SyntheticXml(text))
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_framing(ResponseFraming::ContentLength)
+        };
+        let status = ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime));
+        let items = xml(synthetic_stock_item_collection());
+        let simulator = tally_protocol_simulator::SequenceSimulator::spawn(vec![
+            status.clone(),
+            xml(company_xml.clone()),
+            xml(company_xml.clone()),
+            items.clone(),
+            status.clone(),
+            items,
+            status.clone(),
+            xml(company_xml),
+            status,
+            xml(closing_company_xml),
+        ])
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let expected = render_lab_master_collection(
+            identity.display_name(),
+            LabMasterKind::StockItem,
+            &book_start(identity.books_from_yyyymmdd()),
+        )
+        .unwrap();
+        let result = lab_dated_master_read(&server, &identity, "test.dated", |period| {
+            lab_master_collection_read(identity.display_name(), LabMasterKind::StockItem, period)
+        })
+        .await;
+        let hashes = simulator
+            .finish()
+            .map(|observed| {
+                observed
+                    .into_iter()
+                    .map(|request| request.request_body_sha256)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let expected_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+            &expected,
+        ));
+        (result, hashes, expected_sha256)
+    }
+
+    fn captured_licensed_companies() -> String {
+        let bytes = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        );
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    fn as_education(text: &str) -> String {
+        text.replace(
+            "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
+            "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
+        )
+    }
+
+    #[tokio::test]
+    async fn a_dated_master_read_sends_the_identitys_book_start_to_tally() {
+        let company = captured_licensed_companies();
+        let (result, hashes, expected) = drive_dated_read(company.clone(), company).await;
+        let (xml, _) = result.unwrap();
+        assert!(xml.contains("Sodium Bicarbonate"));
+        assert!(
+            hashes.iter().filter(|hash| **hash == expected).count() == 2,
+            "the paired read is the request rendered for BOOKSFROM: {hashes:?} vs {expected}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mode_change_during_a_dated_master_read_refuses_it() {
+        let company = captured_licensed_companies();
+        let (result, _, _) = drive_dated_read(company.clone(), as_education(&company)).await;
+        assert_eq!(
+            result.unwrap_err().code,
+            "lab_master_period_boundary_changed"
+        );
+    }
+
+    #[test]
+    fn the_book_start_is_admitted_by_the_observed_boundary_profile() {
+        let licensed = book_start_period(DateBoundaryProfile::ModeAgnostic, "20240415").unwrap();
+        assert_eq!(licensed.from().as_str(), "20240415");
+        assert_eq!(licensed.to().as_str(), "20240415");
+        // Education accepts only day 01, 02 or 31 as a boundary; a book start
+        // it would not honour is refused rather than sent and widened.
+        let education = DateBoundaryProfile::EducationRestricted;
+        assert_eq!(
+            book_start_period(education, "20240415").unwrap_err(),
+            "lab_master_period_unsupported"
+        );
+        assert_eq!(
+            book_start_period(education, "20240401")
+                .unwrap()
+                .from()
+                .as_str(),
+            "20240401"
+        );
+        assert_eq!(
+            book_start_period(education, "2024-04-01").unwrap_err(),
+            "lab_master_period_invalid"
+        );
+    }
+
+    #[test]
+    fn every_lab_master_read_loads_the_book_start_period() {
+        // bridge#568: an undated master read reports the loaded display
+        // period's opening, not the book's.
+        for kind in LabMasterKind::ALL {
+            let request =
+                render_lab_master_collection("BRIDGE CORPUS GST", kind, &book_start("20240401"))
+                    .unwrap();
+            let statics = request
+                .split_once("<STATICVARIABLES>")
+                .and_then(|(_, rest)| rest.split_once("</STATICVARIABLES>"))
+                .map(|(inner, _)| inner)
+                .unwrap();
+            assert_eq!(
+                statics,
+                "<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\
+<SVCURRENTCOMPANY>BRIDGE CORPUS GST</SVCURRENTCOMPANY>\
+<SVFROMDATE TYPE=\"Date\">20240401</SVFROMDATE>\
+<SVTODATE TYPE=\"Date\">20240401</SVTODATE>",
+                "{}",
+                kind.tally_type()
+            );
+        }
     }
 }

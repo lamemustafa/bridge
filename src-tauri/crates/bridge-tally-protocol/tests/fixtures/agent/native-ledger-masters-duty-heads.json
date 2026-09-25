@@ -1,0 +1,11 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver response to render_party_ledger_master_request from the disposable BRIDGE GST RECON LAB book; retaken in a02a1e24 (squashed into aab534b2, #311) after adding UT Tax and Cess ledgers",
+  "observed_date": "2026-09-12",
+  "fixture_bytes": 52678,
+  "fixture_sha256": "6ae57bb53c9f28abf962b27642262157f821aa7baf4395445d7e3d8fc52c2332",
+  "encoding": "UTF-16LE without BOM, LF line endings",
+  "rows": 28,
+  "transformation": "not recorded",
+  "provenance_limit": "Backs the recognised GSTDUTYHEAD vocabulary (CGST, IGST, State Tax, UT Tax, Cess; TALLY_PROTOCOL_REFERENCE.md 8.3) via live_capture_backs_the_recognised_duty_head_vocabulary. Port and the source response's own bytes/SHA-256 are not recorded. This instance omits GSTDUTYHEAD on non-GST ledgers, so the empty-element shape is not established here. The first capture in a8551174 (26 ledgers) was superseded; its commit message does not describe the current bytes.",
+  "sensitivity_review": "Disposable synthetic lab book; company name is not in the file; no customer data or credentials."
+}

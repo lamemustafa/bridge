@@ -1,0 +1,10 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver (education_mode false) StandardLedgerCatalogV1 read through Bridge's production read path, after renaming 'WR2 Sales' to 'WR2 Sales Renamed' in the Tally UI; added in f97f2690 (#291)",
+  "observed_date": "2026-09-11",
+  "fixture_bytes": 13102,
+  "fixture_sha256": "7750e24cc7e2db9413f30e1f716526c7d86652eed53d6f99b62d045af71c2f4c",
+  "encoding": "UTF-16LE without BOM",
+  "transformation": [],
+  "provenance_limit": "The commit states the response is not hand-mutated; TALLY_PROTOCOL_REFERENCE.md 12a.9 records what it establishes. Port not recorded. It is paired with native-ledger-catalogue.utf16le.xml as before/after, but that capture was observed 2026-09-06 and was not re-taken, so the pair is not an immediate before/after; most of the lines that differ are CMPINFO counters that 12a.9 records as unexplained. XML-driven rename and deletion are not established. The book was restored after capture.",
+  "sensitivity_review": "Synthetic WR2 Unicode Lab identifiers only; no customer data or credentials."
+}

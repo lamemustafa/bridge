@@ -494,3 +494,34 @@ fn entire_corpus_is_synthetic_and_contains_no_local_identity_markers() {
         }
     }
 }
+
+#[test]
+fn a_body_larger_than_the_socket_buffer_arrives_whole_to_a_slow_reader() {
+    // bridge#520: on macOS an accepted socket inherited the listener's
+    // non-blocking flag, so a body larger than the loopback send buffer was cut
+    // short as soon as the reader fell behind. A reader that waits before
+    // reading is exactly that case.
+    let xml = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>{}</BODY></ENVELOPE>",
+        "x".repeat(2 * 1024 * 1024)
+    );
+    let simulator =
+        SequenceSimulator::spawn(vec![ScenarioPlan::new(Fixture::SyntheticXml(xml.clone()))])
+            .expect("spawn sequence simulator");
+    let mut stream = TcpStream::connect(simulator.address()).expect("connect sequence");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+    write!(
+        stream,
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    .expect("write request");
+    std::thread::sleep(Duration::from_millis(300));
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).expect("read response");
+    let body = response_body(&response);
+    assert_eq!(decode(body).expect("decode body"), xml);
+    let observed = simulator.finish().expect("finish sequence simulator");
+    assert!(!observed[0].client_stopped_reading_response);
+}

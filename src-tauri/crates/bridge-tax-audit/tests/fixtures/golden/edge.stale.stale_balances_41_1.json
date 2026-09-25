@@ -1,0 +1,313 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "stale_balances_41_1",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "d91b78a8ed7ed3be",
+  "population_note_text": "Figures in this test are read directly from the Trial Balance (TOT-1); no voucher population walk is used to compute them.",
+  "figures": [
+    {
+      "id": "stale_balances_41_1.creditor_active_closing_total_paise",
+      "value": -1205,
+      "unit": "paise",
+      "definition_sha256_16": "aadb7fde9f4afe15",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Creditors' ledgers whose closing balance, taken without its sign, is over ₹1.",
+      "evidence": []
+    },
+    {
+      "id": "stale_balances_41_1.creditor_active_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "a93c17e5d2f8fc25",
+      "definition_text": "Ledgers under Tally's 'Sundry Creditors' group whose Trial Balance closing balance, taken without its sign, is over ₹1.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Credit Only",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "C Stale",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.creditor_ledger_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "57f7c2dac57cbc5f",
+      "definition_text": "Ledgers under Tally's 'Sundry Creditors' group.",
+      "evidence": []
+    },
+    {
+      "id": "stale_balances_41_1.creditor_stale_closing_total_paise",
+      "value": -900,
+      "unit": "paise",
+      "definition_sha256_16": "2a465efa6b9c29e1",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Creditors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose period debit and credit movement are both nil.",
+      "evidence": []
+    },
+    {
+      "id": "stale_balances_41_1.creditor_stale_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "30b7b937577c7d43",
+      "definition_text": "'Sundry Creditors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose Trial Balance period debit and credit movement are both nil for the year (opening equal to closing; no voucher touched them).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Stale",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.creditor_unmoved_ledger_8bc427d4",
+      "value": -900,
+      "unit": "paise",
+      "definition_sha256_16": "b005796a6bad4c70",
+      "definition_text": "TB closing balance of one stale creditor ledger (tag 8bc427d4), unchanged all year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Stale",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.debtor_active_closing_total_paise",
+      "value": 1301,
+      "unit": "paise",
+      "definition_sha256_16": "65b81ff3b70be78c",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Debtors' ledgers whose closing balance, taken without its sign, is over ₹1.",
+      "evidence": []
+    },
+    {
+      "id": "stale_balances_41_1.debtor_active_count",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "e9bb608a87992c96",
+      "definition_text": "Ledgers under Tally's 'Sundry Debtors' group whose Trial Balance closing balance, taken without its sign, is over ₹1.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "D Over Limit",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "D Really Touched",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "D Zero Touched",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.debtor_ledger_count",
+      "value": 5,
+      "unit": "count",
+      "definition_sha256_16": "49bb5daecf0264e6",
+      "definition_text": "Ledgers under Tally's 'Sundry Debtors' group.",
+      "evidence": []
+    },
+    {
+      "id": "stale_balances_41_1.debtor_stale_closing_total_paise",
+      "value": 1301,
+      "unit": "paise",
+      "definition_sha256_16": "7ae836f0a96a5984",
+      "definition_text": "Sum of Trial Balance closing balances across the 'Sundry Debtors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose period debit and credit movement are both nil.",
+      "evidence": []
+    },
+    {
+      "id": "stale_balances_41_1.debtor_stale_count",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "a7a0cd3939df005d",
+      "definition_text": "'Sundry Debtors' ledgers whose closing balance, taken without its sign, is over ₹1 and whose Trial Balance period debit and credit movement are both nil for the year (opening equal to closing; no voucher touched them).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "D Over Limit",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "D Really Touched",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "D Zero Touched",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.debtor_unmoved_ledger_1f7bcfab",
+      "value": 700,
+      "unit": "paise",
+      "definition_sha256_16": "c68c257665071d65",
+      "definition_text": "TB closing balance of one stale debtor ledger (tag 1f7bcfab), unchanged all year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "D Really Touched",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.debtor_unmoved_ledger_d1908bb4",
+      "value": 500,
+      "unit": "paise",
+      "definition_sha256_16": "73f8b5659aed7702",
+      "definition_text": "TB closing balance of one stale debtor ledger (tag d1908bb4), unchanged all year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "D Zero Touched",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stale_balances_41_1.debtor_unmoved_ledger_e85203b6",
+      "value": 101,
+      "unit": "paise",
+      "definition_sha256_16": "c8292f7261591e26",
+      "definition_text": "TB closing balance of one stale debtor ledger (tag e85203b6), unchanged all year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "D Over Limit",
+          "label": ""
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "stale_balances_41_1/recoverability/debtor",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "stale_closing_total",
+          "figure_id": "stale_balances_41_1.debtor_stale_closing_total_paise"
+        },
+        {
+          "name": "stale_count",
+          "figure_id": "stale_balances_41_1.debtor_stale_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "D Over Limit",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "D Really Touched",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "D Zero Touched",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "8d84e9dd84ca8339",
+      "title_text": "3 debtor ledgers have an unchanged balance (no voucher posted) for the whole year",
+      "limits_sha256_16": "4e44a634a2eb32ec",
+      "limits_text": [
+        "An unmoved debtor balance is a recoverability question (s.36(1)(vii)/(2) if later written off), not itself evidence of anything wrong; the books here cover only this financial year."
+      ],
+      "ask_client_sha256_16": "0f9b9246069e5480",
+      "ask_client_text": [
+        "Confirm the recoverability of each balance above, and whether any has since been written off or is expected to be."
+      ]
+    },
+    {
+      "id": "stale_balances_41_1/s41_1/creditor",
+      "clauses": [
+        "s.41(1)",
+        "3CD-25"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "stale_closing_total",
+          "figure_id": "stale_balances_41_1.creditor_stale_closing_total_paise"
+        },
+        {
+          "name": "stale_count",
+          "figure_id": "stale_balances_41_1.creditor_stale_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "C Stale",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "3bcaeb904120a062",
+      "title_text": "1 trade-creditor ledgers have an unchanged balance (no voucher posted) for the whole year",
+      "limits_sha256_16": "4db522db68e6a666",
+      "limits_text": [
+        "The books here cover only this financial year; s.41(1) turns on whether the liability has, in substance, ceased to exist or been remitted -- which needs prior-year Trial Balances (to see how long the balance has genuinely sat unchanged) that this engagement does not carry.",
+        "A stale balance is equally consistent with a valid, still-payable liability (a dormant but genuine trade balance, or a related-party loan) as with a ceased one; this test draws no conclusion either way."
+      ],
+      "ask_client_sha256_16": "173ef288b266b7cb",
+      "ask_client_text": [
+        "For each ledger above, confirm how long the balance has been outstanding (prior years, not just this one) and whether any liability has been written back, waived, or otherwise remitted or ceased."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 196 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "opening_paise",
+      "detail": "TB opening_paise sums to 201 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "stale_balances_41_1.check_invariants"
+  ],
+  "module_invariant_violations": [
+    {
+      "invariant": "stale_balances_41_1.check_invariants",
+      "subject": "stale_balances_41_1",
+      "detail": "STL-1: D Really Touched reported as an unmoved debtor (TB debit/credit both nil) but at least one books-population voucher line posts a nonzero amount to it"
+    }
+  ]
+}

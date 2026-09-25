@@ -2,6 +2,7 @@ use super::*;
 
 fn batch() -> ImportLedgerLine {
     ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -292,4 +293,43 @@ fn stale_verifier_cannot_replace_a_newer_same_batch_publication() {
             stale_proof
         );
     }
+}
+
+/// bridge#239: a verification that reports a voucher posted records its
+/// ALTERID beside the proof, once; a later verification cannot move it.
+#[test]
+fn a_verification_records_each_vouchers_first_verified_alter_id_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let batch = batch();
+    server.append_import_ledger(&batch).unwrap();
+    let txn_id = batch.vouchers[0].bridge_txn_id.clone();
+    let verify = |alter_id: u64| {
+        let proof = json!({"batch_id":batch.batch_id,
+            "vouchers":[{"bridge_txn_id":txn_id,"status":"posted_verified","alter_id":alter_id}]});
+        let generation = server
+            .latest_import_snapshot(&batch.batch_id)
+            .unwrap()
+            .unwrap()
+            .generation;
+        server
+            .persist_import_verification(&proof, &batch, generation)
+            .unwrap();
+    };
+    let imports = directory.path().join("imports");
+    verify(40);
+    assert_eq!(
+        read_verified_baseline(&imports, &batch.batch_id)
+            .unwrap()
+            .vouchers[&txn_id],
+        40
+    );
+    // Verified again after someone edited a field it does not compare.
+    verify(41);
+    assert_eq!(
+        read_verified_baseline(&imports, &batch.batch_id)
+            .unwrap()
+            .vouchers[&txn_id],
+        40
+    );
 }

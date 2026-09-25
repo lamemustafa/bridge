@@ -114,6 +114,8 @@ fn parse_voucher_rows(
     // Tally's collection XML varies by release; use a deliberately conservative
     // extractor and never infer a missing field. Malformed rows fail before
     // optional selectors can hide them as an apparently complete empty result.
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut rows = Vec::new();
@@ -359,6 +361,14 @@ fn parse_voucher_rows(
                         identities.admit(row.get("GUID").map(String::as_str), master_id)?;
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": parse_optional_tally_alter_id(row.get("ALTERID").map(String::as_str))?, "master_id": row.get("MASTERID"), "amounts": amounts});
+                        // Present only when the read asked Tally to resolve the
+                        // row's voucher type (bridge#625).
+                        if let Some(resolved) = resolve_row_voucher_type(&row, company_guid)? {
+                            parsed["voucher_type_guid"] = json!(resolved.guid);
+                            parsed["voucher_type_reserved_name"] = json!(resolved.reserved_name);
+                            parsed["voucher_class"] =
+                                json!(resolved.class.map(ReservedVoucherClass::name));
+                        }
                         if require_change_identity {
                             parsed["remote_id"] = json!(row.get("REMOTEID"));
                         }
@@ -380,6 +390,74 @@ fn parse_voucher_rows(
                             Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
                         parsed["optional"] =
                             Value::Bool(required_tally_bool(row.get("ISOPTIONAL"))?);
+                        // Unlike ISCANCELLED/ISOPTIONAL, a real capture has shown Tally
+                        // omitting ISPOSTDATED entirely rather than asserting "No" on every
+                        // voucher. required_tally_bool would refuse the whole read on that
+                        // shape; that is right for a tag known to always be present, but
+                        // wrong here; it would turn "Tally did not say" into a hard failure
+                        // instead of a legible unknown. So this field is optional like
+                        // EFFECTIVEDATE above: an absent or empty element is not observed and
+                        // the key is omitted, never invented as `false`. A present value must
+                        // be Yes/No: an unrecognised value refuses the read rather than
+                        // guessing, exactly as a malformed EFFECTIVEDATE does.
+                        if let Some(post_dated) = row
+                            .get("ISPOSTDATED")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["post_dated"] = Value::Bool(match post_dated {
+                                "Yes" => true,
+                                "No" => false,
+                                _ => return Err("voucher_post_dated_invalid".to_string()),
+                            });
+                        }
+                        // REFERENCE is TYPE="String", the same shape NARRATION uses, but
+                        // unlike NARRATION a blank reference carries no information worth
+                        // returning: protocol reference §8.2c observed it empty on most
+                        // vouchers and populated with a manual reference number on the
+                        // rest. An empty or absent element is not observed and the key is
+                        // omitted, never emitted as "".
+                        if let Some(reference) = row
+                            .get("REFERENCE")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["reference"] = json!(reference);
+                        }
+                        // ISINVOICE follows ISPOSTDATED's optional-boolean idiom exactly:
+                        // absent or empty is "Tally did not say" and the key is omitted,
+                        // never invented as false; a present value must be Yes/No. §8.2c's
+                        // capture asserted it (with one of those two values) on every
+                        // voucher observed, unlike ISPOSTDATED, but that is one instance on
+                        // one release and is not grounds to promote it to
+                        // required_tally_bool. §8.2c also notes ISINVOICE is the one
+                        // logical here Tally emits without a TYPE="Logical" attribute;
+                        // parsing here matches on tag name only, so that is not visible to
+                        // this code and changes nothing about it.
+                        if let Some(is_invoice) = row
+                            .get("ISINVOICE")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["is_invoice"] = Value::Bool(match is_invoice {
+                                "Yes" => true,
+                                "No" => false,
+                                _ => return Err("voucher_is_invoice_invalid".to_string()),
+                            });
+                        }
+                        // PARTYGSTIN is TYPE="String", handled like REFERENCE above: an
+                        // empty or absent element is not observed. §8.2c's capture proved
+                        // the tag round-trips through this FETCH list but never observed a
+                        // populated value (this synthetic company's parties carry no
+                        // GSTIN) -- presence is verified, population is not, and this
+                        // parsing makes no claim about what a populated value looks like.
+                        if let Some(party_gstin) = row
+                            .get("PARTYGSTIN")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["party_gstin"] = json!(party_gstin);
+                        }
                         rows.push(parsed);
                     }
                 }
@@ -427,7 +505,9 @@ fn claim_voucher_scalar(
     entry: Option<&mut BTreeMap<String, String>>,
     allocation: Option<&mut BTreeMap<String, String>>,
 ) -> Result<(), String> {
-    let row = if scope.row("VOUCHER") && is_voucher_scalar(field) {
+    let row = if scope.row("VOUCHER")
+        && (is_voucher_scalar(field) || is_voucher_type_class_scalar(field))
+    {
         current
     } else if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") && is_voucher_entry_scalar(field) {
         entry
@@ -440,6 +520,18 @@ fn claim_voucher_scalar(
         claim_agent_scalar(row, field)?;
     }
     Ok(())
+}
+
+/// The one rule every agent-facing parser applies to a Tally response before
+/// reading it: forbidden numeric references are marked, then the XML reader
+/// unescapes what is left (`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §1.1(d)).
+/// `&#4; Primary` therefore reads as `U+FFFD#4; Primary` here exactly as it
+/// does in `bridge-tally-protocol`'s native parsers, never as a raw U+0004,
+/// and [`decoded_agent_reference`] only sees references the rule leaves
+/// alone. A literal U+FFFD followed by `#`, digits and `;` reads as
+/// `U+FFFD#65533;` and the rest, which keeps the rewrite reversible.
+pub(super) fn mark_agent_xml(xml: &str) -> std::borrow::Cow<'_, str> {
+    bridge_tally_protocol::mark_forbidden_numeric_references(xml)
 }
 
 pub(super) fn decoded_agent_text(text: quick_xml::events::BytesText<'_>) -> Result<String, String> {

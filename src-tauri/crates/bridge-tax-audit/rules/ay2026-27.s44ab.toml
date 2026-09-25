@@ -1,0 +1,227 @@
+# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27, as
+# separate byte-for-byte verbatim blocks (each checked independently against the live source by
+# the local parity example, since the blocks are not contiguous in the source file):
+#   1. [meta] through the end of [s44ab] ("status = \"verified\"") -- excludes the [s44ab.turnover]
+#      sub-table immediately after it in the source, which cites a private research note.
+#   2. [s40a3] in full (five lines) -- cash_payments_40a3 reads every key in it.
+#   3. [s269st]'s first three lines only (limit_per_person_per_day_paise, authority, status) --
+#      excludes the table's Circular 22/2017 discussion further down, which cites a private
+#      research note and is not read by any ported test.
+#   4. [s269ss_269t] as three blocks: its first three lines (limit_paise, authority, status);
+#      exempt_lender_types with its status line; and reporting_exempt_lender_types with its status
+#      line (the last two added for loans_interest). Excludes the comment lines between them,
+#      which cite private research notes.
+#   5. [depreciation] in full, plus its three [depreciation.blocks.<key>] sub-tables
+#      (furniture_10, plant_machinery_15, computers_40) -- depreciation.rs reads every key in all
+#      four; excludes [s43b]/[s36_1_va] immediately after it in the source, unrelated to this test.
+#   6. [due_dates] (added for applicability_44ab), as three blocks: the table header alone; its
+#      first three keys, the third cut at its value (its trailing comment names a client, and this
+#      repository is public; the substring check still holds); and `status` alone. Excludes the
+#      header's comment lines, which cite a private research note.
+#   7. [ledger_scrutiny] in full (added for ledger_scrutiny): large_entry_paise, authority, status.
+#   8. [s194c], [s194i] and [deductor] in full (added for tds_payees), each its own block.
+#   9. [s194j] (added for tds_payees), as three blocks: the table header alone; its three value
+#      lines verbatim; and `status` cut at its value. Excludes the header's comment lines and the
+#      status line's trailing comment, which cite private research notes.
+#   10. [s43b_h] in full (added for creditor_ageing_43bh): both MSMED day limits, authority, status.
+#   11. [s43b] (added for statutory_dues_43b), as two blocks: the table header alone, then
+#       authority and status. Excludes the header's comment lines, which name the reference's own
+#       module history.
+#   12. [s36_1_va] (added for statutory_dues_43b), as three blocks: the header alone; `due_day`
+#       cut at its value (its trailing comment cites a private research note, and this repository
+#       is public; the substring check still holds); and authority and status. Excludes the
+#       header's comment lines.
+#   13. [s194a] in full (added for loans_interest), `status` cut at its value, clear of its trailing
+#       comment, which cites private research.
+#   14. [s194t] (added for partners_40b_194t), as two blocks: the header with rate_bp, limit_paise and
+#       authority; and `status` cut at its value, clear of its trailing comment, which cites private
+#       research.
+#   15. [s201_1a] (added for tds_interest_201), as three blocks: the header alone; its three value
+#       lines and authority; and `status` cut at its value, clear of its trailing comment, which cites
+#       private research. Excludes the header's comment lines, which name the reference's own module
+#       history.
+#   16. [s206c_7] (added for tds_interest_201), as three blocks: the header alone; rate_bp; and
+#       authority and status. Excludes the header's comment lines (module history) and
+#       collected_not_paid_rate_bp, which no ported test reads and whose comment cites private
+#       research.
+#   17. [tds_rates] (added for tds_interest_201's defaults), as three blocks: the header alone; its
+#       seven rate lines; and `status`. Excludes the header's comment lines and `authority`, which
+#       name the reference's own modules.
+#   18. [entity.firm], [entity.individual], [entity.company] and [entity.llp] in full (added for
+#       partners_40b_194t, which reads s40b_interest_rate_bp and s194t for the engagement's entity type).
+# The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
+# name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
+# renamed.
+
+[meta]
+assessment_year = "2026-27"
+previous_year_start = 2025-04-01
+previous_year_end = 2026-03-31
+version = "2026-09-17.1"
+
+[s44ab]
+turnover_threshold_paise = 1_00_00_000_00        # s.44AB(a)
+turnover_threshold_low_cash_paise = 10_00_00_000_00  # proviso to s.44AB(a)
+cash_share_limit_bp = 500                         # 5% of receipts and of payments, each
+authority = "s.44AB(a) and its proviso"
+status = "verified"
+
+[s40a3]
+limit_per_person_per_day_paise = 10_000_00
+goods_carriage_limit_paise = 35_000_00            # proviso to s.40A(3), not Rule 6DD(k)
+excluded_group_roles = ["capital", "loans_liability", "loans_advances_asset", "fixed_assets", "duties_taxes"]
+authority = "s.40A(3), its proviso; Rule 6DD for the CA"
+status = "verified"
+
+[s269st]
+limit_per_person_per_day_paise = 2_00_000_00      # limb (i) only is testable on books
+authority = "s.269ST(a)"
+status = "verified"
+
+[s269ss_269t]
+limit_paise = 20_000_00
+authority = "s.269SS, s.269T"
+status = "verified"
+
+exempt_lender_types = ["bank", "cooperative_bank", "government", "government_company",
+                        "statutory_corporation", "post_office_savings_bank", "notified_institution"]
+exempt_lender_types_status = "confirm"   # the table's own status above covers limit_paise and authority only
+
+reporting_exempt_lender_types = ["government", "government_company", "bank", "statutory_corporation"]
+reporting_exempt_lender_types_status = "confirm"
+
+[depreciation]
+half_rate_days_threshold = 180                      # put to use for less than 180 days: half the rate
+cash_addition_limit_paise = 10_000_00               # s.43(1) second proviso; no Rule 6DD exception
+authority = "s.32(1) second proviso; s.43(1) second proviso; Appendix I to the Income-tax Rules, 1962"
+status = "verified"
+
+[depreciation.blocks.furniture_10]
+rate_bp = 1000
+label = "Furniture and fittings"
+
+[depreciation.blocks.plant_machinery_15]
+rate_bp = 1500
+label = "Plant and machinery, general rate (includes motor cars not used in a hiring business)"
+
+[depreciation.blocks.computers_40]
+rate_bp = 4000
+label = "Computers including computer software"
+
+[due_dates]
+
+audit_report = 2026-09-30                          # s.44AB, subject to CBDT extension
+return_audit_case = 2026-10-31
+return_non_audit_firm = 2026-08-31
+
+status = "partial"
+
+[ledger_scrutiny]
+large_entry_paise = 50_000_00  # Rs 50,000
+authority = "CA analytical materiality convention; not a statutory threshold"
+status = "confirm"
+
+[s194c]
+single_sum_paise = 30_000_00
+aggregate_paise = 1_00_000_00
+authority = "s.194C(5)"
+status = "verified"
+
+[s194i]
+per_month_per_payee_paise = 50_000_00             # from 1-4-2025
+authority = "s.194-I as amended by Finance Act 2025"
+status = "verified"
+
+[deductor]
+# Who must deduct under 194A/194C/194-I/194H/194J(part)
+individual_huf_prev_year_turnover_paise = 1_00_00_000_00
+firm = "always"
+authority = "provisos to s.194A/194C/194-I (Finance Act 2020)"
+status = "verified"
+
+[s194j]
+
+aggregate_paise = 50_000_00                         # per payee, per category (i)-(iv) separately; no single-payment limit
+technical_services_rate_bp = 200                    # also film royalty and call centre; 10% otherwise
+authority = "s.194J(1) first proviso, clause (B)(i)-(iv), as amended by Finance Act 2025; director fees under clause (ba) have no threshold"
+
+status = "VP"
+
+[s43b_h]
+msme_days_with_agreement = 45
+msme_days_without_agreement = 15
+authority = "s.43B(h); s.15 MSMED Act 2006"
+status = "verified"
+
+[s43b]
+
+authority = "s.43B and its proviso (payment on or before the s.139(1) return due date); Explanation 5 (employees' contributions are governed by s.36(1)(va), not this proviso)"
+status = "confirm"
+
+[s36_1_va]
+
+due_day = 15
+
+authority = "s.36(1)(va); Explanations 1 and 2 (Finance Act 2021, from AY 2021-22); Checkmate Services P Ltd v CIT (2022) (SC)"
+status = "confirm"
+
+[s194a]
+exempt_lender_types = ["bank", "cooperative_bank", "insurer"]
+threshold_other_than_securities_paise = 10_000_00  # payers other than bank, co-operative bank, post office
+threshold_bank_paise = 50_000_00                    # bank, co-operative bank, post office (₹1,00,000 for senior citizens)
+authority = "s.194A(1), (3)(i), (3)(iii)"
+status = "VP"
+
+[s194t]
+rate_bp = 1000
+limit_paise = 20_000_00                             # salary, remuneration, commission, bonus or interest to a partner
+authority = "s.194T (Finance (No.2) Act 2024), from 1-4-2025; firms incl. LLPs; at credit (incl. to capital) or payment, whichever earlier; share of profit not covered"
+
+status = "VP"
+
+[s201_1a]
+
+rate_before_deduction_bp = 100   # 1% per month or part, deductible date -> deducted date
+rate_after_deduction_bp = 150    # 1.5% per month or part, deducted date -> paid date
+month_conventions = ["calendar_month_or_part", "thirty_day_periods"]  # TRACES reportedly calendar months; ITAT 2019 orders used 30-day periods: compute both
+authority = "s.201(1A)"
+
+status = "VP"
+
+[s206c_7]
+
+rate_bp = 100                    # 1% per month or part where tax was not collected (confirm)
+
+authority = "s.206C(7)"
+status = "partial"
+
+[tds_rates]
+
+s194c_individual_huf_bp = 100
+s194c_other_bp = 200
+s194i_land_building_bp = 1000
+s194i_plant_machinery_bp = 200
+s194j_professional_bp = 1000
+s194j_technical_bp = 200
+s194t_bp = 1000
+
+status = "confirm"
+
+[entity.firm]
+s40b_interest_rate_bp = 1200                       # simple interest cap on partners' capital
+s194t = true                                        # TDS on payments to partners from 1-4-2025
+form = "3CB"                                        # books not otherwise audited under any law
+
+[entity.individual]
+s40b_interest_rate_bp = 0
+s194t = false
+form = "3CB"
+
+[entity.company]
+form = "3CA"                                        # accounts audited under the Companies Act
+s194t = false
+
+[entity.llp]
+form = "3CB"
+s40b_interest_rate_bp = 1200
+s194t = true

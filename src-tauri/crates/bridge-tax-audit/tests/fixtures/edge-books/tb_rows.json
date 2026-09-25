@@ -1,0 +1,117 @@
+{
+ "comment": "trial_balance: a closing-only row is listed (M03); a zero row is not; a ledger with an empty chain, and a TB row with no ledger master, read '(group not in the masters)' (M05) and sort under '~' (M02); a chain carrying Tally's reserved Primary marker is shown without it (M04); rows sort by the chain as Tally shows it, primary group first (M01) -- that order is checked through the golden's .order.json, since the canonical dump sorts by id.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Petty Cash Box": "Cash-in-Hand"
+ },
+ "ledgers": [
+  {
+   "name": "Alpha Stores",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-alpha-stores"
+  },
+  {
+   "name": "Beta Traders",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-beta-traders"
+  },
+  {
+   "name": "Gamma Rent",
+   "chain": [
+    "Indirect Expenses",
+    "�#4; Primary"
+   ],
+   "guid": "edge-gamma-rent"
+  },
+  {
+   "name": "Delta Chainless",
+   "chain": [],
+   "guid": "edge-delta-chainless"
+  },
+  {
+   "name": "Epsilon Idle",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-epsilon-idle"
+  },
+  {
+   "name": "Zeta Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-zeta-cash"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Alpha Stores",
+   "opening": 1000,
+   "debit": 200,
+   "credit": 300,
+   "closing": 900
+  },
+  {
+   "ledger": "Beta Traders",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": -500
+  },
+  {
+   "ledger": "Gamma Rent",
+   "opening": 0,
+   "debit": 400,
+   "credit": 0,
+   "closing": 400
+  },
+  {
+   "ledger": "Delta Chainless",
+   "opening": 50,
+   "debit": 0,
+   "credit": 0,
+   "closing": 50
+  },
+  {
+   "ledger": "Epsilon Idle",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Ghost Row",
+   "opening": 0,
+   "debit": 10,
+   "credit": 0,
+   "closing": 10
+  },
+  {
+   "ledger": "Zeta Cash",
+   "opening": -1050,
+   "debit": 0,
+   "credit": 300,
+   "closing": -1350
+  }
+ ],
+ "vouchers": [],
+ "tests": [
+  "trial_balance"
+ ]
+}

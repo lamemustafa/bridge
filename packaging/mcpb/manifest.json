@@ -1,9 +1,9 @@
 {
   "manifest_version": "0.1",
   "name": "bridge-tally",
-  "display_name": "Bridge Tally",
+  "display_name": "ComplyEaze Bridge",
   "version": "0.2.0",
-  "description": "Read local Tally data and prepare Journals. Each new Journal posting requires a separate native approval.",
+  "description": "Read the TallyPrime books on this computer, and prepare Journal, Payment, Receipt and Contra vouchers as a local file. Posting is off by default; when voucher posting is turned on in the settings below, it can post one Journal, Payment, Receipt or Contra at a time, and every posting needs your approval in a native dialog. What it reads, including amounts, goes to your AI provider; Response redaction below can only mask party names or drop narration.",
   "author": {
     "name": "Bridge contributors"
   },
@@ -17,6 +17,7 @@
         "BRIDGE_TALLY_HOST": "${user_config.host}",
         "BRIDGE_TALLY_PORT": "${user_config.port}",
         "BRIDGE_AGENT_REDACTION": "${user_config.redaction}",
+        "BRIDGE_AGENT_ENABLE_IMPORT": "true",
         "BRIDGE_AGENT_ENABLE_WRITES": "${user_config.enable_writes}"
       }
     }
@@ -44,9 +45,9 @@
     },
     "enable_writes": {
       "type": "boolean",
-      "title": "Allow Journal posting",
-      "description": "Journal preparation and posting are available by default. Every new posting requires approval in a native dialog; existing ledgers only. Turn off to use reads only.",
-      "default": true
+      "title": "Allow voucher posting (Journal, Payment, Receipt, Contra)",
+      "description": "Off by default. Turning this on lets the connector post one approved Journal, Payment, Receipt or Contra into Tally. Two known limits remain: the post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher (bridge#574), and Bridge cannot delete or roll back a voucher it has posted, so a wrong post must be corrected by hand in Tally (bridge#579). Leave it off unless you accept that risk. It also lets you record, in a separate native dialog, that you reviewed a posted voucher whose ledgers changed master; that writes nothing to Tally. Reads, bank-statement parsing and voucher file preparation are available either way.",
+      "default": false
     }
   }
 }

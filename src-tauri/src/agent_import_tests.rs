@@ -184,6 +184,7 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     };
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -351,6 +352,7 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         writes_enabled: false,
     });
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -452,6 +454,7 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
 fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -539,6 +542,7 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
 fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -710,6 +714,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
     });
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -743,6 +748,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
 fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -827,6 +833,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
 fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -895,6 +902,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -957,6 +965,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let mut line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1026,6 +1035,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
 fn narration_tag_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1091,6 +1101,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     }
     validate_payload(&input).expect("leading zeros satisfy the input contract");
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1149,6 +1160,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
 fn verified_import_vouchers_require_observed_effective_accounting_flags() {
     let input = payload();
     let line = ImportLedgerLine {
+        ledger_identities: None,
         endpoint_origin: None,
         identity_scheme: None,
         amends_batch_id: None,
@@ -1220,6 +1232,37 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
 }
 
 #[test]
+fn the_oversized_window_codes_match_the_transport_vocabulary() {
+    use bridge_tally_transport::TallyTransportError;
+    // The splitter matches these as literals. Pin them to what the transport
+    // actually emits, so renaming a transport code cannot silently stop an
+    // oversized window from being retried in halves — which would turn a
+    // recoverable read back into a hard failure with no test going red.
+    assert!(super::super::is_window_too_large_code(
+        TallyTransportError::RequestTimedOut.safe_code()
+    ));
+    assert!(super::super::is_window_too_large_code(
+        TallyTransportError::ResponseTooLarge {
+            limit: 32 * 1024 * 1024,
+            declared_by_peer: false,
+        }
+        .safe_code()
+    ));
+    // Scope guard: a failure splitting cannot fix must not trigger a retry.
+    for unrelated in [
+        TallyTransportError::ConnectionFailed.safe_code(),
+        TallyTransportError::RequestFailed.safe_code(),
+        "agent_runtime_read_failed",
+        "agent_read_protocol_invalid",
+    ] {
+        assert!(
+            !super::super::is_window_too_large_code(unrelated),
+            "{unrelated} must not be retried by splitting"
+        );
+    }
+}
+
+#[test]
 fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution_boundary() {
     assert_eq!(
         company_high_water_mark(&json!({"vouchers":[{"alter_id":999}]})),
@@ -1230,6 +1273,34 @@ fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution
     assert_eq!(mark.kind, "company_high_water");
     assert_eq!(mark.value, Some(10));
     assert_eq!(mark.master_value, Some(7));
+}
+
+#[test]
+fn only_the_empty_book_parse_failure_is_named_distinctly() {
+    // An empty book is the one cause with a next step the caller can take.
+    assert_eq!(
+        pre_import_mark_refusal(VOUCHER_CHECKPOINT_NOT_OBSERVED),
+        "empty_book_first_import"
+    );
+    // Every other cause parse_company_high_water can report must keep the
+    // general refusal. Enumerated rather than sampled: promoting any of these
+    // would tell a caller its book is empty when Bridge simply could not read
+    // the response, and the documented remedy — post a first voucher — would
+    // then be wrong advice acted on against a book that already has some.
+    for cause in [
+        "master_checkpoint_not_observed",
+        "voucher_checkpoint_invalid",
+        "master_checkpoint_invalid",
+        "agent_read_protocol_invalid",
+        "company_high_water_identity_absent",
+        "company_high_water_identity_ambiguous",
+    ] {
+        assert_eq!(
+            pre_import_mark_refusal(cause),
+            "pre_import_mark_unobserved",
+            "{cause} must not be reported as an empty book"
+        );
+    }
 }
 
 #[test]
@@ -1316,6 +1387,58 @@ fn voucher_number_length_counts_unicode_characters_and_preserves_safety_checks()
 }
 
 #[test]
+fn text_that_would_read_back_changed_is_refused_before_posting() {
+    // The agent readers rewrite a literal U+FFFD followed by `#`, digits and
+    // `;` (`agent_voucher_parse_tests`'s
+    // `a_literal_replacement_character_that_looks_like_a_marker_reads_back_escaped`
+    // measures it on a capture), so such a value could never verify — but only
+    // on a field `voucher_diffs` (agent_import_verification.rs) actually
+    // compares: the voucher number and a ledger name. Narration and reference
+    // are never compared there (attribution only searches narration for the
+    // `[BRIDGE:...]` tag, which the reserved-marker check leaves untouched),
+    // so the same sequence there is invisible to verification and stays
+    // admitted.
+    let mut input = captured_catalogue_payload();
+    assert_eq!(validate_payload(&input), Ok(()));
+    for text in ["A\u{fffd}#5;", "\u{fffd}#65533;"] {
+        let mut changed = input.clone();
+        changed.vouchers[0].voucher_number = Some(text.to_string());
+        assert_eq!(
+            validate_payload(&changed),
+            Err("voucher_text_invalid".to_string()),
+            "{text:?}"
+        );
+        let mut changed = input.clone();
+        changed.vouchers[0].entries[0].ledger = text.to_string();
+        assert_eq!(
+            validate_payload(&changed),
+            Err("voucher_entry_invalid".to_string()),
+            "{text:?}"
+        );
+        // The regression this guards against: narrowing the refusal back onto
+        // narration (its pre-fix scope) instead of onto the fields
+        // verification compares. Both assertions below fail under that
+        // mutation — the first because narration would wrongly refuse, the
+        // second because voucher_number would wrongly admit.
+        let mut changed = input.clone();
+        changed.vouchers[0].narration = Some(text.to_string());
+        assert_eq!(validate_payload(&changed), Ok(()), "{text:?}");
+        let mut changed = input.clone();
+        changed.vouchers[0].reference = Some(text.to_string());
+        assert_eq!(validate_payload(&changed), Ok(()), "{text:?}");
+    }
+    // A replacement character on its own, and reference-looking text the
+    // writer escapes, read back unchanged and stay admissible everywhere.
+    for text in ["A\u{fffd}B", "\u{fffd}#x5;", "&#4; Primary", "A\u{fffd}#"] {
+        let mut changed = input.clone();
+        changed.vouchers[0].voucher_number = Some(text.to_string());
+        assert_eq!(validate_payload(&changed), Ok(()), "{text:?}");
+        input.vouchers[0].narration = Some(text.to_string());
+        assert_eq!(validate_payload(&input), Ok(()), "{text:?}");
+    }
+}
+
+#[test]
 fn batch_company_tuple_rejects_a_same_guid_different_book() {
     let company = |books_from: &str| bridge_tally_protocol::TallyCompany {
         name: "Bridge Book".to_string(),
@@ -1397,7 +1520,9 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
                     .expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 50);
+        // 50 before the pre-flight volume bound, plus the six legs of the one
+        // high-water read verify_import now makes (protocol reference §11c).
+        assert_eq!(simulator.finish().expect("requests").len(), 56);
     }
 }
 
@@ -1434,13 +1559,22 @@ fn import_cycle_plans() -> Vec<ScenarioPlan> {
         company.clone(),
         premark.clone(),
         status.clone(),
+        premark.clone(),
+        status.clone(),
+        company.clone(),
+        company.clone(),
+        status.clone(),
+        company.clone(),
+        status.clone(),
+        // verify_import's pre-flight volume bound (protocol reference §11c)
+        // reads the voucher high-water mark before the window. Ten vouchers
+        // cannot exceed the budget, so the window is then read whole.
+        company.clone(),
+        premark.clone(),
+        status.clone(),
         premark,
         status.clone(),
         company.clone(),
-        company.clone(),
-        status.clone(),
-        company.clone(),
-        status.clone(),
         company.clone(),
         readback.clone(),
         status.clone(),
@@ -1455,9 +1589,8 @@ fn import_cycle_plans() -> Vec<ScenarioPlan> {
         company,
     ]
     .into_iter()
-    .enumerate()
-    .map(|(index, xml)| {
-        if matches!(index, 1 | 3 | 6 | 8 | 12 | 14 | 17 | 19 | 22 | 24 | 28 | 30) {
+    .map(|xml| {
+        if xml == status {
             ScenarioPlan::new(Fixture::ProductStatus(
                 tally_protocol_simulator::ProductStatus::TallyPrime,
             ))
@@ -2053,6 +2186,7 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
         writes_enabled: false,
     });
     let line = ImportLedgerLine {
+        ledger_identities: None,
         batch_id: "batch-dispatched-endpoint".into(),
         identity_scheme: Some(ImportIdentityScheme::BatchV1),
         amends_batch_id: None,
@@ -2129,6 +2263,162 @@ fn persisted_dispatch_response(created: u64, altered: u64) -> ledger::DispatchRe
     }
 }
 
+#[test]
+fn a_page_splits_verified_from_unverified_rows_and_pages_only_the_verified() {
+    let row = |id: &str, status: &str| json!({"bridge_txn_id": id, "status": status});
+    let proof = json!({
+        "batch_id": "bridge-page-test",
+        "counts": {"posted_verified": 3, "not_found": 1},
+        "vouchers": [
+            row("a", "posted_verified"),
+            row("b", "not_found"),
+            row("c", "posted_verified"),
+            row("d", "posted_verified"),
+        ],
+        "duplicates": [],
+    });
+    let page = verification_response_page(&proof, "f".repeat(64).as_str(), 1);
+    assert!(page.get("vouchers").is_none());
+    assert_eq!(page["unverified_vouchers"], json!([row("b", "not_found")]));
+    assert_eq!(page["verified_total"], 3);
+    assert_eq!(page["offset"], 1);
+    assert_eq!(
+        page["items"],
+        json!([row("c", "posted_verified"), row("d", "posted_verified")]),
+        "from the offset, verified rows only"
+    );
+    assert_eq!(page["counts"], proof["counts"]);
+    assert_eq!(
+        page["proof"],
+        json!({"batch_id": "bridge-page-test", "sha256": "f".repeat(64)})
+    );
+}
+
+#[tokio::test]
+async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_again() {
+    // bridge#627: a whole-batch response outgrew the agent byte cap.
+    let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server_with = |max_bytes| {
+        Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+            writes_enabled: false,
+        })
+    };
+    let server = server_with(200_000);
+    let built = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
+        .await
+        .expect("build");
+    let batch_id = built.payload["result"]["batch_id"]
+        .as_str()
+        .expect("batch id")
+        .to_string();
+    let args = json!({"company_guid": CAPTURED_GUID, "batch_id": batch_id});
+    let first = server
+        .call_tool_response("verify_import", args.clone())
+        .await
+        .value;
+    let page = &first["structuredContent"]["result"];
+    assert_ne!(first["isError"], true, "{first}");
+    let proof_path = server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{batch_id}.proof.json"));
+    let persisted = fs::read(&proof_path).unwrap();
+    assert_eq!(
+        page["proof"]["sha256"],
+        crate::agent::sha256_hex(&persisted)
+    );
+    assert!(
+        page.get("vouchers").is_none(),
+        "the rows are split, never both"
+    );
+    let proof: Value = serde_json::from_slice(&persisted).unwrap();
+    let rows = proof["vouchers"].as_array().unwrap();
+    let verified = rows
+        .iter()
+        .filter(|row| row["status"] == "posted_verified")
+        .count();
+    assert_eq!(page["verified_total"], verified);
+    assert_eq!(page["items"].as_array().unwrap().len(), verified);
+    assert_eq!(
+        page["unverified_vouchers"].as_array().unwrap().len(),
+        rows.len() - verified
+    );
+    assert_eq!(page["verification_status"], proof["verification_status"]);
+    assert!(
+        page["verification_status"].is_string(),
+        "the proof records the status the page repeats"
+    );
+    let requests = simulator.received();
+
+    // A later page comes from the proof alone: same status, no Tally request.
+    let mut next = args.clone();
+    next["proof_sha256"] = page["proof"]["sha256"].clone();
+    next["offset"] = json!(verified);
+    let later = server
+        .call_tool_response("verify_import", next.clone())
+        .await
+        .value;
+    let later_page = &later["structuredContent"]["result"];
+    assert_ne!(later["isError"], true, "{later}");
+    assert_eq!(later_page["items"], json!([]));
+    assert_eq!(later_page["counts"], page["counts"]);
+    assert_eq!(
+        later_page["unverified_vouchers"],
+        page["unverified_vouchers"]
+    );
+    assert_eq!(
+        later_page["verification_status"],
+        page["verification_status"]
+    );
+    assert_eq!(later_page["proof"], page["proof"]);
+    assert_eq!(
+        simulator.received(),
+        requests,
+        "no Tally request for a later page"
+    );
+
+    // Never cut to fit: the parts that must stay whole refuse, typed.
+    // Room for the refusal itself, not for the proof's never-cut part.
+    let small = server_with(2_048);
+    let refused = small
+        .call_tool_response("verify_import", next.clone())
+        .await
+        .value;
+    assert_eq!(
+        refused["structuredContent"]["result"]["error"]["code"],
+        "verification_too_large_to_report"
+    );
+
+    // A page belongs to one verification.
+    let mut offset_only = args.clone();
+    offset_only["offset"] = json!(1);
+    let refused = server
+        .call_tool_response("verify_import", offset_only)
+        .await
+        .value;
+    assert_eq!(
+        refused["structuredContent"]["result"]["error"]["code"],
+        "verification_page_requires_proof"
+    );
+    fs::write(&proof_path, [persisted.as_slice(), b" "].concat()).unwrap();
+    let refused = server.call_tool_response("verify_import", next).await.value;
+    assert_eq!(
+        refused["structuredContent"]["result"]["error"]["code"],
+        "verification_proof_changed"
+    );
+}
+
 async fn verify_saved_batch_after_dispatch(
     dispatched: bool,
     dispatch_response: Option<ledger::DispatchResponse>,
@@ -2184,9 +2474,10 @@ async fn verify_saved_batch_after_dispatch(
         .latest_import_snapshot(&batch_id)
         .expect("persisted snapshot")
         .expect("batch");
+    // Six more than before the pre-flight bound: verify_import's high-water read.
     assert_eq!(
         simulator.finish().expect("captured plan requests").len(),
-        50
+        56
     );
     let markdown = fs::read_to_string(
         server
@@ -2258,6 +2549,7 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
     let outcome = server
         .verify_import_after_current_dispatch(
             &json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}),
+            json!({"state":"not_checked","reason":"masters_unmoved"}),
         )
         .await
         .expect("current dispatch verification");
@@ -2283,9 +2575,10 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
     assert_eq!(persisted["dispatch"]["counters"]["created"], 1);
     assert_eq!(persisted["dispatch"]["automatic_retry"], false);
     assert_eq!(latest.batch.status, "verification_incomplete");
+    // Six more than before the pre-flight bound: verify_import's high-water read.
     assert_eq!(
         simulator.finish().expect("captured plan requests").len(),
-        50
+        56
     );
 }
 
@@ -2313,4 +2606,100 @@ fn master_match_byte_cap_retains_narrow_fold_candidate() {
     assert_eq!(listed[0]["name"][super::super::PARTY_NAME_MARKER], narrow);
     assert!(listed.iter().all(|v| v["rule"] == "normalized_equal"));
     assert_eq!(rendered["candidates_truncated"], true);
+}
+
+/// The qualified build-and-verify cycle, except that verify_import's window
+/// (planned whole: ten vouchers under the mark) is refused by Tally as too
+/// large and read again as its two days, then replayed day by day.
+fn verify_split_after_refusal_plans() -> Vec<ScenarioPlan> {
+    let cycle = qualified_import_cycle_plans();
+    // Legs 0..44 build the batch and open verify_import through its marks.
+    let (company, status, premark) = (cycle[44].clone(), cycle[46].clone(), cycle[39].clone());
+    let readback = cycle[45].fixture.body().into_owned();
+    let first = readback.find("<VOUCHER ").unwrap();
+    let second = readback.rfind("<VOUCHER ").unwrap();
+    let end = readback.rfind("</COLLECTION>").unwrap();
+    let day = |voucher: &str| {
+        let mut plan = cycle[45].clone();
+        plan.fixture = Fixture::SyntheticXml(format!(
+            "{}{voucher}{}",
+            &readback[..first],
+            &readback[end..]
+        ));
+        plan
+    };
+    let (day_one, day_two) = (day(&readback[first..second]), day(&readback[second..end]));
+    let paired = |body: &ScenarioPlan| {
+        vec![
+            company.clone(),
+            body.clone(),
+            status.clone(),
+            body.clone(),
+            status.clone(),
+            company.clone(),
+        ]
+    };
+    let mut plans = cycle[..44].to_vec();
+    // The whole window, refused as over the transport cap.
+    plans.push(company.clone());
+    plans.push(
+        cycle[45]
+            .clone()
+            .with_framing(ResponseFraming::DeclaredContentLength {
+                bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+            }),
+    );
+    for body in [&day_one, &day_two, &premark, &day_one, &day_two, &premark] {
+        plans.extend(paired(body));
+    }
+    plans
+}
+
+#[tokio::test]
+async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre_post_request() {
+    // Review of #520, through the tool:
+    // - verify_import's corroboration must replay the split read's parts with
+    //   its witness. Without it the replay of a divided read is refused as
+    //   unwitnessed, so this verification succeeding is what pins the hand-off.
+    // - post_import's verification must refuse, before approval, the whole
+    //   window it would send inside the dispatch lease: Tally has just refused
+    //   that very request.
+    for for_post in [false, true] {
+        let simulator =
+            SequenceSimulator::spawn(verify_split_after_refusal_plans()).expect("simulator");
+        let directory = tempfile::tempdir().expect("temporary data directory");
+        let server = Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+            writes_enabled: false,
+        });
+        let built = server
+            .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
+            .await
+            .expect("build");
+        let args = json!({"company_guid":CAPTURED_GUID,
+            "batch_id": built.payload["result"]["batch_id"].as_str().expect("batch id")});
+        if for_post {
+            let failure = match server.verify_import_for_post(&args).await {
+                Err(failure) => failure,
+                Ok(_) => panic!("the whole window Tally refused must not be admitted"),
+            };
+            assert_eq!(failure.code, post::IMPORT_POST_WINDOW_NOT_BOUNDED);
+            assert!(failure.evidence.is_some());
+        } else {
+            let proof = server.verify_import(&args).await.expect("verify");
+            assert_eq!(
+                proof.payload["result"]["counts"]["matching_content_observed"],
+                2
+            );
+        }
+        assert_eq!(simulator.finish().expect("requests").len(), 82);
+    }
 }

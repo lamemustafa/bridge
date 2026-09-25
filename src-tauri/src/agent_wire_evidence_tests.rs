@@ -80,22 +80,27 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
         let mut plans = cycle[..10].to_vec();
         plans[5] = plans[5].clone().with_framing(framing);
         plans[7] = plans[7].clone().with_framing(framing);
+        // The pre-flight high-water read (protocol reference §11c), then the
+        // window, which ten vouchers keep whole.
+        plans.extend(cycle[10..16].iter().cloned());
+        let readback = cycle[27].clone();
         plans.extend([
             cycle[0].clone(),
-            cycle[21].clone(),
+            readback.clone(),
             cycle[1].clone(),
-            cycle[21].clone(),
+            readback,
             cycle[1].clone(),
             cycle[0].clone(),
         ]);
         plans.extend(cycle[4..10].iter().cloned());
         let company = response_bytes(&plans[0]);
         let catalogue = response_bytes(&plans[5]);
-        let vouchers = response_bytes(&plans[11]);
+        let high_water = response_bytes(&plans[11]);
+        let vouchers = response_bytes(&plans[17]);
         let expected_response = join_hashes(
             &join_hashes(
                 &join_hashes(&sha256_hex(&company), &sha256_hex(&catalogue)),
-                &sha256_hex(&vouchers),
+                &join_hashes(&sha256_hex(&high_water), &sha256_hex(&vouchers)),
             ),
             &sha256_hex(&catalogue),
         );
@@ -118,7 +123,7 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
         assert_eq!(evidence["response_sha256"], expected_response);
         assert_eq!(
             evidence["bytes"],
-            2 * (company.len() + 2 * catalogue.len() + vouchers.len())
+            2 * (company.len() + 2 * catalogue.len() + high_water.len() + vouchers.len())
         );
         let items = &response["structuredContent"]["result"]["items"];
         assert_eq!(items.as_array().unwrap().len(), 2);
@@ -128,7 +133,7 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
         }
         previous = Some((items.clone(), evidence["response_sha256"].clone()));
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), 22);
+        assert_eq!(observed.len(), 28);
         assert_eq!(
             evidence["request_sha256"],
             join_hashes(
@@ -137,9 +142,12 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
                         &observed[0].request_body_sha256,
                         &observed[5].request_body_sha256,
                     ),
-                    &observed[11].request_body_sha256,
+                    &join_hashes(
+                        &observed[11].request_body_sha256,
+                        &observed[17].request_body_sha256,
+                    ),
                 ),
-                &observed[17].request_body_sha256,
+                &observed[23].request_body_sha256,
             ),
         );
     }
@@ -192,7 +200,10 @@ async fn write_shaped_adapter_request_is_refused_before_any_transport() {
         let request = format!("<ENVELOPE><HEADER><TALLYREQUEST>{operation}</TALLYREQUEST><TYPE>Collection</TYPE></HEADER><BODY/></ENVELOPE>");
         assert_eq!(
             server
-                .post_read(&identity, request)
+                .post_read(
+                    &identity,
+                    crate::agent::read_profiles::ReadRequest::unrendered_for_test(request)
+                )
                 .await
                 .err()
                 .unwrap()
@@ -311,6 +322,44 @@ async fn paired_transport_refusal_retains_completed_catalogue_through_tool_and_h
             history["structuredContent"]["result"]["records"][0],
             *evidence
         );
+    }
+}
+
+/// #555: a paired read whose two halves differ is refused, as before, and the
+/// refusal now says why. The control runs the same tool call over identical halves.
+#[tokio::test]
+async fn divergent_paired_read_refusal_names_its_cause_and_identical_halves_pass() {
+    for diverge in [true, false] {
+        let mut plans = import_cycle_plans()[..10].to_vec();
+        if diverge {
+            let first = plans[5].fixture.body().into_owned();
+            let second = first.replacen("Cash", "Changed Cash", 1);
+            assert_ne!(first, second);
+            plans[7].fixture = Fixture::SyntheticXml(second);
+            // The pair is compared after its closing health check, so the
+            // refusal comes before the closing identity bracket is sent.
+            plans.truncate(9);
+        }
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut server = server_for(simulator.address(), directory.path());
+        server.settings.import_enabled = true;
+        let response = server
+            .call_tool(
+                "validate_masters",
+                json!({"company_guid":CAPTURED_GUID,"ledgers":["Cash"]}),
+            )
+            .await;
+        let error = &response["structuredContent"]["result"]["error"];
+        if diverge {
+            assert_eq!(response["isError"], true, "{response}");
+            assert_eq!(error["code"], "agent_runtime_read_failed");
+            assert_eq!(error["cause"], "native_report_pair_changed");
+        } else {
+            assert_eq!(response["isError"], false, "{response}");
+            assert!(error.is_null(), "{response}");
+        }
+        simulator.finish().unwrap();
     }
 }
 

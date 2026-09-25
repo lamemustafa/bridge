@@ -1,0 +1,18 @@
+{
+ "vouchers": [
+  {
+   "masterid": "16",
+   "optional": true,
+   "cancelled": false,
+   "postdated": false,
+   "void": false
+  },
+  {
+   "masterid": "17",
+   "optional": false,
+   "cancelled": false,
+   "postdated": true,
+   "void": false
+  }
+ ]
+}

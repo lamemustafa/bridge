@@ -3,6 +3,7 @@ use crate::commands::VerifiedCompanyIdentity;
 use crate::tally::TallyProduct;
 use anyhow::Context;
 use bridge_tally_core::CapabilityProfile;
+use bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot;
 use std::collections::BTreeMap;
 use tally_protocol_simulator::Fixture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -228,6 +229,11 @@ fn single_company_forex_ledger_capture_returns_a_typed_partial() {
     .text;
     let admitted = admit_native_ledger_snapshot(
         parse_native_ledger_snapshot(&ledger_body)
+            .map(|base| ClassifiedLedgerSnapshot {
+                base,
+                foreign: Vec::new(),
+                unobserved: 0,
+            })
             .map_err(anyhow::Error::from)
             .context("stable native ledger snapshot"),
     )
@@ -311,15 +317,15 @@ async fn single_company_read_returns_the_forex_capture_partial() {
         assert_eq!(source_post_index, 12);
     });
 
-    let result = TallyRuntime::default()
-        .fetch_outstandings(
+    let (result, _) = TallyRuntime::default()
+        .fetch_agent_outstandings_with_evidence(
             TallyConfig {
                 host: address.ip().to_string(),
                 port: address.port(),
             },
             &identity,
             TallyDate::parse("20260401").expect("captured book as-of"),
-            OutstandingsCurrencyAssertion::Inr,
+            inr_witness_for_tests(extent, &identity),
             OutstandingsAgeingAnchor::DueDate,
         )
         .await
@@ -635,6 +641,7 @@ fn party_master_currency_assertion_rejects_a_changed_company_extent() {
             currency_count: 1,
             decimal_places: 2,
             is_inr: true,
+            names: Vec::new(),
         },
         extent: read_extent.clone(),
         evidence: RuntimeReadEvidence::empty(),
@@ -1114,9 +1121,10 @@ fn outstandings_date_boundaries_follow_detected_mode_and_fallback_to_i12() {
 /// data was read". The reason code is gone with it.
 ///
 /// The loopback guard is unchanged and still fails closed; it is simply now
-/// the first guard the native path reaches. That is the property worth
-/// pinning, so this asserts it directly rather than inferring it from an
-/// ordering that no longer exists.
+/// the first guard the read reaches, before its currency read (the desktop
+/// read, which the uncalibrated voucher-scan build falls back to). That is the
+/// property worth pinning, so this asserts it directly rather than inferring
+/// it from an ordering that no longer exists.
 #[tokio::test]
 async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non_loopback_endpoint()
 {
@@ -1127,14 +1135,29 @@ async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non
         "a default runtime must have no calibrated width -- that is what routes to the native path"
     );
 
+    let config = TallyConfig {
+        host: "not-a-loopback-endpoint".to_string(),
+        port: 9000,
+    };
+    let identity = verified_identity("Synthetic Company", "synthetic-guid");
+    let as_of = TallyDate::parse("20260731").unwrap();
+    #[cfg(feature = "voucher-scan")]
     let error = runtime
         .fetch_outstandings(
-            TallyConfig {
-                host: "not-a-loopback-endpoint".to_string(),
-                port: 9000,
-            },
-            &verified_identity("Synthetic Company", "synthetic-guid"),
-            TallyDate::parse("20260731").unwrap(),
+            config,
+            &identity,
+            as_of,
+            OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await
+        .expect_err("a non-loopback endpoint must never be contacted");
+    #[cfg(not(feature = "voucher-scan"))]
+    let error = runtime
+        .fetch_operator_outstandings(
+            config,
+            &identity,
+            as_of,
             OutstandingsCurrencyAssertion::Inr,
             OutstandingsAgeingAnchor::DueDate,
         )
@@ -1142,7 +1165,7 @@ async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non
         .expect_err("a non-loopback endpoint must never be contacted");
     assert!(
         error.to_string().contains("non_loopback_forbidden"),
-        "loopback-only admission must still fail closed on the native path, got: {error}"
+        "loopback-only admission must fail closed before any Tally read, got: {error}"
     );
 }
 
@@ -1937,4 +1960,85 @@ fn telemetry_preview_is_privacy_reduced_and_checksummed() {
         "fixed_dimensions_bucketed_values_v1"
     );
     assert_eq!(preview_value["authenticity_claim"], "none");
+}
+
+/// Both selected-read qualifiers send a custom report whose TDL Education
+/// answers with a blocking dialog on the Tally screen (bridge#45). When the
+/// identity bracket before it reports Education, the qualifier refuses before
+/// sending: only that one company-list request reaches the endpoint.
+#[tokio::test]
+async fn selected_read_qualification_is_refused_before_sending_in_education() {
+    for vouchers in [false, true] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind qualification server");
+        let address = listener.local_addr().expect("qualification server address");
+        let company_list = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="BRIDGE SYNTHETIC BOOK"><GUID TYPE="String">00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM><EDUMODE TYPE="Logical">Yes</EDUMODE></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept identity bracket");
+            let request = read_http_request(&mut socket).await;
+            socket
+                .write_all(&utf16_xml_response(company_list))
+                .await
+                .expect("write identity bracket response");
+            drop(listener);
+            request
+        });
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let session = runtime.session(config.clone()).expect("runtime session");
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
+            review_id: "review-education".to_string(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: synthetic_probe_result(),
+            reserved: false,
+        });
+        drop(session);
+        let reservation = runtime
+            .reserve_cached_probe_fresh(&config, "review-education", 300_000)
+            .expect("reserve reviewed setup")
+            .expect("fresh review");
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            "BRIDGE SYNTHETIC BOOK".to_string(),
+            "00000000-0000-4000-8000-000000000001".to_string(),
+            "100001".to_string(),
+            "20260401".to_string(),
+            &[TallyCompany {
+                name: "BRIDGE SYNTHETIC BOOK".to_string(),
+                guid: Some("00000000-0000-4000-8000-000000000001".to_string()),
+                company_number: Some("100001".to_string()),
+                books_from: Some("20260401".to_string()),
+            }],
+        )
+        .expect("synthetic qualification identity is complete");
+        let refused = if vouchers {
+            runtime
+                .qualify_selected_vouchers(
+                    config,
+                    &reservation,
+                    &identity,
+                    "20260401".to_string(),
+                    "20260430".to_string(),
+                )
+                .await
+        } else {
+            runtime
+                .qualify_selected_ledgers(config, &reservation, &identity)
+                .await
+        }
+        .expect_err("Education refuses the report before it is sent");
+        assert!(
+            refused
+                .chain()
+                .any(|cause| cause.is::<EducationReportFamilyRefusal>()),
+            "{vouchers}: {refused:#}"
+        );
+        let request = server.await.expect("identity bracket server");
+        assert!(request.starts_with(b"POST /"), "{vouchers}");
+    }
 }

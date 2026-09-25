@@ -1,6 +1,7 @@
 import React from "react";
 import { FilePlus2, FolderOpen, Save, ShieldAlert, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { formatCommandErrorMessage } from "./tally-command-error";
 import "./source-draft.css";
 import {
   SourceDraft,
@@ -78,10 +79,7 @@ function withMonotonicGeneration(current: SourceDraft | null, next: SourceDraft)
 }
 
 function errorMessage(cause: unknown) {
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
-  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") return cause.message;
-  return "Bridge could not complete that source-draft action.";
+  return formatCommandErrorMessage(cause, "Bridge could not complete that source-draft action.");
 }
 
 function displayDate(value: string | null) {

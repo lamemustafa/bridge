@@ -951,3 +951,339 @@ fn effective_date_is_read_for_import_verification_only() {
         Err("agent_read_protocol_invalid".to_string())
     );
 }
+
+/// The captured three-voucher response with the first voucher's ISCANCELLED
+/// element immediately followed by one injected `element`. This is fault
+/// injection into a captured response, used both for a field the capture
+/// never carried at all (ISPOSTDATED; see the absent case below) and for a
+/// value not observed live (a populated PARTYGSTIN; protocol reference
+/// §8.2c only ever observed that tag empty) — not a new fixture or evidence
+/// of a live Tally response shape either way.
+fn with_injected_voucher_element(element: &str) -> String {
+    captured_native_vouchers().replacen(
+        "<ISCANCELLED TYPE=\"Logical\">No</ISCANCELLED>",
+        &format!("<ISCANCELLED TYPE=\"Logical\">No</ISCANCELLED>{element}"),
+        1,
+    )
+}
+
+#[test]
+fn post_dated_is_optional_unlike_cancelled_and_optional() {
+    // The unmodified capture never asserts ISPOSTDATED on any of its three
+    // vouchers — this is real captured Tally output, not a synthetic gap.
+    // Unlike a missing ISCANCELLED/ISOPTIONAL (which required_tally_bool
+    // refuses the whole read over), an absent ISPOSTDATED must not fail the
+    // read and must not be invented as `false`: the key is omitted so a
+    // caller can tell "Tally did not say" from "Tally said no".
+    let captured = captured_native_vouchers();
+    for rows in [
+        parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_agent_changed_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_import_verification_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+    ] {
+        assert_eq!(rows.len(), 3);
+        assert!(
+            rows.iter().all(|row| row.get("post_dated").is_none()),
+            "an absent ISPOSTDATED must not be invented as false or true"
+        );
+        // cancelled/optional are unaffected and still always booleans.
+        assert!(rows
+            .iter()
+            .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
+    }
+
+    // ISPOSTDATED=Yes on voucher 1 only.
+    let yes = with_injected_voucher_element("<ISPOSTDATED TYPE=\"Logical\">Yes</ISPOSTDATED>");
+    let rows = parse_agent_rows(&yes, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["post_dated"], true);
+    assert!(rows[1].get("post_dated").is_none());
+    assert!(rows[2].get("post_dated").is_none());
+
+    // ISPOSTDATED=No is observed and distinct from absent.
+    let no = with_injected_voucher_element("<ISPOSTDATED TYPE=\"Logical\">No</ISPOSTDATED>");
+    let rows = parse_agent_rows(&no, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["post_dated"], false);
+
+    // An empty element is not observed, exactly like an absent one.
+    let empty = with_injected_voucher_element("<ISPOSTDATED TYPE=\"Logical\"></ISPOSTDATED>");
+    let rows = parse_agent_rows(&empty, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("post_dated").is_none());
+
+    // A present but unrecognised value refuses the read rather than guessing.
+    let invalid =
+        with_injected_voucher_element("<ISPOSTDATED TYPE=\"Logical\">Maybe</ISPOSTDATED>");
+    assert_eq!(
+        parse_agent_rows(&invalid, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("voucher_post_dated_invalid".to_string())
+    );
+
+    // Two ISPOSTDATED elements on one voucher cannot be reconciled into one
+    // written value; the wire admission layer refuses the duplicate scalar.
+    let repeated = with_injected_voucher_element(
+        "<ISPOSTDATED TYPE=\"Logical\">Yes</ISPOSTDATED><ISPOSTDATED TYPE=\"Logical\">No</ISPOSTDATED>",
+    );
+    assert_eq!(
+        parse_agent_rows(&repeated, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("agent_read_protocol_invalid".to_string())
+    );
+}
+
+/// `reference`, `is_invoice` and `party_gstin` (protocol reference §8.2c),
+/// checked against the same captured three-voucher fixture the ISPOSTDATED
+/// test above uses. The unmodified capture never asserts REFERENCE or
+/// PARTYGSTIN on any of its three vouchers -- real captured Tally output,
+/// not a synthetic gap. It already carries `<ISINVOICE>No</ISINVOICE>` on
+/// all three, immediately after each voucher's ISCANCELLED element, from
+/// whatever broader FETCH originally captured it: this was inert dead data
+/// until ISINVOICE was allow-listed, and its baseline below is real
+/// evidence too, not injection.
+#[test]
+fn reference_is_invoice_and_party_gstin_are_optional_and_non_conflated() {
+    let captured = captured_native_vouchers();
+    for rows in [
+        parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_agent_changed_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_import_verification_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+    ] {
+        assert_eq!(rows.len(), 3);
+        assert!(
+            rows.iter()
+                .all(|row| row.get("reference").is_none() && row.get("party_gstin").is_none()),
+            "reference/party_gstin must not be invented when Tally did not report them"
+        );
+        // ISINVOICE is genuinely present as "No" on all three real captured
+        // vouchers already -- not absent, and not injected.
+        assert!(
+            rows.iter().all(|row| row["is_invoice"] == false),
+            "the captured fixture already asserts ISINVOICE=No on every voucher"
+        );
+    }
+
+    // REFERENCE populated on voucher 1 only -- protocol reference §8.2c
+    // observed exactly this literal value live on 9 of 67 captured vouchers.
+    let referenced =
+        with_injected_voucher_element("<REFERENCE TYPE=\"String\">SHAPELAB-MANUAL-1</REFERENCE>");
+    let rows = parse_agent_rows(&referenced, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["reference"], "SHAPELAB-MANUAL-1");
+    assert!(rows[1].get("reference").is_none());
+    assert!(rows[2].get("reference").is_none());
+
+    // An empty REFERENCE is not observed, exactly like an absent one -- this
+    // is the shape §8.2c actually observed on 58 of 67 vouchers, not a guess.
+    let empty_reference = with_injected_voucher_element("<REFERENCE TYPE=\"String\"></REFERENCE>");
+    let rows = parse_agent_rows(&empty_reference, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("reference").is_none());
+
+    // ISINVOICE already exists once per voucher in this fixture, so these
+    // cases mutate the real captured element in place (voucher 1 only, via
+    // the first-occurrence replacement) instead of appending a second one,
+    // which would just be a duplicate-scalar rejection instead of a value.
+    const CAPTURED_INVOICE_NO: &str = "<ISINVOICE>No</ISINVOICE>";
+
+    // ISINVOICE=Yes on voucher 1 only. §8.2c observed both values live (16
+    // Yes, 51 No of 67), so this is a real observed shape, not a guess --
+    // just not one this particular committed fixture happens to carry.
+    let invoice_yes = captured.replacen(CAPTURED_INVOICE_NO, "<ISINVOICE>Yes</ISINVOICE>", 1);
+    let rows = parse_agent_rows(&invoice_yes, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["is_invoice"], true);
+    assert_eq!(rows[1]["is_invoice"], false);
+    assert_eq!(rows[2]["is_invoice"], false);
+
+    // An empty ISINVOICE is not observed, exactly like an absent one. Never
+    // observed live (§8.2c's capture asserted Yes/No on every voucher), so
+    // this defends the optional-field contract rather than reproducing a
+    // seen shape.
+    let invoice_empty = captured.replacen(CAPTURED_INVOICE_NO, "<ISINVOICE></ISINVOICE>", 1);
+    let rows = parse_agent_rows(&invoice_empty, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("is_invoice").is_none());
+
+    // Removing the element outright is the same "not observed" case as
+    // empty; ISPOSTDATED's absence handling is exercised via a tag that
+    // never appears at all, so this proves ISINVOICE's absence path
+    // independently rather than only its empty-element path.
+    let invoice_absent = captured.replacen(CAPTURED_INVOICE_NO, "", 1);
+    let rows = parse_agent_rows(&invoice_absent, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("is_invoice").is_none());
+    assert_eq!(rows[1]["is_invoice"], false);
+
+    // A present but unrecognised ISINVOICE value refuses the read rather
+    // than guessing, exactly like a malformed ISPOSTDATED.
+    let invoice_invalid = captured.replacen(CAPTURED_INVOICE_NO, "<ISINVOICE>Maybe</ISINVOICE>", 1);
+    assert_eq!(
+        parse_agent_rows(&invoice_invalid, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("voucher_is_invoice_invalid".to_string())
+    );
+
+    // Two ISINVOICE elements on one voucher cannot be reconciled into one
+    // written value; the wire admission layer refuses the duplicate scalar.
+    let invoice_repeated = captured.replacen(
+        CAPTURED_INVOICE_NO,
+        "<ISINVOICE>Yes</ISINVOICE><ISINVOICE>No</ISINVOICE>",
+        1,
+    );
+    assert_eq!(
+        parse_agent_rows(&invoice_repeated, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("agent_read_protocol_invalid".to_string())
+    );
+
+    // A populated PARTYGSTIN was never observed live -- §8.2c's capture found
+    // the tag present but empty on all 67 vouchers, so this value is
+    // synthetic, proving only that the parser round-trips a non-empty string
+    // when Tally does report one; it is not evidence Tally has been observed
+    // to populate it.
+    let gstin =
+        with_injected_voucher_element("<PARTYGSTIN TYPE=\"String\">27AAAAA0000A1Z5</PARTYGSTIN>");
+    let rows = parse_agent_rows(&gstin, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["party_gstin"], "27AAAAA0000A1Z5");
+    assert!(rows[1].get("party_gstin").is_none());
+    assert!(rows[2].get("party_gstin").is_none());
+
+    // An empty PARTYGSTIN is not observed, exactly like an absent one -- this
+    // is the shape §8.2c actually observed live on every one of 67 vouchers.
+    let empty_gstin = with_injected_voucher_element("<PARTYGSTIN TYPE=\"String\"></PARTYGSTIN>");
+    let rows = parse_agent_rows(&empty_gstin, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("party_gstin").is_none());
+}
+
+fn captured_utf16le(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+/// `TALLY_PROTOCOL_REFERENCE.md` §1.1(d): the agent parsers read `&#4;` as
+/// the marker the protocol crate's native parsers produce, not as U+0004.
+const MARKED_ROOT: &str = "\u{fffd}#4; Primary";
+
+#[test]
+fn a_captured_group_parent_reads_as_the_marker_in_the_changed_master_feed() {
+    // The captured Group collection carries `&#4; Primary` in PARENT. It was
+    // fetched without a NAME element, which the changed-master reader
+    // requires, so each row's own NAME attribute is copied into one; nothing
+    // else in the capture is touched.
+    let captured = captured_utf16le(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+    ));
+    let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let named = captured
+        .split("<GROUP NAME=\"")
+        .enumerate()
+        .map(|(index, part)| {
+            if index == 0 {
+                return part.to_string();
+            }
+            let name = part.split('"').next().unwrap();
+            let open_end = part.find('>').unwrap() + 1;
+            format!(
+                "<GROUP NAME=\"{}<NAME>{name}</NAME>{}",
+                &part[..open_end],
+                &part[open_end..]
+            )
+        })
+        .collect::<String>();
+    let rows = parse_agent_changed_masters(&named).expect("captured groups parse");
+    let native = bridge_tally_protocol::native_outstandings::parse_native_group_snapshot(
+        &captured,
+        company_guid,
+    )
+    .expect("the same capture parses natively");
+    let root_rows = rows
+        .iter()
+        .filter(|row| row["parent"] == MARKED_ROOT)
+        .count();
+    assert_eq!(
+        root_rows,
+        captured
+            .matches("<PARENT TYPE=\"String\">&#4; Primary</PARENT>")
+            .count()
+    );
+    assert!(root_rows > 0);
+    assert!(!rows.iter().any(|row| row["parent"]
+        .as_str()
+        .is_some_and(|parent| parent.contains('\u{4}'))));
+    for row in &rows {
+        let group = native
+            .iter()
+            .find(|group| row["name"] == group.name.as_str())
+            .expect("both readers see the same groups");
+        assert_eq!(row["parent"].as_str(), group.parent.returned_text());
+    }
+}
+
+#[test]
+fn a_captured_forbidden_reference_in_voucher_text_reads_as_the_marker() {
+    // No captured voucher carries `&#4;` in a field this reader keeps; it
+    // appears on GST fields the reader skips. The captured atom is moved into
+    // the first captured NARRATION, and the rest of the capture must read
+    // exactly as it did.
+    let captured = captured_entry_wildcard_vouchers();
+    let atom = "&#4; Not Applicable";
+    assert!(captured.contains(&format!(">{atom}</GSTCLASS>")));
+    // The capture's first non-empty narration, whatever it says.
+    let open = "<NARRATION TYPE=\"String\">";
+    let start = captured
+        .find(open)
+        .expect("the capture carries a narration")
+        + open.len();
+    let narration = &captured[start..start + captured[start..].find('<').unwrap()];
+    let derived = format!(
+        "{}{}{}",
+        &captured[..start],
+        atom,
+        &captured[start + narration.len()..]
+    );
+    assert_ne!(derived, captured);
+    let before = parse_agent_rows(&captured, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    let mut after = parse_agent_rows(&derived, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    let changed = after
+        .iter()
+        .position(|row| {
+            row["narration"] != json!(narration)
+                && row["narration"]
+                    .as_str()
+                    .is_some_and(|n| n.contains("Not Applicable"))
+        })
+        .expect("the moved atom is read");
+    assert_eq!(
+        after[changed]["narration"],
+        json!("\u{fffd}#4; Not Applicable")
+    );
+    after[changed]["narration"] = json!(narration);
+    assert_eq!(after, before);
+    // The import-verification reader is the same reader with one more field.
+    let verification =
+        parse_import_verification_rows(&derived, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    assert_eq!(
+        verification[changed]["narration"],
+        json!("\u{fffd}#4; Not Applicable")
+    );
+}
+
+#[test]
+fn a_literal_replacement_character_that_looks_like_a_marker_reads_back_escaped() {
+    // The rule keeps its rewrite reversible by escaping a literal U+FFFD that
+    // is followed by `#`, digits and `;`. A voucher Bridge posted with such
+    // text would read back as other text; `validate_payload` refuses it.
+    let captured = captured_entry_wildcard_vouchers();
+    // The capture's first non-empty narration, whatever it says.
+    let open = "<NARRATION TYPE=\"String\">";
+    let start = captured
+        .find(open)
+        .expect("the capture carries a narration")
+        + open.len();
+    let narration = &captured[start..start + captured[start..].find('<').unwrap()];
+    let derived = format!(
+        "{}{}{}",
+        &captured[..start],
+        "A\u{fffd}#5;",
+        &captured[start + narration.len()..]
+    );
+    let rows = parse_import_verification_rows(&derived, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    assert!(rows
+        .iter()
+        .any(|row| row["narration"] == json!("A\u{fffd}#65533;#5;")));
+}

@@ -24,9 +24,11 @@
 //! * **A ledger exposes `PARENT` and no `PARENTSTRUCTURE`**, so ancestry is one
 //!   hop at a time through the group collection rather than read off the row.
 //! * **The reserved root is control-marked**, and arrives through the tolerant
-//!   reader as a replacement marker rather than the bare word. That spelling is
-//!   already the crate's [`is_tally_reserved_root`], which this reuses rather
-//!   than re-deriving — a second copy would be a second thing to get wrong.
+//!   reader as a replacement marker rather than the bare word. That spelling,
+//!   and only that one, is the crate's [`is_tally_reserved_root`], which this
+//!   reuses rather than re-deriving — a second copy would be a second thing to
+//!   get wrong. A bare `Primary` is a group a user named that, climbed like
+//!   any other.
 //!
 //! **The hop itself is matched exactly, not normalized.** Tally matches master
 //! names by exact codepoint, and a `PARENT` is emitted verbatim from the group
@@ -168,6 +170,127 @@ impl GroupIndex {
                 .to_string();
         }
         Err(AncestryGap::Exhausted)
+    }
+
+    /// Walks every group hop from a ledger's `PARENT` to the reserved account
+    /// root, nearest ancestor first, so a caller can classify by the *whole*
+    /// chain (e.g. a bank OD ledger under `Bank OD A/c` under `Loans
+    /// (Liability)`) rather than only the nearest predefined identity.
+    ///
+    /// Unlike [`reserved_ancestor`](Self::reserved_ancestor), this never stops
+    /// early at the first non-empty `RESERVEDNAME`: a user-created group and a
+    /// predefined one are both recorded as hops, because a caller doing
+    /// ancestry-based classification needs to see every link, not just the
+    /// first reserved one.
+    ///
+    /// The returned [`AncestryChain::hops`] is always the true resolved
+    /// prefix — every group actually climbed through — and is never padded
+    /// past the point resolution stopped. [`AncestryChain::gap`] is `None`
+    /// only when the walk reached the reserved account root; any other
+    /// outcome means the chain is incomplete, and the gap says exactly why,
+    /// using the same refusals [`reserved_ancestor`](Self::reserved_ancestor)
+    /// reports (except [`AncestryGap::ReachedRoot`], which this method never
+    /// produces: reaching the root is this walk's success case, not a
+    /// refusal).
+    pub fn ancestry_chain(&self, parent: Option<&str>) -> AncestryChain {
+        let mut hops = Vec::new();
+        let mut current = match parent {
+            Some(value) => value.to_string(),
+            None => {
+                return AncestryChain {
+                    hops,
+                    gap: Some(AncestryGap::NoParent),
+                }
+            }
+        };
+        let mut visited = BTreeSet::new();
+        // Same bound as `reserved_ancestor`: each hop consumes one distinct
+        // group, so this only guards a pathological index once the visited
+        // set has already ruled out a genuine cycle.
+        for _ in 0..=self.by_name.len() {
+            if current.is_empty() || is_tally_reserved_root(&current) {
+                return AncestryChain { hops, gap: None };
+            }
+            if !visited.insert(current.clone()) {
+                return AncestryChain {
+                    hops,
+                    gap: Some(AncestryGap::Cycle),
+                };
+            }
+            let Some(matches) = self.by_name.get(&current) else {
+                return AncestryChain {
+                    hops,
+                    gap: Some(AncestryGap::GroupAbsent),
+                };
+            };
+            let [group] = matches.as_slice() else {
+                return AncestryChain {
+                    hops,
+                    gap: Some(AncestryGap::GroupNameRepeated),
+                };
+            };
+            let Some(reserved) = group.reserved_name.as_deref() else {
+                return AncestryChain {
+                    hops,
+                    gap: Some(AncestryGap::ReservedNameMissing),
+                };
+            };
+            hops.push(AncestryHop {
+                name: group.name.clone(),
+                reserved_name: reserved.to_string(),
+            });
+            current = group
+                .parent
+                .nonempty_returned_text()
+                .unwrap_or_default()
+                .to_string();
+        }
+        AncestryChain {
+            hops,
+            gap: Some(AncestryGap::Exhausted),
+        }
+    }
+}
+
+/// One resolved step in an [`AncestryChain`]: a group's own (mutable) `NAME`
+/// as observed on this hop, together with its `RESERVEDNAME`.
+///
+/// `reserved_name` is always a captured value here — a hop whose
+/// `RESERVEDNAME` was never captured stops the walk with
+/// [`AncestryGap::ReservedNameMissing`] instead of producing a hop, so this
+/// field is never a stand-in for "unknown". An empty (or whitespace-only)
+/// value is Tally's own signal that the group is user-created; a non-empty
+/// value is a predefined identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AncestryHop {
+    pub name: String,
+    pub reserved_name: String,
+}
+
+/// The result of walking a ledger's `PARENT` to the reserved account root, or
+/// as far as the available group collection allows.
+///
+/// This is deliberately not a `Result`: even an incomplete walk carries the
+/// prefix it *did* resolve, so a caller can show "HDFC CC sits under Bank OD
+/// A/c, and then the chain could not be resolved further" rather than losing
+/// the resolved prefix to an all-or-nothing error. A caller must still treat
+/// a non-`None` `gap` as an unresolved tail — never as an implicit "and nothing
+/// more", and never invent or guess the remainder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AncestryChain {
+    /// Every group hop resolved, nearest ancestor first.
+    pub hops: Vec<AncestryHop>,
+    /// `None` only when the walk reached the reserved account root, i.e. the
+    /// chain is complete. `Some(gap)` names exactly why the walk could go no
+    /// further; `hops` still holds everything resolved before that point.
+    pub gap: Option<AncestryGap>,
+}
+
+impl AncestryChain {
+    /// `true` only when the walk reached the reserved account root: the
+    /// chain in `hops` is the whole ancestry, not a prefix.
+    pub fn is_complete(&self) -> bool {
+        self.gap.is_none()
     }
 }
 

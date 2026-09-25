@@ -8,8 +8,8 @@
 //! documented at each module:
 //!
 //! - [`request`] — exact request XML for both native reports.
-//! - [`date`] — Tally's `D-MMM-YY` display dates, resolved against the
-//!   pinned company's `BooksFrom` century only.
+//! - [`date`] — Tally's `D-MMM-YY` display dates: a bill date resolved in the
+//!   pinned company's book window, a due date against its bill date.
 //! - [`wire`] — the flat, inverted-`STATUS` Bills grammar and the
 //!   `DATA`-scoped Ledger collection grammar (`CMPINFO` counter trap).
 //! - [`model`] — row and result types; reuses `OutstandingsReport` so this
@@ -19,14 +19,20 @@
 
 mod compute;
 mod date;
+mod ledger_currency;
 mod model;
 mod request;
 mod wire;
 
 pub use compute::{
-    age_in_days, compute_native_outstandings, NativeGroupSnapshot, NativeMasterSnapshot,
+    age_in_days, compute_native_outstandings, compute_native_outstandings_with_exclusions,
+    NativeGroupSnapshot, NativeMasterSnapshot,
 };
-pub use date::{parse_native_display_date, NativeDisplayDateRole};
+pub use date::{parse_native_bill_date, parse_native_due_date};
+pub use ledger_currency::{
+    classify_ledger_currencies, BaseCurrencyName, ForeignCurrencyLedger, LedgerCurrencies,
+    LedgerCurrencyRefusal,
+};
 pub use model::{
     AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
     NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
@@ -42,5 +48,6 @@ pub use request::{
 pub use wire::{
     parse_company_currency, parse_native_bill_rows, parse_native_group_snapshot,
     parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
-    parse_native_ledger_snapshot_for_company, NativeGroupSnapshotEntry,
+    parse_native_ledger_snapshot_classified, parse_native_ledger_snapshot_for_company,
+    ClassifiedLedgerSnapshot, NativeGroupSnapshotEntry,
 };

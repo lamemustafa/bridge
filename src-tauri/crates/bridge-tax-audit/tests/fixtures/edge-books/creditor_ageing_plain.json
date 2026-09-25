@@ -1,0 +1,121 @@
+{
+ "comment": "creditor_ageing_43bh, no acceptance lag and no classification at all: an opening debit is an advance a later bill consumes; every creditor unknown; no post-year data and no MSMED-interest ledger.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Advance Only",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-cb-adv"
+  },
+  {
+   "name": "Plain Unknown",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-cb-plain"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-cb-purch"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-cb-bank"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Advance Only",
+   "opening": 1000,
+   "debit": 0,
+   "credit": 300,
+   "closing": 700
+  },
+  {
+   "ledger": "Plain Unknown",
+   "opening": 0,
+   "debit": 100,
+   "credit": 900,
+   "closing": -800
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "edge-ca-101",
+   "date": "2026-03-21",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Advance Only",
+     -300
+    ],
+    [
+     "Purchases",
+     300
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-102",
+   "date": "2026-02-19",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Plain Unknown",
+     -900
+    ],
+    [
+     "Purchases",
+     900
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-103",
+   "date": "2026-03-26",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Plain Unknown",
+     100
+    ],
+    [
+     "Bank",
+     -100
+    ]
+   ]
+  }
+ ],
+ "cash": [],
+ "bank": [
+  "Bank"
+ ],
+ "creditors": [
+  "Advance Only",
+  "Plain Unknown"
+ ],
+ "creditor_ageing": {
+  "acceptance_lag_days": 0
+ },
+ "tests": [
+  "creditor_ageing_43bh"
+ ]
+}

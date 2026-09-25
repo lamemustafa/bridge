@@ -1,21 +1,19 @@
 use super::{
-    combine_evidence, company_json, normalized_date, parse_company_high_water, party_name,
-    render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
-    ToolFailure, ToolOutcome,
+    arg_usize, combine_evidence, company_currency_read, company_high_water_read, company_json,
+    native_group_snapshot_read, normalized_date, optional_string, parse_company_high_water,
+    party_name, required_string, sha256_hex, sha256_json, standard_ledger_catalog_read, Evidence,
+    Server, ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
-    render_standard_ledger_catalog_request,
 };
 use bridge_tally_core::master_binding::{
     self, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog, MasterClass,
     SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
-use bridge_tally_protocol::native_outstandings::{
-    parse_native_group_snapshot, render_native_group_snapshot_request,
-};
+use bridge_tally_protocol::native_outstandings::parse_native_group_snapshot;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -43,6 +41,8 @@ pub(crate) mod desktop_journal_review;
 mod desktop_journal_tests;
 use crate::endpoint_coordination as dispatch_lease;
 use crate::local_files::file::lock_error as import_admission_lock_error;
+#[path = "agent_import_ack.rs"]
+mod ack;
 #[path = "agent_import_amend.rs"]
 mod amend;
 #[path = "agent_import_ledger.rs"]
@@ -58,8 +58,9 @@ use uuid::Uuid;
 use verification::{
     actual_entry_fingerprint, alter_id_delta, canonical_verification_amount,
     company_high_water_mark, corroborate_verification_window, expected_entry_fingerprint,
-    parse_import_vouchers, render_proof_markdown, verification_status,
-    verification_window_identities, verify_batch, voucher_diffs, voucher_is_accounting_effective,
+    parse_import_voucher_rows, parse_import_vouchers, render_proof_markdown,
+    verification_response_page, verification_status, verification_window_identities, verify_batch,
+    voucher_diffs, voucher_is_accounting_effective,
 };
 #[cfg(test)]
 use verification::{
@@ -96,6 +97,30 @@ const MAX_VOUCHERS: usize = 1_000;
 pub(super) const MAX_MASTER_NAMES: usize = 100;
 pub(super) const MAX_MASTER_NAME_CHARS: usize = 1024;
 const MAX_TEXT_CHARS: usize = 2_000;
+
+/// Name the one parse failure a caller can act on, and keep every other cause on
+/// the general refusal.
+///
+/// `parse_company_high_water` already reports which of its causes fired. That
+/// detail used to be discarded, so an empty book — a company that has never held
+/// a voucher, for which Tally omits ALTVCHID entirely — was indistinguishable
+/// from a malformed response, an unmatched company GUID or an ambiguous company
+/// row. Only the empty book has a next step the caller can take, so only it is
+/// promoted.
+///
+/// This changes what a refusal is *called*, never whether it refuses. Without a
+/// voucher high-water mark there is no "before", so an import cannot be
+/// attributed and Bridge must still decline either way.
+///
+/// Kept pure and separate from `pre_import_mark` so the mapping is provable
+/// without a live gateway or a scripted response sequence.
+fn pre_import_mark_refusal(parse_error: &str) -> &'static str {
+    if parse_error == VOUCHER_CHECKPOINT_NOT_OBSERVED {
+        "empty_book_first_import"
+    } else {
+        "pre_import_mark_unobserved"
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +273,19 @@ pub(super) struct ImportLedgerLine {
     status: String,
     pre_import_mark: PreImportMark,
     vouchers: Vec<ImportVoucher>,
+    /// Each ledger the batch names, with the GUID the build's own catalogue
+    /// read bound it to (bridge#239). A post refuses when any of them now
+    /// resolves to another GUID. Absent on records built before this field
+    /// existed: such a batch is refused for posting and must be rebuilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ledger_identities: Option<Vec<BoundLedger>>,
+}
+
+/// One ledger name and the GUID it was bound to at build time.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct BoundLedger {
+    name: String,
+    guid: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -290,6 +328,21 @@ struct ReadVoucher {
     effective_date: Option<String>,
     #[serde(rename = "amounts")]
     entries: Vec<ReadEntry>,
+}
+
+impl super::WindowRow for ReadVoucher {
+    fn window_date(&self) -> Option<&str> {
+        self.date.as_deref()
+    }
+    fn window_alter_id(&self) -> Option<u64> {
+        self.alter_id
+    }
+    fn window_guid(&self) -> Option<&str> {
+        self.guid.as_deref()
+    }
+    fn window_master_id(&self) -> Result<Option<u64>, String> {
+        super::master_id_of(self.master_id.as_deref())
+    }
 }
 
 /// A complete collection admitted before either corroboration or attribution.
@@ -346,7 +399,7 @@ impl Server {
                 "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
                 "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
-                "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
+                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides (for more than two entries, one Bridge-built three-entry Receipt has been imported over the gateway and verified; no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu), and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
                 "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
@@ -354,7 +407,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits; a multi-entry Payment, Receipt or Contra and every other voucher type are refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only a single-voucher batch is eligible for post_import: an unnumbered Journal, or a Payment, Receipt or Contra, whose legs post_import classifies again before approval and after approval inside the endpoint queue, before the final duplicate check and the post."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -498,6 +551,17 @@ impl Server {
                     truncated: false,
                 });
             }
+            // Bind each named ledger to the GUID this read observed (#239): a
+            // post refuses a ledger renamed and replaced under its name since.
+            let build_binding = ledger_masters
+                .bind_selected(requested_ledger_names(&payload))
+                .map_err(|_| "import_masters_changed".to_string())?
+                .pairs()
+                .map(|(name, guid)| BoundLedger {
+                    name: name.to_string(),
+                    guid: guid.to_string(),
+                })
+                .collect::<Vec<_>>();
             // Only a payload carrying a cash/bank voucher reads the group
             // collection, so a Journal-only batch keeps the request sequence its
             // own qualification was measured on.
@@ -575,17 +639,41 @@ impl Server {
             };
             // Exercise the exact future readback projection before publishing a file.
             // This observes today's source, not a bound on later Tally mutations.
-            let (preflight_xml, preflight_evidence) = self
-                .post_read(
+            // The high-water mark was read just above, so the pre-flight bound
+            // costs no further read for a book it already proves small.
+            //
+            // This read was a single request before the bound. It now also
+            // halves a part Tally cannot serve (#485), as verify_import does:
+            // it is the same request shape over the same window as the
+            // verification it precedes, and a preflight stricter than that
+            // verification would refuse to build a batch that could be verified.
+            let preflight_read = self
+                .read_verification_window(
                     &identity,
-                    render_import_verification_read(&company.name, &date_from, &date_to),
+                    &company.name,
+                    (&date_from, &date_to),
+                    super::WindowPlanSource::Estimate {
+                        known_marks: mark.value.zip(mark.master_value).map(
+                            |(vouchers, masters)| super::CompanyMarks { vouchers, masters },
+                        ),
+                    },
                 )
                 .await?;
+            if let Some(estimate) = preflight_read.preflight_evidence {
+                accumulated = combine_evidence(accumulated.clone(), estimate);
+            }
+            let (preflight, preflight_evidence) = (preflight_read.source, preflight_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), preflight_evidence.clone());
-            let preflight = parse_import_vouchers(&preflight_xml, identity.company_guid())?;
+            if let Some(closing) = preflight_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
             verification_window_identities(&preflight, &date_from, &date_to)?;
             let amendment = match &lineage {
-                Some(lineage) => match lineage.compare_and_swap(&payload.vouchers, &preflight)? {
+                Some(lineage) => match lineage.compare_and_swap(
+                    &payload.vouchers,
+                    &preflight,
+                    &verified_baselines(&self.imports_dir()?, lineage),
+                )? {
                     Ok(vouchers) => Some(json!({
                         "amends_batch_id": payload.amends_batch_id,
                         "identity_batch_id": lineage.identity_batch_id,
@@ -650,6 +738,7 @@ impl Server {
                 status: "built".to_string(),
                 pre_import_mark: mark,
                 vouchers: payload.vouchers,
+                ledger_identities: Some(build_binding),
             };
             let imports = self.imports_dir()?;
             let path = imports.join(format!("{batch_id}.xml"));
@@ -672,7 +761,12 @@ impl Server {
             // this exact saved batch can take. A manual-only batch is still a
             // successful build.
             let native_post_eligible = self.settings.writes_enabled
-                && post::admit_saved_journal(&line, &self.settings.endpoint).is_ok();
+                && post::admit_saved_voucher(
+                    &line,
+                    &self.settings.endpoint,
+                    post::PostScope::Vouchers,
+                )
+                .is_ok();
             let (mut warnings, next_step) = build_import_guidance(
                 self.settings.writes_enabled,
                 native_post_eligible,
@@ -683,10 +777,18 @@ impl Server {
                         .bank_shape()
                         .is_some_and(|shape| shape.party_side().is_some())
                 }),
+                line.vouchers.iter().any(|voucher| {
+                    voucher.voucher_type.bank_shape().is_some() && voucher.entries.len() > 2
+                }),
             );
             let next_step = match &amendment {
                 Some(_) => {
                     if let Some(list) = warnings.as_array_mut() {
+                        // Native posting refuses every amendment, so the
+                        // generic first message would give the wrong reason.
+                        if let Some(first) = list.first_mut() {
+                            *first = json!(AMENDMENT_NOT_POSTABLE);
+                        }
                         list.insert(0, json!(AMENDMENT_WARNING));
                     }
                     AMENDMENT_NEXT_STEP
@@ -719,21 +821,150 @@ impl Server {
         result.map_err(|failure| failure.with_prior_evidence(accumulated))
     }
 
+    /// The tool: page 1 verifies against Tally; a later page (`proof_sha256`
+    /// and `offset`) is served from the proof that verification persisted and
+    /// never reads Tally again, so every page describes one verification
+    /// (bridge#627).
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false).await
+        let offset = arg_usize(args, "offset", 0)?;
+        if let Some(proof_sha256) = optional_string(args, "proof_sha256")? {
+            return self.verify_import_page(args, &proof_sha256, offset);
+        }
+        if offset != 0 {
+            return Err("verification_page_requires_proof".to_string().into());
+        }
+        let batch_id = required_string(args, "batch_id")?;
+        let mut outcome = self
+            .verify_import_with_dispatch(args, false, &mut None, None, &mut None)
+            .await?;
+        let evidence = outcome.evidence.clone();
+        let persisted = self
+            .read_persisted_proof(batch_id)
+            .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+        // Page 1 is built from the bytes read back, not from memory, so the
+        // page and the hash it names are the same file even if another
+        // verification replaced it in between.
+        let proof: Value = serde_json::from_slice(&persisted).map_err(|_| {
+            ToolFailure::from("verification_proof_unreadable".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        if proof["batch_id"] != batch_id {
+            return Err(
+                ToolFailure::from("verification_proof_batch_mismatch".to_string())
+                    .with_prior_evidence(evidence),
+            );
+        }
+        let page = verification_response_page(&proof, &sha256_hex(&persisted), 0);
+        self.admit_verification_page(&page)
+            .map_err(|failure| failure.with_prior_evidence(evidence))?;
+        outcome.payload["result"] = page;
+        Ok(outcome)
     }
 
-    pub(in crate::agent) async fn verify_import_after_current_dispatch(
+    /// A later page of a verification, from its persisted proof only.
+    fn verify_import_page(
+        &self,
+        args: &Value,
+        proof_sha256: &str,
+        offset: usize,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let guid = required_string(args, "company_guid")?;
+        let batch_id = required_string(args, "batch_id")?;
+        let persisted = self.read_persisted_proof(batch_id)?;
+        let sha256 = sha256_hex(&persisted);
+        // A newer verification replaced the proof this page belongs to.
+        if sha256 != proof_sha256 {
+            return Err("verification_proof_changed".to_string().into());
+        }
+        let proof: Value = serde_json::from_slice(&persisted)
+            .map_err(|_| "verification_proof_unreadable".to_string())?;
+        if proof["batch_id"] != batch_id
+            || !proof["company"]["guid"]
+                .as_str()
+                .is_some_and(|recorded| batch_guid_matches(recorded, guid))
+        {
+            return Err("verification_proof_batch_mismatch".to_string().into());
+        }
+        let page = verification_response_page(&proof, &sha256, offset);
+        self.admit_verification_page(&page)?;
+        Ok(ToolOutcome {
+            payload: json!({"company": proof["company"], "result": page}),
+            evidence: Evidence {
+                request_sha256: sha256_hex(
+                    format!("verify_import_page:{batch_id}:{offset}").as_bytes(),
+                ),
+                response_sha256: sha256,
+                bytes: persisted.len(),
+                state: "complete",
+                read_at: None,
+                duration_ms: None,
+                reason_code: None,
+            },
+            company_guid: Some(guid.to_string()),
+            truncated: false,
+        })
+    }
+
+    /// The parts of a page that are never cut must fit on their own: the byte
+    /// cap may shorten only the verified rows, so otherwise the refusal is
+    /// typed here rather than lost as a generic oversize.
+    fn admit_verification_page(&self, page: &Value) -> Result<(), ToolFailure> {
+        let mut essential = page.clone();
+        essential["items"] = json!([]);
+        if essential.to_string().len() > self.settings.max_bytes {
+            return Err("verification_too_large_to_report".to_string().into());
+        }
+        Ok(())
+    }
+
+    /// [`Self::verify_import`] for `acknowledge_post_review`, which also needs
+    /// the rows the readback observed, to bind the voucher a person reviews.
+    async fn verify_for_review(
+        &self,
+        args: &Value,
+        rows: &mut Option<Vec<ReadVoucher>>,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, false, &mut None, None, rows)
+            .await
+    }
+
+    /// [`Self::verify_import`] for `post_import`, which then sends the batch's
+    /// whole verification window as one request inside the dispatch lease. That
+    /// request is admitted here on what this verification read of the same
+    /// window measured (§11c), and refused otherwise, before any approval.
+    pub(super) async fn verify_import_for_post(
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true).await
+        let mut served = None;
+        let outcome = self
+            .verify_import_with_dispatch(args, false, &mut served, None, &mut None)
+            .await?;
+        post::admit_post_window(served).map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
+        })?;
+        Ok(outcome)
+    }
+
+    /// The readback right after this call's own POST. `masters_after_post`
+    /// is the check of the company's masters across the post (#239); it goes
+    /// into the proof before it is persisted, so a downgrade is recorded too.
+    pub(in crate::agent) async fn verify_import_after_current_dispatch(
+        &self,
+        args: &Value,
+        masters_after_post: Value,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, true, &mut None, Some(masters_after_post), &mut None)
+            .await
     }
 
     async fn verify_import_with_dispatch(
         &self,
         args: &Value,
         current_dispatch: bool,
+        served: &mut Option<super::WindowServed>,
+        masters_after_post: Option<Value>,
+        observed_rows: &mut Option<Vec<ReadVoucher>>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -761,15 +992,48 @@ impl Server {
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
                 return Err("company_identity_mismatch".to_string().into());
             }
-            let request =
-                render_import_verification_read(&company.name, &line.date_from, &line.date_to);
-            let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
-            accumulated = combine_evidence(accumulated.clone(), evidence.clone());
-            let observed = parse_import_vouchers(&xml, identity.company_guid())?;
-            let (corroboration_xml, corroboration_evidence) =
-                self.post_read(&identity, request).await?;
+            let window = (line.date_from.as_str(), line.date_to.as_str());
+            let observed_read = self
+                .read_verification_window(
+                    &identity,
+                    &company.name,
+                    window,
+                    super::WindowPlanSource::Estimate { known_marks: None },
+                )
+                .await?;
+            if let Some(preflight) = observed_read.preflight_evidence {
+                accumulated = combine_evidence(accumulated.clone(), preflight);
+            }
+            *served = Some(super::WindowServed::of(
+                &observed_read.reads,
+                &observed_read.evidence,
+                observed_read.refused_a_part,
+            ));
+            let (observed, observed_evidence) = (observed_read.source, observed_read.evidence);
+            accumulated = combine_evidence(accumulated.clone(), observed_evidence.clone());
+            if let Some(closing) = observed_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
+            // The corroborating read replays the ranges the first one actually
+            // read, rather than planning again: it must observe the same parts.
+            let corroboration_read = self
+                .read_verification_window(
+                    &identity,
+                    &company.name,
+                    window,
+                    super::WindowPlanSource::replay_of(observed_read.reads, observed_read.witness),
+                )
+                .await?;
+            let (corroboration, corroboration_evidence) =
+                (corroboration_read.source, corroboration_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
-            let corroboration = parse_import_vouchers(&corroboration_xml, identity.company_guid())?;
+            if let Some(closing) = corroboration_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
+            // The window may have been served in parts, so there is no single
+            // response to hash. The evidence's own response digest already folds
+            // every part that was read, which is the honest commitment here.
+            let voucher_read_sha256 = observed_evidence.response_sha256.clone();
             corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
             let result = verify_batch(&line, &observed)?;
             let mut closing_mode_evidence = None;
@@ -797,16 +1061,80 @@ impl Server {
                 "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed.rows),
                 "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
-                "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
+                "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": observed_evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": voucher_read_sha256}
             });
+            // This call's own check, or the doubt recorded when this batch was
+            // posted: a later readback, which compares by name, never clears it.
+            let masters_after_post = match masters_after_post {
+                Some(masters) => Some(masters),
+                None if dispatched => {
+                    match read_masters_check(&self.imports_dir()?, &line.batch_id) {
+                        // The check after the post did not finish: finish it
+                        // now against the ledgers bound at build, which the
+                        // post required to match the approved ones (#616).
+                        // Only once the vouchers are found: before the POST
+                        // lands, a verdict would vouch for a post not yet made.
+                        Some(check)
+                            if check["state"] == MASTERS_CHECK_PENDING
+                                && verification_status(&proof, line.vouchers.len())
+                                    == "posted_verified" =>
+                        {
+                            let bound = line
+                                .ledger_identities
+                                .iter()
+                                .flatten()
+                                .map(|bound| (bound.name.clone(), bound.guid.clone()))
+                                .collect::<Vec<_>>();
+                            let verdict = if bound.is_empty() {
+                                json!({"state":"check_unavailable","trigger":MASTERS_CHECK_PENDING})
+                            } else {
+                                self.ledgers_still_approved(
+                                    &identity,
+                                    &company.name,
+                                    &bound,
+                                    MASTERS_CHECK_PENDING,
+                                    &mut accumulated,
+                                )
+                                .await
+                            };
+                            Some(self.record_masters_verdict(&line.batch_id, verdict))
+                        }
+                        recorded => recorded,
+                    }
+                }
+                None => None,
+            };
+            let mut proof = proof;
+            if let Some(masters) = &masters_after_post {
+                proof["masters_after_post"] = masters.clone();
+            }
+            // Whether a person's recorded review still covers this doubt and
+            // this voucher (#239). Beside the verdict, never instead of it.
+            if dispatched {
+                // Adds no way for a verification to fail: without the imports
+                // directory there is no record to report.
+                if let Some(review) = self
+                    .imports_dir()
+                    .ok()
+                    .and_then(|imports| ack::operator_review(&imports, &line, &observed.rows))
+                {
+                    proof["operator_review"] = review;
+                }
+            }
+            *observed_rows = Some(observed.rows.clone());
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
                 if current_dispatch {
-                    post::finalize_current_dispatch(&mut payload, dispatch_response.as_ref());
+                    post::finalize_current_dispatch(
+                        &mut payload,
+                        dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
+                    );
                 } else {
                     post::finalize_previous_attempt_reconciliation(
                         &mut payload,
                         dispatch_response.as_ref(),
+                        masters_after_post.as_ref(),
                     );
                 }
             }
@@ -817,6 +1145,7 @@ impl Server {
             } else {
                 verification_status(&result, line.vouchers.len())
             };
+            payload["result"]["verification_status"] = json!(status);
             let mut update = line.clone();
             update.status = status.to_string();
             self.persist_import_verification(&payload["result"], &update, generation)?;
@@ -854,7 +1183,15 @@ impl Server {
             markdown.as_bytes(),
             || self.append_import_record_while_admitted(&ledger::StatusRecord::from(update)),
             |_| Ok(()),
-        )
+        )?;
+        // The first verified ALTERID of each voucher, for a later amendment to
+        // compare against (#239). Kept beside the proof, not in the journal, so
+        // an older binary still reads the journal after a rollback. A failed
+        // write leaves the previous baseline, or none, and an amendment of a
+        // voucher it lacks then refuses: the safe direction, so it does not
+        // fail this verification.
+        let _ = record_verified_baseline(&imports, &update.batch_id, proof);
+        Ok(())
     }
 
     pub(super) async fn read_ledger_catalogue(
@@ -881,16 +1218,20 @@ impl Server {
         ),
         ToolFailure,
     > {
-        let request_xml = render_standard_ledger_catalog_request(company_name)
+        let read = standard_ledger_catalog_read(company_name)
             .map_err(|_| "company_name_invalid".to_string())?;
-        let request = admit_standard_ledger_catalog_request(request_xml.clone())
+        let request = admit_standard_ledger_catalog_request(read.as_str().to_string())
             .map_err(|_| "ledger_export_invalid".to_string())?;
-        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let (xml, evidence) = self.post_read(identity, read).await?;
         let catalogue =
             parse_standard_ledger_catalog_response(&xml, company_name, identity.company_guid())
-                .map_err(|_| {
-                    ToolFailure::from("ledger_export_invalid".to_string())
-                        .with_prior_evidence(evidence.clone())
+                .map_err(|error| {
+                    // `code` keeps naming what failed; the cause says why, which
+                    // every catalogue refusal used to leave out (bridge#634).
+                    let mut failure = ToolFailure::from("ledger_export_invalid".to_string())
+                        .with_prior_evidence(evidence.clone());
+                    failure.cause = Some(error.safe_code());
+                    failure
                 })?;
         Ok((
             catalogue.names().map(str::to_string).collect(),
@@ -908,13 +1249,65 @@ impl Server {
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
     ) -> Result<(Vec<bridge_tally_protocol::TallyNamedMaster>, Evidence), ToolFailure> {
-        let request_xml = render_native_group_snapshot_request(company_name);
-        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let (xml, evidence) = self
+            .post_read(identity, native_group_snapshot_read(company_name))
+            .await?;
         let groups = parse_native_group_snapshot(&xml, identity.company_guid()).map_err(|_| {
             ToolFailure::from("group_export_invalid".to_string())
                 .with_prior_evidence(evidence.clone())
         })?;
         Ok((groups, evidence))
+    }
+
+    /// Read the whole verification window, divided before it is sent so that no
+    /// request is predicted over the budget (protocol reference §11c), and
+    /// divided again if Tally still cannot serve a part (#485).
+    ///
+    /// The window is never narrowed — only divided. Every sub-window is read and
+    /// its rows concatenated, so the set of vouchers observed is identical to
+    /// what one undivided read would have returned. That distinction matters
+    /// because this read feeds an attribution check: filtering it by voucher
+    /// identity would make it cheaper by making it see less, which is how a
+    /// safety gate quietly stops being one. A date partition costs more requests
+    /// and gives up nothing.
+    ///
+    /// The rows are admitted ONCE over the union. `admit` enforces identity
+    /// uniqueness across the whole row set, so admitting each sub-window
+    /// separately would check uniqueness only within each one and let a voucher
+    /// duplicated across two sub-windows through — a hole that dividing would
+    /// have opened and that the undivided read never had.
+    async fn read_verification_window(
+        &self,
+        identity: &super::VerifiedCompanyIdentity,
+        company: &str,
+        (from, to): (&str, &str),
+        source: super::WindowPlanSource,
+    ) -> Result<VerificationWindowRead, ToolFailure> {
+        let shape = super::VoucherReadShape::ImportVerification;
+        let read = self
+            .read_voucher_window(
+                identity,
+                company,
+                from,
+                to,
+                shape,
+                source,
+                super::WindowReadLimits::for_shape(shape),
+                |xml| parse_import_voucher_rows(xml, identity.company_guid()),
+            )
+            .await?;
+        let all_evidence = read.all_evidence();
+        let source = ImportReadSource::admit(read.rows)
+            .map_err(|failure| ToolFailure::from(failure).with_prior_evidence(all_evidence))?;
+        Ok(VerificationWindowRead {
+            source,
+            evidence: read.evidence,
+            preflight_evidence: read.preflight_evidence,
+            closing_evidence: read.closing_evidence,
+            reads: read.reads,
+            witness: read.witness,
+            refused_a_part: read.refused_a_part,
+        })
     }
 
     async fn pre_import_mark(
@@ -927,15 +1320,73 @@ impl Server {
             .as_deref()
             .ok_or_else(|| "pre_import_mark_unobserved".to_string())?;
         let (xml, evidence) = self
-            .post_read(identity, render_agent_company_high_water(&company.name))
+            .post_read(identity, company_high_water_read(&company.name))
             .await?;
-        let high_water = parse_company_high_water(&xml, guid).map_err(|_| {
-            ToolFailure::from("pre_import_mark_unobserved".to_string())
+        let high_water = parse_company_high_water(&xml, guid).map_err(|code| {
+            ToolFailure::from(pre_import_mark_refusal(&code).to_string())
                 .with_prior_evidence(evidence.clone())
         })?;
         let mark = company_high_water_mark(&high_water)
             .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
         Ok((mark, evidence))
+    }
+
+    /// The proof the last verification of `batch_id` persisted, read whole.
+    /// The batch must be one the import journal records, and the file is
+    /// named exactly as `publish_proofs` names it, from the recorded id, so
+    /// a caller's argument never becomes a path on its own.
+    fn read_persisted_proof(&self, batch_id: &str) -> Result<Vec<u8>, String> {
+        const MAX_PERSISTED_PROOF_BYTES: usize = 32 * 1024 * 1024;
+        let recorded = self
+            .latest_import_snapshot(batch_id)?
+            .ok_or_else(|| "import_batch_not_found".to_string())?
+            .batch
+            .batch_id;
+        let path = self.imports_dir()?.join(format!("{recorded}.proof.json"));
+        let file = super::local_file::open_local_file(&path, false)
+            .map_err(|_| "verification_proof_missing".to_string())?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(file, (MAX_PERSISTED_PROOF_BYTES + 1) as u64),
+            &mut bytes,
+        )
+        .map_err(|_| "verification_proof_missing".to_string())?;
+        if bytes.len() > MAX_PERSISTED_PROOF_BYTES {
+            return Err("verification_proof_too_large".into());
+        }
+        Ok(bytes)
+    }
+
+    /// The XML file Bridge persisted when it built `batch_id`, read whole. The
+    /// desktop review and the post path both compare it byte for byte with
+    /// what they accept or send, so a journal record that agrees only with
+    /// itself cannot stand in for the batch Bridge built (bridge#575).
+    pub(super) fn read_persisted_import_xml(&self, batch_id: &str) -> Result<Vec<u8>, String> {
+        const MAX_PERSISTED_IMPORT_XML_BYTES: usize = 5_000_000;
+        let uuid = batch_id
+            .strip_prefix("bridge-")
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
+        let path = self.imports_dir()?.join(format!("bridge-{uuid}.xml"));
+        let mut file = super::local_file::open_local_file(&path, false)
+            .map_err(|_| "import_persisted_file_unavailable".to_string())?;
+        let length = file
+            .metadata()
+            .map_err(|_| "import_persisted_file_unavailable".to_string())?
+            .len();
+        if length > MAX_PERSISTED_IMPORT_XML_BYTES as u64 {
+            return Err("import_persisted_file_too_large".into());
+        }
+        let mut bytes = Vec::with_capacity(length as usize);
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(&mut file, (MAX_PERSISTED_IMPORT_XML_BYTES + 1) as u64),
+            &mut bytes,
+        )
+        .map_err(|_| "import_persisted_file_unavailable".to_string())?;
+        if bytes.len() > MAX_PERSISTED_IMPORT_XML_BYTES {
+            return Err("import_persisted_file_too_large".into());
+        }
+        Ok(bytes)
     }
 
     fn imports_dir(&self) -> Result<PathBuf, String> {
@@ -1003,6 +1454,17 @@ impl Server {
         }
     }
 
+    /// Whether the journal already records `remote_id` on a dispatch intent.
+    pub(super) fn import_remote_id_recorded_while_admitted(
+        &self,
+        remote_id: Uuid,
+    ) -> Result<bool, String> {
+        match self.import_journal_while_admitted()? {
+            Some(reader) => ledger::remote_id_recorded(reader, remote_id),
+            None => Ok(false),
+        }
+    }
+
     fn latest_import_snapshot(
         &self,
         batch_id: &str,
@@ -1063,11 +1525,13 @@ impl Server {
     }
 }
 
-const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build. An edit made in Tally between now and the import is overwritten without warning, so import promptly, and build the amendment again if anyone may have changed these vouchers. A Journal's reference is not compared, so an edit to it in Tally is overwritten. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
+const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build, and only these fields: the date, a bank voucher's effective date when Tally returned one, the voucher type, the voucher number when the batch set one, each entry's ledger, amount and side, and the narration. It did not compare a voucher's reference, its bill-wise or cost-centre allocations, or which ledger Tally records as its party, because the verification read does not fetch them; instead it refused any voucher whose ALTERID has moved since Bridge first verified it, which catches an edit to those fields made after that verification, provided a Tally edit advances the voucher's ALTERID (measured over the gateway; not yet for an edit made in Tally's own screens). An edit made before that first verification is not caught, so verify right after every import. An in-place alteration replaces a voucher's entries rather than merging them (measured over the gateway), and this file's entries carry no allocations, so allocations made in Tally, including those Bridge advises adding after an import, are expected to be lost; that loss, and what happens to a reference, were not measured directly. An edit made in Tally between this build and the import is overwritten without warning. Import promptly, and build the amendment again if anyone may have changed these vouchers. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
 
-const AMENDMENT_NEXT_STEP: &str = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+const AMENDMENT_NOT_POSTABLE: &str = "No import XML was sent to Tally. Bridge does not post amendments (post_import refuses them), so import the written file by hand, promptly, then use verify_import; do not call post_import for this batch.";
 
-const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book exactly as a build of this batch wrote it. not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured.";
+const AMENDMENT_NEXT_STEP: &str = "Import promptly: an edit made in Tally before the import is overwritten, so build the amendment again first if anyone may have changed these vouchers, and re-enter any allocation afterwards. Verify right after importing: that first verification is what a later amendment compares against. Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+
+const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book as a build of this batch wrote it, in the fields Bridge compares (date, a bank voucher's effective date when Tally returns one, type, number when set, entries' ledger, amount and side, narration). not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured. voucher_altered_since_verified means the voucher's ALTERID is not the one Bridge recorded when it first verified a build the book matches, or was not read: Tally has altered the voucher since, which can be an edit to a field Bridge does not compare, such as a reference or an allocation. Correct the voucher in Tally directly; a fresh batch would duplicate it unless the existing voucher is first cancelled or deleted in Tally. voucher_never_verified means no build the book matches has a verification Bridge recorded for this voucher: most often the last import was never verified, or it was verified before Bridge kept these records. Verifying now records this voucher exactly as it stands in Tally, including any changes made since Bridge built it. Check the voucher in Tally first; if someone has edited it, correct it there instead of amending. If it is unchanged, verify the batch named in book_matches_batch_ids and build the amendment again.";
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
 /// admission. Older manual imports retain their original verification path.
@@ -1192,6 +1656,7 @@ fn build_import_guidance(
     native_post_eligible: bool,
     bank_types: bool,
     names_a_counterparty: bool,
+    multi_entry_bank: bool,
 ) -> (Value, &'static str) {
     let preflight_warning =
         "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits.";
@@ -1217,8 +1682,12 @@ fn build_import_guidance(
     // proves master stability across the build only, and says nothing about
     // afterwards, so a regroup between build and hand import is invisible to
     // verify_import.
+    // post_import closes the gap for its own path: it classifies every leg
+    // again before approval and again after approval inside the endpoint
+    // queue, before the final duplicate check and the post. A hand import of
+    // the file has no such check, so the warning keeps saying so.
     let stale_classification_warning = bank_types.then_some(
-        "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. verify_import compares the entries as built, not current ancestry, so nothing catches it later. If any master changed since this batch was built, discard it and build again.",
+        "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. post_import classifies every leg again before approval and after approval inside the endpoint queue, before the final duplicate check and the post, and refuses a changed one, but a manual import of this file is not checked, and verify_import compares the entries as built, not current ancestry. If any master changed since this batch was built, discard it and build again.",
     );
     // The qualified slice is §9.13's, measured on one licensed instance. This
     // repo's settled position — see `observe_import_profile`'s own comment —
@@ -1231,6 +1700,12 @@ fn build_import_guidance(
     let allocation_warning = names_a_counterparty.then_some(
         "This batch names a counterparty on a Payment or Receipt and carries no bill allocation, so each amount lands On Account. If that ledger is configured for bill-wise accounting, the entry will need allocating in Tally afterwards; Bridge does not read that configuration and cannot warn per ledger.",
     );
+    // bridge#466: the shape rests on narrower live evidence than two entries.
+    // Comments and docs are not what an operator reads, so the result says so
+    // itself, beside the party choice it made.
+    let multi_entry_warning = multi_entry_bank.then_some(
+        "A Payment, Receipt or Contra with more than two entries rests on narrower evidence than a two-entry one (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver (for a Contra, only with a ledger repeated; three distinct ledgers not observed), and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts and on that three-entry Receipt, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
+    );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
             .chain(std::iter::once(preflight_warning))
@@ -1239,20 +1714,21 @@ fn build_import_guidance(
             .chain(stale_classification_warning)
             .chain(release_evidence_warning)
             .chain(allocation_warning)
+            .chain(multi_entry_warning)
             .collect::<Vec<_>>())
     };
-    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import";
+    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import right away: its first verification records each voucher's state for any later amendment";
     if writes_enabled && native_post_eligible {
         (
             warnings(
-                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import afterward and do not call post_import for that batch.",
+                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import right after importing and do not call post_import for that batch.",
             ),
             "Call post_import with this company_guid and batch_id; the local user must review and approve it before one posting attempt.",
         )
     } else if writes_enabled {
         (
             warnings(
-                "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
+                "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal, Payment, Receipt or Contra with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
             ),
             manual_import_next_step,
         )
@@ -1282,6 +1758,16 @@ fn live_evidence(vouchers: &[ImportVoucher]) -> Vec<Value> {
             None => (
                 "synthetic_lab_readback",
                 "docs/agent/ASSESSMENT-2026-09-06.md",
+            ),
+            // §9.13 imported two-entry vouchers only. A bank voucher with more
+            // entries (bridge#466) must not borrow that. It keeps the weaker
+            // label even after one Bridge-built three-entry Receipt was imported
+            // over the gateway and verified: that is one type, one sample, and
+            // not Tally's Import menu. §9.3's correction table records hand-built
+            // XML of this shape imported and read back over the gateway.
+            Some(_) if voucher.entries.len() > 2 => (
+                "hand_built_gateway_readback",
+                "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
             ),
             Some(_) => (
                 "licensed_bank_voucher_import",
@@ -1374,18 +1860,35 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
                 return Err("narration_reserved_marker".to_string());
             }
         }
-        for text in [
-            voucher.narration.as_deref(),
-            voucher.reference.as_deref(),
-            voucher.voucher_number.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
+        for text in [voucher.narration.as_deref(), voucher.reference.as_deref()]
+            .into_iter()
+            .flatten()
         {
             // JSON Schema minLength/maxLength count Unicode code points, not UTF-8 bytes.
+            //
+            // No `reads_back_as_other_text` check here: `voucher_diffs`
+            // (agent_import_verification.rs) never compares narration or
+            // reference text, and attribution only searches narration for
+            // the `[BRIDGE:...]` tag, which the marker check above leaves
+            // untouched. A rewrite verification cannot see is not refused —
+            // see `reads_back_as_other_text`'s doc comment for which fields
+            // this refusal actually protects.
             if text.is_empty()
                 || text.chars().count() > MAX_TEXT_CHARS
                 || text.chars().any(char::is_control)
+            {
+                return Err("voucher_text_invalid".to_string());
+            }
+        }
+        if let Some(number) = voucher.voucher_number.as_deref() {
+            // Unlike narration/reference, `voucher_diffs` compares the
+            // voucher number verbatim, so a value that would read back
+            // rewritten must be refused here — verification could never
+            // confirm it as posted.
+            if number.is_empty()
+                || number.chars().count() > MAX_TEXT_CHARS
+                || number.chars().any(char::is_control)
+                || reads_back_as_other_text(number)
             {
                 return Err("voucher_text_invalid".to_string());
             }
@@ -1401,6 +1904,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
             if entry.ledger.trim().is_empty()
                 || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
                 || entry.ledger.chars().any(char::is_control)
+                || reads_back_as_other_text(&entry.ledger)
                 || !valid_2dp_amount(&entry.amount)
             {
                 return Err("voucher_entry_invalid".to_string());
@@ -1421,22 +1925,43 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
     Ok(())
 }
 
-/// Payment, Receipt and Contra are admitted only in the two-entry shape that
-/// was imported and read back live: one debit, one credit, two distinct
-/// ledgers, and neither a supplied voucher number nor a reference.
+/// Payment, Receipt and Contra take two or more entries with at least one on
+/// each side, and neither a supplied voucher number nor a reference.
 ///
-/// A multi-leg Payment is a perfectly ordinary Tally voucher and is
-/// deliberately not admitted. No such file has been imported and read back
-/// here, and the readback pairing that verify_import relies on has never been
-/// exercised on one; a Journal remains available for a batch that needs it.
+/// More than two entries is bridge#466 (one bank line settling two parties,
+/// or a payment funded from two accounts). Tally stores and reads back a
+/// multi-entry bank voucher with every entry (§9.3 correction table), and
+/// verify_import pairs entries as a sorted multiset, so a repeated ledger on
+/// one side pairs as two entries. What keeps a disguised Contra out is that
+/// every leg is classified (`constrained_legs`), not only the first on each
+/// side. The every-leg rule and the party choice (`render_voucher_xml`) are
+/// the owner's decisions of 2026-09-22. One Bridge-built three-entry Receipt
+/// has been imported over the gateway and verified live; no multi-entry
+/// Payment or Contra has been, and none of the three, including that Receipt,
+/// through Tally's Import menu.
+///
+/// One ledger on both sides would net inside the voucher, so it is refused.
 fn validate_bank_voucher_shape(voucher: &ImportVoucher) -> Result<(), String> {
-    let [first, second] = voucher.entries.as_slice() else {
-        return Err("voucher_entry_pair_required".to_string());
-    };
-    if first.side == second.side {
+    let debits = voucher
+        .entries
+        .iter()
+        .filter(|entry| entry.side == EntrySide::Dr)
+        .collect::<Vec<_>>();
+    let credits = voucher
+        .entries
+        .iter()
+        .filter(|entry| entry.side == EntrySide::Cr)
+        .collect::<Vec<_>>();
+    // Unreachable while validate_payload's entry-count, positive-amount and
+    // balance checks run first; kept so this function stays correct on its own
+    // if that order changes.
+    if debits.is_empty() || credits.is_empty() {
         return Err("voucher_entry_pair_required".to_string());
     }
-    if first.ledger == second.ledger {
+    if debits
+        .iter()
+        .any(|debit| credits.iter().any(|credit| credit.ledger == debit.ledger))
+    {
         return Err("voucher_entry_ledger_repeated".to_string());
     }
     // A supplied VOUCHERNUMBER's fate is decided by the *voucher type's*
@@ -1483,9 +2008,15 @@ fn constrained_legs(
                 .bank_shape()
                 .into_iter()
                 .flat_map(move |shape| {
-                    shape.legs.iter().filter_map(move |(side, requirement)| {
-                        entry_for_side(voucher, side)
-                            .map(|entry| (voucher, side, entry.ledger.as_str(), *requirement))
+                    // Every entry on a constrained side, not only the first:
+                    // money at any counterparty position is a disguised
+                    // Contra (bridge#466).
+                    shape.legs.iter().flat_map(move |(side, requirement)| {
+                        voucher
+                            .entries
+                            .iter()
+                            .filter(move |entry| &entry.side == side)
+                            .map(move |entry| (voucher, side, entry.ledger.as_str(), *requirement))
                     })
                 })
         })
@@ -1504,8 +2035,10 @@ struct CashBankRefusals {
     /// it, and 400 copies of one problem is not 400 problems.
     ///
     /// This is what bounds the result. `validate_payload` already caps a batch
-    /// at `MAX_MASTER_NAMES` distinct ledger names, and a ledger can be
-    /// constrained at most once per side, so these rows cannot exceed 200
+    /// at `MAX_MASTER_NAMES` distinct ledger names, rows are deduplicated by
+    /// (ledger, requirement), and there are only two requirements (money and
+    /// counterparty) — a ledger repeated on one side of a multi-entry voucher
+    /// still yields one row — so these rows cannot exceed 200
     /// however many vouchers the batch carries. Emitting one row per leg had no
     /// such bound: a 1,000-voucher batch produced up to 2,000 rows, and once
     /// that passed the response cap the whole actionable refusal collapsed into
@@ -1605,6 +2138,33 @@ fn cash_bank_refusals(
         ledgers,
         legs,
     }
+}
+
+/// Whether a value Bridge writes would read back as different text.
+///
+/// Every agent reader marks forbidden numeric references before parsing
+/// (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)), and to keep that rewrite
+/// reversible it also rewrites a literal U+FFFD directly followed by `#`,
+/// digits and `;` to `U+FFFD#65533;`. A posted ledger name or voucher number
+/// holding that sequence would therefore read back changed.
+///
+/// Call this only on a field `voucher_diffs`
+/// (agent_import_verification.rs) actually compares — today that is a
+/// ledger name (checked in `validate_payload`'s entry loop) and the voucher
+/// number (checked above). Narration and reference are never compared there:
+/// attribution only searches narration for the `[BRIDGE:...]` tag, which the
+/// reserved-marker check above already protects, and a rewrite elsewhere in
+/// the text is invisible to verification either way. Calling this on
+/// narration or reference would refuse a value nothing downstream would ever
+/// notice as changed, so `validate_payload` does not.
+///
+/// The value is escaped as the writer escapes it, so a literal `&#4;` in it
+/// is text, not a reference, and is not refused.
+fn reads_back_as_other_text(value: &str) -> bool {
+    matches!(
+        bridge_tally_protocol::mark_forbidden_numeric_references(&quick_xml::escape::escape(value)),
+        std::borrow::Cow::Owned(_)
+    )
 }
 
 fn contains_reserved_marker(value: &str) -> bool {
@@ -1937,13 +2497,21 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
     render_import_envelope(company, &messages)
 }
 
-fn render_native_journal_xml(company: &str, voucher: &ImportVoucher, batch_id: &str) -> String {
-    // A public file may already have been imported and edited. Never reuse its
-    // client REMOTEID for a native Create, which Tally can treat as an upsert.
-    // The stable narration tag remains the batch attribution used by readback.
+/// The native post's request. `remote_id` must be fresh for every attempt: a
+/// public file may already have been imported and edited, and reusing its
+/// client REMOTEID for a native Create can make Tally treat it as an upsert.
+/// The caller records `remote_id` with the dispatch intent before sending,
+/// because Tally deletes only by it and never exports it (bridge#579). The
+/// stable narration tag remains the batch attribution used by readback.
+fn render_native_voucher_xml(
+    company: &str,
+    voucher: &ImportVoucher,
+    batch_id: &str,
+    remote_id: Uuid,
+) -> String {
     let messages = render_voucher_xml(
         voucher,
-        Uuid::new_v4(),
+        remote_id,
         import_identity(batch_id, &voucher.bridge_txn_id),
     );
     render_import_envelope(company, &messages)
@@ -2001,6 +2569,12 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
         .as_ref()
         .map(|_| format!("<EFFECTIVEDATE>{date}</EFFECTIVEDATE>"))
         .unwrap_or_default();
+    // PARTYLEDGERNAME is the first entry on the counterparty side, in the
+    // voucher's own order: the single counterparty when there is one, and a
+    // deterministic choice when several parties share a voucher (bridge#466,
+    // owner decision 2026-09-22; Tally 7.1 Silver read the bank ledger back as
+    // the party on a three-entry Receipt, and omitting the element was not
+    // tried).
     let party = shape
         .as_ref()
         .and_then(BankVoucherShape::party_side)
@@ -2018,8 +2592,38 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
     format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{date}</DATE>{effective_date}<VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{party}{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), voucher.voucher_type.as_str())
 }
 
-fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
-    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+/// One verification window as read: the admitted rows, the evidence for the
+/// data reads alone, the pre-flight reads kept apart from it, and the ranges
+/// read so that a corroborating read can replay them.
+struct VerificationWindowRead {
+    source: ImportReadSource,
+    evidence: Evidence,
+    preflight_evidence: Option<Evidence>,
+    /// The closing bracket, read after the data parts.
+    closing_evidence: Option<Evidence>,
+    reads: Vec<super::WindowPart>,
+    /// What a corroborating replay of this read must carry.
+    witness: Option<super::WindowWitness>,
+    /// Tally refused one of this read's data requests as too large or timed out.
+    refused_a_part: bool,
+}
+
+pub(super) fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
+    render_import_verification_in_span(company, from, to, None)
+}
+
+/// [`render_import_verification_read`], optionally narrowed to an AlterID span.
+/// `None` renders the unnarrowed request byte for byte; `Some` is one part of
+/// a day too heavy for one read (protocol reference §11c). Every part is read
+/// and verified against; none is discarded.
+pub(super) fn render_import_verification_in_span(
+    company: &str,
+    from: &str,
+    to: &str,
+    span: Option<super::AlterIdSpan>,
+) -> String {
+    let span_filter = span.map(super::AlterIdSpan::filter).unwrap_or_default();
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{span_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
 fn xml_escape(value: &str) -> String {
@@ -2031,7 +2635,7 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn local_evidence(label: &str) -> Evidence {
+pub(super) fn local_evidence(label: &str) -> Evidence {
     Evidence {
         request_sha256: sha256_hex(label.as_bytes()),
         response_sha256: sha256_hex(label.as_bytes()),
@@ -2045,6 +2649,148 @@ fn local_evidence(label: &str) -> Evidence {
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
+/// The state of a masters check that has not finished (#239).
+pub(super) const MASTERS_CHECK_PENDING: &str = "check_pending";
+
+fn masters_check_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_check.json"))
+}
+
+fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.masters_doubt.json"))
+}
+
+/// The masters check recorded for this batch (#239). An observed doubt is
+/// kept in a file of its own that nothing removes or replaces, and it
+/// overrides the check record. Absent only for a batch dispatched before
+/// these records existed.
+fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
+    read_masters_record(&masters_doubt_path(imports, batch_id))
+        .or_else(|| read_masters_record(&masters_check_path(imports, batch_id)))
+}
+
+/// A record that exists but cannot be opened, read or parsed reads as a
+/// pending check: a doubt, never an admission.
+fn read_masters_record(path: &Path) -> Option<Value> {
+    let unreadable = || Some(json!({"state": MASTERS_CHECK_PENDING}));
+    let mut file = match super::local_file::open_local_file(path, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return unreadable(),
+    };
+    let mut bytes = Vec::new();
+    if std::io::Read::read_to_end(&mut file, &mut bytes).is_err() {
+        return unreadable();
+    }
+    serde_json::from_slice(&bytes).ok().or_else(unreadable)
+}
+
+/// Staged under a name no other writer uses, then renamed into place, so
+/// writers need no lock and never collide.
+fn write_masters_record(path: &Path, record: &Value) -> Result<(), String> {
+    let staged = path.with_extension(format!("{}.next", Uuid::new_v4()));
+    let bytes =
+        serde_json::to_vec_pretty(record).map_err(|_| "proof_serialization_failed".to_string())?;
+    write_private(&staged, &bytes)?;
+    fs::rename(&staged, path).map_err(|_| {
+        let _ = fs::remove_file(&staged);
+        "import_file_write_failed".to_string()
+    })
+}
+
+impl Server {
+    /// Mark this batch's masters check pending before it can be dispatched. A
+    /// crash before the check finishes, a concurrent reader, or a failed later
+    /// write then reads a doubt, never an absent record; a post whose record
+    /// cannot be written is not sent. It never touches an observed doubt.
+    pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
+        let unavailable = |_| "post_masters_record_unavailable".to_string();
+        let imports = self.imports_dir().map_err(unavailable)?;
+        write_masters_record(
+            &masters_check_path(&imports, batch_id),
+            &json!({"state": MASTERS_CHECK_PENDING}),
+        )
+        .map_err(unavailable)
+    }
+
+    /// Record a finished check's verdict and return what the batch's records
+    /// now say. An observed doubt goes first to its own file, which then
+    /// outranks any later verdict. A check that could not run
+    /// (`check_unavailable`) is not recorded, so a later readback checks
+    /// again; a verdict that cannot be written leaves the check pending.
+    pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
+        if verdict["state"] == "check_unavailable" {
+            return verdict;
+        }
+        let pending = json!({"state": MASTERS_CHECK_PENDING});
+        let Ok(imports) = self.imports_dir() else {
+            return pending;
+        };
+        if verdict["state"] == "posted_under_changed_masters" {
+            let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
+        }
+        let _ = write_masters_record(&masters_check_path(&imports, batch_id), &verdict);
+        read_masters_check(&imports, batch_id).unwrap_or(pending)
+    }
+}
+
+fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.baseline.json"))
+}
+
+/// A build's verified baseline, or `None` when it has none or it cannot be
+/// read. Either way an amendment of that build refuses.
+fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    // A batch in doubt about its ledgers, or whose check is still pending
+    // (#239), is no baseline, whenever its baseline was written.
+    if post::masters_doubt(read_masters_check(imports, batch_id).as_ref()).is_some() {
+        return None;
+    }
+    let mut file =
+        super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
+            .ok()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Record each voucher's first verified ALTERID; a voucher already recorded
+/// keeps its value. Called under the import admission lock.
+fn record_verified_baseline(imports: &Path, batch_id: &str, proof: &Value) -> Result<(), String> {
+    let path = verified_baseline_path(imports, batch_id);
+    let mut baseline = if path.exists() {
+        // An unreadable baseline is never rewritten: nothing proves which
+        // values were first, so amendments of this build stay refused.
+        read_verified_baseline(imports, batch_id)
+            .ok_or_else(|| "verified_baseline_unreadable".to_string())?
+    } else {
+        amend::VerifiedBaseline::default()
+    };
+    if amend::record_first_verified(&mut baseline, proof) {
+        let bytes = serde_json::to_vec_pretty(&baseline)
+            .map_err(|_| "verified_baseline_serialization_failed".to_string())?;
+        // Staged and renamed, so a failed write leaves the previous file whole
+        // rather than a truncated one that would refuse every amendment.
+        let staged = imports.join(format!("{batch_id}.baseline.json.next"));
+        write_private(&staged, &bytes)?;
+        fs::rename(&staged, &path).map_err(|_| "verified_baseline_publish_failed".to_string())?;
+    }
+    Ok(())
+}
+
+fn verified_baselines(imports: &Path, lineage: &amend::Lineage) -> amend::VerifiedBaselines {
+    amend::VerifiedBaselines(
+        lineage
+            .builds
+            .iter()
+            .filter_map(|build| {
+                read_verified_baseline(imports, &build.batch.batch_id)
+                    .map(|baseline| (build.batch.batch_id.clone(), baseline))
+            })
+            .collect(),
+    )
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = super::local_file::open_local_file(path, true)
         .map_err(|_| "import_file_write_failed".to_string())?;

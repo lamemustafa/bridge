@@ -288,7 +288,32 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// verification, moved out with only visibility and `super::` paths changed. It
 /// decides whether an imported voucher is reported `posted_verified`, which the
 /// posting path and the amendment compare-and-swap also rely on.
-pub const MAX_SURFACE_FILES: usize = 268;
+///
+/// `src-tauri/src/agent_voucher_window.rs` is the pre-flight volume bound for
+/// windowed voucher reads (protocol reference §11c). It decides which voucher
+/// requests Bridge sends Tally — whether a window goes out whole, in which date
+/// and AlterID parts, and which windows are refused unsent — for `vouchers`,
+/// `voucher_presence`, `ledger_movement` and the import-verification read.
+// The canonical protocol-reference index is retained for legacy links while
+// bridge#317 moves its content into six separately pinned parts. The cap grows
+// by those six pins; it remains an exact count after the coordinated reseal.
+// `src-tauri/src/agent_import_post_location.rs` (bridge#574) confirms which
+// loaded company a native post is aimed at, last before the POST, and reports
+// which companies' voucher marks moved after it.
+// `native_outstandings/ledger_currency.rs` (bridge#551) classifies each
+// ledger's own currency against the base, which decides whether an
+// outstandings read reports any figure.
+// `src-tauri/src/agent_import_ack.rs` (bridge#239) decides whether a person's
+// review of a doubted post is recorded, and what verify_import reports about
+// it beside the unchanged verdict; a defect there could record a review of a
+// voucher state nobody saw.
+// `bridge-tally-protocol/src/gst_registration.rs` (bridge#624) decides which
+// GSTIN ledger_masters reports for a party on a date; a defect there reports a
+// registered supplier as unregistered, or the reverse.
+// `src-tauri/src/agent_voucher_type_class.rs` (bridge#625) decides which
+// vouchers a type filter returns, and which request is refused as ambiguous;
+// a defect there reports a class of vouchers as absent.
+pub const MAX_SURFACE_FILES: usize = 280;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -306,7 +331,7 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// entry and resealing. A required path cannot be dropped silently, and
 /// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
 /// here is what covers its omission.
-const REQUIRED_SURFACE_FILES: [&str; 7] = [
+const REQUIRED_SURFACE_FILES: [&str; 14] = [
     "src-tauri/src/agent_catalog.rs",
     "src-tauri/src/agent_desktop_journal.rs",
     "src-tauri/src/agent_ledgers.rs",
@@ -314,6 +339,13 @@ const REQUIRED_SURFACE_FILES: [&str; 7] = [
     "src/JournalPostingScreen.tsx",
     "src/ErrorBoundary.tsx",
     "src/NativeLifecycleController.tsx",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
 ];
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

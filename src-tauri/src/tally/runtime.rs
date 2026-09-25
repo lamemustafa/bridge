@@ -22,13 +22,14 @@ use crate::warning_codes::WarningCode;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
-    parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
-    render_native_bills_request, render_native_group_snapshot_request,
-    render_native_ledger_export_request, render_native_ledger_snapshot_request,
-    AgeingAnchor as NativeAgeingAnchor, CompanyCurrency, LedgerSnapshotEntry,
-    NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerExportPeriod,
-    NativeLedgerExportPeriodError, NativeLedgerSnapshotPeriod, NativeMasterSnapshot,
-    NativeOutstandingsError, NativeOverdueCrosscheck,
+    parse_native_group_snapshot, parse_native_ledger_snapshot_classified,
+    render_company_currency_request, render_native_bills_request,
+    render_native_group_snapshot_request, render_native_ledger_export_request,
+    render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, BaseCurrencyName,
+    ClassifiedLedgerSnapshot, CompanyCurrency, LedgerCurrencyRefusal, NativeBillsReportKind,
+    NativeGroupSnapshot, NativeLedgerExportPeriod, NativeLedgerExportPeriodError,
+    NativeLedgerSnapshotPeriod, NativeMasterSnapshot, NativeOutstandingsError,
+    NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -83,6 +84,9 @@ pub struct AgentRead {
     pub body: String,
     pub encoded_bytes: usize,
     pub encoded_sha256: String,
+    /// The stricter of the date-boundary profiles the read's opening and
+    /// closing identity brackets observed: Education if either reported it.
+    pub boundary_profile: DateBoundaryProfile,
 }
 
 async fn fetch_admitted_agent_read(
@@ -90,23 +94,582 @@ async fn fetch_admitted_agent_read(
     identity: &VerifiedCompanyIdentity,
     request: super::agent_read_request::AgentReadRequest,
 ) -> anyhow::Result<(AgentRead, RuntimeReadEvidence)> {
-    bracket_verified_company_identity(client, identity).await?;
-    let request_xml = request.into_xml();
+    let opening = bracket_verified_company_identity_observing_mode(client, identity).await?;
+    if !request.window_accepted_by(opening) {
+        return Err(EducationBoundaryRefusal.into());
+    }
+    let request_xml = request.clone().into_xml();
     let (body, encoded_bytes, encoded_sha256) = client
         .fetch_native_report_paired_with_evidence(request_xml.clone())
         .await?;
     let evidence = RuntimeReadEvidence::paired(&request_xml, encoded_sha256.clone(), encoded_bytes);
-    bracket_verified_company_identity(client, identity)
+    let closing = bracket_verified_company_identity_observing_mode(client, identity)
         .await
         .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+    // Education reported only after the read may have served it: which mode
+    // answered is unknown, so the read is refused as if it had been sent in
+    // Education (a licence server dropping out mid-read does this).
+    if !request.window_accepted_by(closing) {
+        return Err(with_read_evidence(
+            EducationBoundaryRefusal.into(),
+            evidence.clone(),
+        ));
+    }
+    let profile = if closing == DateBoundaryProfile::EducationRestricted {
+        closing
+    } else {
+        opening
+    };
     Ok((
         AgentRead {
             body,
             encoded_bytes,
             encoded_sha256,
+            boundary_profile: profile,
         },
         evidence,
     ))
+}
+
+/// The per-HTTP-request deadline an audit_read part's requests get. It is the
+/// transport's own session deadline, not a longer one: owner ruling 2
+/// (`docs/tally/UNIT_A_RULING_2.md`) denied raising the 20-second deadline, and
+/// the audit-read design's 90 s would reverse that ruling, so it waits for the
+/// owner. Nothing here enforces it; the session transport policy does, and a
+/// test keeps the two equal.
+///
+/// It bounds each request, not the part: a single part sends three requests
+/// (bracket, data, bracket) and a paired part six, so a part can take several
+/// times this long.
+///
+/// What keeping it costs, measured on licensed books: a stock master read of
+/// 43.4 s, a narrow voucher window of 42.8 s and a one-day voucher read of
+/// 31-34 s all exceed it. Each is refused as `audit_part_deadline_exceeded`
+/// rather than admitted late, so the planner must divide voucher windows
+/// smaller than one day's AlterIDs, and a master read that slow cannot be
+/// taken at all until the owner rules.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "read by the audit_read planner, plan step 7; pinned here by its test"
+    )
+)]
+pub(crate) const AUDIT_PART_DEADLINE: std::time::Duration =
+    bridge_tally_transport::DEFAULT_REQUEST_TIMEOUT;
+
+/// Each drain probe gets its own short deadline. That makes an unanswered probe
+/// give up sooner; it does not stop the probe reaching Tally, which is why
+/// probes are also spaced and capped below.
+const AUDIT_DRAIN_PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+/// A probe answered more slowly than this does not count towards the drain.
+const AUDIT_DRAIN_PROBE_SLOW: std::time::Duration = std::time::Duration::from_secs(2);
+/// Consecutive quick probe answers that clear a drain debt.
+const AUDIT_DRAIN_QUICK_PROBES: u8 = 2;
+/// The least time between two probes of one endpoint.
+const AUDIT_DRAIN_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+/// Probes that went unanswered before the runtime stops probing and needs the
+/// operator. Repeated silence is not "Tally is down": a modal dialog on the
+/// Tally screen looks the same, and more requests only queue behind it.
+const AUDIT_DRAIN_ABANDONED_PROBES: u8 = 2;
+/// A probe started longer ago than this and never finished was dropped by its
+/// caller: it counts as abandoned, and another may be sent. Generous, because a
+/// live probe can wait up to the endpoint queue's 30 s before its own 5 s.
+const AUDIT_DRAIN_PROBE_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How an audit_read part is read. Voucher parts are read once; masters are
+/// read twice and admitted only when the two responses match byte for byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
+)]
+pub(crate) enum AuditPartShape {
+    Single,
+    Paired,
+}
+
+/// One admitted audit_read part: the HTTP response entity exactly as the
+/// transport received it (after chunked framing is removed; content encodings
+/// other than identity are refused), read between two identity brackets that
+/// both matched, with an export status of success.
+///
+/// What the brackets prove is narrow: at each, the company list held exactly
+/// one company with the complete identity tuple. They say nothing about the
+/// state of the book between them, which another user may change; a caller
+/// that needs a book-state witness brackets the part with the company's
+/// AlterID marks itself.
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
+)]
+pub(crate) struct AuditPart {
+    pub(crate) encoded_body: Vec<u8>,
+    pub(crate) encoded_sha256: String,
+    /// The decoded text, for admission only. What is sealed is `encoded_body`.
+    pub(crate) body: String,
+    /// Time spent on the data request or requests, excluding the brackets.
+    pub(crate) elapsed: std::time::Duration,
+    pub(crate) evidence: RuntimeReadEvidence,
+    /// The stricter of the date-boundary profiles the two brackets observed:
+    /// Education if either reported it.
+    pub(crate) boundary_profile: DateBoundaryProfile,
+}
+
+/// Why a part was not admitted. No failure carries a body: a part is admitted
+/// whole or not at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AuditPartFailureKind {
+    /// A previous response was abandoned and Tally may still be building it.
+    /// Nothing was sent.
+    DrainRequired,
+    /// The request did not name exactly the verified company. Nothing was sent.
+    RequestNotCompanyScoped,
+    Deadline,
+    SizeLimit,
+    /// The request reached Tally and the connection ended before a complete
+    /// response.
+    ConnectionDropped,
+    /// Tally's response was refused at its head (HTTP status, content type or
+    /// content encoding), usually abandoning the body unread, or because a
+    /// complete body could not be decoded. A drain is owed either way; in the
+    /// second case it is merely conservative.
+    HeadRejected(&'static str),
+    /// The read was cancelled. If it had started, Tally may still be working.
+    Cancelled,
+    /// Nothing reached Tally.
+    Unreachable,
+    /// The runtime's queue or circuit breaker refused before sending anything.
+    NotSent(&'static str),
+    /// The two reads of a paired part differed: the book changed between them.
+    PairDrift,
+    /// The company was absent, ambiguous or changed at a bracket.
+    IdentityChanged,
+    /// Education mode was observed and would not honour this part's
+    /// `SVFROMDATE`/`SVTODATE`: it answers such a window with a well-formed
+    /// empty collection (bridge#581). Refused before sending when the opening
+    /// bracket reports it, and after the read, discarding the body, when only
+    /// the closing bracket does.
+    EducationBoundary,
+    /// A complete response whose export status was not success, such as an
+    /// error envelope for a company Tally could not select.
+    ResponseRejected,
+    /// Any other refusal, by its existing safe code.
+    Other(&'static str),
+}
+
+impl AuditPartFailureKind {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::DrainRequired => "audit_part_drain_required",
+            Self::RequestNotCompanyScoped => "audit_part_request_not_company_scoped",
+            Self::Deadline => "audit_part_deadline_exceeded",
+            Self::SizeLimit => "audit_part_response_size_limit_exceeded",
+            Self::ConnectionDropped => "audit_part_connection_dropped",
+            Self::HeadRejected(_) => "audit_part_response_head_rejected",
+            Self::Cancelled => "audit_part_cancelled",
+            Self::Unreachable => "audit_part_endpoint_unreachable",
+            Self::NotSent(code) | Self::Other(code) => code,
+            Self::PairDrift => "audit_part_pair_drift",
+            Self::IdentityChanged => "audit_part_company_identity_changed",
+            Self::EducationBoundary => "audit_part_window_unsupported_in_education",
+            Self::ResponseRejected => "audit_part_response_rejected",
+        }
+    }
+
+    /// Whether the same request may be sent again later as it stands. A size
+    /// refusal is not: the plan must divide the part. An identity change is
+    /// not: the read must start again from the company list. A pair drift is,
+    /// but a caller must cap how often, because a responder whose output is
+    /// not deterministic drifts every time.
+    pub(crate) const fn retryable(self) -> bool {
+        matches!(
+            self,
+            Self::DrainRequired
+                | Self::Deadline
+                | Self::ConnectionDropped
+                | Self::Cancelled
+                | Self::Unreachable
+                | Self::NotSent(_)
+                | Self::PairDrift
+        )
+    }
+
+    /// Whether Bridge may have stopped listening before Tally finished
+    /// answering, so Tally may still be building or sending the response. A
+    /// client deadline does not stop Tally working (the lab gateway stayed
+    /// busy for over 40 minutes after one abandoned read), so no later audit
+    /// part is sent to that endpoint until it has been drained.
+    pub(crate) const fn owes_drain(self) -> bool {
+        matches!(
+            self,
+            Self::Deadline
+                | Self::ConnectionDropped
+                | Self::SizeLimit
+                | Self::HeadRejected(_)
+                | Self::Cancelled
+        )
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
+)]
+pub(crate) struct AuditPartFailure {
+    pub(crate) kind: AuditPartFailureKind,
+    /// Completed source bodies read before the refusal, if any.
+    pub(crate) evidence: Option<RuntimeReadEvidence>,
+}
+
+impl AuditPartFailure {
+    fn new(kind: AuditPartFailureKind) -> Self {
+        Self {
+            kind,
+            evidence: None,
+        }
+    }
+}
+
+/// Where an endpoint's drain stands after [`TallyRuntime::drain_probe`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AuditDrainStatus {
+    Clear,
+    Owed {
+        quick_probes: u8,
+        abandoned_probes: u8,
+    },
+    /// No probe was sent: the last one was too recent.
+    Wait {
+        retry_after: std::time::Duration,
+    },
+    /// No probe was sent, and none will be: probes went unanswered too often.
+    /// Someone must look at the Tally screen, and restart Tally if it is
+    /// stuck, before [`TallyRuntime::clear_audit_drain_after_operator_check`].
+    OperatorRequired,
+}
+
+/// One endpoint's drain debt. `ticket` names the part that armed it; an armed
+/// part clears only its own entry.
+#[derive(Clone, Copy, Debug)]
+struct AuditDrainDebt {
+    ticket: u64,
+    /// Armed by a part that has not settled. A part whose future was dropped
+    /// never settles, so its debt stays owed.
+    in_flight: bool,
+    quick_probes: u8,
+    abandoned_probes: u8,
+    last_probe: Option<Instant>,
+    /// When a probe for this debt was started and has not finished. A
+    /// concurrent call sends nothing; a start older than
+    /// `AUDIT_DRAIN_PROBE_STALE` was dropped by its caller.
+    probe_started: Option<Instant>,
+}
+
+impl AuditDrainDebt {
+    fn armed(ticket: u64) -> Self {
+        Self {
+            ticket,
+            in_flight: true,
+            quick_probes: 0,
+            abandoned_probes: 0,
+            last_probe: None,
+            probe_started: None,
+        }
+    }
+}
+
+type AuditDrainRegistry = Arc<Mutex<HashMap<EndpointKey, AuditDrainDebt>>>;
+
+/// The registry holds plain counters that no update leaves half-written, so a
+/// poisoned lock is recovered rather than refusing every endpoint forever.
+fn audit_drain_lock(
+    registry: &AuditDrainRegistry,
+) -> std::sync::MutexGuard<'_, HashMap<EndpointKey, AuditDrainDebt>> {
+    registry
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Names each armed part, so a part settles only the debt it armed.
+static AUDIT_DRAIN_TICKET: AtomicU64 = AtomicU64::new(1);
+
+/// Raised inside the endpoint gate when a drain became owed while this part
+/// was queued behind the part that abandoned a response.
+#[derive(Debug, thiserror::Error)]
+#[error("audit_part_drain_required")]
+struct AuditDrainOwedAtDispatch;
+
+/// A complete response whose export status was not success.
+#[derive(Debug, thiserror::Error)]
+#[error("audit_part_response_rejected")]
+struct AuditResponseRejected;
+
+/// Arm this endpoint's drain for `ticket` immediately before anything is sent,
+/// inside the endpoint gate, refusing if any debt is already recorded.
+fn arm_audit_drain(
+    registry: &AuditDrainRegistry,
+    endpoint: &EndpointKey,
+    ticket: u64,
+) -> anyhow::Result<()> {
+    let mut owed = audit_drain_lock(registry);
+    if owed.contains_key(endpoint) {
+        return Err(AuditDrainOwedAtDispatch.into());
+    }
+    owed.insert(endpoint.clone(), AuditDrainDebt::armed(ticket));
+    Ok(())
+}
+
+/// A part's armed debt. The part settles it with what it knows; if the part's
+/// future is dropped first (a caller timeout, a cancel, an abort), dropping the
+/// guard leaves the debt owed. So `in_flight` means a part that is still
+/// running, never one that was abandoned.
+struct ArmedAuditDrain {
+    registry: AuditDrainRegistry,
+    endpoint: EndpointKey,
+    ticket: u64,
+    settled: bool,
+}
+
+impl ArmedAuditDrain {
+    fn settle(mut self, owed_now: bool) {
+        self.settled = true;
+        settle_audit_drain(&self.registry, &self.endpoint, self.ticket, owed_now);
+    }
+}
+
+impl Drop for ArmedAuditDrain {
+    fn drop(&mut self) {
+        if !self.settled {
+            settle_audit_drain(&self.registry, &self.endpoint, self.ticket, true);
+        }
+    }
+}
+
+/// Settle the entry `ticket` armed: remove it when nothing was left running in
+/// Tally, or keep it as an owed debt when something may have been.
+fn settle_audit_drain(
+    registry: &AuditDrainRegistry,
+    endpoint: &EndpointKey,
+    ticket: u64,
+    owed_now: bool,
+) {
+    let mut owed = audit_drain_lock(registry);
+    match owed.get_mut(endpoint) {
+        Some(debt) if debt.ticket == ticket && debt.in_flight => {
+            if owed_now {
+                debt.in_flight = false;
+            } else {
+                owed.remove(endpoint);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether `request` names exactly one `SVCURRENTCOMPANY`, in
+/// `ENVELOPE/BODY/DESC/STATICVARIABLES` where Tally reads it, equal to the
+/// verified company's name. Without one there, Tally reads whichever company
+/// is active; with a different one, it reads that company. An element of that
+/// name anywhere else is refused too, rather than trusted to be inert.
+fn request_scopes_company(request: &str, company: &str) -> bool {
+    use quick_xml::events::Event;
+    const STATIC_VARIABLES: [&[u8]; 4] = [b"ENVELOPE", b"BODY", b"DESC", b"STATICVARIABLES"];
+    let mut reader = quick_xml::Reader::from_str(request);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut named = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if name == b"SVCURRENTCOMPANY" {
+                    let anchored = path.len() == STATIC_VARIABLES.len()
+                        && path
+                            .iter()
+                            .zip(STATIC_VARIABLES)
+                            .all(|(part, expected)| part.as_slice() == expected);
+                    if !anchored {
+                        return false;
+                    }
+                    let Ok(text) = reader.read_text(element.name()) else {
+                        return false;
+                    };
+                    let Ok(raw) = text.decode() else {
+                        return false;
+                    };
+                    let Ok(text) = quick_xml::escape::unescape(&raw) else {
+                        return false;
+                    };
+                    named.push(text.into_owned());
+                } else {
+                    path.push(name);
+                }
+            }
+            Ok(Event::Empty(element))
+                if element
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"SVCURRENTCOMPANY") =>
+            {
+                return false;
+            }
+            Ok(Event::End(_)) => {
+                path.pop();
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    matches!(named.as_slice(), [only] if only == company)
+}
+
+fn classify_audit_part_failure(error: &anyhow::Error) -> AuditPartFailure {
+    let kind = if error
+        .chain()
+        .any(|cause| cause.is::<AuditDrainOwedAtDispatch>())
+    {
+        AuditPartFailureKind::DrainRequired
+    } else if error
+        .chain()
+        .any(|cause| cause.is::<EducationBoundaryRefusal>())
+    {
+        AuditPartFailureKind::EducationBoundary
+    } else if error.chain().any(|cause| cause.is::<ToolCancelled>()) {
+        // Withdrawn before the operation was queued: nothing was sent.
+        AuditPartFailureKind::NotSent("request_cancelled")
+    } else if let Some(transport) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TallyTransportError>())
+    {
+        match transport {
+            TallyTransportError::RequestTimedOut => AuditPartFailureKind::Deadline,
+            TallyTransportError::ResponseTooLarge { .. } => AuditPartFailureKind::SizeLimit,
+            TallyTransportError::RequestFailed
+            | TallyTransportError::ResponseReadFailed
+            | TallyTransportError::ResponseTruncated => AuditPartFailureKind::ConnectionDropped,
+            TallyTransportError::HttpStatus { .. }
+            | TallyTransportError::InvalidEncoding { .. }
+            | TallyTransportError::UnsupportedContentEncoding => {
+                AuditPartFailureKind::HeadRejected(transport.safe_code())
+            }
+            TallyTransportError::ConnectionFailed => AuditPartFailureKind::Unreachable,
+            other => AuditPartFailureKind::Other(other.safe_code()),
+        }
+    } else if error
+        .chain()
+        .any(|cause| cause.is::<crate::tally::connection::NativeReportPairDrift>())
+    {
+        AuditPartFailureKind::PairDrift
+    } else if error
+        .chain()
+        .any(|cause| cause.is::<CompanyIdentityBracketError>())
+    {
+        AuditPartFailureKind::IdentityChanged
+    } else if error
+        .chain()
+        .any(|cause| cause.is::<AuditResponseRejected>())
+    {
+        AuditPartFailureKind::ResponseRejected
+    } else if let Some(control) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TallyRuntimeControlError>())
+    {
+        match control {
+            TallyRuntimeControlError::Cancelled => AuditPartFailureKind::Cancelled,
+            TallyRuntimeControlError::QueueDeadline => {
+                AuditPartFailureKind::NotSent("endpoint_queue_deadline_exceeded")
+            }
+            TallyRuntimeControlError::CircuitCooldown => {
+                AuditPartFailureKind::NotSent("endpoint_circuit_cooldown")
+            }
+            TallyRuntimeControlError::HalfOpenProbeInFlight => {
+                AuditPartFailureKind::NotSent("endpoint_half_open_probe_in_flight")
+            }
+            TallyRuntimeControlError::EndpointSessionCapacity => {
+                AuditPartFailureKind::NotSent("endpoint_session_capacity_reached")
+            }
+        }
+    } else {
+        AuditPartFailureKind::Other("audit_part_read_failed")
+    };
+    AuditPartFailure {
+        kind,
+        evidence: error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<RuntimeReadFailure>())
+            .map(|failure| failure.evidence.clone()),
+    }
+}
+
+async fn fetch_admitted_audit_part(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+    request: super::agent_read_request::AgentReadRequest,
+    shape: AuditPartShape,
+) -> anyhow::Result<AuditPart> {
+    // As for every admitted agent read (bridge#581): the mode comes from the
+    // bracket's own company list, and a window Education would serve empty is
+    // refused before it is sent.
+    let opening = bracket_verified_company_identity_observing_mode(client, identity).await?;
+    if !request.window_accepted_by(opening) {
+        return Err(EducationBoundaryRefusal.into());
+    }
+    let window = request.clone();
+    let request_xml = request.into_xml();
+    let started = Instant::now();
+    let raw = match shape {
+        AuditPartShape::Single => client.post_xml_raw(request_xml.clone()).await?,
+        AuditPartShape::Paired => client.post_xml_raw_paired(request_xml.clone()).await?,
+    };
+    let elapsed = started.elapsed();
+    let evidence = match shape {
+        AuditPartShape::Single => RuntimeReadEvidence::single(
+            &request_xml,
+            raw.encoded_sha256.clone(),
+            raw.encoded_body.len(),
+        ),
+        AuditPartShape::Paired => RuntimeReadEvidence::paired(
+            &request_xml,
+            raw.encoded_sha256.clone(),
+            raw.encoded_body.len(),
+        ),
+    };
+    if !matches!(
+        bridge_tally_protocol::export_status(&raw.text),
+        Ok(bridge_tally_protocol::TallyExportStatus::Success)
+    ) {
+        return Err(with_read_evidence(
+            AuditResponseRejected.into(),
+            evidence.clone(),
+        ));
+    }
+    let closing = bracket_verified_company_identity_observing_mode(client, identity)
+        .await
+        .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+    // Education reported only after the part may have been served by it: which
+    // mode answered is unknown, so the part is refused as if sent in Education.
+    if !window.window_accepted_by(closing) {
+        return Err(with_read_evidence(
+            EducationBoundaryRefusal.into(),
+            evidence.clone(),
+        ));
+    }
+    let boundary_profile = if closing == DateBoundaryProfile::EducationRestricted {
+        closing
+    } else {
+        opening
+    };
+    Ok(AuditPart {
+        encoded_body: raw.encoded_body,
+        encoded_sha256: raw.encoded_sha256,
+        body: raw.text,
+        elapsed,
+        evidence,
+        boundary_profile,
+    })
 }
 
 /// An approved import response retains the import wire separately from the
@@ -117,6 +680,8 @@ pub(crate) struct ApprovedImportDispatch {
     pub(crate) body: String,
     pub(crate) response_evidence: RuntimeReadEvidence,
     pub(crate) admission_evidence: RuntimeReadEvidence,
+    /// Every loaded company's change marks, read last before the POST (#574).
+    pub(crate) company_marks_before: String,
 }
 
 /// Commitments to completed runtime source observations, using actual encoded
@@ -130,6 +695,20 @@ pub struct RuntimeReadEvidence {
     pub response_sha256: String,
     pub bytes: usize,
 }
+
+tokio::task_local! {
+    /// The cancellation of the one agent tool call running in this task, when
+    /// its caller can withdraw it (an MCP `notifications/cancelled`, or the host
+    /// closing its input). Checked before each queued operation starts, never
+    /// during one: an operation already sent to Tally runs to completion, since
+    /// abandoning a request does not stop Tally (protocol reference §11b.2).
+    pub(crate) static TOOL_CANCELLATION: CancellationToken;
+}
+
+/// The tool call was withdrawn before this operation started; nothing was sent.
+#[derive(Debug, thiserror::Error)]
+#[error("request_cancelled")]
+pub(crate) struct ToolCancelled;
 
 /// Retains admitted source commitments when a runtime read cannot be released.
 #[derive(Debug, thiserror::Error)]
@@ -235,6 +814,56 @@ async fn bracket_verified_company_identity(
     admit_company_identity(&companies, identity)
 }
 
+/// As [`bracket_verified_company_identity`], also returning the date-boundary
+/// profile the same company-list response reports. Education mode is read from
+/// the `EDUMODE` field every `CompanyListV2` row carries, so observing it here
+/// costs no request. Any `EDUMODE` field that does not say `No` is enough, even
+/// when the other capability fields do not parse. A response with no `EDUMODE`
+/// field at all keeps the mode-agnostic profile, as before bridge#581.
+async fn bracket_verified_company_identity_observing_mode(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<DateBoundaryProfile> {
+    let (companies, _, education) = client.fetch_companies_observing_education_mode().await?;
+    admit_company_identity(&companies, identity)?;
+    Ok(if education {
+        DateBoundaryProfile::EducationRestricted
+    } else {
+        DateBoundaryProfile::ModeAgnostic
+    })
+}
+
+/// A read refused because Education mode would not honour its
+/// `SVFROMDATE`/`SVTODATE` (the 1st, 2nd or 31st only). Education answers such
+/// a read with a well-formed empty collection, not an error (bridge#581), so it
+/// is refused before sending when the opening identity bracket reports
+/// Education, and after the read, discarding it, when only the closing bracket
+/// does. Raised by agent reads (reported as this code) and audit parts
+/// (reported as `audit_part_window_unsupported_in_education`).
+#[derive(Debug, thiserror::Error)]
+#[error("window_part_boundary_unsupported_in_education")]
+pub(crate) struct EducationBoundaryRefusal;
+
+/// A read was refused before it was sent: the endpoint reported Education mode,
+/// and the request is one of Bridge's custom reports whose TDL passes a spaced
+/// collection identifier to a `$$` function. Education answered one such report
+/// (`ledgers_v1`) with a blocking "Bad formula!" dialog on the Tally screen,
+/// which holds the XML gateway until someone dismisses it (bridge#45); the
+/// others carry the same construct. Such a read needs a licensed
+/// Tally until the Collection-based reads replace it.
+#[derive(Debug, thiserror::Error)]
+#[error("education_report_family_unsupported")]
+pub(crate) struct EducationReportFamilyRefusal;
+
+/// Refuses a report-formula read when the bracket that precedes it observed
+/// Education mode ([`EducationReportFamilyRefusal`]).
+fn refuse_report_formula_in_education(profile: DateBoundaryProfile) -> anyhow::Result<()> {
+    if profile == DateBoundaryProfile::EducationRestricted {
+        return Err(EducationReportFamilyRefusal.into());
+    }
+    Ok(())
+}
+
 fn admit_company_identity(
     companies: &[TallyCompany],
     identity: &VerifiedCompanyIdentity,
@@ -317,13 +946,18 @@ pub enum OutstandingsCurrencyAssertion {
 }
 
 /// An INR admission that is inseparable from the company extent observed
-/// during the currency read. Party/ledger masters and MCP outstandings consume
-/// this witness; desktop outstandings retains its explicit operator assertion.
+/// during the currency read. Party/ledger masters, MCP outstandings, the
+/// desktop single-company outstandings read (bridge#604, carrying the
+/// operator's assertion) and the all-companies sweep consume this witness.
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
     decimal_places: u8,
     currency_read_extent: CompanyBookExtent,
+    /// The base Currency master's NAME, which each ledger's own
+    /// `CURRENCYNAME` is compared with (bridge#551). `None` where no single
+    /// master's NAME was read; every ledger then refuses as unmatched.
+    base: Option<bridge_tally_protocol::native_outstandings::BaseCurrencyName>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -351,6 +985,12 @@ impl PartyLedgerMasterCurrencyAssertion {
         ))
     }
 }
+
+/// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
+/// as INR. The code is one of that function's static reasons, never data.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct CurrencyAdmissionRefusal(pub(crate) &'static str);
 
 /// The result of the existing Tally currency probe, retaining the extent that
 /// bracketed it so a monetary document cannot separate the two facts.
@@ -392,15 +1032,12 @@ impl CompanyCurrencyRead {
         PartyLedgerMasterCurrencyAssertion {
             assertion,
             decimal_places: self.currency.decimal_places,
+            base: bridge_tally_protocol::native_outstandings::BaseCurrencyName::of_single_master(
+                &self.currency,
+            ),
             currency_read_extent: self.extent,
         }
     }
-}
-
-#[derive(Clone)]
-enum NativeOutstandingsCurrency {
-    Operator(OutstandingsCurrencyAssertion),
-    Observed(PartyLedgerMasterCurrencyAssertion),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -663,6 +1300,16 @@ pub struct UnallocatedParty {
     pub direction: ExposureDirection,
 }
 
+/// Why an operator's currency assertion may not be read for a book with
+/// `currency_count` Currency masters ([`TallyRuntime::fetch_operator_outstandings`]).
+fn operator_currency_refusal(currency_count: usize) -> Option<&'static str> {
+    match currency_count {
+        0 => Some("company_currency_probe_failed"),
+        1 => None,
+        _ => Some("company_base_currency_undetermined"),
+    }
+}
+
 fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsLoadResult {
     OutstandingsLoadResult::Partial {
         reason: reason.into(),
@@ -680,7 +1327,7 @@ pub(crate) enum OpeningBoundaryObservationError {
     Changed,
 }
 
-fn observed_opening_boundary(
+pub(crate) fn observed_opening_boundary(
     profile: &bridge_tally_core::CapabilityProfile,
 ) -> Result<DateBoundaryProfile, OpeningBoundaryObservationError> {
     use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
@@ -811,6 +1458,10 @@ mod financial_mode_tests;
 mod agent_read_evidence_tests;
 
 #[cfg(test)]
+#[path = "runtime_audit_part_tests.rs"]
+mod audit_part_tests;
+
+#[cfg(test)]
 #[path = "runtime_party_evidence_tests.rs"]
 mod party_evidence_tests;
 
@@ -824,8 +1475,65 @@ enum NativeLedgerSnapshotPeriodAdmission {
 }
 
 enum NativeLedgerSnapshotAdmission {
-    Snapshot(Vec<LedgerSnapshotEntry>),
+    Snapshot(ClassifiedLedgerSnapshot),
     Partial(OutstandingsLoadResult),
+}
+
+/// A one-master base for tests that build a witness without a currency read.
+/// Their captured ledger snapshots predate `CURRENCYNAME`, so every ledger's
+/// currency is absent and classifies as this base.
+#[cfg(test)]
+pub(crate) fn single_master_base_for_tests() -> Option<BaseCurrencyName> {
+    BaseCurrencyName::of_single_master(&CompanyCurrency {
+        symbol: "I\u{20b9}".to_string(),
+        mailing_name: "INR".to_string(),
+        currency_count: 1,
+        decimal_places: 2,
+        is_inr: true,
+        names: vec!["I\u{20b9}".to_string()],
+    })
+}
+
+/// A one-master INR witness bound to `extent_xml`, the company extent a test
+/// scripts for the read, as a currency read would have observed it.
+#[cfg(test)]
+pub(crate) fn inr_witness_for_tests(
+    extent_xml: &str,
+    identity: &VerifiedCompanyIdentity,
+) -> PartyLedgerMasterCurrencyAssertion {
+    PartyLedgerMasterCurrencyAssertion {
+        assertion: OutstandingsCurrencyAssertion::Inr,
+        decimal_places: 2,
+        base: single_master_base_for_tests(),
+        currency_read_extent:
+            bridge_tally_protocol::outstandings_shared::parse_company_book_extent_v2(
+                extent_xml,
+                &identity.company_book_extent_expectation().unwrap(),
+            )
+            .unwrap(),
+    }
+}
+
+/// A one-master base admits every ledger or refuses, so no ledger is foreign
+/// in a production read. Only a base among several masters (bridge#601) can
+/// set one aside, and that lands with the result that discloses it; until
+/// then a foreign ledger withholds every figure, naming the first.
+fn foreign_ledger_withholds_figures(
+    snapshot: &ClassifiedLedgerSnapshot,
+) -> Option<OutstandingsLoadResult> {
+    let foreign = snapshot.foreign.first()?;
+    let mut reason = OutstandingsPartialReason::code("foreign_currency_ledger_present");
+    reason.foreign_currency_ledger_name = Some(foreign.ledger.clone());
+    Some(partial_result(reason))
+}
+
+/// What a native outstandings read compares each ledger's own currency with
+/// (bridge#551).
+enum LedgerClassification {
+    /// The base Currency master's NAME.
+    Against(BaseCurrencyName),
+    /// A witness without a known base: every ledger refuses as unmatched.
+    BaseUnknown,
 }
 
 fn admit_native_ledger_snapshot_period(
@@ -842,20 +1550,37 @@ fn admit_native_ledger_snapshot_period(
 }
 
 fn admit_native_ledger_snapshot(
-    snapshot: anyhow::Result<Vec<LedgerSnapshotEntry>>,
+    snapshot: anyhow::Result<ClassifiedLedgerSnapshot>,
 ) -> anyhow::Result<NativeLedgerSnapshotAdmission> {
     match snapshot {
         Ok(snapshot) => Ok(NativeLedgerSnapshotAdmission::Snapshot(snapshot)),
         Err(error) => {
-            let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+            match error
                 .chain()
                 .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
-            else {
-                return Err(error);
-            };
-            Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
-                OutstandingsPartialReason::foreign_currency_ledger_balance(ledger_name.clone()),
-            )))
+            {
+                Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) => {
+                    Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
+                        OutstandingsPartialReason::foreign_currency_ledger_balance(
+                            ledger_name.clone(),
+                        ),
+                    )))
+                }
+                // The ledgers' own currencies disagree with the base, or one
+                // is unobserved where several masters exist: in-band, with
+                // the ledger it names when there is one.
+                Some(NativeOutstandingsError::LedgerCurrency(refusal)) => {
+                    let mut reason = OutstandingsPartialReason::code(refusal.code());
+                    reason.foreign_currency_ledger_name = match refusal {
+                        LedgerCurrencyRefusal::BaseUnmatched { ledger } => ledger.clone(),
+                        LedgerCurrencyRefusal::Unobserved { ledger } => Some(ledger.clone()),
+                    };
+                    Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
+                        reason,
+                    )))
+                }
+                _ => Err(error),
+            }
         }
     }
 }
@@ -1264,6 +1989,13 @@ struct SessionSlot {
 #[derive(Clone)]
 pub struct TallyRuntime {
     sessions: Arc<Mutex<HashMap<EndpointKey, SessionSlot>>>,
+    /// Endpoints owed a drain after an abandoned audit part, with the count of
+    /// consecutive quick probe answers so far. Kept here, not on a session,
+    /// because a session can be evicted while Tally is still busy.
+    audit_drain: AuditDrainRegistry,
+    audit_drain_probe_interval: std::time::Duration,
+    audit_drain_probe_stale: std::time::Duration,
+    audit_drain_probe_slow: std::time::Duration,
     runtime_identity: Arc<()>,
     control: PortableReadRuntime,
     #[cfg(feature = "voucher-scan")]
@@ -1410,6 +2142,10 @@ impl Default for TallyRuntime {
     fn default() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            audit_drain: Arc::new(Mutex::new(HashMap::new())),
+            audit_drain_probe_interval: AUDIT_DRAIN_PROBE_INTERVAL,
+            audit_drain_probe_stale: AUDIT_DRAIN_PROBE_STALE,
+            audit_drain_probe_slow: AUDIT_DRAIN_PROBE_SLOW,
             runtime_identity: Arc::new(()),
             control: PortableReadRuntime::default(),
             #[cfg(feature = "voucher-scan")]
@@ -1545,6 +2281,14 @@ impl TallyRuntime {
         F: FnMut(TallyClient) -> Fut,
         Fut: Future<Output = anyhow::Result<T>>,
     {
+        // The only point a withdrawn agent tool call stops: before this
+        // operation is queued, so nothing further is sent. Never mid-operation.
+        if TOOL_CANCELLATION
+            .try_with(CancellationToken::is_cancelled)
+            .unwrap_or(false)
+        {
+            return Err(ToolCancelled.into());
+        }
         let session = self.session(config)?;
         let request = session.begin_request()?;
         let client = session.client.clone();
@@ -1788,6 +2532,29 @@ impl TallyRuntime {
         .await
     }
 
+    /// As [`Self::fetch_companies`], also returning whether the same
+    /// `CompanyListV2` response may come from an Education-mode endpoint
+    /// ([`TallyClient::fetch_companies_observing_education_mode`]). No further
+    /// request is made.
+    pub async fn fetch_companies_observing_education_mode(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<(Vec<TallyCompany>, bool)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::transient_default(),
+            |client| async move {
+                client
+                    .fetch_companies_observing_education_mode()
+                    .await
+                    .map(|(companies, _, education)| (companies, education))
+            },
+        )
+        .await
+    }
+
     /// Reads the documented company collection and retains evidence for the
     /// exact raw response bytes used to produce the parsed company list. As in
     /// the shared retry runtime, only the terminal attempt contributes evidence.
@@ -1851,8 +2618,47 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, None)
+        self.fetch_ledger_opening_with_evidence(config, identity, None, false)
             .await
+            .map(|(ledgers, _, evidence, _)| (ledgers, evidence))
+    }
+
+    /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
+    /// export was pinned to (the admitted BOOKSFROM). Each ledger's
+    /// `OPENINGBALANCE` is the opening at that date (TALLY_PROTOCOL_REFERENCE
+    /// §5.5), which on a multi-year book is not the current year's opening.
+    pub async fn fetch_ledgers_with_opening_as_of_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(Vec<TallyLedger>, TallyDate, RuntimeReadEvidence)> {
+        self.fetch_ledger_opening_with_evidence(config, identity, None, false)
+            .await
+            .map(|(ledgers, from, evidence, _)| (ledgers, from, evidence))
+    }
+
+    /// As `fetch_ledgers_with_opening_as_of_evidence`, also reading the group
+    /// collection once, paired, inside the same identity and book-extent
+    /// bracket, so every ledger's `PARENT` resolves against groups from the
+    /// same unchanged book. This is the group request outstandings already
+    /// sends; its size follows the book's group count, not its ledger count.
+    pub async fn fetch_ledgers_and_groups_with_opening_as_of_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(
+        Vec<TallyLedger>,
+        Vec<bridge_tally_protocol::TallyNamedMaster>,
+        TallyDate,
+        RuntimeReadEvidence,
+    )> {
+        let (ledgers, from, evidence, groups) = self
+            .fetch_ledger_opening_with_evidence(config, identity, None, true)
+            .await?;
+        let Some(groups) = groups else {
+            unreachable!("a ledger read asked for groups returns them or an error");
+        };
+        Ok((ledgers, groups, from, evidence))
     }
 
     /// Reads the native period opening at `from`, retaining the existing paired
@@ -1865,8 +2671,9 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         from: TallyDate,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, Some(from))
+        self.fetch_ledger_opening_with_evidence(config, identity, Some(from), false)
             .await
+            .map(|(ledgers, _, evidence, _)| (ledgers, evidence))
     }
 
     async fn fetch_ledger_opening_with_evidence(
@@ -1874,7 +2681,13 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
-    ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
+        read_groups: bool,
+    ) -> anyhow::Result<(
+        Vec<TallyLedger>,
+        TallyDate,
+        RuntimeReadEvidence,
+        Option<Vec<bridge_tally_protocol::TallyNamedMaster>>,
+    )> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1913,6 +2726,21 @@ impl TallyRuntime {
                         ));
                         let ledgers =
                             admit_native_ledger_opening_rows(&body, identity.company_guid())?;
+                        let groups = if read_groups {
+                            let request =
+                                render_native_group_snapshot_request(identity.display_name());
+                            let paired = client.fetch_native_report_paired(request.clone()).await?;
+                            let (body, encoded_bytes, encoded_sha256) = paired
+                                .require_stable(PairedReadValidationError::NativeLedgerGroup)?;
+                            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                                &request,
+                                encoded_sha256,
+                                encoded_bytes,
+                            ));
+                            Some(parse_native_group_snapshot(&body, identity.company_guid())?)
+                        } else {
+                            None
+                        };
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != opening_extent {
                             return Err(anyhow::Error::new(
@@ -1923,7 +2751,7 @@ impl TallyRuntime {
                         let closing_evidence =
                             confirm_read_boundary(&client, boundary_profile).await?;
                         evidence = evidence.clone().combine(closing_evidence);
-                        Ok((ledgers, evidence.clone()))
+                        Ok((ledgers, period.from().clone(), evidence.clone(), groups))
                     }
                     .await;
                     result.map_err(|error| with_read_evidence(error, evidence))
@@ -1994,26 +2822,41 @@ impl TallyRuntime {
     /// commitments. Currency admission remains inside the runtime so callers
     /// cannot label an unverified currency as INR or bypass the paired master
     /// read.
+    ///
+    /// The group collection is returned alongside the records rather than
+    /// dropped: `fetch_party_ledger_master_source` already reads it, in the
+    /// same company-bracketed triple as the master and balance rows, purely
+    /// to let Schedule III classify the party rows it captures. A caller that
+    /// needs ledger *ancestry* (ledger_masters' compliance path) can now
+    /// build a `GroupIndex` from this without any additional Tally read.
     pub async fn fetch_agent_party_ledger_masters_with_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(
         Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+        Vec<bridge_tally_protocol::TallyNamedMaster>,
+        TallyDate,
         RuntimeReadEvidence,
     )> {
         let currency_read = self
             .detect_base_currency_with_extent(config.clone(), identity)
             .await?;
         let currency_evidence = currency_read.evidence.clone();
-        let assertion = currency_read
-            .admit_inr()
-            .map_err(|code| with_read_evidence(anyhow::anyhow!(code), currency_evidence.clone()))?;
+        let assertion = currency_read.admit_inr().map_err(|code| {
+            with_read_evidence(
+                anyhow::Error::new(CurrencyAdmissionRefusal(code)),
+                currency_evidence.clone(),
+            )
+        })?;
         let (source, source_evidence) = self
             .fetch_party_ledger_master_source_with_evidence(config, identity, assertion)
             .await
             .map_err(|error| with_read_evidence(error, currency_evidence.clone()))?;
         let evidence = currency_evidence.combine(source_evidence);
+        let groups = source.groups.clone();
+        // The master request's SVFROMDATE (the admitted BOOKSFROM): each opening is as of it.
+        let opening_as_of = source.from.clone();
         let records = source
             .rows
             .into_iter()
@@ -2027,7 +2870,7 @@ impl TallyRuntime {
                 fields: row.fields,
             })
             .collect();
-        Ok((records, evidence))
+        Ok((records, groups, opening_as_of, evidence))
     }
 
     /// Retain the three actual request body commitments alongside their paired
@@ -2103,7 +2946,10 @@ impl TallyRuntime {
             move |client| {
                 let identity = identity.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    refuse_report_formula_in_education(
+                        bracket_verified_company_identity_observing_mode(&client, &identity)
+                            .await?,
+                    )?;
                     let observation = client
                         .qualify_selected_ledgers(identity.display_name(), identity.company_guid())
                         .await?;
@@ -2172,6 +3018,271 @@ impl TallyRuntime {
         .await
     }
 
+    /// One audit_read part: a single attempt, bracketed by the complete company
+    /// identity, whose response entity is kept byte-for-byte.
+    ///
+    /// Nothing partial is ever returned. The drain debt is armed inside the
+    /// endpoint gate immediately before anything is sent, and cleared only when
+    /// the part settles with nothing left running in Tally. So a part that
+    /// abandons a response, is cancelled, or whose future is dropped leaves the
+    /// endpoint owed, and every later audit part to it, including one already
+    /// queued, is refused without sending anything until [`Self::drain_probe`]
+    /// clears it.
+    ///
+    /// What this does not do, and a caller must:
+    /// - Other runtime reads (`fetch_agent_read`, status, catalogue reads)
+    ///   ignore the debt. A caller must send no other read to the endpoint
+    ///   while a debt is owed.
+    /// - The debt lives in this process's memory. It is not shared with another
+    ///   Bridge process on the same machine and does not survive a restart.
+    ///   It is keyed by the canonical loopback origin, so `127.0.0.1` and
+    ///   `localhost` share one debt, but another spelling of the same instance
+    ///   would not.
+    /// - It proves nothing about the state of the book between the brackets
+    ///   (see [`AuditPart`]).
+    /// - A part whose window Education would not honour is refused as
+    ///   `EducationBoundary`. An admitted part reports the stricter
+    ///   `boundary_profile` its brackets saw; a caller reading a window in parts
+    ///   must carry Education forward once seen and plan every later part on
+    ///   days Education honours.
+    /// - It checks the export status and the company the request names, not
+    ///   the rows; admitting the rows is the caller's. The company binding
+    ///   covers the `SVCURRENTCOMPANY` static variable only: TDL embedded in a
+    ///   request is not proven unable to change which company Tally reads, so
+    ///   requests must come from Bridge's pinned profiles.
+    pub(crate) async fn fetch_audit_part(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        request: super::agent_read_request::AgentReadRequest,
+        shape: AuditPartShape,
+    ) -> Result<AuditPart, AuditPartFailure> {
+        let endpoint = EndpointKey::from_config(&config)
+            .map_err(|_| AuditPartFailure::new(AuditPartFailureKind::Other("endpoint_invalid")))?;
+        if !request_scopes_company(&request.clone().into_xml(), identity.display_name()) {
+            return Err(AuditPartFailure::new(
+                AuditPartFailureKind::RequestNotCompanyScoped,
+            ));
+        }
+        if self.audit_drain_owed(&endpoint) {
+            return Err(AuditPartFailure::new(AuditPartFailureKind::DrainRequired));
+        }
+        let _lease = self
+            .begin_ordinary_read(&config)
+            .map_err(|error| classify_audit_part_failure(&error))?;
+        let ticket = AUDIT_DRAIN_TICKET.fetch_add(1, Ordering::Relaxed);
+        let registry = Arc::clone(&self.audit_drain);
+        let identity = identity.clone();
+        let armed_endpoint = endpoint;
+        let result = self
+            .execute(
+                config,
+                ReadOperation::OtherRead,
+                ReadRetryPolicy::SINGLE_ATTEMPT,
+                move |client| {
+                    let identity = identity.clone();
+                    let request = request.clone();
+                    let registry = Arc::clone(&registry);
+                    let endpoint = armed_endpoint.clone();
+                    async move {
+                        arm_audit_drain(&registry, &endpoint, ticket)?;
+                        let armed = ArmedAuditDrain {
+                            registry,
+                            endpoint,
+                            ticket,
+                            settled: false,
+                        };
+                        match fetch_admitted_audit_part(&client, &identity, request, shape).await {
+                            Ok(part) => {
+                                armed.settle(false);
+                                Ok(part)
+                            }
+                            Err(error) => {
+                                armed.settle(classify_audit_part_failure(&error).kind.owes_drain());
+                                Err(error)
+                            }
+                        }
+                    }
+                },
+            )
+            .await;
+        // An armed part has settled its own debt inside the gate, or left it
+        // owed by being dropped; a failure before arming sent nothing.
+        result.map_err(|error| classify_audit_part_failure(&error))
+    }
+
+    /// At most one status probe, with its own short deadline, towards clearing
+    /// an endpoint's drain debt.
+    ///
+    /// - The debt clears only after `AUDIT_DRAIN_QUICK_PROBES` consecutive
+    ///   probes each answered within `AUDIT_DRAIN_PROBE_SLOW`. A slow, failed
+    ///   or unanswered probe starts the count again.
+    /// - Probes are spaced at least `AUDIT_DRAIN_PROBE_INTERVAL` apart; a call
+    ///   sooner sends nothing and returns [`AuditDrainStatus::Wait`].
+    /// - After `AUDIT_DRAIN_ABANDONED_PROBES` unanswered probes, no more are
+    ///   sent until the operator has looked at Tally
+    ///   ([`AuditDrainStatus::OperatorRequired`]).
+    /// - Sends nothing when nothing is owed.
+    ///
+    /// Unmeasured premise, for live qualification: that Tally answers
+    /// `/status` quickly only once it has finished building an abandoned
+    /// response. The brain notes record `/status` both dead during a modal
+    /// hang and healthy just before one.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
+    )]
+    pub(crate) async fn drain_probe(&self, config: TallyConfig) -> AuditDrainStatus {
+        let Ok(endpoint) = EndpointKey::from_config(&config) else {
+            return AuditDrainStatus::OperatorRequired;
+        };
+        let captured = {
+            let mut owed = audit_drain_lock(&self.audit_drain);
+            let Some(debt) = owed.get_mut(&endpoint) else {
+                return AuditDrainStatus::Clear;
+            };
+            if debt.abandoned_probes >= AUDIT_DRAIN_ABANDONED_PROBES {
+                return AuditDrainStatus::OperatorRequired;
+            }
+            // A part is still running and has not settled: there is nothing to
+            // drain yet, and a probe now would only queue behind it.
+            if debt.in_flight {
+                return AuditDrainStatus::Wait {
+                    retry_after: self.audit_drain_probe_interval,
+                };
+            }
+            if let Some(started) = debt.probe_started {
+                let running = started.elapsed();
+                if running < self.audit_drain_probe_stale {
+                    return AuditDrainStatus::Wait {
+                        retry_after: self.audit_drain_probe_stale - running,
+                    };
+                }
+                // Its caller stopped waiting; the request may still be queued
+                // behind a busy responder. Count it, then carry on.
+                debt.probe_started = None;
+                debt.quick_probes = 0;
+                debt.abandoned_probes = debt.abandoned_probes.saturating_add(1);
+                if debt.abandoned_probes >= AUDIT_DRAIN_ABANDONED_PROBES {
+                    return AuditDrainStatus::OperatorRequired;
+                }
+            }
+            if let Some(last) = debt.last_probe {
+                let since = last.elapsed();
+                if since < self.audit_drain_probe_interval {
+                    return AuditDrainStatus::Wait {
+                        retry_after: self.audit_drain_probe_interval - since,
+                    };
+                }
+            }
+            debt.last_probe = Some(Instant::now());
+            debt.probe_started = Some(Instant::now());
+            (debt.ticket, debt.in_flight)
+        };
+        let outcome = match self.begin_ordinary_read(&config) {
+            Ok(_lease) => self
+                .execute(
+                    config,
+                    ReadOperation::Status,
+                    ReadRetryPolicy::SINGLE_ATTEMPT,
+                    |client| async move {
+                        let started = Instant::now();
+                        tokio::time::timeout(AUDIT_DRAIN_PROBE_DEADLINE, client.status_probe())
+                            .await
+                            .map_err(|_| TallyTransportError::RequestTimedOut)??;
+                        Ok(started.elapsed())
+                    },
+                )
+                .await
+                .map_err(|error| classify_audit_part_failure(&error).kind),
+            Err(_) => Err(AuditPartFailureKind::NotSent("endpoint_read_reserved")),
+        };
+        let mut owed = audit_drain_lock(&self.audit_drain);
+        let Some(debt) = owed.get_mut(&endpoint) else {
+            return AuditDrainStatus::Clear;
+        };
+        debt.probe_started = None;
+        // A probe counts only towards the debt it was sent for.
+        if (debt.ticket, debt.in_flight) != captured {
+            return AuditDrainStatus::Owed {
+                quick_probes: debt.quick_probes,
+                abandoned_probes: debt.abandoned_probes,
+            };
+        }
+        match outcome {
+            Ok(elapsed) if elapsed <= self.audit_drain_probe_slow => {
+                debt.quick_probes = debt.quick_probes.saturating_add(1);
+            }
+            Ok(_) => debt.quick_probes = 0,
+            Err(kind) => {
+                debt.quick_probes = 0;
+                if kind.owes_drain() {
+                    debt.abandoned_probes = debt.abandoned_probes.saturating_add(1);
+                }
+            }
+        }
+        if debt.quick_probes >= AUDIT_DRAIN_QUICK_PROBES {
+            owed.remove(&endpoint);
+            return AuditDrainStatus::Clear;
+        }
+        if debt.abandoned_probes >= AUDIT_DRAIN_ABANDONED_PROBES {
+            return AuditDrainStatus::OperatorRequired;
+        }
+        AuditDrainStatus::Owed {
+            quick_probes: debt.quick_probes,
+            abandoned_probes: debt.abandoned_probes,
+        }
+    }
+
+    /// Clear an endpoint's drain debt after the operator has looked at the
+    /// Tally screen and, if it was stuck, restarted Tally. Only for a debt
+    /// that reached [`AuditDrainStatus::OperatorRequired`].
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
+    )]
+    pub(crate) fn clear_audit_drain_after_operator_check(&self, config: &TallyConfig) -> bool {
+        let Ok(endpoint) = EndpointKey::from_config(config) else {
+            return false;
+        };
+        let mut owed = audit_drain_lock(&self.audit_drain);
+        match owed.get(&endpoint) {
+            Some(debt) if debt.abandoned_probes >= AUDIT_DRAIN_ABANDONED_PROBES => {
+                owed.remove(&endpoint);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a settled debt is owed. A part still in flight is not a debt
+    /// yet: a later part waits behind it in the endpoint queue and is checked
+    /// again at dispatch ([`arm_audit_drain`]), where an in-flight entry left
+    /// by a dropped part also refuses.
+    fn audit_drain_owed(&self, endpoint: &EndpointKey) -> bool {
+        audit_drain_lock(&self.audit_drain)
+            .get(endpoint)
+            .is_some_and(|debt| !debt.in_flight)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_audit_drain_probe_slow(mut self, slow: std::time::Duration) -> Self {
+        self.audit_drain_probe_slow = slow;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_audit_drain_probe_stale(mut self, stale: std::time::Duration) -> Self {
+        self.audit_drain_probe_stale = stale;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_audit_drain_probe_interval(mut self, interval: std::time::Duration) -> Self {
+        self.audit_drain_probe_interval = interval;
+        self
+    }
+
     /// One approved mutation through the shared endpoint queue. The durable
     /// intent is committed after identity admission and before any import bytes.
     /// Unlike paired reads, an import must never be repeated automatically.
@@ -2184,12 +3295,7 @@ impl TallyRuntime {
         before_dispatch: F,
     ) -> anyhow::Result<ApprovedImportDispatch>
     where
-        A: Fn(
-            &str,
-            &str,
-            &str,
-            &bridge_tally_protocol::StandardLedgerCatalogBinding,
-        ) -> anyhow::Result<()>,
+        A: Fn(super::approved_import::QueuedAdmission<'_>) -> anyhow::Result<()>,
         F: Fn() -> Result<(), String>,
     {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -2233,6 +3339,29 @@ impl TallyRuntime {
                         .map_err(|error| {
                             with_read_evidence(error.into(), admission_evidence.clone())
                         })?;
+                    // Every loaded company's marks as the binding reads begin
+                    // (#239). The aim snapshot sent last before the POST must
+                    // show the target's master mark unchanged, or a master moved
+                    // after the catalogue re-read below. As for the aim read, a
+                    // failure is the typed refusal itself: nothing was sent.
+                    let binding_marks_xml = request.company_marks_request().into_xml();
+                    let binding_marks = client
+                        .post_xml_raw(binding_marks_xml.clone())
+                        .await
+                        .map_err(|error| {
+                            with_read_evidence(
+                                anyhow::Error::new(
+                                    super::approved_import::ApprovedImportAdmissionError::MastersUnconfirmed,
+                                )
+                                .context(format!("{error:#}")),
+                                admission_evidence.clone(),
+                            )
+                        })?;
+                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                        &binding_marks_xml,
+                        binding_marks.encoded_sha256.clone(),
+                        binding_marks.encoded_body.len(),
+                    ));
                     let (catalogue, catalogue_evidence) = fetch_admitted_agent_read(
                         &client,
                         &identity,
@@ -2241,6 +3370,30 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(catalogue_evidence);
+                    // A bank voucher's legs are classified from the ledgers'
+                    // parents (in the catalogue above) and the group tree, so
+                    // both are re-read here, inside the same identity brackets,
+                    // after approval and before the POST.
+                    let (groups, admission_evidence) = match request.group_collection_request() {
+                        Some(group_request) => {
+                            let (groups, group_evidence) =
+                                fetch_admitted_agent_read(&client, &identity, group_request)
+                                    .await
+                                    .map_err(|error| {
+                                        with_read_evidence(error, admission_evidence.clone())
+                                    })?;
+                            (Some(groups), admission_evidence.combine(group_evidence))
+                        }
+                        None => (None, admission_evidence),
+                    };
+                    // Every post re-reads the company's Currency masters in the
+                    // same brackets: it goes only into a book with exactly one
+                    // (bridge#551), and one can be added while approval waits.
+                    let (currencies, currency_evidence) =
+                        fetch_admitted_agent_read(&client, &identity, request.currency_request())
+                            .await
+                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(currency_evidence);
                     let (profile, mode_evidence) = observe_read_boundary(&client)
                         .await
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
@@ -2260,8 +3413,9 @@ impl TallyRuntime {
                         with_read_evidence(error.into(), admission_evidence.clone())
                     })?;
                     // Keep duplicate absence as the final source admission. The
-                    // helper retains its required identity/health brackets; no
-                    // unrelated profile or catalogue read follows this verdict.
+                    // helper retains its required identity/health brackets; only
+                    // the company-marks snapshot that aims the POST (#574)
+                    // follows this verdict, and no profile or catalogue read.
                     let (first_read, first_evidence) = fetch_admitted_agent_read(
                         &client,
                         &identity,
@@ -2278,12 +3432,40 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(second_evidence);
-                    recheck_admission(
-                        &first_read.body,
-                        &second_read.body,
-                        &catalogue.body,
-                        request.ledger_binding(),
-                    )
+                    // The last Tally request before the POST (#574): every
+                    // loaded company's change marks, one unpaired read. The
+                    // import names its company only by name, so the aim is
+                    // confirmed on this snapshot, and only local work (the
+                    // recheck and the durable intent) follows it.
+                    let marks_xml = request.company_marks_request().into_xml();
+                    // The typed refusal is the error itself, with the transport
+                    // failure as context: a context value is not reachable by
+                    // `downcast_ref` on the chain, and a failed read here means
+                    // nothing was sent, never an unknown outcome.
+                    let before_marks = client.post_xml_raw(marks_xml.clone()).await.map_err(|error| {
+                        with_read_evidence(
+                            anyhow::Error::new(
+                                super::approved_import::ApprovedImportAdmissionError::CompanyScopeUnconfirmed,
+                            )
+                            .context(format!("{error:#}")),
+                            admission_evidence.clone(),
+                        )
+                    })?;
+                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                        &marks_xml,
+                        before_marks.encoded_sha256.clone(),
+                        before_marks.encoded_body.len(),
+                    ));
+                    recheck_admission(super::approved_import::QueuedAdmission {
+                        first: &first_read.body,
+                        second: &second_read.body,
+                        catalogue: &catalogue.body,
+                        groups: groups.as_ref().map(|groups| groups.body.as_str()),
+                        currencies: &currencies.body,
+                        company_marks_at_binding: &binding_marks.text,
+                        company_marks: &before_marks.text,
+                        ledger_binding: request.ledger_binding(),
+                    })
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
@@ -2297,8 +3479,33 @@ impl TallyRuntime {
                         body,
                         response_evidence,
                         admission_evidence,
+                        company_marks_before: before_marks.text,
                     })
                 }
+            },
+        )
+        .await
+    }
+
+    /// Every loaded company's change marks, one unpaired read through the
+    /// endpoint queue (#574). Sent after a native post's response has been
+    /// journaled, so a slow or failed read can delay nothing that records the
+    /// post. The request is the same admitted marks request the POST was
+    /// aimed with.
+    pub(crate) async fn read_company_marks_once(
+        &self,
+        config: TallyConfig,
+        request: super::agent_read_request::AgentReadRequest,
+    ) -> anyhow::Result<String> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let xml = request.into_xml();
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let xml = xml.clone();
+                async move { client.post_xml_raw(xml).await.map(|marks| marks.text) }
             },
         )
         .await
@@ -2337,42 +3544,82 @@ impl TallyRuntime {
         .await
     }
 
-    /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
-    /// snapshot.
+    /// The desktop single-company outstandings read, under the INR assertion
+    /// the screen sends: settled by Tally's own currency read, or confirmed by
+    /// the operator for a book with one Currency master that Tally does not
+    /// name INR (bridge#604). It reads the masters itself, whatever the
+    /// screen read before, and refuses without reading any bill:
+    /// - several masters: the book can hold a foreign-currency ledger, whose
+    ///   bills the Bills reports return as plain amounts, indistinguishable
+    ///   from rupees;
+    /// - none (the probe read no master): several cannot be ruled out.
     ///
-    /// Four paired reads, bracketed by a GUID-pinned company extent probe
-    /// before and after. The extent probe is what binds identity: the native
-    /// report carries **no GUID anywhere**, so it cannot be identity-checked
-    /// from its own bytes. It does fail closed on an unloaded company
-    /// (`STATUS=0`, `LINEERROR: Could not set 'SVCurrentCompany'`, verified
-    /// live 2026-08-07), which the Collection path does not -- that path
-    /// silently substitutes whichever company is loaded.
-    ///
-    /// The bills reports alone are **not** complete: unallocated "on account"
-    /// balances carry no bill reference and appear in neither report. The
-    /// ledger snapshot recovers them exactly, as
-    /// `CLOSINGBALANCE - sum(BILLCL)` per party -- measured to 0.00 to the
-    /// paisa on every bill-carrying party of both a bill-dominated book (6 of
-    /// 10 parties exact, residual Rs 1,05,000) and an on-account-dominated one
-    /// (7 of 7 exact, residual Rs 2.79 crore against Rs 10.36 lakh of named
-    /// bills). Reporting the bills reports without that residual would show
-    /// 3.7% of exposure on the second book, with no error.
-    async fn fetch_outstandings_native(
+    /// With one master the assertion stands, bound to the extent the currency
+    /// read observed, as the agent read binds its witness. A book that changed
+    /// since that read is the same retryable partial as one that changed
+    /// during the outstandings read.
+    pub(crate) async fn fetch_operator_outstandings(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
-        self.fetch_outstandings_native_with_currency(
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        let currency = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        if let Some(reason) = operator_currency_refusal(currency.currency_count()) {
+            return Ok(partial_result(reason));
+        }
+        self.fetch_outstandings_under_currency_read(
             config,
             identity,
             as_of,
-            NativeOutstandingsCurrency::Operator(currency_assertion),
+            currency,
+            currency_assertion,
             ageing_anchor,
         )
         .await
+    }
+
+    /// Outstandings under a currency read the caller has already admitted:
+    /// the desktop read above, and the all-companies sweep, which admits INR
+    /// itself. The read's extent binds the assertion, and its single master's
+    /// NAME is the base each ledger's own currency is compared with
+    /// (bridge#551).
+    pub(crate) async fn fetch_outstandings_under_currency_read(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency: CompanyCurrencyRead,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        match self
+            .fetch_outstandings_native_with_currency(
+                config,
+                identity,
+                as_of,
+                currency.bind_party_ledger_master_assertion(currency_assertion),
+                ageing_anchor,
+            )
+            .await
+        {
+            Ok((result, _)) => Ok(result),
+            Err(error)
+                if matches!(
+                    error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<PairedReadValidationError>()),
+                    Some(PairedReadValidationError::CurrencyToMasterExtent)
+                ) =>
+            {
+                Ok(partial_result("book_changed_during_read"))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// MCP monetary reads require the observed currency's company extent;
@@ -2393,18 +3640,38 @@ impl TallyRuntime {
             config,
             identity,
             as_of,
-            NativeOutstandingsCurrency::Observed(currency_assertion),
+            currency_assertion,
             ageing_anchor,
         )
         .await
     }
 
+    /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
+    /// snapshot.
+    ///
+    /// Four paired reads, bracketed by a GUID-pinned company extent probe
+    /// before and after. The extent probe is what binds identity: the native
+    /// report carries **no GUID anywhere**, so it cannot be identity-checked
+    /// from its own bytes. It does fail closed on an unloaded company
+    /// (`STATUS=0`, `LINEERROR: Could not set 'SVCurrentCompany'`, verified
+    /// live 2026-08-07), which the Collection path does not -- that path
+    /// silently substitutes whichever company is loaded.
+    ///
+    /// The bills reports alone are **not** complete: unallocated "on account"
+    /// balances carry no bill reference and appear in neither report. The
+    /// ledger snapshot recovers them exactly, as
+    /// `CLOSINGBALANCE - sum(BILLCL)` per party -- measured to 0.00 to the
+    /// paisa on every bill-carrying party of both a bill-dominated book (6 of
+    /// 10 parties exact, residual Rs 1,05,000) and an on-account-dominated one
+    /// (7 of 7 exact, residual Rs 2.79 crore against Rs 10.36 lakh of named
+    /// bills). Reporting the bills reports without that residual would show
+    /// 3.7% of exposure on the second book, with no error.
     async fn fetch_outstandings_native_with_currency(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
-        currency_assertion: NativeOutstandingsCurrency,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -2427,12 +3694,15 @@ impl TallyRuntime {
                         let company = identity.display_name();
                         let expected_company_guid = identity.company_guid();
                         let extent = client.fetch_company_book_extent(&identity).await?;
-                        let currency_assertion = match &currency_assertion {
-                            NativeOutstandingsCurrency::Operator(assertion) => *assertion,
-                            NativeOutstandingsCurrency::Observed(witness) => {
-                                witness.require_opening_extent(&extent)?.assertion
-                            }
-                        };
+                        // The base each ledger's own currency is compared with
+                        // (bridge#551).
+                        let classify_against = currency_assertion.base.clone().map_or(
+                            LedgerClassification::BaseUnknown,
+                            LedgerClassification::Against,
+                        );
+                        let currency_assertion = currency_assertion
+                            .require_opening_extent(&extent)?
+                            .assertion;
                         if &as_of < extent.books_from() {
                             return Ok((
                                 partial_result("as_of_precedes_books_from"),
@@ -2578,14 +3848,28 @@ impl TallyRuntime {
                             parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
                         let payable_rows =
                             parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
-                        let ledger_rows = match admit_native_ledger_snapshot(
-                            parse_native_ledger_snapshot(&ledger_body).map_err(anyhow::Error::from),
+                        let snapshot = match classify_against {
+                            LedgerClassification::Against(base) => {
+                                parse_native_ledger_snapshot_classified(&ledger_body, &base)
+                            }
+                            LedgerClassification::BaseUnknown => {
+                                Err(NativeOutstandingsError::LedgerCurrency(
+                                    LedgerCurrencyRefusal::BaseUnmatched { ledger: None },
+                                ))
+                            }
+                        };
+                        let snapshot = match admit_native_ledger_snapshot(
+                            snapshot.map_err(anyhow::Error::from),
                         )? {
                             NativeLedgerSnapshotAdmission::Snapshot(snapshot) => snapshot,
                             NativeLedgerSnapshotAdmission::Partial(partial) => {
                                 return Ok((partial, read_evidence.clone()));
                             }
                         };
+                        if let Some(partial) = foreign_ledger_withholds_figures(&snapshot) {
+                            return Ok((partial, read_evidence.clone()));
+                        }
+                        let ledger_rows = snapshot.base;
                         let group_rows =
                             parse_native_group_snapshot(&group_body, expected_company_guid)?;
 
@@ -2733,62 +4017,6 @@ impl TallyRuntime {
         .await
     }
 
-    /// With `voucher-scan` off, the legacy scan cannot execute in any shipped
-    /// build (its only width-calibration constructors are `#[cfg(test)]` and
-    /// `#[cfg(feature = "live-calibration-harness")]`, and this crate's
-    /// default build has neither), so this simply *is* the native path: no
-    /// `Option`, no branch, no dead arm to compile in and never take.
-    #[cfg(not(feature = "voucher-scan"))]
-    pub async fn fetch_outstandings(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<OutstandingsLoadResult> {
-        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
-            .await
-            .map(|(result, _)| result)
-    }
-
-    #[cfg(not(feature = "voucher-scan"))]
-    pub async fn fetch_outstandings_with_evidence(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
-        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
-            .await
-    }
-
-    #[cfg(feature = "voucher-scan")]
-    pub async fn fetch_outstandings_with_evidence(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
-        if self.outstandings_segment_policy.is_none() {
-            return self
-                .fetch_outstandings_native(
-                    config,
-                    identity,
-                    as_of,
-                    currency_assertion,
-                    ageing_anchor,
-                )
-                .await;
-        }
-
-        anyhow::bail!("outstandings_read_evidence_unavailable")
-    }
-
     #[cfg(feature = "voucher-scan")]
     pub async fn fetch_outstandings(
         &self,
@@ -2815,15 +4043,14 @@ impl TallyRuntime {
         // Tally data was read".
         let Some(segment_policy) = self.outstandings_segment_policy else {
             return self
-                .fetch_outstandings_native(
+                .fetch_operator_outstandings(
                     config,
                     identity,
                     as_of,
                     currency_assertion,
                     ageing_anchor,
                 )
-                .await
-                .map(|(result, _)| result);
+                .await;
         };
         let Some(_coverage) = self.unallocated_balance_coverage.as_ref() else {
             return Ok(partial_result("unallocated_direct_postings_not_covered"));
@@ -3185,7 +4412,10 @@ impl TallyRuntime {
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    refuse_report_formula_in_education(
+                        bracket_verified_company_identity_observing_mode(&client, &identity)
+                            .await?,
+                    )?;
                     let observation = client
                         .qualify_selected_vouchers(
                             identity.display_name(),

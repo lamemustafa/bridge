@@ -1,6 +1,7 @@
 import React from "react";
 import { Search } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { formatCommandErrorMessage } from "./tally-command-error";
 
 type Company = { name: string; guid: string; company_number: string; books_from_yyyymmdd: string; canonical_origin: string };
 type Entry = { ledger: string; amount: string; is_deemed_positive: "Yes" | "No"; polarity_disagrees_with_amount?: boolean };
@@ -92,10 +93,5 @@ function formatDate(value: string) { return value.length === 8 ? `${value.slice(
 function formatDateInput(value?: string) { return value || "unavailable"; }
 function formatObservedAt(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "an unavailable time" : date.toLocaleString(); }
 function operatorMessage(cause: unknown) {
-  if (typeof cause === "string") return cause;
-  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") {
-    const remediation = "remediation" in cause && typeof cause.remediation === "string" ? cause.remediation : "";
-    return [cause.message, remediation].filter(Boolean).join(" ");
-  }
-  return "Bridge could not complete this ledger investigation.";
+  return formatCommandErrorMessage(cause, "Bridge could not complete this ledger investigation.");
 }

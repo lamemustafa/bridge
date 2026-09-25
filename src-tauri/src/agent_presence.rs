@@ -112,15 +112,12 @@ impl Server {
             let catalog = MasterCatalog::new(MasterClass::Ledger, &catalogue)
                 .map_err(|error| error.safe_reason_code().to_string())?;
 
-            let request = render_agent_vouchers(&company.name, &from, &to, None)?;
-            let (xml, evidence) = self.post_read(&identity, request).await?;
-            accumulate(&mut accumulated, evidence);
-            let rows = validate_then_filter_voucher_rows(
-                parse_agent_rows(&xml, identity.company_guid())?,
-                &from,
-                &to,
-                None,
-            )?;
+            let read = self
+                .read_entry_wildcard_window(&identity, &company.name, &from, &to, None)
+                .await?;
+            accumulate(&mut accumulated, read.all_evidence());
+            let source_marks = read.witness.as_ref().map(|witness| witness.marks);
+            let rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
 
             // The window is independent evidence about which ledgers exist.
             // A row posting to an unlisted ledger proves the first catalogue
@@ -154,7 +151,14 @@ impl Server {
             let mut reason = Some("nonempty_window_unqualified");
             if rows.is_empty() {
                 let (read_evidence, partial, corroboration) = self
-                    .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
+                    .corroborate_empty_voucher_read(
+                        &identity,
+                        &company.name,
+                        &from,
+                        &to,
+                        None,
+                        source_marks,
+                    )
                     .await?;
                 accumulate(&mut accumulated, read_evidence);
                 reason = corroboration;

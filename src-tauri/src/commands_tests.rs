@@ -43,10 +43,10 @@ use super::{
     company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
     first_calendar_day_canary_window, party_ledger_master_currency_admission_error,
     party_ledger_master_runtime_command_error, portable_export_file_name, reconcile_review_cleanup,
-    reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-    tally_runtime_command_error, verify_observed_company_tuple_from_companies,
-    write_unique_download, CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany,
-    SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
+    reviewed_probe_commitment_sha256, tally_command_error, tally_runtime_command_error,
+    verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
+    OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
+    VerifiedCompanyIdentity,
 };
 // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
 // path cannot be constructed portably. The import must carry the same gate as
@@ -54,8 +54,8 @@ use super::{
 #[cfg(unix)]
 use super::require_utf8_destination;
 use crate::tally::{
-    ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
-    SelectedReadObservation, TallyCompany, TallyLedger, TallyProbeResult, TallyProduct,
+    ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyCompany,
+    TallyLedger, TallyProbeResult, TallyProduct,
 };
 use bridge_tally_core::CapabilityProfile;
 use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
@@ -727,30 +727,30 @@ fn reviewed_probe_commitment_binds_time_company_name_and_full_company_list() {
     assert_ne!(first, different_review);
 }
 
+/// A compliance read refused on its size (#637) reaches the desktop as its own
+/// code, not as a validation failure worth retrying; any other source
+/// validation keeps the existing mapping. Both through the runtime's evidence
+/// wrapper, as the export receives them.
 #[test]
-fn selected_read_observation_distinguishes_empty_identity_evidence() {
-    let observation = |bucket| SelectedReadObservation {
-        request_sha256: "a".repeat(64),
-        decoded_response_sha256: "b".repeat(64),
-        response_encoding: "utf8",
-        result_bucket: bucket,
-    };
-    let empty = selected_read_observation(
-        "selected_ledger_read",
-        Ok(observation("empty_observed")),
-        false,
-        "selected_ledger_read_empty_observed",
-        "selected_ledger_read_non_empty_observed",
-    );
-    assert_eq!(empty.identity_evidence_state, "not_applicable_empty");
-    assert!(empty.record_count_verified);
+fn a_size_refused_party_master_export_names_the_size_not_a_validation_failure() {
+    use crate::tally::connection::PartyLedgerMasterSourceValidationError as Validation;
+    use crate::tally::runtime::{with_read_evidence, RuntimeReadEvidence};
+    let too_large = party_ledger_master_runtime_command_error(with_read_evidence(
+        anyhow::Error::new(Validation::TooLarge {
+            master_alter_id: 9_500,
+            estimated_bytes: 35_625_000,
+            budget_bytes: 16_000_000,
+        }),
+        RuntimeReadEvidence::empty(),
+    ));
+    assert_eq!(too_large.code, "ledger_masters_too_large");
+    assert_eq!(too_large.category, "Response size");
+    assert_eq!(too_large.retry, "after_change");
+    assert!(!too_large.local_state_changed);
 
-    let populated = selected_read_observation(
-        "selected_ledger_read",
-        Ok(observation("non_empty_observed")),
-        false,
-        "selected_ledger_read_empty_observed",
-        "selected_ledger_read_non_empty_observed",
-    );
-    assert_eq!(populated.identity_evidence_state, "verified");
+    let other = party_ledger_master_runtime_command_error(with_read_evidence(
+        anyhow::Error::new(Validation::OpeningBalancesDisagreed),
+        RuntimeReadEvidence::empty(),
+    ));
+    assert_eq!(other.code, "response_validation_failed");
 }

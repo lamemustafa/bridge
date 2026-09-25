@@ -1,0 +1,294 @@
+{
+ "comment": "ledger_scrutiny, written by an independent reviewer to catch what scrutiny.json does not: a debit cash leg is still a cash leg (X08); a large credit entry is large by its absolute amount (X09); a ledger in the masters with no TB row, a ledger under both expense groups, cash shares just either side of the rounding, a non-ASCII ledger and group with an unnumbered voucher after the period, and a cancelled voucher.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Frais généraux": "Indirect Expenses",
+  "Zeta": null,
+  "alpha": null,
+  "Ωmega": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "adv-cash"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "adv-susp"
+  },
+  {
+   "name": "Half",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "adv-half"
+  },
+  {
+   "name": "Half2",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "adv-half2"
+  },
+  {
+   "name": "PosCash",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "adv-poscash"
+  },
+  {
+   "name": "NoTB",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "adv-notb"
+  },
+  {
+   "name": "Both",
+   "chain": [
+    "Direct Expenses",
+    "Indirect Expenses"
+   ],
+   "guid": "adv-both"
+  },
+  {
+   "name": "Frais é",
+   "chain": [
+    "Frais généraux",
+    "Indirect Expenses"
+   ],
+   "guid": "adv-fraisé"
+  },
+  {
+   "name": "NegLarge",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "adv-neglarge"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Half",
+   "opening": 0,
+   "debit": 20000,
+   "credit": 0,
+   "closing": 20000
+  },
+  {
+   "ledger": "Half2",
+   "opening": 0,
+   "debit": 20000,
+   "credit": 0,
+   "closing": 20000
+  },
+  {
+   "ledger": "PosCash",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "Both",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "Frais é",
+   "opening": 0,
+   "debit": 1000000000,
+   "credit": 0,
+   "closing": 1000000000
+  },
+  {
+   "ledger": "NegLarge",
+   "opening": 0,
+   "debit": 0,
+   "credit": 6000000,
+   "closing": -6000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "h1",
+   "date": "2025-05-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Half",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ]
+  },
+  {
+   "guid": "h2",
+   "date": "2025-05-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Half",
+     19999
+    ],
+    [
+     "Suspense",
+     -19999
+    ]
+   ]
+  },
+  {
+   "guid": "h3",
+   "date": "2025-05-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Half2",
+     3
+    ],
+    [
+     "Cash",
+     -3
+    ]
+   ]
+  },
+  {
+   "guid": "h4",
+   "date": "2025-05-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Half2",
+     19997
+    ],
+    [
+     "Suspense",
+     -19997
+    ]
+   ]
+  },
+  {
+   "guid": "p1",
+   "date": "2025-05-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "PosCash",
+     100
+    ],
+    [
+     "Cash",
+     50
+    ],
+    [
+     "Suspense",
+     -150
+    ]
+   ]
+  },
+  {
+   "guid": "n1",
+   "date": "2025-05-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "NoTB",
+     500
+    ],
+    [
+     "Suspense",
+     -500
+    ]
+   ]
+  },
+  {
+   "guid": "b1",
+   "date": "2025-05-04",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Both",
+     100
+    ],
+    [
+     "Cash",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "f1",
+   "date": "2026-04-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Frais é",
+     100000
+    ],
+    [
+     "Suspense",
+     -100000
+    ]
+   ],
+   "number": ""
+  },
+  {
+   "guid": "g1",
+   "date": "2025-05-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "NegLarge",
+     -6000000
+    ],
+    [
+     "Suspense",
+     6000000
+    ]
+   ]
+  },
+  {
+   "guid": "x1",
+   "date": "2025-05-06",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Frais é",
+     7
+    ],
+    [
+     "Cash",
+     -7
+    ]
+   ],
+   "status": "cancelled"
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "tests": [
+  "ledger_scrutiny"
+ ]
+}

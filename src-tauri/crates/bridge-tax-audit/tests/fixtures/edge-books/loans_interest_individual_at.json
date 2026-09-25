@@ -1,0 +1,121 @@
+{
+ "comment": "loans_interest: an individual at the previous-year turnover limit: not a deductor.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Bank A",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_individual_at-000"
+  },
+  {
+   "name": "Interest on NBFC Loan",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_individual_at-001"
+  },
+  {
+   "name": "NBFC Loan",
+   "chain": [
+    "Unsecured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_individual_at-002"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank A",
+   "opening": 0,
+   "debit": 3000000,
+   "credit": 0,
+   "closing": 3000000
+  },
+  {
+   "ledger": "Interest on NBFC Loan",
+   "opening": 0,
+   "debit": 1200000,
+   "credit": 0,
+   "closing": 1200000
+  },
+  {
+   "ledger": "NBFC Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 4200000,
+   "closing": -4200000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "li-101",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "NBFC Loan",
+     -3000000
+    ],
+    [
+     "Bank A",
+     3000000
+    ]
+   ]
+  },
+  {
+   "guid": "li-102",
+   "date": "2025-06-30",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Interest on NBFC Loan",
+     1200000
+    ],
+    [
+     "NBFC Loan",
+     -1200000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "loans_interest"
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Bank A"
+ ],
+ "entity_type": "individual",
+ "previous_year_turnover_paise": 1000000000,
+ "loans": {
+  "NBFC Loan": {
+   "lender": "Invented Finance Ltd",
+   "lender_type": "nbfc",
+   "interest_ledger": "Interest on NBFC Loan"
+  }
+ }
+}

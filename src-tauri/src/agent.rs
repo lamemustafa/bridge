@@ -4,10 +4,11 @@
 use crate::local_files::directory::{ensure_private_directory, DirectoryAdmissionError};
 use crate::local_files::file as local_file;
 use crate::local_files::paths::default_data_dir;
+use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 
 #[path = "agent_import.rs"]
 mod agent_import;
-pub use crate::tally::approved_import::run_confirmation;
+pub use crate::tally::approved_import::{run_confirmation, run_review_confirmation};
 pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 
 // LAB-ONLY additive surface (audit-sprint 2026-09-14, Phase 3). Compiled only
@@ -70,6 +71,12 @@ use change_parse::*;
 #[path = "agent_read_profiles.rs"]
 mod read_profiles;
 use read_profiles::*;
+#[path = "agent_voucher_window.rs"]
+mod voucher_window;
+use voucher_window::*;
+#[path = "agent_voucher_type_class.rs"]
+mod voucher_type_class;
+use voucher_type_class::*;
 #[path = "agent_movement_math.rs"]
 mod movement_math;
 use movement_math::*;
@@ -380,6 +387,125 @@ struct ToolOutcome {
 struct ToolFailure {
     code: String,
     evidence: Option<Box<Evidence>>,
+    /// Why the operation named by `code` failed, when a typed, data-free cause
+    /// is known. `code` keeps naming what failed.
+    cause: Option<&'static str>,
+    /// How many rows a refused read returned against how many it was counted
+    /// to hold, when the refusal is that disagreement. Numbers only.
+    counts: Option<RowCounts>,
+    /// What each request of a window read cost up to its failure (#595), when
+    /// the failure came out of one. Data-free.
+    window_timings: Option<Box<WindowReadTimings>>,
+    /// The count and estimate a read was refused on before it was sent (#637).
+    /// Numbers only; boxed to keep the refusal small on every other path.
+    read_size: Option<Box<ReadSize>>,
+    /// Set when no response reached Tally-protocol parsing (#629). The refusal
+    /// then names the configured endpoint, so a wrong or reset port is visible
+    /// instead of reading as a Tally data problem.
+    unanswered: Option<Unanswered>,
+    /// The voucher types a type-filter refusal is about, so a caller can pick
+    /// one (bridge#625, bridge#664). Boxed to keep the refusal small on every
+    /// other path.
+    candidates: Option<Box<Candidates>>,
+}
+
+/// The types a refusal offers instead, and the name the caller asked for when
+/// that name matched none (bridge#664).
+#[derive(Debug)]
+struct Candidates {
+    requested: Option<String>,
+    items: Vec<Value>,
+}
+
+/// A compliance read refused on its size before the master request was sent:
+/// the counted ledgers, the estimated response and the budget it exceeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReadSize {
+    master_alter_id: u64,
+    estimated_bytes: u64,
+    budget_bytes: u64,
+}
+
+fn read_size_refusal(error: &anyhow::Error) -> Option<ReadSize> {
+    error.chain().find_map(|cause| {
+        match cause
+            .downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()?
+        {
+            crate::tally::connection::PartyLedgerMasterSourceValidationError::TooLarge {
+                master_alter_id,
+                estimated_bytes,
+                budget_bytes,
+            } => Some(ReadSize {
+                master_alter_id: *master_alter_id,
+                estimated_bytes: *estimated_bytes,
+                budget_bytes: *budget_bytes,
+            }),
+            _ => None,
+        }
+    })
+}
+
+/// Why a refused request produced no response Bridge could read, as a typed,
+/// data-free code (#629). Three kinds count:
+/// - nothing reached the endpoint or came back from it: the configured endpoint
+///   is invalid, the connection was not accepted, the request failed before
+///   any response, or the deadline passed;
+/// - the responder was rejected on its HTTP status or headers before any body
+///   was read: an error status, a content type that is not XML, or an
+///   unsupported content encoding;
+/// - Bridge's runtime held the request back and sent nothing.
+///
+/// A failure from a body or from Bridge's own limits is not counted, because it
+/// does not suggest the endpoint is wrong: an oversized request or response, a
+/// truncated or undecodable body, or a local policy or client fault. The
+/// transport match is exhaustive, so a new transport error needs a decision
+/// here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Unanswered(&'static str);
+
+fn unanswered_cause(error: &anyhow::Error) -> Option<Unanswered> {
+    use crate::tally::runtime::TallyRuntimeControlError as Control;
+    use bridge_tally_transport::TallyTransportError as Transport;
+    error.chain().find_map(|cause| {
+        if let Some(transport) = cause.downcast_ref::<Transport>() {
+            return match transport {
+                Transport::EndpointInvalid { .. }
+                | Transport::ConnectionFailed
+                | Transport::RequestTimedOut
+                | Transport::RequestFailed
+                | Transport::HttpStatus { .. }
+                | Transport::UnsupportedContentEncoding => Some(Unanswered(transport.safe_code())),
+                Transport::InvalidEncoding {
+                    code: code @ "response_content_type_unsupported",
+                } => Some(Unanswered(code)),
+                Transport::InvalidEncoding { .. }
+                | Transport::PolicyInvalid { .. }
+                | Transport::ClientInitializationFailed
+                | Transport::RequestTooLarge { .. }
+                | Transport::ResponseTooLarge { .. }
+                | Transport::ResponseTruncated
+                | Transport::ResponseReadFailed => None,
+            };
+        }
+        match cause.downcast_ref::<Control>()? {
+            Control::Cancelled => None,
+            Control::QueueDeadline => Some(Unanswered("endpoint_queue_deadline_exceeded")),
+            Control::CircuitCooldown => Some(Unanswered("endpoint_circuit_cooldown")),
+            Control::HalfOpenProbeInFlight => {
+                Some(Unanswered("endpoint_half_open_probe_in_flight"))
+            }
+            Control::EndpointSessionCapacity => {
+                Some(Unanswered("endpoint_session_capacity_reached"))
+            }
+        }
+    })
+}
+
+/// A read's returned rows against the rows a census counted for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowCounts {
+    returned: u64,
+    counted: u64,
 }
 
 impl From<String> for ToolFailure {
@@ -387,8 +513,43 @@ impl From<String> for ToolFailure {
         Self {
             code,
             evidence: None,
+            cause: None,
+            counts: None,
+            window_timings: None,
+            read_size: None,
+            unanswered: None,
+            candidates: None,
         }
     }
+}
+
+/// The first typed, data-free cause in a runtime error chain. Before this, an
+/// operation code such as `party_ledger_master_read_failed` was all a caller
+/// saw, whether the read refused on currency admission or on the ledger join.
+fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
+    error.chain().find_map(|cause| {
+        if let Some(refusal) =
+            cause.downcast_ref::<crate::tally::runtime::CurrencyAdmissionRefusal>()
+        {
+            return Some(refusal.0);
+        }
+        if let Some(validation) =
+            cause.downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()
+        {
+            return Some(validation.safe_code());
+        }
+        if cause.is::<crate::tally::connection::NativeReportPairDrift>() {
+            return Some(crate::tally::connection::NativeReportPairDrift::SAFE_CODE);
+        }
+        if let Some(catalogue) =
+            cause.downcast_ref::<bridge_tally_protocol::StandardLedgerCatalogError>()
+        {
+            return Some(catalogue.safe_code());
+        }
+        cause
+            .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
+            .map(crate::tally::connection::PairedReadValidationError::safe_code)
+    })
 }
 
 /// The generic agent read-failure code. It names no operation and covers parse
@@ -396,9 +557,142 @@ impl From<String> for ToolFailure {
 /// deadline is worth substituting for this one and for nothing else.
 const GENERIC_RUNTIME_READ_FAILURE: &str = "agent_runtime_read_failed";
 
+/// Response budget below which a refusal carries no remediation, so that the
+/// guidance can never displace the refusal code it explains. Well above the
+/// longest guidance string plus the refusal envelope, and far below the 200,000
+/// default, so only a caller that has deliberately asked for tiny responses
+/// gives it up.
+const REMEDIATION_MIN_RESPONSE_BUDGET: usize = 4_096;
+
+/// Guidance for refusals whose remedy a caller cannot derive from the code alone.
+///
+/// Deliberately sparse. A code without a documented, concrete next step returns
+/// `None` and its refusal keeps the general message, because filler guidance is
+/// worse than none: it reads as authoritative while sending the caller nowhere.
+/// This never softens a refusal — it only says what to do about one.
+fn refusal_remediation(code: &str) -> Option<&'static str> {
+    match code {
+        "empty_book_first_import" => Some(
+            "This company has never held a voucher, so Tally reports no voucher high-water \
+             mark and Bridge has no \"before\" to attribute an import against. Record one \
+             voucher in this company by another route and confirm it in Tally, then build \
+             this batch again.",
+        ),
+        // A cause, reached through the shared `party_ledger_master_read_failed`.
+        "ledger_masters_too_large" => Some(
+            "The company's master-alteration mark (`size.master_alter_id`) puts the estimated \
+             compliance response over Bridge's budget, so no ledger request was sent: a read \
+             of that size has left Tally's gateway unable to answer (#637). The mark is an \
+             UPPER BOUND on ledgers, since stock items, units and every other master raise it \
+             too, so a company with fewer ledgers may be refused. Call ledger_masters with \
+             fields=basic, which returns names, parents and opening balances without the \
+             compliance fields. Retrying this call refuses again. A `group` filter does not \
+             narrow the request, and a precise ledger count is pending (#668).",
+        ),
+        // Narration, reference and voucher number share this code for several
+        // unrelated text failures (empty, over the schema's character cap, a
+        // control character); the least discoverable of them is specific to
+        // the voucher number, so it is named here rather than left for a
+        // caller to reverse-engineer.
+        "voucher_text_invalid" => Some(
+            "The voucher number is empty, longer than the schema allows, holds a control \
+             character, or — the one cause that is not visible by inspection — begins a \
+             literal U+FFFD immediately followed by `#`, digits and `;` (for example \
+             U+FFFD#5;). Bridge's own agent readers rewrite exactly that sequence before \
+             parsing, so a voucher number carrying it would read back as different text and \
+             could never be confirmed as posted. Remove that sequence from the voucher number \
+             and resubmit; narration and reference may carry it freely.",
+        ),
+        // Same shared-code shape as voucher_text_invalid, for a ledger name
+        // instead of the voucher number.
+        "voucher_entry_invalid" => Some(
+            "A ledger name is empty, longer than the schema allows, holds a control character, \
+             pairs with an amount that is not a valid two-decimal figure, or — the one cause \
+             that is not visible by inspection — begins a literal U+FFFD immediately followed \
+             by `#`, digits and `;` (for example U+FFFD#5;). Bridge's own agent readers rewrite \
+             exactly that sequence before parsing, so a ledger name carrying it would read back \
+             as different text and could never be confirmed as posted. Rename the ledger to \
+             drop that sequence and resubmit.",
+        ),
+        // A product limit of the bounded window read (protocol reference §11c):
+        // the census walks the book's AlterIDs whatever the window, so the
+        // obvious retry — a shorter window — cannot succeed, and saying so is
+        // the whole point of naming a step.
+        "voucher_window_book_too_large" => Some(
+            "This company's voucher history is too large for Bridge to count before reading \
+             it in bounded requests: its voucher high-water mark is above about 2.1 million. \
+             A shorter date window will not help, because the count covers the whole book. \
+             Read this company with Tally's own reports, or split the company in Tally so \
+             that each part's books are smaller.",
+        ),
+        "import_post_window_not_bounded" => Some(
+            "Before posting, Bridge checks the batch's whole date range in one request, and \
+             this range holds too many vouchers for one request to stay within its bound. \
+             Build the batch again over fewer days, then post that batch.",
+        ),
+        _ => None,
+    }
+}
+
+/// Whether a refusal code is one of the two that mean "this window asked for
+/// more than one read can carry".
+///
+/// The literals are pinned to `TallyTransportError::safe_code()` by
+/// `the_oversized_window_codes_match_the_transport_vocabulary`, so renaming a
+/// transport code cannot silently stop the splitter recognising it — which would
+/// turn a recoverable oversized window back into a hard failure.
+pub(super) fn is_window_too_large_code(code: &str) -> bool {
+    matches!(
+        code,
+        "request_deadline_exceeded" | "response_size_limit_exceeded"
+    )
+}
+
+/// Name the transport failures that mean "this window asked for more than one
+/// read can carry", and nothing else.
+///
+/// Two limits produce that, and which one trips first depends on the book: the
+/// 20s per-leg deadline (`DEFAULT_REQUEST_TIMEOUT`) and the 32MB transport
+/// response cap (`XML_RESPONSE_MAX_BYTES`). Measured on one licensed book, a
+/// month of vouchers took 7.6s and 11.8MB while a quarter took 25.7s and 41.2MB
+/// — over both at once — so neither limit alone predicts the answer and a caller
+/// that splits must react to either.
+///
+/// Returns the transport's own `safe_code()` so the vocabulary is not duplicated.
+pub(super) fn window_too_large_code(error: &anyhow::Error) -> Option<&'static str> {
+    error.chain().find_map(|cause| {
+        match cause.downcast_ref::<bridge_tally_transport::TallyTransportError>() {
+            Some(
+                failure @ (bridge_tally_transport::TallyTransportError::RequestTimedOut
+                | bridge_tally_transport::TallyTransportError::ResponseTooLarge { .. }),
+            ) => Some(failure.safe_code()),
+            _ => None,
+        }
+    })
+}
+
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
-        let code = if let Some(error) = error.chain().find_map(|cause| {
+        // Only the catch-all is eligible for substitution; a code that already
+        // names its operation keeps it. Bound here rather than inline because
+        // this edition has no let-chains.
+        let oversized = if code == GENERIC_RUNTIME_READ_FAILURE {
+            window_too_large_code(&error)
+        } else {
+            None
+        };
+        // A withdrawn call names the withdrawal, whatever operation it stopped.
+        let code = if error
+            .chain()
+            .any(|cause| cause.is::<crate::tally::runtime::ToolCancelled>())
+        {
+            "request_cancelled"
+        } else if error
+            .chain()
+            .any(|cause| cause.is::<crate::tally::runtime::EducationBoundaryRefusal>())
+        {
+            "window_part_boundary_unsupported_in_education"
+        } else if let Some(error) = error.chain().find_map(|cause| {
             cause.downcast_ref::<crate::tally::runtime::TrialBalanceReadError>()
         }) {
             error.safe_code()
@@ -431,27 +725,23 @@ impl ToolFailure {
             )
         }) {
             "financial_read_profile_unqualified"
-        } else if code == GENERIC_RUNTIME_READ_FAILURE
-            && error.chain().any(|cause| {
-                matches!(
-                    cause.downcast_ref::<bridge_tally_transport::TallyTransportError>(),
-                    Some(bridge_tally_transport::TallyTransportError::RequestTimedOut)
-                )
-            })
-        {
-            // A deadline is the one transport failure a caller can act on without
-            // reading Bridge's source: narrow the window or the batch. It used to
-            // fall through to `agent_runtime_read_failed`, a catch-all that also
-            // covers parse failures and application rejections, so a timeout was
-            // indistinguishable from them in a log.
+        } else if let Some(oversized) = oversized {
+            // A deadline or an oversized response are the transport failures a
+            // caller can act on without reading Bridge's source: both mean the
+            // window asked for more than one read can carry, and they differ only
+            // in which limit tripped first — the 20s per-leg deadline or the 32MB
+            // transport response cap. They used to fall through to
+            // `agent_runtime_read_failed`, a catch-all that also covers parse
+            // failures and application rejections, so neither was distinguishable
+            // from them in a log.
             //
             // Scoped to that catch-all ON PURPOSE. Every other call site passes a
             // code that already names the operation — `import_mode_probe_failed`,
             // `ledger_movement_read_failed` — and replacing those would tell the
             // caller why it failed while taking away what failed. That is a net
             // loss of information, and an existing test caught it: naming the
-            // deadline is only an improvement where the code named nothing.
-            bridge_tally_transport::TallyTransportError::RequestTimedOut.safe_code()
+            // cause is only an improvement where the code named nothing.
+            oversized
         } else {
             code
         };
@@ -466,9 +756,16 @@ impl ToolFailure {
                 })
                 .map(|failure| Box::new(evidence_from_runtime_read(failure.evidence.clone())))
         });
+        let cause = runtime_refusal_cause(&error).filter(|cause| *cause != code);
         Self {
             code: code.to_string(),
             evidence,
+            cause,
+            counts: None,
+            window_timings: None,
+            read_size: read_size_refusal(&error).map(Box::new),
+            unanswered: unanswered_cause(&error),
+            candidates: None,
         }
     }
 
@@ -499,8 +796,21 @@ impl Server {
     async fn post_read(
         &self,
         identity: &VerifiedCompanyIdentity,
-        request: String,
+        request: ReadRequest,
     ) -> Result<(String, Evidence), ToolFailure> {
+        self.post_read_observing_boundary(identity, request)
+            .await
+            .map(|(body, evidence, _)| (body, evidence))
+    }
+
+    /// As [`Self::post_read`], also returning the date-boundary profile the
+    /// read's own identity bracket observed. It costs no request.
+    async fn post_read_observing_boundary(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        request: ReadRequest,
+    ) -> Result<(String, Evidence, DateBoundaryProfile), ToolFailure> {
+        let request = request.into_xml();
         let admitted = crate::tally::agent_read_request::AgentReadRequest::parse(request.clone())
             .map_err(|error| error.to_string())?;
         let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
@@ -522,7 +832,7 @@ impl Server {
             duration_ms: None,
             reason_code: None,
         };
-        Ok((response.body, evidence))
+        Ok((response.body, evidence, response.boundary_profile))
     }
 
     #[cfg(test)]
@@ -557,7 +867,16 @@ impl Server {
             truncated,
         } = match result {
             Ok(outcome) => outcome,
-            Err(ToolFailure { code, evidence }) => {
+            Err(ToolFailure {
+                code,
+                evidence,
+                cause,
+                counts,
+                window_timings,
+                read_size,
+                unanswered,
+                candidates,
+            }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
                     response_sha256: sha256_hex(code.as_bytes()),
@@ -569,8 +888,98 @@ impl Server {
                 });
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
+                let mut error = json!({"code": code, "message": "Bridge refused this operation."});
+                // Additive: `code` and `message` keep their existing shape for
+                // every refusal, and `remediation` appears only for the codes
+                // that have a concrete next step to name.
+                //
+                // Never trade the code for the guidance. `max_bytes` is settable
+                // down to 256, and `enforce_response_byte_cap` has no page shape
+                // to trim inside an error object — it replaces the entire refusal
+                // with `agent_response_too_large`. So at a deliberately small cap
+                // these ~250 extra bytes could cost the caller the one thing it
+                // most needs, leaving it worse off than before this field existed.
+                // Guidance is a convenience; the refusal code is not.
+                // A shared operation code can still have a cause with its own
+                // next step (#637), so the cause is consulted when the code has
+                // none.
+                if let Some(remediation) =
+                    refusal_remediation(&code).or_else(|| cause.and_then(refusal_remediation))
+                {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["remediation"] = json!(remediation);
+                    }
+                }
+                // A typed validation cause wins; otherwise a request that no
+                // response answered names why, unless the code already says it.
+                let cause = cause.or_else(|| {
+                    unanswered
+                        .map(|unanswered| unanswered.0)
+                        .filter(|unanswered| *unanswered != code)
+                });
+                // Same budget rule as `remediation`: at a deliberately small cap
+                // the refusal code must survive, so the cause is only added
+                // where there is room for it.
+                if let Some(cause) = cause {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["cause"] = json!(cause);
+                    }
+                }
+                if let Some(size) = read_size {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["size"] = json!({
+                            "master_alter_id": size.master_alter_id,
+                            "estimated_bytes": size.estimated_bytes,
+                            "budget_bytes": size.budget_bytes,
+                        });
+                    }
+                }
+                // #629: the endpoint that was tried, so a wrong or reset port
+                // is visible. Only in the refusal payload, never in evidence,
+                // and under the same budget rule as the cause.
+                if unanswered.is_some()
+                    && self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET
+                {
+                    if let Ok(endpoint) = endpoint_origin(&self.settings.endpoint) {
+                        error["endpoint"] = json!(endpoint);
+                    }
+                }
+                // The list grows with the window, so it is kept only within a
+                // quarter of the response budget, like `window` below: the
+                // refusal code must survive the byte cap.
+                if let Some(candidates) = candidates {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        if let Some(requested) = &candidates.requested {
+                            error["requested"] = json!(requested);
+                        }
+                        let fields =
+                            candidate_fields(&candidates.items, self.settings.max_bytes / 4);
+                        for (key, value) in fields {
+                            error[key] = value;
+                        }
+                    }
+                }
+                if let Some(counts) = counts {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["counts"] =
+                            json!({"returned": counts.returned, "counted": counts.counted});
+                    }
+                }
+                // Same budget rule again, and the per-part list, which grows
+                // with the window, is given up first: it is kept only while it
+                // takes at most a quarter of the response budget. Only the
+                // `vouchers` tool reports it (#595); the other tools that read a
+                // window keep their refusal shape.
+                if let Some(timings) = window_timings {
+                    if name == "vouchers"
+                        && self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET
+                    {
+                        error["window"] =
+                            window_timings_within(&timings, self.settings.max_bytes / 4);
+                    }
+                }
                 ToolOutcome {
-                    payload: json!({"error": {"code": code, "message": "Bridge refused this operation."}}),
+                    payload: json!({ "error": error }),
                     evidence,
                     company_guid: args
                         .get("company_guid")
@@ -674,7 +1083,9 @@ impl Server {
         if matches!(name, "build_import_xml" | "parse_bank_statement") {
             self.import_enabled()?;
         }
-        if name == "post_import" && !self.settings.writes_enabled {
+        if matches!(name, "post_import" | "acknowledge_post_review")
+            && !self.settings.writes_enabled
+        {
             return Err("import_posting_disabled".to_string().into());
         }
         #[cfg(feature = "lab-writes")]
@@ -711,6 +1122,7 @@ impl Server {
             "voucher_schema" => self.voucher_schema().map_err(Into::into),
             "validate_masters" => self.validate_masters(args).await,
             "post_import" => self.post_import(args).await,
+            "acknowledge_post_review" => self.acknowledge_post_review(args).await,
             "build_import_xml" => {
                 self.import_enabled()?;
                 self.build_import_xml(args).await
@@ -1137,6 +1549,25 @@ fn add_decimal(left: &str, right: &str) -> Result<String, String> {
     left.checked_add(&right)
         .map(|value| value.as_str().to_string())
         .map_err(|_| "voucher_amount_invalid".to_string())
+}
+
+/// A refusal's `candidates`: the longest prefix whose serialised size fits
+/// `budget`, the full count, and whether any were left out.
+fn candidate_fields(candidates: &[Value], budget: usize) -> [(&'static str, Value); 3] {
+    let mut used = 0;
+    let kept = candidates
+        .iter()
+        .take_while(|candidate| {
+            used += candidate.to_string().len();
+            used <= budget
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    [
+        ("candidates_total", json!(candidates.len())),
+        ("candidates_truncated", json!(kept.len() < candidates.len())),
+        ("candidates", json!(kept)),
+    ]
 }
 
 fn redact_tool_response(tool: &str, value: Value, redaction: Redaction) -> Value {

@@ -2,7 +2,7 @@ use std::{
     io::{self, Read, Write},
     net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
     thread::{self, JoinHandle},
@@ -20,7 +20,9 @@ const ACCEPT_DEADLINE: Duration = Duration::from_secs(30);
 const REQUEST_READ_DEADLINE: Duration = Duration::from_secs(30);
 const REQUEST_READ_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_REQUEST_BYTES: usize = 128 * 1024;
-pub const MAX_SEQUENCE_REQUESTS: usize = 64;
+/// A divided agent read replayed end to end (bridge#520) is about ninety legs:
+/// six per paired read, plus the identity and ledger legs around them.
+pub const MAX_SEQUENCE_REQUESTS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedRequest {
@@ -57,6 +59,7 @@ pub struct Simulator {
 pub struct SequenceSimulator {
     address: SocketAddr,
     cancelled: Arc<AtomicBool>,
+    received: Arc<AtomicUsize>,
     worker: Option<JoinHandle<io::Result<Vec<ObservedRequest>>>>,
 }
 
@@ -119,12 +122,14 @@ impl SequenceSimulator {
         debug_assert!(address.ip().is_loopback());
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
+        let received = Arc::new(AtomicUsize::new(0));
+        let worker_received = Arc::clone(&received);
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("tally-protocol-sequence-simulator".to_owned())
             .spawn(move || {
                 let _ = ready_tx.send(());
-                serve_sequence(listener, plans, worker_cancelled)
+                serve_sequence(listener, plans, worker_cancelled, worker_received)
             })?;
         ready_rx
             .recv_timeout(Duration::from_secs(1))
@@ -132,12 +137,21 @@ impl SequenceSimulator {
         Ok(Self {
             address,
             cancelled,
+            received,
             worker: Some(worker),
         })
     }
 
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// How many requests have been read so far, while the sequence is still
+    /// running. A request counts once it has been read in full, before its
+    /// response is delayed or sent, so a test can act while a slow response
+    /// is still held.
+    pub fn received(&self) -> usize {
+        self.received.load(Ordering::Acquire)
     }
 
     pub fn cancel(&self) {
@@ -187,20 +201,21 @@ fn serve_once(
     plan: ScenarioPlan,
     cancelled: Arc<AtomicBool>,
 ) -> io::Result<ObservedRequest> {
-    serve_request(&listener, plan, &cancelled)
+    serve_request(&listener, plan, &cancelled, &AtomicUsize::new(0))
 }
 
 fn serve_sequence(
     listener: TcpListener,
     plans: Vec<ScenarioPlan>,
     cancelled: Arc<AtomicBool>,
+    received: Arc<AtomicUsize>,
 ) -> io::Result<Vec<ObservedRequest>> {
     let mut observed = Vec::with_capacity(plans.len());
     for plan in plans {
         if cancelled.load(Ordering::Acquire) {
             break;
         }
-        observed.push(serve_request(&listener, plan, &cancelled)?);
+        observed.push(serve_request(&listener, plan, &cancelled, &received)?);
     }
     Ok(observed)
 }
@@ -209,6 +224,7 @@ fn serve_request(
     listener: &TcpListener,
     plan: ScenarioPlan,
     cancelled: &AtomicBool,
+    received: &AtomicUsize,
 ) -> io::Result<ObservedRequest> {
     let started = Instant::now();
     let (mut stream, request) = loop {
@@ -226,9 +242,29 @@ fn serve_request(
             }
             Err(error) => return Err(error),
         };
-        stream.set_nodelay(true)?;
-        stream.set_read_timeout(Some(REQUEST_READ_POLL_INTERVAL))?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        // The listener is non-blocking so that accept can poll; on macOS and the
+        // BSDs an accepted socket inherits that. A non-blocking `write_all` of a
+        // body larger than the loopback send buffer (about 256 KiB there) then
+        // fails with `WouldBlock`, which reads as a client that stopped reading,
+        // and the response was cut short. Linux does not inherit the flag.
+        // A client that gave up while this responder was busy may already have
+        // reset the connection, and on macOS configuring such a socket fails
+        // (EINVAL). It carries no request for this plan: wait for the next.
+        match stream
+            .set_nonblocking(false)
+            .and_then(|()| stream.set_nodelay(true))
+            .and_then(|()| stream.set_read_timeout(Some(REQUEST_READ_POLL_INTERVAL)))
+            .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(2))))
+        {
+            Ok(()) => {}
+            Err(error)
+                if client_stopped_reading(&error)
+                    || error.kind() == io::ErrorKind::InvalidInput =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
         let remaining_read_deadline = REQUEST_READ_DEADLINE
             .checked_sub(started.elapsed())
             .filter(|deadline| !deadline.is_zero())
@@ -248,9 +284,19 @@ fn serve_request(
             {
                 continue;
             }
+            // A client that gave up before its request was read (its deadline
+            // fired while this responder was still busy with an earlier one)
+            // resets the connection. It sent nothing this plan could answer, so
+            // wait for the next request rather than ending the whole sequence.
+            Err(error) if client_stopped_reading(&error) && !cancelled.load(Ordering::Acquire) => {
+                continue;
+            }
             Err(error) => return Err(error),
         }
     };
+    if !request.is_empty() {
+        received.fetch_add(1, Ordering::AcqRel);
+    }
     let (method, path) = request_line(&request);
     let request_body = request_body(&request);
     let mut observed = ObservedRequest {
@@ -274,8 +320,10 @@ fn serve_request(
     match plan.delivery {
         Delivery::Immediate => {
             observed.request_processed = true;
-            stream.write_all(headers.as_bytes())?;
-            stream.flush()?;
+            if !write_headers(&mut stream, &headers)? {
+                observed.client_stopped_reading_response = true;
+                return Ok(observed);
+            }
             record_response_write_outcome(
                 &mut observed,
                 write_complete_response(&mut stream, &body, plan.framing, None, cancelled)?,
@@ -287,8 +335,10 @@ fn serve_request(
                 return Ok(observed);
             }
             observed.request_processed = true;
-            stream.write_all(headers.as_bytes())?;
-            stream.flush()?;
+            if !write_headers(&mut stream, &headers)? {
+                observed.client_stopped_reading_response = true;
+                return Ok(observed);
+            }
             record_response_write_outcome(
                 &mut observed,
                 write_complete_response(&mut stream, &body, plan.framing, None, cancelled)?,
@@ -302,8 +352,10 @@ fn serve_request(
                 ));
             }
             observed.request_processed = true;
-            stream.write_all(headers.as_bytes())?;
-            stream.flush()?;
+            if !write_headers(&mut stream, &headers)? {
+                observed.client_stopped_reading_response = true;
+                return Ok(observed);
+            }
             record_response_write_outcome(
                 &mut observed,
                 write_complete_response(
@@ -316,8 +368,10 @@ fn serve_request(
             );
         }
         Delivery::ResetBeforeBody => {
-            stream.write_all(headers.as_bytes())?;
-            stream.flush()?;
+            if !write_headers(&mut stream, &headers)? {
+                observed.client_stopped_reading_response = true;
+                return Ok(observed);
+            }
             // A declared body length with no body exercises truncated HTTP delivery.
         }
         Delivery::ResetAfterRequestProcessed { delay } => {
@@ -329,6 +383,21 @@ fn serve_request(
         }
     }
     Ok(observed)
+}
+
+/// Writes the response head. A client that has already gone away (its
+/// deadline fired while a scripted delay held the response) is recorded, as
+/// for the body, rather than ending the whole sequence: an unhandled error here
+/// dropped the listener, so every later request in the sequence was refused.
+fn write_headers(stream: &mut TcpStream, headers: &str) -> io::Result<bool> {
+    match stream
+        .write_all(headers.as_bytes())
+        .and_then(|()| stream.flush())
+    {
+        Ok(()) => Ok(true),
+        Err(error) if client_stopped_reading(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn record_response_write_outcome(observed: &mut ObservedRequest, outcome: ResponseWriteOutcome) {
@@ -379,6 +448,9 @@ fn client_stopped_reading(error: &io::Error) -> bool {
         io::ErrorKind::BrokenPipe
             | io::ErrorKind::ConnectionAborted
             | io::ErrorKind::ConnectionReset
+            // macOS reports a read, write or shutdown on a socket whose client
+            // has already gone as ENOTCONN.
+            | io::ErrorKind::NotConnected
             | io::ErrorKind::TimedOut
             | io::ErrorKind::WouldBlock
     )

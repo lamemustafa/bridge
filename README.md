@@ -38,11 +38,19 @@ reading. When writing is off, the write tools do not merely refuse — they are
 **absent from the tool list entirely**, so an assistant cannot see that they
 exist.
 
-- **The Claude Desktop extension turns Journal posting on by default.** It shows
-  in the extension settings as **Allow Journal posting**. Every posting still
-  waits for your approval in a separate Bridge dialog, and the assistant cannot
-  approve it — but the tools are there from the moment you install. Turn that
-  setting off if you want a read-only connector.
+- **The Claude Desktop extension turns voucher posting off by default.** Two
+  known limits in posting remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher
+  ([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
+  delete or roll back a voucher it has posted, so a wrong post must be
+  corrected by hand in Tally
+  ([#579](https://github.com/lamemustafa/bridge/issues/579)). Turning on
+  **Allow voucher posting (Journal, Payment, Receipt, Contra)** in the extension
+  settings adds `post_import`, which posts one saved voucher of those types; every
+  posting still waits for your approval in a separate Bridge dialog. Leave it
+  off unless you accept those risks. Voucher file preparation and bank-statement
+  parsing, which write nothing to Tally, stay available with the setting off.
+  If you installed an earlier version, check the setting: an earlier default
+  may still be saved as on.
 - **A source build turns writing off by default.** Preparing a file needs
   `BRIDGE_AGENT_ENABLE_IMPORT`; posting additionally needs
   `BRIDGE_AGENT_ENABLE_WRITES`, which grants both.

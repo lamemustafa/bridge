@@ -30,6 +30,16 @@ use thiserror::Error;
 #[cfg(feature = "bills-native-outstandings-probe-runner")]
 pub mod native_outstandings_qualification;
 
+/// What an operator is told when Education mode stops a read: Bridge's ledger
+/// and voucher profiles are custom reports whose TDL Education answers with a
+/// blocking "Bad formula!" dialog on the Tally screen, so they are refused
+/// before sending (`education_report_family_unsupported`, bridge#45).
+pub const EDUCATION_REPORT_FAMILY_NOTICE: &str =
+    "Education mode: Bridge's ledger and voucher reads \
+are refused before sending (education_report_family_unsupported). Their report TDL raises a \
+blocking \"Bad formula!\" dialog on the Tally screen in Education (bridge#45). Qualifying them in \
+Education waits for the Collection-based reads (Phase 2 Unit A); use a licensed Tally meanwhile.";
+
 const CONFIG_SCHEMA_VERSION: u16 = 1;
 const FIXTURE_SCHEMA_VERSION: u16 = 1;
 const MAX_LOCAL_INPUT_BYTES: usize = 64 * 1024;
@@ -220,6 +230,12 @@ impl LiveRunInputs {
         self.config.no_customer_data_attested
     }
 
+    /// [`EDUCATION_REPORT_FAMILY_NOTICE`] when this run is configured for
+    /// Education, whose ledger and voucher reads are refused before sending.
+    pub fn education_notice(&self) -> Option<&'static str> {
+        (self.config.mode == TallyMode::Education).then_some(EDUCATION_REPORT_FAMILY_NOTICE)
+    }
+
     pub fn validate_receipt_output(
         &self,
         output_path: &Path,
@@ -260,11 +276,30 @@ impl LiveRunInputs {
             &self.repository_root,
             &self.metadata.compatibility_surface_sha256,
         )?;
-        let transport =
-            ReadOnlyTransport::new(read_loopback(self.config.endpoint_family), self.config.port)
-                .map_err(|_| error("endpoint_configuration_invalid"))?;
+        let transport = read_transport(&self.config)?;
         execute_with_transport(&self.config, &self.fixture, &self.metadata, &transport).await
     }
+}
+
+/// The run's read transport. For a run configured for Education, it refuses
+/// the ledger and voucher profiles before sending: their report TDL raised a
+/// blocking dialog on an Education Tally's screen (bridge#45). The receipt then
+/// records the ledger step as failed with `education_report_family_unsupported`,
+/// and the voucher steps as not attempted.
+///
+/// The mode is the configuration's, not observed: this tool's company read
+/// (`CompanyListV1`) carries no `EDUMODE`, so a run configured as `Licensed`
+/// against an endpoint that is actually in Education is not protected. A ledger
+/// or voucher read in Education waits for the Collection-based profiles
+/// (Phase 2 Unit A).
+fn read_transport(config: &LiveRunConfig) -> Result<ReadOnlyTransport, LiveReadError> {
+    let transport = ReadOnlyTransport::new(read_loopback(config.endpoint_family), config.port)
+        .map_err(|_| error("endpoint_configuration_invalid"))?;
+    Ok(if config.mode == TallyMode::Education {
+        transport.education_restricted()
+    } else {
+        transport
+    })
 }
 
 pub fn confirm_network_challenge(

@@ -65,6 +65,18 @@ pub(crate) async fn selected_voucher_operation_for_verified(
     } = scope;
     let mut accumulated = initial_evidence;
     let outcome = async {
+        // Parsed before any read, so a conflicting request costs nothing.
+        let type_selector = VoucherTypeSelector::from_args(args)?;
+        // A type GUID that is not this company's cannot name any of its
+        // types: refused rather than answered with an empty selection.
+        if let Some(VoucherTypeSelector::Guid(type_guid)) = &type_selector {
+            if !bridge_tally_protocol::master_guid_belongs_to_company(
+                type_guid,
+                identity.company_guid(),
+            ) {
+                return Err(ToolFailure::from("voucher_type_guid_foreign".to_string()));
+            }
+        }
         let requested_ledger = optional_string(args, "ledger")?;
         let selected_catalogue = if let Some(requested) = requested_ledger {
             let (ledgers, catalogue_evidence) =
@@ -78,16 +90,27 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         } else {
             None
         };
-        let request = render_agent_vouchers(&company.name, &from, &to, None)?;
-        let (xml, evidence) = server.post_read(&identity, request).await?;
-        accumulate_evidence(&mut accumulated, evidence);
-        let mut rows =
-            validate_then_filter_voucher_rows(parse_agent_rows(&xml, identity.company_guid())?, &from, &to, None)?;
+        // A type filter asks Tally to resolve each row's type in the same
+        // response (bridge#625); every other call sends the request unchanged.
+        let shape = if type_selector.is_some() {
+            VoucherReadShape::ClassEntryWildcard
+        } else {
+            VoucherReadShape::EntryWildcard
+        };
+        let read = server
+            .read_entry_window_shaped(&identity, &company.name, &from, &to, None, shape)
+            .await?;
+        accumulate_evidence(&mut accumulated, read.all_evidence());
+        // What each request of the window read cost (#595); the empty-window
+        // corroboration below is a read of its own and is not counted here.
+        let window = serde_json::to_value(&read.timings).unwrap_or(Value::Null);
+        let source_marks = read.witness.as_ref().map(|witness| witness.marks);
+        let mut rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
         let mut result_state = "complete";
         let mut corroboration_reason = None;
         if rows.is_empty() {
             let (read_evidence, partial, reason) = server
-                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
+                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None, source_marks)
                 .await?;
             accumulate_evidence(&mut accumulated, read_evidence);
             if partial {
@@ -117,10 +140,39 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             }
             rows = filter_voucher_rows_for_ledger(rows, &ledger);
         }
-        if let Some(kind) = optional_string(args, "voucher_type")? {
-            rows.retain(|row| {
-                row.get("voucher_type").and_then(Value::as_str) == Some(kind.as_str())
-            });
+        let mut voucher_types = None;
+        if let Some(selector) = &type_selector {
+            let selection = select_voucher_rows(rows, selector).map_err(|refusal| {
+                let mut failure = ToolFailure::from(refusal.code.to_string());
+                if !refusal.candidates.is_empty() {
+                    failure.candidates = Some(Box::new(Candidates {
+                        requested: None,
+                        items: refusal.candidates.iter().map(WindowVoucherType::json).collect(),
+                    }));
+                }
+                failure
+            })?;
+            // A name that selected nothing may name no type at all (a typo):
+            // only then, one read of the book's voucher types tells a
+            // confident zero from an unknown name (bridge#664).
+            if let (VoucherTypeSelector::Name(name), true) = (selector, selection.rows.is_empty()) {
+                let (book, catalogue_evidence) =
+                    server.read_voucher_type_catalogue(&identity, &company.name).await?;
+                accumulate_evidence(&mut accumulated, catalogue_evidence);
+                if let Some(nearest) = unknown_voucher_type(name, &book) {
+                    let mut failure = ToolFailure::from("unknown_voucher_type".to_string());
+                    failure.candidates = Some(Box::new(Candidates {
+                        requested: Some(name.clone()),
+                        items: nearest.into_iter().map(BookVoucherType::json).collect(),
+                    }));
+                    return Err(failure);
+                }
+            }
+            rows = selection.rows;
+            voucher_types = Some(json!({
+                "included": selection.included.iter().map(WindowVoucherType::json).collect::<Vec<_>>(),
+                "in_scope": selection.window_types.iter().map(WindowVoucherType::json).collect::<Vec<_>>(),
+            }));
         }
         let offset = arg_usize(args, "offset", 0)?;
         let limit =
@@ -133,8 +185,12 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             .map(|row| redact_value(mark_voucher_party_names(row), server.settings.redaction))
             .collect::<Vec<_>>();
         let truncated = offset.saturating_add(items.len()) < total;
+        let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": result_state, "reason": corroboration_reason, "items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters", "window": window}});
+        if let Some(voucher_types) = voucher_types {
+            payload["result"]["voucher_types"] = voucher_types;
+        }
         Ok(ToolOutcome {
-            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": result_state, "reason": corroboration_reason, "items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters"}}),
+            payload,
             evidence: accumulated.clone().expect("voucher source evidence is present after admitted read"),
             company_guid: Some(guid),
             truncated,
@@ -155,6 +211,35 @@ fn accumulate_evidence(target: &mut Option<Evidence>, next: Evidence) {
 }
 
 impl Server {
+    /// The book's voucher types (`voucher_type_catalogue_read`), bound to the
+    /// verified company by their GUIDs.
+    async fn read_voucher_type_catalogue(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+    ) -> Result<(Vec<BookVoucherType>, Evidence), ToolFailure> {
+        let (xml, evidence) = self
+            .post_read(identity, voucher_type_catalogue_read(company))
+            .await?;
+        let parsed = bridge_tally_protocol::parse_native_voucher_type_source_records_with_evidence(
+            &xml,
+            identity.company_guid(),
+        )
+        .map_err(|_| {
+            ToolFailure::from("voucher_type_export_invalid".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        let book = parsed
+            .records
+            .into_iter()
+            .map(|record| BookVoucherType {
+                name: record.record.name,
+                guid: record.identities.guid,
+            })
+            .collect();
+        Ok((book, evidence))
+    }
+
     pub(super) async fn corroborate_empty_voucher_read(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -162,28 +247,29 @@ impl Server {
         from: &str,
         to: &str,
         ledger: Option<&str>,
+        known_marks: Option<CompanyMarks>,
     ) -> Result<(Evidence, bool, Option<&'static str>), ToolFailure> {
         let (wider_from, wider_to) = widened_window(from, to)?;
-        let wider_request = render_agent_vouchers(company, &wider_from, &wider_to, None)?;
-        let (wider_xml, wider_evidence) = self.post_read(identity, wider_request).await?;
-        let mut evidence = wider_evidence;
+        // The window itself was empty, but the day either side of it need not
+        // be, and this read uses the entry wildcard: it is bounded like any
+        // other windowed read rather than trusted to be small.
+        let wider = self
+            .read_entry_wildcard_window(identity, company, &wider_from, &wider_to, known_marks)
+            .await?;
+        let mut evidence = wider.all_evidence();
+        let wider_rows = wider.rows;
         let outcome = async {
-            let wider_rows = validate_then_filter_voucher_rows(
-                parse_agent_rows(&wider_xml, identity.company_guid())?,
-                &wider_from,
-                &wider_to,
-                ledger,
-            )?;
+            let wider_rows =
+                validate_then_filter_voucher_rows(wider_rows, &wider_from, &wider_to, ledger)?;
             let high_water = if wider_rows.is_empty() {
                 let (high_water_xml, high_water_evidence) = self
-                    .post_read(identity, render_agent_company_high_water(company))
+                    .post_read(identity, company_high_water_read(company))
                     .await?;
                 evidence = combine_evidence(evidence.clone(), high_water_evidence);
-                Some(
-                    parse_company_high_water(&high_water_xml, identity.company_guid())?["altvchid"]
-                        .as_u64()
-                        .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?,
-                )
+                Some(company_voucher_high_water(
+                    &high_water_xml,
+                    identity.company_guid(),
+                )?)
             } else {
                 None
             };
@@ -193,5 +279,54 @@ impl Server {
         }
         .await;
         outcome.map_err(|failure: ToolFailure| failure.with_prior_evidence(evidence))
+    }
+}
+
+impl Server {
+    /// A bounded read of the entry-wildcard voucher window (`render_agent_vouchers`)
+    /// shared by `vouchers`, `voucher_presence` and the empty-window
+    /// corroboration. Rows are parsed per part and returned in date order;
+    /// validating them is the caller's job, over the union.
+    pub(super) async fn read_entry_wildcard_window(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        known_marks: Option<CompanyMarks>,
+    ) -> Result<WindowReadOutcome<Value>, ToolFailure> {
+        self.read_entry_window_shaped(
+            identity,
+            company,
+            from,
+            to,
+            known_marks,
+            VoucherReadShape::EntryWildcard,
+        )
+        .await
+    }
+
+    /// [`Self::read_entry_wildcard_window`] in either entry-wildcard shape:
+    /// plain, or with each row's voucher type resolved (bridge#625).
+    pub(super) async fn read_entry_window_shaped(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        known_marks: Option<CompanyMarks>,
+        shape: VoucherReadShape,
+    ) -> Result<WindowReadOutcome<Value>, ToolFailure> {
+        self.read_voucher_window(
+            identity,
+            company,
+            from,
+            to,
+            shape,
+            WindowPlanSource::Estimate { known_marks },
+            WindowReadLimits::for_shape(shape),
+            |xml| parse_agent_rows(xml, identity.company_guid()),
+        )
+        .await
     }
 }

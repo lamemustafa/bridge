@@ -1,0 +1,372 @@
+{
+ "comment": "cash_book_integrity, written by an independent reviewer to catch what cash_book.json does not: own-account terms that repeat in different case are one term (X01); a matching Contra between two bank ledgers moves no cash and is neither withdrawal nor deposit (X02), while one between two cash ledgers nets to nil; zero-amount expense lines count in neither part 4 nor part 5 (X04, X05); one voucher's evidence is listed once however many of its lines match (X22); a no-break space and U+001C in narrations, dotted capital I, a non-ASCII cash ledger and group, two unnumbered vouchers, and an optional voucher.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Frais généraux": "Indirect Expenses",
+  "Zeta": null,
+  "alpha": null,
+  "Ωmega": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "adv-cash"
+  },
+  {
+   "name": "Kasse Ü",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "adv-kasse"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "adv-bank"
+  },
+  {
+   "name": "Bank2",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "adv-bank2"
+  },
+  {
+   "name": "Wages",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "adv-wages"
+  },
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "adv-rent"
+  },
+  {
+   "name": "Frais é",
+   "chain": [
+    "Frais généraux",
+    "Indirect Expenses"
+   ],
+   "guid": "adv-frais"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "adv-susp"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 1000,
+   "debit": 0,
+   "credit": 0,
+   "closing": -5
+  },
+  {
+   "ledger": "Wages",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Bank",
+   "opening": 7,
+   "debit": 0,
+   "credit": 0,
+   "closing": 7
+  },
+  {
+   "ledger": "Rent",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "m1",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Wages",
+     400
+    ],
+    [
+     "Cash",
+     -400
+    ]
+   ],
+   "narration": "wages"
+  },
+  {
+   "guid": "m2",
+   "date": "2025-06-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     0
+    ],
+    [
+     "Rent",
+     50
+    ],
+    [
+     "Cash",
+     -50
+    ]
+   ],
+   "narration": "x y"
+  },
+  {
+   "guid": "m3",
+   "date": "2025-06-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     60
+    ],
+    [
+     "Cash",
+     -60
+    ]
+   ],
+   "narration": "X y"
+  },
+  {
+   "guid": "m4",
+   "date": "2025-06-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     70
+    ],
+    [
+     "Cash",
+     -70
+    ]
+   ],
+   "narration": "x\u001cy"
+  },
+  {
+   "guid": "m5",
+   "date": "2025-06-03",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     90
+    ],
+    [
+     "Rent",
+     0
+    ],
+    [
+     "Wages",
+     -90
+    ]
+   ]
+  },
+  {
+   "guid": "m6",
+   "date": "2025-06-04",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Bank",
+     500
+    ],
+    [
+     "Bank2",
+     -500
+    ]
+   ],
+   "narration": "SELF xfer"
+  },
+  {
+   "guid": "m7",
+   "date": "2025-06-05",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     100
+    ],
+    [
+     "Kasse Ü",
+     -100
+    ]
+   ],
+   "narration": "self"
+  },
+  {
+   "guid": "m8",
+   "date": "2025-06-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Cash",
+     300
+    ],
+    [
+     "Cash",
+     -300
+    ],
+    [
+     "Rent",
+     5
+    ],
+    [
+     "Suspense",
+     -5
+    ]
+   ],
+   "narration": ""
+  },
+  {
+   "guid": "m9",
+   "date": "2025-06-07",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Frais é",
+     11
+    ],
+    [
+     "Frais é",
+     12
+    ],
+    [
+     "Kasse Ü",
+     -23
+    ]
+   ],
+   "narration": "dup"
+  },
+  {
+   "guid": "m10",
+   "date": "2025-06-08",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Kasse Ü",
+     -2000
+    ],
+    [
+     "Suspense",
+     2000
+    ]
+   ],
+   "number": ""
+  },
+  {
+   "guid": "m11",
+   "date": "2025-06-08",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Kasse Ü",
+     2000
+    ],
+    [
+     "Suspense",
+     -2000
+    ]
+   ],
+   "number": ""
+  },
+  {
+   "guid": "m12",
+   "date": "2025-06-09",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     8
+    ],
+    [
+     "Cash",
+     -8
+    ]
+   ],
+   "narration": "İstanbul"
+  },
+  {
+   "guid": "m13",
+   "date": "2025-06-09",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     9
+    ],
+    [
+     "Cash",
+     -9
+    ]
+   ],
+   "narration": "İSTANBUL"
+  },
+  {
+   "guid": "m14",
+   "date": "2025-06-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -1
+    ],
+    [
+     "Suspense",
+     1
+    ]
+   ],
+   "status": "optional"
+  }
+ ],
+ "cash": [
+  "Cash",
+  "Kasse Ü"
+ ],
+ "bank": [
+  "Bank",
+  "Bank2"
+ ],
+ "own_account_terms": [
+  "self",
+  "SELF",
+  "Self"
+ ],
+ "tests": [
+  "cash_book_integrity"
+ ]
+}

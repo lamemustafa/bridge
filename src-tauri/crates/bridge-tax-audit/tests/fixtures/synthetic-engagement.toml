@@ -1,0 +1,127 @@
+# Engagement for the synthetic read beside this file. Invented; see PROVENANCE.md.
+# Shape: the keys of a reference-engine client config that the ported tests read, and nothing else.
+[client]
+label = "Lakeview Hardware Demo"
+entity_type = "individual"
+assessment_year = "2026-27"
+
+[period]
+start = "2025-04-01"
+end = "2026-03-31"
+
+[snapshot]
+format = "tally-read-v1"
+path = "synthetic-read"
+allow_unbracketed_read = false
+
+[roles]
+cash_groups = ["Cash-in-Hand"]
+bank_groups = ["Bank Accounts", "Bank OD A/c"]
+# cash_payments_40a3 only: a role ledger-name set (not a group) excluded from being a s.269ST
+# party, same as a Duties & Taxes line.
+round_off_ledgers = ["Round Off"]
+# creditor_ageing_43bh only: its trade creditors are every ledger under the read's own Sundry
+# Creditors group.
+creditor_groups = ["Sundry Creditors"]
+trade_creditors_source = { kind = "groups" }
+# book_keeping_quality only: all five are REQUIRED by the reference engine (book_keeping_quality_config,
+# tax_ledgers_by_head); none is configured for this invented book.
+payment_channel_debtors = []
+gst_payment_ledgers = []
+writeoff_discount_ledgers = []
+reissue_narration_terms = []
+tax_ledgers = {}
+
+# cash_payments_40a3 only: [loans.loan_ledgers.<ledger>] names a ledger the client has already
+# configured for the (not yet ported) loans_interest test; "Sunrise NBFC Loan" is covered here,
+# so its s.269SS candidate carries no Clause 31 tag, while "Highway Motors Loan" is deliberately
+# left out, so its s.269T candidate is the one this test tags for Clause 31.
+[loans.loan_ledgers."Sunrise NBFC Loan"]
+lender = "invented NBFC, not a real entity"
+lender_type = "nbfc"
+
+# depreciation only: block_by_ledger, opening_wdv_paise and dep_expense_ledgers are all REQUIRED
+# by the reference engine's depreciation_config (unlike round_off_ledgers/loan_ledgers above).
+# put_to_use_by_voucher is left unconfigured -- no shipped client config uses it either.
+[depreciation]
+dep_expense_ledgers = ["Depreciation A/c"]
+
+[depreciation.block_by_ledger]
+"Office Furniture" = "furniture_10"
+"Showroom Furniture" = "furniture_10"
+"Factory Machine" = "plant_machinery_15"
+# "Delivery Van" already exists in the shared fixture (cash_payments_40a3's own fixed_assets
+# exclusion case, masterid 27): a motor vehicle not used in a hiring business shares the general
+# Plant & Machinery block (module docstring), so it belongs here too, or this Fixed Assets ledger
+# would be "unmapped" and depreciation would fail loud for the whole book.
+"Delivery Van" = "plant_machinery_15"
+"Office Computers" = "computers_40"
+"Reception Computers" = "computers_40"
+
+[depreciation.opening_wdv_paise]
+furniture_10 = 0
+plant_machinery_15 = 50000000
+computers_40 = 0
+
+# financial_statements reads each partner's interest_ledger (the reference engine's
+# partner_interest_ledgers); partners_40b_194t reads the whole entry, but this engagement is an
+# individual, so it does not apply. Every [partners.*] ledger location is bound, as the reference
+# engine binds it.
+[partners.partner_a]
+capital_ledgers = ["Partner Capital - A"]
+interest_ledger = "Interest to Partners"
+
+# applicability_44ab only: client confirmation of one year's s.44AD history (invented), restated by
+# the test and never interpreted.
+[presumptive_history]
+ay = "2024-25"
+opted_44ad = true
+
+# creditor_ageing_43bh only: an invented Udyam classification for four of the creditors, so each
+# branch is reached (micro: FIFO lots past the window; small: only its opening balance still open;
+# medium and trader: outside s.43B(h)); every other creditor stays "unknown". The lag is invented
+# too, so ages are not measured from the bill date alone. mse_interest_ledgers is left out: the
+# edge books carry an MSMED-interest ledger.
+[creditor_ageing_43bh]
+acceptance_lag_days = 3
+
+[creditor_ageing_43bh.supplier_classification]
+"Comfort Furnishings" = "micro"
+"Harbour Mill Supplies" = "small"
+"Metro Hardware Distributors" = "medium"
+"Riverside Traders" = "trader"
+
+# statutory_dues_43b only: an invented mapping of three existing ledgers to s.43B natures, so the
+# test reaches its branches on the synthetic read (GST payable in debit at year end; a liability
+# whose opening balance is still wholly unpaid; one whose opening is paid down and which closes
+# owing). The employee-contribution walk and the coverage finding are reached by the edge books.
+[statutory_dues.nature_by_ledger]
+"GST Payable" = "gst_payable"
+"Harbour Mill Supplies" = "other_statutory"
+"Tidewater Fasteners" = "bonus"
+
+# tds_payees only (invented): nature_by_ledger and payee_aliases are REQUIRED once [tds] exists,
+# as the reference engine's tds_config requires them. Freight is a s.194C contract, shop rent a
+# s.194-I one; the two carriers are one payee entity, merged by payee_aliases. No previous-year
+# turnover is given, so this individual's deductor status is "unknown".
+[tds.nature_by_ledger]
+"Freight Inward" = "194C"
+"Shop Rent" = "194I"
+
+[tds.payee_aliases]
+"Coastal Freight Carriers" = "Coastal-Bayside carrier group"
+"Bayside Cargo Logistics" = "Coastal-Bayside carrier group"
+
+# tds_tcs_26as and twentysixas_receipts only (invented): all four keys are REQUIRED once the table
+# exists, as the reference engine's tds_tcs_26as_config requires them. The synthetic read has no
+# TDS/TCS ledger, so the role ledger lists are empty; deductor_aliases maps invented TAN strings
+# (deliberately not TAN-shaped) to two debtors, so twentysixas_receipts compares their Form 26AS
+# amounts with the books. The rows themselves are synthetic-traces-documents.json.
+[tds_tcs_26as]
+tds_ledgers = []
+tcs_ledgers = []
+advance_tax_ledgers = []
+
+[tds_tcs_26as.deductor_aliases]
+"TAN-INVENTED-A" = "Pinecrest Builders"
+"TAN-INVENTED-B" = "Harborview Textiles"

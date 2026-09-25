@@ -78,12 +78,24 @@ fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
         for field in [
             "ISCANCELLED",
             "ISOPTIONAL",
+            // Allow-listing ISPOSTDATED in agent_voucher_scalars.rs is inert unless
+            // it is also named here: Tally omits a field from COLLECTION XML that
+            // the FETCH list does not name, no matter what the parser accepts.
+            "ISPOSTDATED",
             // The ENTRY wildcard, which 2.4a proves correct on the instance where
             // curated allocation paths misreport New Ref/Agst Ref as On Account.
             // The narrower BILLALLOCATIONS.* is cheaper and measured equivalent
             // HERE, but untested THERE -- and an unverified narrowing is not worth
             // a payload saving when the failure is silently-wrong evidence.
             "ALLLEDGERENTRIES.*",
+            // Same inertness trap as ISPOSTDATED above: allow-listing REFERENCE/
+            // ISINVOICE/PARTYGSTIN in agent_voucher_scalars.rs without also naming
+            // them here would leave reference/is_invoice/party_gstin permanently
+            // absent. Protocol reference §8.2c captured all three cleanly on
+            // TallyPrime 7.1 Silver alongside the existing fields.
+            "REFERENCE",
+            "ISINVOICE",
+            "PARTYGSTIN",
         ] {
             assert!(fields.iter().any(|value| value == field), "missing {field}");
         }
@@ -189,6 +201,39 @@ fn voucher_company_name_is_validated_and_xml_escaped_without_a_tdl_literal() {
 }
 
 #[test]
+fn the_audit_voucher_part_is_the_agent_window_shape_with_its_own_fetch() {
+    use bridge_tally_protocol::xml_read_profiles::{
+        ReadOnlyProfile, ValidatedCompanyName, ValidatedDateRange, AUDIT_VOUCHER_FETCH,
+    };
+    // The audit part inherits the agent window's qualification (literal
+    // `$Date` bounds, protocol reference §5.3) and every refusal keyed to it
+    // only if it is that request byte for byte apart from the FETCH.
+    for (company, from, to) in [
+        ("BRIDGE SYNTHETIC BOOK", "20260330", "20260330"),
+        (
+            "Bridge & <Synthetic> \"Book\", + खर्चा",
+            "20250401",
+            "20260331",
+        ),
+    ] {
+        let agent = render_agent_vouchers_in_span(company, from, to, None).unwrap();
+        let (head, rest) = agent.split_once("<FETCH>").unwrap();
+        let (_, tail) = rest.split_once("</FETCH>").unwrap();
+        let expected = format!("{head}<FETCH>{AUDIT_VOUCHER_FETCH}</FETCH>{tail}");
+        let validated = ValidatedCompanyName::new(company).unwrap();
+        let window = ValidatedDateRange::new(from, to).unwrap();
+        assert_eq!(
+            ReadOnlyProfile::AuditVouchersV1 {
+                company: &validated,
+                window: &window,
+            }
+            .render(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn built_batch_stays_in_band_when_its_egress_receipt_fails() {
     let mut response = json!({
         "jsonrpc": "2.0",
@@ -261,10 +306,97 @@ async fn invalid_scope_arguments_are_rejected_before_any_tally_probe() {
         ),
     ] {
         let response = server.call_tool(tool, args).await;
-        assert_eq!(
-            response["structuredContent"]["result"]["error"]["code"], code,
-            "{tool}"
+        let error = &response["structuredContent"]["result"]["error"];
+        assert_eq!(error["code"], code, "{tool}");
+        // Remediation is additive: a refusal with no documented next step keeps
+        // exactly the two fields it always carried. This drives the real payload
+        // assembly, so it fails if remediation is ever attached unconditionally.
+        assert!(
+            error.get("remediation").is_none(),
+            "{tool} refusal gained unearned remediation: {error}"
         );
+        assert_eq!(error["message"], "Bridge refused this operation.", "{tool}");
+    }
+}
+
+#[test]
+fn an_empty_book_refusal_carries_its_remediation_through_the_real_payload() {
+    let directory = tempfile::tempdir().expect("agent directory");
+    let server = Server::new(settings(
+        "127.0.0.1:9".parse().unwrap(),
+        directory.path().to_path_buf(),
+    ));
+    // Drives the real payload assembly, not `refusal_remediation` alone. Without
+    // this, deleting the attachment in `finish_tool_response` would leave every
+    // other test green while callers silently stopped receiving the guidance:
+    // the sibling tests only assert remediation is ABSENT where it should be,
+    // and that stays true when it is never attached at all.
+    let response = server.finish_tool_response(
+        "build_import_xml",
+        &json!({"company_guid": "00000000-0000-4000-8000-000000000001"}),
+        Utc::now(),
+        Err(ToolFailure::from("empty_book_first_import".to_string())),
+    );
+    let error = &response.value["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], "empty_book_first_import");
+    assert_eq!(error["message"], "Bridge refused this operation.");
+    assert!(
+        error["remediation"]
+            .as_str()
+            .expect("remediation attached to the refusal payload")
+            .contains("Record one voucher in this company by another route"),
+        "{error}"
+    );
+    assert_eq!(response.value["isError"], true);
+}
+
+#[test]
+fn a_small_response_budget_keeps_the_refusal_code_and_drops_only_the_guidance() {
+    let directory = tempfile::tempdir().expect("agent directory");
+    let mut small = settings(
+        "127.0.0.1:9".parse().unwrap(),
+        directory.path().to_path_buf(),
+    );
+    // Just under the guidance threshold, and still roomy enough for the refusal
+    // envelope itself — so this exercises the new guard rather than the
+    // pre-existing too-large path, which would prove nothing about it.
+    small.max_bytes = REMEDIATION_MIN_RESPONSE_BUDGET - 1;
+    let server = Server::new(small);
+    let response = server.finish_tool_response(
+        "build_import_xml",
+        &json!({"company_guid": "00000000-0000-4000-8000-000000000001"}),
+        Utc::now(),
+        Err(ToolFailure::from("empty_book_first_import".to_string())),
+    );
+    let error = &response.value["structuredContent"]["result"]["error"];
+    // The code is what the caller cannot do without, so it must survive a budget
+    // too small to carry the guidance as well.
+    assert_eq!(error["code"], "empty_book_first_import");
+    assert_eq!(error["message"], "Bridge refused this operation.");
+    assert!(
+        error.get("remediation").is_none(),
+        "guidance displaced the refusal budget: {error}"
+    );
+}
+
+#[test]
+fn remediation_is_present_only_where_a_concrete_next_step_exists() {
+    let guidance = refusal_remediation("empty_book_first_import").expect("empty book guidance");
+    // The guidance must name the action to take, not restate the refusal.
+    assert!(
+        guidance.contains("Record one voucher in this company by another route"),
+        "{guidance}"
+    );
+    // Sparse by design. A code with no documented step gets None rather than
+    // filler, because guidance that reads as authoritative and sends the caller
+    // nowhere is worse than the general message.
+    for code in [
+        "pre_import_mark_unobserved",
+        "agent_runtime_read_failed",
+        "pagination_invalid",
+        "masters_not_exact",
+    ] {
+        assert_eq!(refusal_remediation(code), None, "{code}");
     }
 }
 
@@ -1668,11 +1800,26 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
         ))
         .with_framing(ResponseFraming::ContentLength)
     };
+    // The pre-flight volume bound (protocol reference §11c) reads the voucher
+    // high-water mark first. A small synthetic mark keeps this window whole, so
+    // the test still isolates the byte accounting it exists for.
+    let high_water_xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTVCHID>2</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>";
+    let high_water_plan = || {
+        ScenarioPlan::new(Fixture::SyntheticXml(high_water_xml.to_string()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
     let simulator = SequenceSimulator::spawn(vec![
         company_plan(),
         status_plan(),
         company_plan(),
         status_plan(),
+        company_plan(),
+        high_water_plan(),
+        status_plan(),
+        high_water_plan(),
+        status_plan(),
+        company_plan(),
         company_plan(),
         voucher_plan(),
         status_plan(),
@@ -1707,6 +1854,7 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
         .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
     let expected_bytes = bridge_tally_protocol::encode_tally_xml_request_utf16le(&company_xml)
         .len()
+        + bridge_tally_protocol::encode_tally_xml_request_utf16le(high_water_xml).len()
         + bridge_tally_protocol::encode_tally_xml_request_utf16le(captured_vouchers).len();
     assert_eq!(
         response["structuredContent"]["evidence"]["bytes"],
@@ -1714,9 +1862,130 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     );
     assert_ne!(
         response["structuredContent"]["evidence"]["bytes"],
-        company_xml.len() + captured_vouchers.len()
+        company_xml.len() + high_water_xml.len() + captured_vouchers.len()
     );
-    assert_eq!(simulator.finish().expect("simulator result").len(), 10);
+    assert_eq!(simulator.finish().expect("simulator result").len(), 16);
+}
+
+/// `vouchers` over an empty window on a company whose high-water row carries
+/// the given axes: identity, then the bracketed window, widened window and
+/// company high-water reads (#550).
+/// `vouchers` over an empty window, in the order the bounded read sends
+/// (protocol reference §11c): the company marks, the window, the widened
+/// window (which reuses those marks), then the empty-window corroboration's own
+/// mark read. A marks response the bound cannot read refuses at the first,
+/// before the window: `refused_at_preflight` scripts only that far.
+async fn empty_window_vouchers_with_high_water(
+    high_water: String,
+    refused_at_preflight: bool,
+) -> (Value, usize) {
+    let utf16 = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let company_xml = utf16(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"
+    ));
+    let empty_xml = utf16(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    ));
+    let plan = |xml: &str| {
+        ScenarioPlan::new(Fixture::SyntheticXml(xml.to_string()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
+    let status = || {
+        ScenarioPlan::new(Fixture::ProductStatus(
+            tally_protocol_simulator::ProductStatus::TallyPrime,
+        ))
+        .with_framing(ResponseFraming::ContentLength)
+    };
+    let bracketed = |xml: &str| {
+        vec![
+            plan(&company_xml),
+            plan(xml),
+            status(),
+            plan(xml),
+            status(),
+            plan(&company_xml),
+        ]
+    };
+    let mut plans = vec![plan(&company_xml), status(), plan(&company_xml), status()];
+    plans.extend(bracketed(&high_water));
+    if !refused_at_preflight {
+        plans.extend(bracketed(&empty_xml));
+        plans.extend(bracketed(&empty_xml));
+        plans.extend(bracketed(&high_water));
+    }
+    let simulator = SequenceSimulator::spawn(plans).expect("synthetic loopback server");
+    let directory = tempfile::tempdir().expect("temporary agent directory");
+    let server = Server::new(settings(
+        simulator.address(),
+        directory.path().to_path_buf(),
+    ));
+    let response = server
+        .call_tool(
+            "vouchers",
+            json!({"company_guid":"bb8ad19e-6aef-4239-a917-87fec0c6215e","from":"2026-04-01","to":"2026-04-30"}),
+        )
+        .await;
+    let requests = simulator.finish().expect("simulator result").len();
+    (response, requests)
+}
+
+fn company_high_water_fixture() -> String {
+    include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    )
+    .to_string()
+}
+
+#[tokio::test]
+async fn an_empty_book_corroborates_an_empty_voucher_window() {
+    // Negative-only fault injection into a captured response: the live
+    // never-held-a-voucher shape (#550) keeps ALTMSTID and omits ALTVCHID.
+    let captured = company_high_water_fixture();
+    let empty_book = captured.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
+    assert_ne!(empty_book, captured);
+    let (response, requests) = empty_window_vouchers_with_high_water(empty_book, false).await;
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["items"], json!([]));
+    assert_eq!(
+        response["structuredContent"]["evidence"]["state"],
+        "complete"
+    );
+    // Master's 22, plus the six legs of the bound's opening mark read.
+    assert_eq!(requests, 28);
+}
+
+#[tokio::test]
+async fn a_high_water_row_with_neither_axis_still_refuses_the_empty_window() {
+    let captured = company_high_water_fixture();
+    let neither = captured
+        .replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1)
+        .replacen("<ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>", "", 1);
+    // Exactly one of each axis removed: the requested company's row.
+    assert_eq!(
+        neither.matches("<ALTVCHID").count() + 1,
+        captured.matches("<ALTVCHID").count()
+    );
+    assert_eq!(
+        neither.matches("<ALTMSTID").count() + 1,
+        captured.matches("<ALTMSTID").count()
+    );
+    // Refused at the bound's opening mark read, under the same code.
+    let (response, _) = empty_window_vouchers_with_high_water(neither, true).await;
+    assert_eq!(response["isError"], true, "{response}");
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "master_checkpoint_not_observed"
+    );
 }
 
 #[tokio::test]
@@ -1921,4 +2190,34 @@ async fn diagnostic_history_reads_honor_the_configured_global_row_cap() {
             }
         }
     }
+}
+
+#[test]
+fn preparation_without_posting_lists_the_import_tools_but_not_post_import() {
+    // The MCPB bundle's default since the posting-default-off decision:
+    // BRIDGE_AGENT_ENABLE_IMPORT=true, BRIDGE_AGENT_ENABLE_WRITES=false.
+    let names = |definitions: Value| {
+        definitions
+            .as_array()
+            .expect("tool list")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let preparing = names(tool_definitions(true, false));
+    for tool in ["build_import_xml", "parse_bank_statement", "verify_import"] {
+        assert!(preparing.contains(tool), "{tool}");
+    }
+    assert!(!preparing.contains("post_import"));
+    assert!(!preparing.contains("acknowledge_post_review"));
+    // The posting opt-in adds posting and recording a review of a doubted
+    // post (#239), and nothing else.
+    let posting = names(tool_definitions(true, true));
+    assert_eq!(
+        posting.difference(&preparing).cloned().collect::<Vec<_>>(),
+        [
+            "acknowledge_post_review".to_string(),
+            "post_import".to_string()
+        ]
+    );
 }

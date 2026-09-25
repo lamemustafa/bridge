@@ -114,7 +114,8 @@ class BundleSmokeTests(unittest.TestCase):
         resolved = smoke.resolve_environment(manifest)
         self.assertEqual(resolved["BRIDGE_TALLY_HOST"], "127.0.0.1")
         self.assertEqual(resolved["BRIDGE_TALLY_PORT"], "9")
-        self.assertEqual(resolved["BRIDGE_AGENT_ENABLE_WRITES"], "true")
+        self.assertEqual(resolved["BRIDGE_AGENT_ENABLE_WRITES"], "false")
+        self.assertEqual(resolved["BRIDGE_AGENT_ENABLE_IMPORT"], "true")
         for key in ("BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT"):
             broken = json.loads(template.read_text(encoding="utf-8"))
             broken["server"]["mcp_config"]["env"][key] = "${user_config.redaction}"
@@ -130,11 +131,36 @@ class BundleSmokeTests(unittest.TestCase):
             smoke.validate_server_version(
                 {"result": {"serverInfo": {"version": "0.2.1"}}}, manifest)
 
-    def test_read_only_user_setting_still_resolves_to_false(self):
+    def test_posting_defaults_off_and_a_default_on_manifest_is_refused(self):
         template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"
         manifest = json.loads(template.read_text(encoding="utf-8"))
-        manifest["user_config"]["enable_writes"]["default"] = False
-        self.assertEqual(smoke.resolve_environment(manifest)["BRIDGE_AGENT_ENABLE_WRITES"], "false")
+        self.assertIs(manifest["user_config"]["enable_writes"]["default"], False)
+        manifest["user_config"]["enable_writes"]["default"] = True
+        with self.assertRaisesRegex(smoke.SmokeError, "posting_must_default_off"):
+            smoke.resolve_environment(manifest)
+
+    def test_the_default_bundle_prepares_and_parses_but_does_not_post(self):
+        template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"
+        default = smoke.resolve_environment(json.loads(template.read_text(encoding="utf-8")))
+        tools = smoke.expected_tools(default)
+        self.assertTrue({"build_import_xml", "parse_bank_statement", "verify_import"} <= tools)
+        self.assertNotIn("post_import", tools)
+        self.assertNotIn("acknowledge_post_review", tools)
+        enabled = smoke.expected_tools(dict(default, BRIDGE_AGENT_ENABLE_WRITES="true"))
+        self.assertEqual(enabled - tools, {"post_import", "acknowledge_post_review"})
+
+    def test_import_mapping_must_be_the_constant_true(self):
+        template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"
+        for mapping in ("false", "${user_config.enable_writes}", "1"):
+            manifest = json.loads(template.read_text(encoding="utf-8"))
+            manifest["server"]["mcp_config"]["env"]["BRIDGE_AGENT_ENABLE_IMPORT"] = mapping
+            with self.subTest(mapping=mapping), self.assertRaisesRegex(
+                    smoke.SmokeError, "import_environment_mapping_mismatch"):
+                smoke.resolve_environment(manifest)
+        manifest = json.loads(template.read_text(encoding="utf-8"))
+        del manifest["server"]["mcp_config"]["env"]["BRIDGE_AGENT_ENABLE_IMPORT"]
+        with self.assertRaisesRegex(smoke.SmokeError, "unexpected_environment_mapping"):
+            smoke.resolve_environment(manifest)
 
     def test_write_setting_requires_a_real_boolean_default(self):
         template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"

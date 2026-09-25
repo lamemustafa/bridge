@@ -44,6 +44,7 @@ members = [
   "crates/bridge-tally-primitives",
   "crates/bridge-tally-protocol",
   "crates/bridge-tally-transport",
+  "crates/bridge-tax-audit",
   "crates/tally-protocol-simulator",
 ]
 resolver = "2"

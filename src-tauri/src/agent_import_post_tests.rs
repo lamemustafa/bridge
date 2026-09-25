@@ -241,7 +241,7 @@ fn native_preview_preserves_visible_multilingual_text() {
     }
 }
 
-fn dispatch_response(
+pub(super) fn dispatch_response(
     application_status: &str,
     created: u64,
     altered: u64,
@@ -294,7 +294,7 @@ fn exact_readback_requires_a_clean_persisted_response_to_reconcile() {
         let mut payload = json!({
             "result": {"counts": {"posted_verified": 1}, "duplicates": []}
         });
-        finalize_previous_attempt_reconciliation(&mut payload, response);
+        finalize_previous_attempt_reconciliation(&mut payload, response, None);
         assert_eq!(payload["result"]["dispatch"]["state"], expected_state);
         assert_eq!(
             payload["result"]["dispatch"]["response_state"],
@@ -562,7 +562,7 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     let mut payload = json!({
         "result": {"counts": {"posted_verified": 1}, "duplicates": []}
     });
-    finalize_current_dispatch(&mut payload, Some(&response));
+    finalize_current_dispatch(&mut payload, Some(&response), None);
     assert_eq!(payload["result"]["dispatch"]["state"], "posted_verified");
     assert_eq!(
         payload["result"]["dispatch"]["response_state"],
@@ -599,10 +599,11 @@ fn missing_counter_evidence_cannot_confirm_current_or_previous_dispatch() {
             counter => saved["outcome"]["counters"]["counter_presence"][counter] = json!(false),
         }
         let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
-        for finalize in [
-            finalize_current_dispatch,
-            finalize_previous_attempt_reconciliation,
-        ] {
+        let current: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+            |payload, response| finalize_current_dispatch(payload, response, None);
+        let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+            |payload, response| finalize_previous_attempt_reconciliation(payload, response, None);
+        for finalize in [current, previous] {
             let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
             finalize(&mut payload, Some(&response));
             assert_eq!(
@@ -689,8 +690,18 @@ fn native_request_uses_a_private_remote_identity_but_preserves_batch_attribution
     let (line, _) = batch();
     let voucher = &line.vouchers[0];
     let public = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
-    let first = render_native_journal_xml("Synthetic Accounts", voucher, &line.batch_id);
-    let second = render_native_journal_xml("Synthetic Accounts", voucher, &line.batch_id);
+    let first = render_native_voucher_xml(
+        "Synthetic Accounts",
+        voucher,
+        &line.batch_id,
+        Uuid::new_v4(),
+    );
+    let second = render_native_voucher_xml(
+        "Synthetic Accounts",
+        voucher,
+        &line.batch_id,
+        Uuid::new_v4(),
+    );
     let remote_id = |xml: &str| {
         let mut reader = quick_xml::Reader::from_str(xml);
         loop {
@@ -784,6 +795,9 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
             .collect::<Vec<_>>(),
     )
     .unwrap();
+    let single_currency = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
     let ledger_binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
         &catalogue,
         "WR2 Unicode Lab",
@@ -803,6 +817,8 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &captured,
         &captured,
         &catalogue,
+        None,
+        &single_currency,
         &ledger_binding,
     )
     .expect_err("captured attributed Journal must block the queued native attempt");
@@ -825,7 +841,546 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &captured,
         &captured,
         &catalogue,
+        None,
+        &single_currency,
         &ledger_binding,
     )
     .expect("paired captured source establishes absence of the new candidate");
+
+    // A bank voucher is classified from the group collection read beside the
+    // catalogue. Without that read the queue refuses rather than post on half
+    // a check, and a Journal that somehow carries one is a wiring fault too.
+    let groups_bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+    );
+    let groups = String::from_utf16(
+        &groups_bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut payment = absent.clone();
+    payment.vouchers[0].voucher_type = VoucherType::Payment;
+    payment.vouchers[0].reference = None;
+    let recheck = |line: &ImportLedgerLine, groups: Option<&str>| {
+        recheck_import_admission(
+            line,
+            company_guid,
+            "WR2 Unicode Lab",
+            &captured,
+            &captured,
+            &catalogue,
+            groups,
+            &single_currency,
+            &ledger_binding,
+        )
+    };
+    recheck(&payment, Some(&groups)).expect("the captured masters classify this Payment");
+    for (line, groups) in [(&payment, None), (&absent, Some(groups.as_str()))] {
+        let error = recheck(line, groups).expect_err("a missing or stray group read must refuse");
+        assert!(matches!(
+            error.downcast_ref::<ApprovedImportAdmissionError>(),
+            Some(ApprovedImportAdmissionError::AdmissionInconsistent)
+        ));
+    }
+}
+
+#[test]
+fn the_whole_window_pre_post_request_is_admitted_on_the_verification_measurement() {
+    // Review of #520. The request sent whole inside the dispatch lease is
+    // admitted on what verify_import's read of the same window measured.
+    let evidence = |bytes: usize| Evidence {
+        request_sha256: String::new(),
+        response_sha256: String::new(),
+        bytes,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
+    };
+    let divided = [
+        crate::agent::WindowPart {
+            from: "20260801".into(),
+            to: "20260815".into(),
+            span: None,
+        },
+        crate::agent::WindowPart {
+            from: "20260816".into(),
+            to: "20260831".into(),
+            span: None,
+        },
+    ];
+    let budget = usize::try_from(crate::agent::WINDOW_READ_BUDGET_BYTES).unwrap();
+    let light = crate::agent::WindowServed::of(&divided, &evidence(2 * budget), false);
+    let heavy = crate::agent::WindowServed::of(&divided, &evidence(2 * budget + 2), false);
+    assert_eq!(admit_post_window(Some(light)), Ok(()));
+    assert_eq!(
+        admit_post_window(Some(heavy)),
+        Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string())
+    );
+    // A verification that reported nothing is refused, not assumed small.
+    assert_eq!(
+        admit_post_window(None),
+        Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string())
+    );
+}
+
+/// bridge#575. The post path used to compare a journal record only with
+/// itself; the saved XML file Bridge built was never read. A record and file
+/// that disagree must stop the post before anything is sent to Tally.
+#[tokio::test]
+async fn a_saved_xml_file_that_differs_from_the_record_is_refused_before_tally() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut line, mut endpoint) = batch();
+    // Port 9 is not a Tally endpoint: a regression that reaches the network
+    // fails there with a transport error, never with the codes below.
+    endpoint.port = 9;
+    line.endpoint_origin = Some(super::super::super::canonical_loopback_origin(&endpoint).unwrap());
+    let server = Server::new(crate::agent::Settings {
+        endpoint,
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    server.append_import_ledger(&line).unwrap();
+    let path = server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{}.xml", line.batch_id));
+    let args = json!({"company_guid":line.company_guid,"batch_id":line.batch_id});
+
+    // The record is self-consistent; the file holds a different Journal.
+    let mut other = line.vouchers.clone();
+    other[0].entries[0].amount = "99.00".into();
+    other[0].entries[1].amount = "99.00".into();
+    fs::write(
+        &path,
+        render_import_xml("Synthetic Accounts", &other, &line.batch_id),
+    )
+    .unwrap();
+    assert!(admit_saved_journal_integrity(&line, &server.settings.endpoint).is_ok());
+    assert_eq!(post_error(&server, &args).await, "import_batch_changed");
+
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        post_error(&server, &args).await,
+        "import_persisted_file_unavailable"
+    );
+
+    // The exact file passes this check; the post then fails later, at the
+    // network, because port 9 is not Tally.
+    fs::write(
+        &path,
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id),
+    )
+    .unwrap();
+    let later = post_error(&server, &args).await;
+    assert!(
+        !matches!(
+            later.as_str(),
+            "import_batch_changed" | "import_persisted_file_unavailable"
+        ),
+        "{later}"
+    );
+}
+
+/// The error code a post reports, whether it failed before or inside its
+/// operation (the latter comes back as an outcome whose result names the
+/// error), and that no attempt was recorded.
+async fn post_error(server: &Server, args: &Value) -> String {
+    match server.post_import(args).await {
+        Ok(outcome) => {
+            let result = &outcome.payload["result"];
+            assert_ne!(result["attempt_recorded"], json!(true), "{result}");
+            result["error"]["code"]
+                .as_str()
+                .unwrap_or("unexpected_success")
+                .to_string()
+        }
+        Err(failure) => failure.code,
+    }
+}
+
+/// bridge#579. Tally deletes a voucher only by the client REMOTEID it was
+/// created with and exports its own GUID in that attribute, so the native
+/// post must record the REMOTEID it sends, with its request hash, before
+/// sending. The recorded value must be exactly the one in the request bytes.
+#[test]
+fn the_dispatch_intent_records_the_remoteid_the_native_request_carries() {
+    let (line, _) = batch();
+    let remote_id = Uuid::new_v4();
+    let request = native_post_request(&line, remote_id).unwrap();
+    assert_eq!(request.remote_id, remote_id);
+    let sent = request
+        .xml
+        .split("<VOUCHER REMOTEID=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    assert_eq!(request.xml.matches("REMOTEID=").count(), 1);
+    assert_eq!(sent, remote_id.hyphenated().to_string());
+    assert_eq!(
+        request.request_sha256,
+        sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+            &request.xml
+        ))
+    );
+
+    let intent = serde_json::to_value(ledger::StatusRecord::dispatch_for(&line, &request)).unwrap();
+    assert_eq!(intent["native_remote_id"], json!(sent));
+    assert_eq!(
+        intent["native_request_sha256"],
+        json!(request.request_sha256)
+    );
+
+    // Two posts never share a REMOTEID: reuse could make Tally upsert.
+    let other = native_post_request(&line, Uuid::new_v4()).unwrap();
+    assert_ne!(other.remote_id, request.remote_id);
+    assert_ne!(other.request_sha256, request.request_sha256);
+}
+
+/// A Payment with one bank credit and `parties` debits named by `name`.
+fn payment_with(parties: usize, name: impl Fn(usize) -> String) -> ImportLedgerLine {
+    let (mut line, _) = batch();
+    let voucher = &mut line.vouchers[0];
+    voucher.voucher_type = VoucherType::Payment;
+    voucher.reference = None;
+    voucher.entries = (0..parties)
+        .map(|index| ImportEntry {
+            ledger: name(index),
+            amount: "1.00".into(),
+            side: EntrySide::Dr,
+        })
+        .chain(std::iter::once(ImportEntry {
+            ledger: "Cash".into(),
+            amount: format!("{parties}.00"),
+            side: EntrySide::Cr,
+        }))
+        .collect();
+    line
+}
+
+/// The native dialog cannot scroll, so a preview past its caps is refused,
+/// never truncated. Multi-entry bank vouchers reach the caps: seventeen fixed
+/// lines plus one per entry, so seven entries fit 24 lines and eight do not.
+#[test]
+fn a_bank_preview_is_refused_at_each_cap_rather_than_truncated() {
+    let (_, endpoint) = batch();
+    let seven = admit_fresh_saved_voucher(&payment_with(6, |i| format!("Party {i}")), &endpoint)
+        .expect("seven entries fit");
+    assert_eq!(seven.lines().count(), 24, "{seven}");
+    assert_eq!(
+        admit_fresh_saved_voucher(&payment_with(7, |i| format!("Party {i}")), &endpoint)
+            .unwrap_err(),
+        "import_review_too_large"
+    );
+    // One entry line is `Dr 1.00  "<name>"`: 11 characters around the name.
+    let fits = admit_fresh_saved_voucher(&payment_with(1, |_| "N".repeat(89)), &endpoint)
+        .expect("a 100-character line fits");
+    assert!(
+        fits.lines().any(|line| line.chars().count() == 100),
+        "{fits}"
+    );
+    assert_eq!(
+        admit_fresh_saved_voucher(&payment_with(1, |_| "N".repeat(90)), &endpoint).unwrap_err(),
+        "import_review_too_large"
+    );
+}
+
+fn captured_currencies(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_post_is_admitted_only_into_a_book_with_one_currency_master() {
+    // Both single-master spellings measured on 7.1 are admitted, whatever the
+    // base is called: the gate asks how many masters there are, not which.
+    for single in [
+        &include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )[..],
+        &include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_legacy_live.utf16le.xml"
+        )[..],
+    ] {
+        admit_post_currency(&captured_currencies(single)).expect("one master admits");
+    }
+    // The captured two-master book refuses, naming both masters as read.
+    let multi = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ));
+    let names = bridge_tally_protocol::native_outstandings::parse_company_currency(&multi)
+        .unwrap()
+        .names;
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert_eq!(
+        admit_post_currency(&multi),
+        Err(ApprovedImportAdmissionError::MultiCurrencyBook { currencies: names })
+    );
+    // Kept out of every serialized output that carries the struct.
+    let serialized = serde_json::to_value(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&multi).unwrap(),
+    )
+    .unwrap();
+    assert!(serialized.get("names").is_none(), "{serialized}");
+    // No base can be named from a response that does not parse, from one with
+    // no master, or from one whose only master has no NAME (which the parser
+    // itself refuses). The last two are explicit edits of the one-master
+    // capture, not live evidence.
+    let single = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
+    // The row's own close: CMPINFO's `<CURRENCY>0</CURRENCY>` comes earlier.
+    let row_start = single.find("<CURRENCY NAME=").unwrap();
+    let row_end =
+        row_start + single[row_start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    assert_eq!(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&no_master)
+            .unwrap()
+            .currency_count,
+        0,
+        "the edit must leave a readable collection with no master"
+    );
+    assert_eq!(single.matches(" NAME=\"I₹\"").count(), 1);
+    let nameless = single.replace(" NAME=\"I₹\"", " NAME=\"\"");
+    assert!(bridge_tally_protocol::native_outstandings::parse_company_currency(&nameless).is_err());
+    for undetermined in ["<ENVELOPE/>", no_master.as_str(), nameless.as_str()] {
+        assert_eq!(
+            admit_post_currency(undetermined),
+            Err(ApprovedImportAdmissionError::BaseCurrencyUndetermined),
+            "{undetermined}"
+        );
+    }
+}
+
+#[test]
+fn a_multi_currency_refusal_names_the_masters_in_plain_words_only_when_nothing_was_attempted() {
+    let currencies = (1..=10).map(|n| format!("C{n}")).collect::<Vec<_>>();
+    let refused = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_multi_currency_unsupported","message":"generic"}}});
+        name_refused_currencies(&mut payload, &currencies);
+        payload["result"]["error"].clone()
+    };
+    let error = refused(json!(false));
+    assert_eq!(
+        error["message"],
+        "This company has more than one currency defined (C1, C2, C3, C4, C5, C6, C7, C8 and 2 \
+         more); Bridge does not post into multi-currency books yet. Nothing was posted."
+    );
+    assert_eq!(error["currencies_seen"].as_array().unwrap().len(), 8);
+    assert_eq!(error["currencies_total"], 10);
+    // An unknown attempt keeps its instruction to reconcile.
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(refused(attempted)["message"], "generic");
+    }
+}
+
+/// The captured catalogue's binding of `names`, as a post binds them.
+fn captured_binding(names: &[&str]) -> bridge_tally_protocol::StandardLedgerCatalogBinding {
+    let catalogue = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    ));
+    bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .unwrap()
+    .bind_selected(names.iter().map(|name| name.to_string()))
+    .unwrap()
+}
+
+fn recorded(pairs: &[(&str, &str)]) -> Vec<BoundLedger> {
+    pairs
+        .iter()
+        .map(|(name, guid)| BoundLedger {
+            name: name.to_string(),
+            guid: guid.to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_post_admits_only_the_ledgers_its_build_bound() {
+    // The captured catalogue's GUIDs for these two ledgers.
+    const A: &str = "61c6de69-1748-461c-ad3f-162cb949df9f-000000d5";
+    const B: &str = "61c6de69-1748-461c-ad3f-162cb949df9f-0000001f";
+    let now = captured_binding(&["Bridge Nested Debtor WR4", "Cash"]);
+    // Same ledgers, same GUIDs (GUID case is not identity).
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[
+                ("Cash", &B.to_uppercase()),
+                ("Bridge Nested Debtor WR4", A)
+            ])),
+            &now
+        ),
+        Ok(())
+    );
+    // Cash renamed and a new Cash created since the build: named.
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[
+                ("Bridge Nested Debtor WR4", A),
+                ("Cash", "61c6de69-1748-461c-ad3f-162cb949df9f-000000ff")
+            ])),
+            &now
+        ),
+        Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
+    );
+    // A ledger the record does not hold is not admitted by name alone.
+    assert_eq!(
+        admit_build_binding(Some(&recorded(&[("Bridge Nested Debtor WR4", A)])), &now),
+        Err(BuildBindingRefusal::Changed(vec!["Cash".into()]))
+    );
+    // Two ledgers that exchanged names since the build: every GUID is still
+    // recorded, but under the other name, so both refuse.
+    assert_eq!(
+        admit_build_binding(
+            Some(&recorded(&[("Cash", A), ("Bridge Nested Debtor WR4", B)])),
+            &now
+        ),
+        Err(BuildBindingRefusal::Changed(vec![
+            "Bridge Nested Debtor WR4".into(),
+            "Cash".into()
+        ]))
+    );
+    // A record built before binding existed has nothing to compare.
+    assert_eq!(
+        admit_build_binding(None, &now),
+        Err(BuildBindingRefusal::Unbound)
+    );
+}
+
+#[test]
+fn a_record_without_ledger_identities_reads_as_built_before_binding() {
+    // An older record, exactly as it was serialized: no `ledger_identities`.
+    let (mut line, _) = batch();
+    line.ledger_identities = None;
+    let json = serde_json::to_value(&line).unwrap();
+    assert!(json.get("ledger_identities").is_none(), "{json}");
+    let reread: ImportLedgerLine = serde_json::from_value(json).unwrap();
+    assert_eq!(reread.ledger_identities, None);
+    // And a current record keeps them across a round trip.
+    line.ledger_identities = Some(recorded(&[("Cash", "g")]));
+    let reread: ImportLedgerLine =
+        serde_json::from_value(serde_json::to_value(&line).unwrap()).unwrap();
+    assert_eq!(reread.ledger_identities, line.ledger_identities);
+}
+
+#[test]
+fn a_changed_ledger_is_named_in_plain_words_only_when_nothing_was_attempted() {
+    let ledgers = (1..=9).map(|n| format!("L{n}")).collect::<Vec<_>>();
+    let refused = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_masters_changed_since_build","message":"generic"}}});
+        name_changed_ledgers(&mut payload, &ledgers);
+        payload["result"]["error"].clone()
+    };
+    let error = refused(json!(false));
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(
+            "A ledger this batch names is no longer the one it was built against (L1, L2, L3, L4, L5, L6, L7, L8 and 1 more)"
+        ),
+        "{message}"
+    );
+    assert_eq!(error["ledgers_changed_total"], 9);
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(refused(attempted)["message"], "generic");
+    }
+    // An unbound batch is told to rebuild, only when nothing was attempted.
+    let unbound = |attempted: Value| {
+        let mut payload = json!({"result":{"attempt_recorded":attempted,
+            "error":{"code":"import_batch_predates_ledger_binding","message":"generic"}}});
+        explain_unbound_batch(&mut payload);
+        payload["result"]["error"]["message"].clone()
+    };
+    assert!(unbound(json!(false))
+        .as_str()
+        .unwrap()
+        .contains("Build the batch again"));
+    for attempted in [json!(true), Value::Null] {
+        assert_eq!(unbound(attempted), "generic");
+    }
+}
+
+/// bridge#239: a clean, verified post is still not posted_verified when its
+/// masters changed across the post; the message says the voucher is in Tally
+/// and must not be posted again.
+#[test]
+fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
+    let response = dispatch_response("success", 1, 0);
+    let finalized = |masters: Value| {
+        let mut payload = json!({"result": {"counts": {"posted_verified": 1}, "duplicates": []}});
+        finalize_current_dispatch(&mut payload, Some(&response), Some(&masters));
+        payload["result"].clone()
+    };
+    for (state, code) in [
+        (
+            "posted_under_changed_masters",
+            "posted_under_changed_masters",
+        ),
+        ("check_unavailable", "masters_after_post_unconfirmed"),
+        ("check_pending", "masters_after_post_unconfirmed"),
+        // A state this build does not know, or a not_checked for any other
+        // reason than unmoved masters, is a doubt too.
+        ("not_checked", "masters_after_post_unconfirmed"),
+        ("some_future_state", "masters_after_post_unconfirmed"),
+    ] {
+        let result = finalized(json!({"state": state}));
+        assert_eq!(
+            result["dispatch"]["state"], "reconciliation_required",
+            "{state}"
+        );
+        assert_eq!(result["error"]["code"], code);
+        let message = result["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with("Posted to Tally"), "{message}");
+        assert!(message.contains("do not rebuild this event"), "{message}");
+        // Only a check that could not finish is promised a later one.
+        assert_eq!(
+            message.contains("checks again"),
+            state == "check_unavailable" || state == "check_pending",
+            "{message}"
+        );
+    }
+    for masters in [
+        json!({"state": "unchanged"}),
+        json!({"state": "not_checked", "reason": "masters_unmoved"}),
+    ] {
+        let result = finalized(masters.clone());
+        assert_eq!(result["dispatch"]["state"], "posted_verified", "{masters}");
+        assert!(result.get("error").is_none());
+    }
+    // A reconcile of an earlier attempt is held back by the same doubt.
+    let reconciled = |masters: Option<Value>| {
+        let mut payload = json!({"result": {"counts": {"posted_verified": 1}, "duplicates": []}});
+        finalize_previous_attempt_reconciliation(&mut payload, Some(&response), masters.as_ref());
+        payload["result"].clone()
+    };
+    let doubted = reconciled(Some(
+        json!({"state": "posted_under_changed_masters", "ledgers": ["Cash"]}),
+    ));
+    assert_eq!(
+        doubted["dispatch"]["state"], "reconciliation_required",
+        "{doubted}"
+    );
+    assert_eq!(doubted["error"]["code"], "posted_under_changed_masters");
+    let clear = reconciled(None);
+    assert_eq!(
+        clear["dispatch"]["state"], "previous_attempt_reconciled",
+        "{clear}"
+    );
 }

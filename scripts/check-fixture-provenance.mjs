@@ -72,6 +72,7 @@ const repositoryRoot = rootArgument === -1 ? scriptRoot : resolve(process.argv[r
 // directory that gate does not, or vice versa.
 const fixtureDirectories = [
   "src-tauri/crates/bridge-bank-statement/tests/fixtures",
+  "src-tauri/crates/bridge-tax-audit/tests/fixtures",
   "src-tauri/crates/bridge-tally-protocol/tests/fixtures",
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",

@@ -78,7 +78,7 @@ fn observed_identity(
 
 fn native_groups(company_guid: &str, groups: &[(&str, &str)]) -> String {
     let groups = if groups.is_empty() {
-        &[("Primary", "Primary")][..]
+        &[("Primary", "&#4; Primary")][..]
     } else {
         groups
     };
@@ -98,7 +98,7 @@ fn native_groups(company_guid: &str, groups: &[(&str, &str)]) -> String {
 
 fn native_ledgers(company_guid: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">&#4; Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
     )
 }
 
@@ -731,6 +731,107 @@ async fn failed_period_read_preserves_its_error_after_a_closing_identity_request
     assert_eq!(methods, ["POST", "POST", "POST"]);
 }
 
+/// The period report is a custom report whose TDL Education answers with a
+/// blocking dialog on the Tally screen (bridge#45). With Education observed,
+/// by the identity read that precedes it or by the run's own probe, it is
+/// refused before it is sent. Licensed, the same read goes out.
+#[tokio::test]
+async fn the_period_report_is_refused_before_sending_when_education_is_observed() {
+    let _simulator_guard = simulator_test_lock().lock().await;
+    let company_guid = "synthetic-company-guid";
+    let collection = |edumode: &str| {
+        format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM><EDUMODE TYPE="Logical">{edumode}</EDUMODE></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    };
+    let education_profile = bridge_tally_core::CapabilityProfile {
+        profile_version: 4,
+        product: "TallyPrime".to_string(),
+        release: Some("7.1".to_string()),
+        license_tier: None,
+        mode: Some("Education".to_string()),
+        transports: Default::default(),
+        features: Default::default(),
+        packs: Default::default(),
+    };
+    for (case, responses, probed_education) in [
+        (
+            "identity read reports Education",
+            vec![collection("Yes")],
+            false,
+        ),
+        ("probe reported Education", vec![collection("No")], true),
+        (
+            "licensed",
+            vec![
+                collection("No"),
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER></ENVELOPE>".to_string(),
+                collection("No"),
+            ],
+            false,
+        ),
+    ] {
+        let licensed = case == "licensed";
+        let (address, server) = spawn_method_routed_server_refusing_extra_requests(responses).await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                company_guid,
+                "100001",
+                "Synthetic Company",
+                "20260401",
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-period-education".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context.clone())
+                .unwrap();
+        if probed_education {
+            assert_eq!(
+                connector
+                    .observe_snapshot_profile(&education_profile)
+                    .unwrap(),
+                DateBoundaryProfile::EducationRestricted
+            );
+        }
+        let error = connector
+            .read_core_period_balance_report(&context)
+            .await
+            .expect_err(case);
+        let methods = server.await.expect("join period server");
+        if licensed {
+            // The report was sent (and its rejection is the reported failure).
+            assert!(
+                matches!(&error, TallyError::Protocol { code } if code == "application_response_rejected"),
+                "{case}: {error:?}"
+            );
+            assert_eq!(methods, ["POST", "POST", "POST"], "{case}");
+        } else {
+            assert!(
+                matches!(&error, TallyError::Unsupported { code } if code == "education_report_family_unsupported"),
+                "{case}: {error:?}"
+            );
+            assert_eq!(methods, ["POST"], "{case}: only the identity read went out");
+        }
+    }
+}
+
 /// `discover_companies` requests the native `Company` collection
 /// (`ReadOnlyProfile::CompanyListV2`) and must fail closed -- rejecting the
 /// whole discovery read -- when a company row in that collection omits its
@@ -1165,7 +1266,7 @@ async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
     let company_guid = "synthetic-company-guid";
     let identity = observed_identity("Synthetic Company", company_guid, "100001", "20240101");
     let empty_native_groups = native_groups(company_guid, &[]);
-    let second_group = native_groups(company_guid, &[("Post-start Assets", "Primary")]);
+    let second_group = native_groups(company_guid, &[("Post-start Assets", "&#4; Primary")]);
     let plans = [
         company_extent("Synthetic Company", company_guid),
         company_extent("Synthetic Company", company_guid),

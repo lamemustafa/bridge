@@ -10,6 +10,7 @@ import {
   asOfBoundValueForAsOf,
   asOfYyyymmdd,
   bulkPartyStatementsInvokeArgument,
+  bulkPartyStatementsPreviewInvokeArgument,
   partyStatementInvokeArgument,
   settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
@@ -18,6 +19,7 @@ import {
 } from "./outstandings-as-of";
 import { companyIdentityKey, type CompanyIdentityKey } from "./company-identity";
 import { reportEvidenceDrawerEntry, type EvidenceDrawerEntry } from "./evidence-drawer-entry";
+import { formatCommandErrorMessage } from "./tally-command-error";
 
 export type OutstandingsExportNotice = {
   message: string;
@@ -115,6 +117,7 @@ type LoadResult =
       synced_at_unix_ms: number;
       working_paper_export_id?: string;
       working_paper_unavailable_reason_code?: string;
+      party_statement_source_id?: string;
       // Absent when the read path cannot establish it. Absent is not zero and
       // must never render as zero.
       unallocated_total?: string;
@@ -237,7 +240,7 @@ export function OutstandingsScreen({
   const [consumedWorkingPaperId, setConsumedWorkingPaperId] = React.useState<string | null>(null);
   const exportLock = React.useRef(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
-  const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
+  const [currencyCheck, setCurrencyCheck] = React.useState<CurrencyCheck>({ state: "idle" });
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
   const initialReadKey = React.useRef<string | null>(null);
@@ -384,14 +387,15 @@ export function OutstandingsScreen({
   // assert it. The INR requirement stays -- putting a rupee symbol in front of
   // a foreign balance misstates money -- but it is a fact Tally holds, and
   // asking for it on every company was a step the product can answer itself.
-  // Where Tally cannot settle it (several currencies defined, or a non-Indian
-  // one) the manual confirmation below is still shown.
+  // Where Tally names one currency but not INR, the operator may still
+  // confirm it below; a book with several currencies, or none read, is not
+  // read at all (bridge#604).
   React.useEffect(() => {
     if (liveReadSuppressed || !company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
-    setCurrencyCheck("checking");
+    setCurrencyCheck({ state: "checking" });
     onTallyReadActivityChange(1);
-    void invoke<{ is_inr: boolean; mailing_name: string; currency_count: number }>(
+    void invoke<{ is_inr: boolean; symbol: string; mailing_name: string; currency_count: number }>(
       "detect_tally_base_currency",
       { request: {
         config,
@@ -406,10 +410,10 @@ export function OutstandingsScreen({
       .then((currency) => {
         if (cancelled) return;
         if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityFor(company));
-        setCurrencyCheck(currency.is_inr ? "inr" : "undetermined");
+        setCurrencyCheck(currencyCheckOf(currency));
       })
       .catch(() => {
-        if (!cancelled) setCurrencyCheck("undetermined");
+        if (!cancelled) setCurrencyCheck({ state: "unread" });
       })
       .finally(() => {
         onTallyReadActivityChange(-1);
@@ -463,7 +467,9 @@ export function OutstandingsScreen({
   }
 
   if (!currencyReadPermitted) {
-    if (currencyCheck === "checking" || currencyCheck === "idle") {
+    // "inr" lands here only for the render before the confirmed identity
+    // catches up with the selected company.
+    if (currencyCheck.state === "checking" || currencyCheck.state === "idle" || currencyCheck.state === "inr") {
       return (
         <section className="panel wide outstandings-empty">
           <h2>Opening {company.name}</h2>
@@ -471,10 +477,30 @@ export function OutstandingsScreen({
         </section>
       );
     }
+    // bridge#604: only a book with one Currency master may be confirmed by
+    // hand, and the backend re-reads the masters and refuses the rest. With
+    // several, the Bills reports return a foreign-currency party's bills as
+    // plain amounts that would be shown as rupees.
+    if (currencyCheck.state === "several") {
+      return (
+        <section className="panel wide outstandings-empty">
+          <h2>Multi-currency books are not supported yet</h2>
+          <p>Tally reports more than one currency in this company. Bridge cannot yet tell which of its outstanding amounts are in a foreign currency, so it does not read outstandings for this company.</p>
+        </section>
+      );
+    }
+    if (currencyCheck.state !== "single") {
+      return (
+        <section className="panel wide outstandings-empty">
+          <h2>Bridge could not read this company&rsquo;s currency</h2>
+          <p>Without it Bridge cannot tell whether this company&rsquo;s amounts are in rupees, so it does not read outstandings. Reopen the company to try again.</p>
+        </section>
+      );
+    }
     return (
       <section className="panel wide outstandings-empty">
         <h2>Confirm the base currency</h2>
-        <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Bridge shows totals in rupees, so confirm before continuing.</p>
+        <p>Tally reports this company&rsquo;s currency as {currencyCheck.mailingName ? `${currencyCheck.mailingName} (${currencyCheck.name})` : currencyCheck.name}. Confirm only if this company&rsquo;s books are in Indian rupees.</p>
         <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityFor(company))}>This company uses INR</button>
       </section>
     );
@@ -524,7 +550,11 @@ export function OutstandingsScreen({
   // NOT known and those two are absent.
   const ageingDisclosure = report && completeResult?.unallocated_total === undefined
     && outstandingsAgeingDisclosure(report.has_unaged_receivable);
+  // Statements come only from the source Bridge holds for this read
+  // (bridge#551): without its handle, no statement control is offered.
+  const statementSourceAvailable = completeResult?.party_statement_source_id !== undefined;
   const batchStatementRowsAvailable = completeResult !== null
+    && statementSourceAvailable
     && (completeResult.statement_open_bills !== undefined
       || completeResult.statement_unallocated_by_party !== undefined);
   // A present unallocated control identifies the native path that computed
@@ -542,14 +572,16 @@ export function OutstandingsScreen({
     // Disable both batch-export controls before opening the native picker so
     // two click handlers cannot race each other in the renderer.
     try {
-      const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
-      if (!selection) return;
-      approvalIdToRevoke = selection.approval_id;
+      // The held source is checked before the folder picker opens, so a
+      // result whose statements are gone costs no folder choice.
       const preview = await previewBulkPartyStatements(completeResult);
       if (preview.party_count === 0) {
         onExportNoticeChange({ message: "No parties with outstanding balances are available for statements." });
         return;
       }
+      const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
+      if (!selection) return;
+      approvalIdToRevoke = selection.approval_id;
       const label = format === "xlsx" ? "Excel" : "PDF";
       const confirmed = window.confirm(
         `Create ${preview.party_count} ${label} statement${preview.party_count === 1 ? "" : "s"} in:\n${selection.destination}\n\nThe dashboard shows only its largest parties. This batch includes every party with a non-zero outstanding balance.`,
@@ -921,7 +953,7 @@ export function OutstandingsScreen({
                             <button
                               type="button"
                               className="party-statement-action"
-                              disabled={exporting !== null}
+                              disabled={exporting !== null || !statementSourceAvailable}
                               onClick={async () => {
                                 if (!beginExport("party")) return;
                                 try {
@@ -940,7 +972,7 @@ export function OutstandingsScreen({
                             <button
                               type="button"
                               className="party-statement-action"
-                              disabled={exporting !== null}
+                              disabled={exporting !== null || !statementSourceAvailable}
                               onClick={async () => {
                                 if (!beginExport("party")) return;
                                 try {
@@ -982,16 +1014,21 @@ export function OutstandingsScreen({
   );
 }
 
+const STATEMENT_SOURCE_UNAVAILABLE =
+  "This outstandings result is no longer available for statements. Refresh outstandings and try again.";
+
 /// Builds one party's statement in the selected format via the Rust command
-/// and writes it to Downloads. Sends the complete statement source rows this
-/// screen already holds from `fetch_tally_outstandings` -- Bridge never reads
-/// Tally a second time to produce a statement.
+/// and writes it to Downloads. Names the statement source Bridge holds from
+/// `fetch_tally_outstandings` -- Bridge never reads Tally a second time to
+/// produce a statement, and the rows never come from this screen.
 async function exportPartyStatement(
   result: InrCompleteResult,
   party: string,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<string>("export_party_statement", partyStatementInvokeArgument(result, party, format));
+  const argument = partyStatementInvokeArgument(result, party, format);
+  if (!argument) throw new Error(STATEMENT_SOURCE_UNAVAILABLE);
+  return invoke<string>("export_party_statement", argument);
 }
 
 type BulkPartyStatementResult = {
@@ -1003,18 +1040,22 @@ type BulkPartyStatementResult = {
 
 type BulkPartyStatementsPreview = { party_count: number };
 
-/// Uses the complete statement-source rows returned by the finished read. The
-/// dashboard's top-ten and drill-down projections are intentionally not used:
-/// a batch must not silently omit a party beyond a display cap.
+/// Uses the complete statement source Bridge holds from the finished read.
+/// The dashboard's top-ten and drill-down projections are intentionally not
+/// used: a batch must not silently omit a party beyond a display cap.
 async function exportBulkPartyStatements(
   result: InrCompleteResult,
   selection: BulkPartyStatementDestinationSelection,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<BulkPartyStatementResult>(
-    "export_bulk_party_statements",
-    bulkPartyStatementsInvokeArgument(result, selection.destination, selection.approval_id, format),
+  const argument = bulkPartyStatementsInvokeArgument(
+    result,
+    selection.destination,
+    selection.approval_id,
+    format,
   );
+  if (!argument) throw new Error(STATEMENT_SOURCE_UNAVAILABLE);
+  return invoke<BulkPartyStatementResult>("export_bulk_party_statements", argument);
 }
 
 async function revokePartyStatementDestination(approvalId: string) {
@@ -1024,12 +1065,9 @@ async function revokePartyStatementDestination(approvalId: string) {
 /// Uses the same complete source rows and backend counting rule as the writer,
 /// so the confirmation names the exact scope before any files are created.
 async function previewBulkPartyStatements(result: InrCompleteResult) {
-  return invoke<BulkPartyStatementsPreview>("preview_bulk_party_statements", {
-    request: {
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  });
+  const argument = bulkPartyStatementsPreviewInvokeArgument(result);
+  if (!argument) throw new Error(STATEMENT_SOURCE_UNAVAILABLE);
+  return invoke<BulkPartyStatementsPreview>("preview_bulk_party_statements", argument);
 }
 
 /// Builds the complete dual-ageing workbook from the finished native read.
@@ -1293,6 +1331,19 @@ function exposureComposition(report: Report, unallocatedTotal: string | undefine
   });
 }
 
+/// What Tally's own currency read settled for the selected company.
+type CurrencyCheck =
+  | { state: "idle" | "checking" | "inr" | "several" | "unread" }
+  | { state: "single"; name: string; mailingName: string };
+
+function currencyCheckOf(currency: { is_inr: boolean; symbol: string; mailing_name: string; currency_count: number }): CurrencyCheck {
+  if (currency.is_inr) return { state: "inr" };
+  if (currency.currency_count === 1) {
+    return { state: "single", name: currency.symbol, mailingName: currency.mailing_name };
+  }
+  return { state: currency.currency_count > 1 ? "several" : "unread" };
+}
+
 function formatMoney(value: string, currencyAssertion: "INR") {
   const negative = value.startsWith("-");
   const unsigned = negative ? value.slice(1) : value;
@@ -1327,8 +1378,5 @@ function relativeTime(timestamp: number) {
 }
 
 function operatorMessage(cause: unknown) {
-  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") {
-    return cause.message;
-  }
-  return typeof cause === "string" ? cause : "The local Tally read did not complete.";
+  return formatCommandErrorMessage(cause, "The local Tally read did not complete.");
 }

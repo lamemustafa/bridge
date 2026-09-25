@@ -167,14 +167,15 @@ fn captured_masters_establish_cash_and_refuse_every_other_captured_ledger() {
         }
     );
     // `Profit & Loss A/c` is the one captured ledger parented on the reserved
-    // account root. The catalogue reader refuses a control-bearing parent
-    // outright rather than returning it, so the classifier sees no parent at
-    // all — which is still a refusal, and the reason says the true thing.
+    // account root. The catalogue reader marks the captured `&#4; Primary`
+    // (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)) instead of reading a control
+    // character it then discarded, so the classifier sees the root itself —
+    // still a refusal, and the reason now names the parent Tally returned.
     let root = masters.classify("Profit & Loss A/c");
     assert_eq!(root.state(), "not_established");
     assert!(
-        root.detail().contains("no parent group"),
-        "an unreturned parent is reported as one: {}",
+        root.detail().contains("account root"),
+        "a root-parented ledger is reported as one: {}",
         root.detail()
     );
     for (name, _) in &ledgers {
@@ -242,7 +243,7 @@ fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
     // defined against that. It still refuses, as an absent group.
     let raw = observed(&under("\u{4} Primary"), captured_demo_groups()).classify("Probe Ledger");
     assert_eq!(raw.state(), "not_established");
-    for spelling in [captured_root.as_str(), "Primary"] {
+    for (spelling, is_root) in [(captured_root.as_str(), true), ("Primary", false)] {
         let mut rows = captured_groups();
         rows.push(TallyNamedMaster {
             name: "House Accounts".into(),
@@ -251,9 +252,12 @@ fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
         });
         let state = observed(&under("House Accounts"), rows).classify("Probe Ledger");
         assert_eq!(state.state(), "not_established");
-        assert!(
+        // A bare `Primary` is a group a user named that; none is captured,
+        // so the walk reports it absent rather than calling it the root.
+        assert_eq!(
             state.detail().contains("account root"),
-            "{spelling:?} reads as the reserved root: {}",
+            is_root,
+            "{spelling:?}: {}",
             state.detail()
         );
     }
@@ -600,12 +604,98 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
             .any(|warning| warning.contains("Confirm the loaded company before importing")),
         "company-identity warning missing from a bank batch: {warnings:?}"
     );
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning.contains("more than two entries")),
+        "a two-entry bank batch must not carry the multi-entry warning: {warnings:?}"
+    );
+    assert_eq!(
+        result["live_evidence"],
+        json!([{"observation":"licensed_bank_voucher_import",
+            "report":"docs/tally/TALLY_PROTOCOL_REFERENCE.md",
+            "voucher_types":["Payment","Receipt"]}])
+    );
     assert!(result["next_step"]
         .as_str()
         .unwrap()
         .starts_with("Confirm the loaded company matches this batch"));
+    // Its first verification is what a later amendment compares against
+    // (#239), so the manual import step asks for it at once.
+    assert!(result["next_step"]
+        .as_str()
+        .unwrap()
+        .contains("call verify_import right away"));
     // A cash/bank payload reads the group collection twice, exactly as it reads
     // the catalogue twice, and the whole sequence is consumed.
+    assert_eq!(simulator.finish().expect("requests").len(), 44);
+}
+
+/// bridge#466 through the tool call, not the builder: a three-entry Receipt
+/// passes argument validation, admission and both group reads, writes a file,
+/// and says in its own result that the shape rests on narrower evidence,
+/// labelled as §9.3's hand-built gateway readback — it must not borrow §9.13's
+/// two-entry evidence.
+#[tokio::test]
+async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualified() {
+    let payload: ImportPayload = serde_json::from_value(json!({"company_guid":CAPTURED_GUID,"vouchers":[
+        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Receipt","narration":"Shared deposit",
+         "entries":[{"ledger":"Cash","amount":"20.00","side":"Dr"},
+                    {"ledger":"Bridge Nested Debtor WR4","amount":"12.50","side":"Cr"},
+                    {"ledger":"WR2 Sales","amount":"7.50","side":"Cr"}]}
+    ]}))
+    .expect("multi-entry payload");
+    let simulator = SequenceSimulator::spawn(bank_build_plans()).expect("bank build plan");
+    let directory = tempfile::tempdir().unwrap();
+    let server = bank_server(directory.path(), simulator.address().port());
+    let response = server
+        .call_tool_response("build_import_xml", serde_json::to_value(&payload).unwrap())
+        .await
+        .value;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["voucher_count"], 1, "{response}");
+    // The build records each ledger with the GUID its catalogue read bound it
+    // to (#239), exactly as the captured catalogue gives them.
+    let saved = server
+        .latest_import_snapshot(result["batch_id"].as_str().unwrap())
+        .unwrap()
+        .unwrap()
+        .batch;
+    let bound = |name: &str, suffix: &str| BoundLedger {
+        name: name.into(),
+        guid: format!("61c6de69-1748-461c-ad3f-162cb949df9f-{suffix}"),
+    };
+    assert_eq!(
+        saved.ledger_identities,
+        Some(vec![
+            bound("Bridge Nested Debtor WR4", "000000d5"),
+            bound("Cash", "0000001f"),
+            bound("WR2 Sales", "000000d0"),
+        ])
+    );
+    assert_eq!(
+        result["live_evidence"],
+        json!([{"observation":"hand_built_gateway_readback",
+            "report":"docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
+            "voucher_types":["Receipt"]}])
+    );
+    let warnings = result["warnings"].as_array().expect("warnings array");
+    assert!(
+        warnings.iter().any(|warning| warning
+            .as_str()
+            .unwrap()
+            .contains("no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu")),
+        "multi-entry warning missing: {warnings:?}"
+    );
+    let xml = std::fs::read_to_string(
+        directory
+            .path()
+            .join("imports")
+            .join(format!("{}.xml", result["batch_id"].as_str().unwrap())),
+    )
+    .expect("written import file");
+    assert_eq!(xml.matches("<ALLLEDGERENTRIES.LIST>").count(), 3, "{xml}");
+    assert!(xml.contains("<PARTYLEDGERNAME>Bridge Nested Debtor WR4</PARTYLEDGERNAME>"));
     assert_eq!(simulator.finish().expect("requests").len(), 44);
 }
 
@@ -1226,6 +1316,7 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
         voucher.voucher_type = voucher_type.clone();
         voucher.voucher_number = None;
         let line = ImportLedgerLine {
+            ledger_identities: None,
             endpoint_origin: None,
             identity_scheme: None,
             amends_batch_id: None,
@@ -1631,4 +1722,225 @@ fn the_verification_read_fetches_the_effective_date_and_not_the_party() {
     // written counterparty (§9.8 scoped correction): comparing it would refuse
     // every legitimate bank voucher.
     assert!(!fetch.contains(&"PARTYLEDGERNAME"));
+}
+
+/// A bank voucher of any number of entries, each `(ledger, amount, side)`.
+fn multi_entry_batch(voucher_type: &str, entries: &[(&str, &str, &str)]) -> ImportPayload {
+    serde_json::from_value(json!({"company_guid":AARAV_GUID,"vouchers":[
+        {"bridge_txn_id":"txn-multi","date":"2026-09-01","voucher_type":voucher_type,
+         "entries":entries.iter().map(|(ledger, amount, side)| json!({
+             "ledger":ledger,"amount":amount,"side":side})).collect::<Vec<_>>()}
+    ]}))
+    .expect("multi-entry batch")
+}
+
+/// bridge#466, owner decision 2026-09-22: every leg of a
+/// multi-entry Payment, Receipt or Contra is classified, not only the first on
+/// each side. A money ledger at any counterparty position is a disguised
+/// Contra and is refused; the money side may carry several money ledgers.
+#[test]
+fn every_leg_of_a_multi_entry_bank_voucher_is_classified() {
+    let masters = observed(&captured_demo_ledger_parents(), captured_demo_groups());
+    let bank = "HDFC Bank Current Account";
+    let admitted = [
+        // One bank payment settling two suppliers.
+        (
+            "Payment",
+            vec![
+                ("Gujarat Poly Industries", "600.00", "Dr"),
+                ("Kohinoor Fabrics", "400.00", "Dr"),
+                (bank, "1000.00", "Cr"),
+            ],
+        ),
+        // One deposit covering two customers, credited in either order.
+        (
+            "Receipt",
+            vec![
+                (bank, "1000.00", "Dr"),
+                ("Amrut Beverages", "250.00", "Cr"),
+                ("Balaji Traders", "750.00", "Cr"),
+            ],
+        ),
+        // A Payment funded by two bank accounts.
+        (
+            "Payment",
+            vec![
+                ("Office Rent", "1000.00", "Dr"),
+                (bank, "400.00", "Cr"),
+                ("ICICI Bank CA 4471", "600.00", "Cr"),
+            ],
+        ),
+        // The same money ledger twice on its side.
+        (
+            "Receipt",
+            vec![
+                (bank, "500.00", "Dr"),
+                (bank, "500.00", "Dr"),
+                ("Amrut Beverages", "1000.00", "Cr"),
+            ],
+        ),
+        // A Contra across three money ledgers.
+        (
+            "Contra",
+            vec![
+                ("Cash", "300.00", "Dr"),
+                ("Petty Cash", "200.00", "Dr"),
+                (bank, "500.00", "Cr"),
+            ],
+        ),
+    ];
+    for (voucher_type, entries) in &admitted {
+        let refusals =
+            cash_bank_refusals(&multi_entry_batch(voucher_type, entries), &masters, 200_000);
+        assert!(refusals.ledgers.is_empty(), "{voucher_type} {entries:?}");
+    }
+    let refused = [
+        // Money in the SECOND counterparty position: a disguised Contra.
+        (
+            "Payment",
+            vec![
+                ("Gujarat Poly Industries", "600.00", "Dr"),
+                ("Cash", "400.00", "Dr"),
+                (bank, "1000.00", "Cr"),
+            ],
+            "Cash",
+            "not_cash_bank",
+        ),
+        (
+            "Receipt",
+            vec![
+                (bank, "1000.00", "Dr"),
+                ("Amrut Beverages", "250.00", "Cr"),
+                ("Petty Cash", "750.00", "Cr"),
+            ],
+            "Petty Cash",
+            "not_cash_bank",
+        ),
+        // A non-money ledger in the second money position.
+        (
+            "Payment",
+            vec![
+                ("Office Rent", "1000.00", "Dr"),
+                (bank, "400.00", "Cr"),
+                ("Salaries", "600.00", "Cr"),
+            ],
+            "Salaries",
+            "cash_bank",
+        ),
+        // A party at the third leg of a Contra.
+        (
+            "Contra",
+            vec![
+                ("Cash", "300.00", "Dr"),
+                ("Amrut Beverages", "200.00", "Dr"),
+                (bank, "500.00", "Cr"),
+            ],
+            "Amrut Beverages",
+            "cash_bank",
+        ),
+    ];
+    for (voucher_type, entries, ledger, requires) in &refused {
+        let refusals =
+            cash_bank_refusals(&multi_entry_batch(voucher_type, entries), &masters, 200_000);
+        assert!(
+            refusals
+                .ledgers
+                .iter()
+                .any(
+                    |leg| leg["ledger"]["$bridge_agent_party_name"] == json!(ledger)
+                        && leg["requires"] == json!(requires)
+                ),
+            "{voucher_type}: expected {ledger} refused as {requires}, got {:?}",
+            refusals.ledgers
+        );
+    }
+}
+
+/// bridge#466, owner decision 2026-09-22: PARTYLEDGERNAME is the
+/// first counterparty entry in the voucher's own order.
+#[test]
+fn a_shared_voucher_names_its_first_counterparty_as_the_party() {
+    let bank = "HDFC Bank Current Account";
+    for (voucher_type, entries, party) in [
+        (
+            "Receipt",
+            vec![
+                (bank, "1000.00", "Dr"),
+                ("Balaji Traders", "750.00", "Cr"),
+                ("Amrut Beverages", "250.00", "Cr"),
+            ],
+            "Balaji Traders",
+        ),
+        (
+            "Payment",
+            vec![
+                ("Kohinoor Fabrics", "400.00", "Dr"),
+                (bank, "1000.00", "Cr"),
+                ("Gujarat Poly Industries", "600.00", "Dr"),
+            ],
+            "Kohinoor Fabrics",
+        ),
+    ] {
+        let batch = multi_entry_batch(voucher_type, &entries);
+        let xml = render_import_xml("Synthetic Accounts", &batch.vouchers, "bridge-466-party");
+        assert_eq!(
+            xml.matches("<PARTYLEDGERNAME>").count(),
+            1,
+            "{voucher_type}"
+        );
+        assert!(
+            xml.contains(&format!("<PARTYLEDGERNAME>{party}</PARTYLEDGERNAME>")),
+            "{voucher_type}: {xml}"
+        );
+    }
+    // A Contra names no party, however many entries it has.
+    let contra = multi_entry_batch(
+        "Contra",
+        &[
+            ("Cash", "300.00", "Dr"),
+            ("Petty Cash", "200.00", "Dr"),
+            (bank, "500.00", "Cr"),
+        ],
+    );
+    let xml = render_import_xml("Synthetic Accounts", &contra.vouchers, "bridge-466-contra");
+    assert!(!xml.contains("PARTYLEDGERNAME"));
+}
+
+/// verify_import pairs entries as a sorted multiset, so a multi-entry voucher
+/// with a repeated ledger pairs entry for entry, and a missing or merged entry
+/// does not pair.
+#[test]
+fn a_multi_entry_voucher_with_a_repeated_ledger_pairs_as_a_multiset() {
+    let bank = "HDFC Bank Current Account";
+    let batch = multi_entry_batch(
+        "Receipt",
+        &[
+            (bank, "500.00", "Dr"),
+            (bank, "500.00", "Dr"),
+            ("Amrut Beverages", "1000.00", "Cr"),
+        ],
+    );
+    let expected = expected_entry_fingerprint(&batch.vouchers[0]);
+    let read = |entries: &[(&str, &str, &str)]| ReadVoucher {
+        entries: entries
+            .iter()
+            .map(|(ledger, amount, positive)| ReadEntry {
+                ledger: ledger.to_string(),
+                amount: amount.to_string(),
+                is_deemed_positive: positive.to_string(),
+            })
+            .collect(),
+        ..serde_json::from_value(json!({"amounts": []})).unwrap()
+    };
+    let separate = read(&[
+        ("Amrut Beverages", "1000.00", "No"),
+        (bank, "-500.00", "Yes"),
+        (bank, "-500.00", "Yes"),
+    ]);
+    assert_eq!(actual_entry_fingerprint(&separate), expected);
+    let merged = read(&[
+        ("Amrut Beverages", "1000.00", "No"),
+        (bank, "-1000.00", "Yes"),
+    ]);
+    assert_ne!(actual_entry_fingerprint(&merged), expected);
 }

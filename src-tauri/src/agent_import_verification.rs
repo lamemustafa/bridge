@@ -11,6 +11,20 @@ pub(super) fn parse_import_vouchers(
     xml: &str,
     company_guid: &str,
 ) -> Result<ImportReadSource, String> {
+    ImportReadSource::admit(parse_import_voucher_rows(xml, company_guid)?)
+}
+
+/// Parse one verification response into rows **without admitting them.**
+///
+/// `ImportReadSource::admit` enforces identity uniqueness across the whole row
+/// set, so a window read in parts must be admitted **once over the union** — not
+/// per part. Admitting each part separately would check uniqueness only within
+/// each part and let a voucher duplicated across two sub-windows through, which
+/// is exactly the kind of thing this read exists to catch.
+pub(super) fn parse_import_voucher_rows(
+    xml: &str,
+    company_guid: &str,
+) -> Result<Vec<ReadVoucher>, String> {
     let parsed =
         super::super::parse_import_verification_rows(xml, company_guid).map_err(|code| {
             match code.as_str() {
@@ -46,7 +60,7 @@ pub(super) fn parse_import_vouchers(
     for entry in rows.iter_mut().flat_map(|row| &mut row.entries) {
         entry.is_deemed_positive = entry.is_deemed_positive.trim().to_string();
     }
-    ImportReadSource::admit(rows)
+    Ok(rows)
 }
 
 // File preflight and later verification require the same window and row identities.
@@ -336,6 +350,37 @@ pub(super) fn voucher_is_accounting_effective(voucher: &ReadVoucher) -> Result<b
         (Some(true), _) | (_, Some(true)) => Ok(false),
         _ => Err("voucher_accounting_state_not_observed".to_string()),
     }
+}
+
+/// The `verify_import` response for one page of a verification (bridge#627).
+///
+/// Every row that is not `posted_verified`, the duplicate lists, the counts and
+/// the status are always returned in full: they are what a caller must act on,
+/// and the byte cap never cuts them. Only the `posted_verified` rows are paged,
+/// as `items` from `offset`, which the response byte cap may shorten further
+/// (it then sets `next_offset`). `proof` names the persisted proof a later
+/// page is served from, so every page describes the same verification.
+pub(super) fn verification_response_page(
+    proof: &Value,
+    proof_sha256: &str,
+    offset: usize,
+) -> Value {
+    let (verified, unverified): (Vec<Value>, Vec<Value>) = proof["vouchers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .partition(|row| row["status"] == "posted_verified");
+    let mut page = proof.clone();
+    if let Some(fields) = page.as_object_mut() {
+        fields.remove("vouchers");
+    }
+    page["unverified_vouchers"] = json!(unverified);
+    page["verified_total"] = json!(verified.len());
+    page["offset"] = json!(offset);
+    page["items"] = json!(verified.into_iter().skip(offset).collect::<Vec<_>>());
+    page["proof"] = json!({"batch_id": proof["batch_id"], "sha256": proof_sha256});
+    page
 }
 
 pub(super) fn verification_status(result: &Value, expected_voucher_count: usize) -> &'static str {

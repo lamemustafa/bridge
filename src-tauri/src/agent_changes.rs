@@ -31,7 +31,7 @@ impl Server {
                 ),
                 (None, None) => {
                     let (xml, evidence) = self
-                        .post_read(&identity, render_agent_company_high_water(&company.name))
+                        .post_read(&identity, company_high_water_read(&company.name))
                         .await?;
                     let voucher_snapshot = parse_company_high_water(&xml, guid)?["altvchid"]
                         .as_u64()
@@ -42,7 +42,7 @@ impl Server {
                         let (xml, evidence) = self
                             .post_read(
                                 &identity,
-                                render_agent_master_domain_high_water(&company.name, kind),
+                                master_domain_high_water_read(&company.name, kind),
                             )
                             .await?;
                         master_snapshot =
@@ -65,8 +65,7 @@ impl Server {
         if voucher_alter_id > voucher_snapshot || master_alter_id > master_snapshot {
             return Err("change_checkpoint_exceeds_snapshot".to_string().into());
         }
-        let request =
-            render_agent_changed_vouchers(&company.name, voucher_alter_id, voucher_snapshot);
+        let request = changed_vouchers_read(&company.name, voucher_alter_id, voucher_snapshot);
         let (xml, evidence) = self.post_read(&identity, request).await?;
         let all_rows = parse_agent_changed_rows(&xml, identity.company_guid()).map_err(|code| {
             ToolFailure::from(code).with_prior_evidence(combine_evidence(
@@ -86,12 +85,7 @@ impl Server {
             let (xml, evidence) = self
                 .post_read(
                     &identity,
-                    render_agent_changed_masters(
-                        &company.name,
-                        master_alter_id,
-                        master_snapshot,
-                        kind,
-                    ),
+                    changed_masters_read(&company.name, master_alter_id, master_snapshot, kind),
                 )
                 .await?;
             all_masters.extend(parse_agent_changed_masters(&xml)?);

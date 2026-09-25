@@ -11,7 +11,23 @@ use crate::{
     validate_only_attributes, PartyLedgerMasterFieldObservation, TallyLedger,
 };
 
-pub const MAX_STANDARD_LEDGER_IDENTITY_ROWS: usize = 1_000;
+/// Rows either parser in this file will hold from one `List of Ledgers`
+/// response. Both parse the same request, and it returns every ledger in the
+/// book, so this bound refuses a whole company, never one row.
+///
+/// It was 1,000, which refused every book over a thousand ledgers: a book of
+/// about 9,500 ledgers lost the `vouchers` ledger filter and import validation
+/// together (bridge#634). The response's real limit is the transport's 32 MiB
+/// cap, counted on the wire, where Tally's XML is UTF-16LE: at most about 16.7
+/// million characters. The smallest row the identity parser accepts is about
+/// 121 characters plus the company name, so no admitted response can carry
+/// more than about 140,000 rows. This bound is above that, and fires only if
+/// the transport cap is raised without revisiting it.
+///
+/// It is not the limit a large book meets first. The master-binding catalogue
+/// holds at most `bridge_tally_core::master_binding::MAX_CATALOG_ENTRIES`
+/// names, and the desktop catalogue keeps the old 1,000 of its own.
+pub const MAX_STANDARD_LEDGER_IDENTITY_ROWS: usize = 250_000;
 
 /// A failed standard-ledger catalog is never a usable catalog. Keep the
 /// failure class at the XML boundary so callers can retain their fail-closed
@@ -51,6 +67,20 @@ impl std::fmt::Display for StandardLedgerCatalogError {
 
 impl std::error::Error for StandardLedgerCatalogError {}
 
+impl StandardLedgerCatalogError {
+    /// A stable, data-free name for the failure, for a refusal's `cause`
+    /// (bridge#634). None of these names a ledger.
+    pub const fn safe_code(self) -> &'static str {
+        match self {
+            Self::MalformedResponse => "ledger_catalogue_malformed_response",
+            Self::LedgerNameUnusable => "ledger_catalogue_name_unusable",
+            Self::CompanyIdentityMismatch => "ledger_catalogue_identity_mismatch",
+            Self::DuplicateIdentity => "ledger_catalogue_duplicate_identity",
+            Self::BoundsViolation => "ledger_catalogue_bounds_exceeded",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardLedgerIdentityObservation {
     pub company_guid: String,
@@ -65,6 +95,9 @@ pub fn parse_standard_ledger_identity_observation(
     xml: &str,
     expected_company_name: &str,
 ) -> anyhow::Result<StandardLedgerIdentityObservation> {
+    // The one rule every Tally read applies first (§1.1(d)).
+    let marked = crate::mark_forbidden_numeric_references(xml);
+    let xml = marked.as_ref();
     validate_export_response(xml)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
     let mut reader = configured_reader(xml);
@@ -185,6 +218,15 @@ pub struct StandardLedgerCatalogBinding {
 }
 
 impl StandardLedgerCatalogBinding {
+    /// Each selected ledger's observed name with the GUID it was bound to, in
+    /// name order. For recording a build's binding, so a later post can tell
+    /// a ledger renamed and replaced under its old name (bridge#239).
+    pub fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.entries
+            .iter()
+            .map(|(name, guid)| (name.as_str(), guid.as_str()))
+    }
+
     /// True when every selected pair is still present in an already-parsed
     /// catalog.
     ///
@@ -271,6 +313,13 @@ fn parse_standard_ledger_catalog_rows(
     expected_company_name: &str,
     expected_company_guid: &str,
 ) -> Result<Vec<StandardLedgerCatalogRow>, StandardLedgerCatalogError> {
+    // The one rule every Tally read applies first (§1.1(d)): ledger names and
+    // parents here must spell a forbidden reference exactly as the voucher
+    // rows they are matched against do, and `&#4; Primary` must reach
+    // `group_ancestry` as the reserved root rather than as a control
+    // character `safe_standard_ledger_parent` would discard.
+    let marked = crate::mark_forbidden_numeric_references(xml);
+    let xml = marked.as_ref();
     validate_export_response(xml).map_err(|_| StandardLedgerCatalogError::MalformedResponse)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")
         .map_err(|_| StandardLedgerCatalogError::BoundsViolation)?;

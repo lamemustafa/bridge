@@ -10,6 +10,7 @@ import {
   asOfBoundValueForAsOf,
   asOfYyyymmdd,
   bulkPartyStatementsInvokeArgument,
+  bulkPartyStatementsPreviewInvokeArgument,
   operatorSelectedOutstandingsAsOf,
   partyStatementInvokeArgument,
   refreshAutomaticOutstandingsAsOf,
@@ -166,41 +167,40 @@ test("compare clients emits the same selected canonical as-of date", () => {
   );
 });
 
-test("Excel and PDF statement builders emit the report's actual as-of date", () => {
+test("statement exports name the Rust-held source, never rows, dates or a basis", () => {
   const result = {
     report: { company_name: "Bridge Validation Lab", as_of_yyyymmdd: "20260801" },
     ageing_anchor: "bill_date",
     statement_open_bills: [{ party: "Alpha", amount: "1" }],
     statement_unallocated_by_party: [{ party: "Alpha", amount: "2" }],
+    party_statement_source_id: "synthetic-statements",
   };
 
+  assert.deepEqual(partyStatementInvokeArgument(result, "Alpha", "xlsx"), {
+    request: { source_id: "synthetic-statements", party: "Alpha", format: "xlsx" },
+  });
   assert.deepEqual(
-    partyStatementInvokeArgument(result, "Alpha", "xlsx"),
+    bulkPartyStatementsInvokeArgument(result, "/tmp/statements", "synthetic-approval", "pdf"),
     {
       request: {
-        company: "Bridge Validation Lab",
-        as_of_yyyymmdd: "20260801",
-        party: "Alpha",
-        format: "xlsx",
-        ageing_anchor: "bill_date",
-        open_bills: [{ party: "Alpha", amount: "1" }],
-        unallocated_by_party: [{ party: "Alpha", amount: "2" }],
+        source_id: "synthetic-statements",
+        destination: "/tmp/statements",
+        approval_id: "synthetic-approval",
+        format: "pdf",
       },
     },
   );
-  assert.deepEqual(
-    bulkPartyStatementsInvokeArgument(result, "/tmp/statements", "synthetic-approval", "pdf").request,
-    {
-      company: "Bridge Validation Lab",
-      as_of_yyyymmdd: "20260801",
-      destination: "/tmp/statements",
-      approval_id: "synthetic-approval",
-      format: "pdf",
-      ageing_anchor: "bill_date",
-      open_bills: [{ party: "Alpha", amount: "1" }],
-      unallocated_by_party: [{ party: "Alpha", amount: "2" }],
-    },
+  assert.deepEqual(bulkPartyStatementsPreviewInvokeArgument(result), {
+    request: { source_id: "synthetic-statements" },
+  });
+
+  const withoutSource = { ...result, party_statement_source_id: undefined };
+  assert.equal(partyStatementInvokeArgument(withoutSource, "Alpha", "xlsx"), null);
+  assert.equal(
+    bulkPartyStatementsInvokeArgument(withoutSource, "/tmp/statements", "synthetic-approval", "pdf"),
+    null,
   );
+  assert.equal(bulkPartyStatementsPreviewInvokeArgument(withoutSource), null);
 });
 
 test("working-paper export sends only the opaque Rust-owned read binding", () => {

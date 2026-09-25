@@ -1,0 +1,134 @@
+{
+ "comment": "cash_book_integrity on narrations and an own-account term whose case mapping differs between Unicode 17 (the Rust toolchain) and 15.1 (the reference's Python 3.13): U+0264 upper-cases to U+A7CB only in 17, where U+A7CB is newly assigned. The reference keeps both as they are, so the two journal narrations are not repeats of each other and the Contra narration does not match the term; unpinned Rust case mapping would report a repeated pair and an own-account deposit. Pins support::py_upper.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Direct Expenses": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-u-cash"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-u-bank"
+  },
+  {
+   "name": "Wages",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-u-wages"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-u-susp"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 10000,
+   "debit": 0,
+   "credit": 0,
+   "closing": 10000
+  },
+  {
+   "ledger": "Bank",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Wages",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Suspense",
+   "opening": -10000,
+   "debit": 0,
+   "credit": 0,
+   "closing": -10000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "u1",
+   "date": "2025-06-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     100
+    ],
+    [
+     "Cash",
+     -100
+    ]
+   ],
+   "narration": "wages ɤ"
+  },
+  {
+   "guid": "u2",
+   "date": "2025-06-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     200
+    ],
+    [
+     "Cash",
+     -200
+    ]
+   ],
+   "narration": "wages Ɤ"
+  },
+  {
+   "guid": "u3",
+   "date": "2025-06-03",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     -300
+    ],
+    [
+     "Bank",
+     300
+    ]
+   ],
+   "narration": "to Ɤ account"
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Bank"
+ ],
+ "own_account_terms": [
+  "ɤ"
+ ],
+ "tests": [
+  "cash_book_integrity"
+ ]
+}

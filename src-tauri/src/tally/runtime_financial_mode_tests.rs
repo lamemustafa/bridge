@@ -59,16 +59,7 @@ fn assertion(
     extent: &str,
     identity: &VerifiedCompanyIdentity,
 ) -> PartyLedgerMasterCurrencyAssertion {
-    PartyLedgerMasterCurrencyAssertion {
-        assertion: OutstandingsCurrencyAssertion::Inr,
-        decimal_places: 2,
-        currency_read_extent:
-            bridge_tally_protocol::outstandings_shared::parse_company_book_extent_v2(
-                extent,
-                &identity.company_book_extent_expectation().unwrap(),
-            )
-            .unwrap(),
-    }
+    inr_witness_for_tests(extent, identity)
 }
 fn stale_cache(runtime: &TallyRuntime, config: &TallyConfig) {
     let companies = parse_companies_from_collection(&companies()).unwrap();
@@ -202,11 +193,11 @@ async fn financial_reads_refuse_unqualified_profiles_before_reports_despite_stal
                         .unwrap_err()
                 } else {
                     runtime
-                        .fetch_outstandings_native(
+                        .fetch_agent_outstandings_with_evidence(
                             config,
                             &identity,
                             TallyDate::parse("20260902").unwrap(),
-                            OutstandingsCurrencyAssertion::Inr,
+                            assertion(&extents(), &identity),
                             OutstandingsAgeingAnchor::DueDate,
                         )
                         .await
@@ -346,14 +337,14 @@ async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let identity = identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb");
         let result = TallyRuntime::default()
-            .fetch_outstandings_native(
+            .fetch_agent_outstandings_with_evidence(
                 TallyConfig {
                     host: simulator.address().ip().to_string(),
                     port: simulator.address().port(),
                 },
                 &identity,
                 TallyDate::parse("20260801").unwrap(),
-                OutstandingsCurrencyAssertion::Inr,
+                assertion(&extents(), &identity),
                 OutstandingsAgeingAnchor::DueDate,
             )
             .await;

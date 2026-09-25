@@ -6,8 +6,11 @@ The developer configuration below remains for supported client integrations.
 
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
-The MCPB extension also exposes Journal preparation and posting by default,
-with separate native approval for each new attempt. Command-line installations
+The MCPB extension also exposes voucher file preparation and bank-statement
+parsing by default. Voucher posting (one Journal, Payment, Receipt or Contra) is
+off by default while bridge#574 and bridge#579 are open; the **Allow voucher
+posting (Journal, Payment, Receipt, Contra)** setting adds it, with
+separate native approval for each new attempt. Command-line installations
 retain explicit environment switches.
 
 Build and run it with Rust 1.96:
@@ -63,14 +66,53 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 {"mcpServers":{"bridge-tally":{"command":"/absolute/path/to/bridge_mcp"}}}
 ```
 
-The read tools are `tally_status`, `list_companies`, `outstandings`,
-`ledger_masters`, `trial_balance`, `ledger_movement`, `vouchers`,
-`read_evidence`, `egress_log`, and `verify_import`; `voucher_schema` and
-`validate_masters` are also available by default (eleven read/schema tools).
-The MCPB extension adds Journal building and posting by default, for thirteen
-total. Each call returns compact JSON with the
+The ordinary default tools are `tally_status`, `list_companies`,
+`voucher_schema`, `validate_masters`, `verify_import`, `outstandings`,
+`ledger_masters`, `ledger_movement`, `trial_balance`, `vouchers`,
+`voucher_presence`, `read_evidence`, and `egress_log`. For a command-line
+installation, `BRIDGE_AGENT_ENABLE_IMPORT=true` also exposes
+`build_import_xml` and `parse_bank_statement`, which prepares local
+bank-statement voucher proposals. `BRIDGE_AGENT_ENABLE_WRITES=true` enables
+that import workflow and exposes `post_import` and `acknowledge_post_review`. The MCPB extension always
+sets `BRIDGE_AGENT_ENABLE_IMPORT=true` and maps its **Allow voucher posting
+(Journal, Payment, Receipt, Contra)** setting, off by default, to `BRIDGE_AGENT_ENABLE_WRITES`.
+This is a source-configuration inventory, not a claim that an installed client
+uses a particular setting or that a tool is qualified for every runtime. Each
+call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
-byte count, completeness reason, and truncation state. Before a tool response is written, Bridge appends a metadata-only
+byte count, completeness reason, and truncation state. A refused call returns
+`result.error` with `code`, which names what failed, and `message`. Where a runtime
+refusal has a typed, data-free reason, the error also carries `cause`, which names why
+(for example `company_base_currency_undetermined` beside `party_ledger_master_read_failed`).
+A read whose two paired halves differ, because the book changed while Bridge was reading it,
+carries `native_report_pair_changed`. A voucher-window part that is not admitted
+(`voucher_window_part_not_admitted`) names why, and a census disagreement also carries
+`counts`, the rows the part `returned` against the rows the census `counted`.
+A compliance ledger read (`ledger_masters fields=compliance`) that its company's master-alteration
+mark cannot bound within Bridge's response budget is refused before any ledger request (#637). The
+refusal has cause `ledger_masters_too_large` and a `size` object: `master_alter_id`,
+`estimated_bytes` and `budget_bytes`. The mark is an upper bound on ledgers, since every master
+raises it, so a company with fewer ledgers may be refused. `fields=basic` still reads it, and a
+precise count is pending (#668).
+When Bridge got no response it could read, the `cause` names why and the error also carries
+`endpoint`, the configured origin that was tried (#629). The causes are:
+- `endpoint_invalid`: the configured endpoint failed validation. The `endpoint` field then appears only
+  if a valid origin can still be formed from the configuration.
+- `endpoint_unreachable`: the connection was not accepted.
+- `request_failed` or `request_deadline_exceeded`: the request failed before any response, or its
+  deadline passed.
+- `http_status_failure`, `response_content_type_unsupported` or
+  `response_content_encoding_unsupported`: the responder was rejected on its HTTP status or headers
+  before any body was read.
+- An `endpoint_…` runtime code: Bridge held the request back and sent nothing.
+
+A wrong or reset port therefore reads as an endpoint problem, not as a Tally data problem. A
+failed read without `endpoint` either received a response whose body then failed to read, decode,
+parse or pass Bridge's checks, or hit a local limit or fault that does not involve the endpoint. A
+withdrawn call is `request_cancelled`.
+
+Like `remediation`, `cause`, `counts`, `size` and `endpoint` are omitted when `BRIDGE_AGENT_MAX_BYTES` is below
+4,096, so that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
 After `write_all` and `flush` succeed, it appends a `stdio_write_completed` record
 with the same ID and response hash plus `bytes_written`. This confirms the local
@@ -90,6 +132,17 @@ cannot establish completed delivery. Consumers must join new records by
 `receipt_id`; preparation alone is not a completed write.
 All output object keys must remain server-defined; identifiers belong in values,
 including when adding new grouped reports.
+While a tool other than `post_import` runs, a `notifications/cancelled` naming it
+stops the call before its next queued operation. An operation already started runs
+to completion, including every request it makes (a paired read, its brackets and any
+retries), because abandoning a request would not stop Tally; so a cancellation can
+still be followed by the rest of that operation's requests. The call is answered with
+`request_cancelled` and partial evidence, never with part of a read. Closing the
+input is not a cancellation: the call in flight still completes. Requests other than
+`ping` sent while a call runs are served after it, in order; a ping is answered at
+once. Once eight requests are waiting, further input (including a ping or a
+cancellation of the call) stays unread until the call ends. The lab write tools are
+not cancellable.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
 larger receipt file still yields its bounded tail without loading the head.
 `changed_since` is unavailable: it is omitted from tool discovery and direct calls
@@ -155,6 +208,18 @@ or cached profile does not grant admission.
 The retained Education observations in protocol sections 5.3, 5.5 and 12a remain
 valid within their recorded scope. Ordinary voucher reads retain their separate
 literal-date and returned-row validation contract.
+Every voucher, movement, presence and verification read observes the mode from the
+`CompanyListV2` response of its own identity bracket, at no extra request. In Education
+mode a read whose `SVFROMDATE` or `SVTODATE` is not on day 1, 2 or 31 is refused as
+`window_part_boundary_unsupported_in_education` before it is sent, because Education
+answers a read starting on another day with an empty collection rather than an error. A
+divided window is checked whole before its first part, and a read whose closing bracket
+reports Education is refused the same way, since either mode may have served it. Any
+`EDUMODE` value other than `No` counts as Education even when the other capability fields
+do not parse; a company list with no `EDUMODE` field keeps ordinary boundaries, and
+`EDUMODE = Yes` itself has not yet been captured from a live Education instance. The end
+side is held to the same rule without a live measurement in these shapes, so an Education
+whole-month read ending on the 30th is refused.
 A genuinely empty voucher response uses the same wider-window
 corroboration as `vouchers` before zero movement can be reported. Cancelled and
 optional rows establish response presence while contributing no accounting movement.
@@ -173,9 +238,10 @@ valid empty collection remains distinguishable from invalid discovery.
 ## Voucher-file preparation and verification
 
 The MCPB extension exposes `verify_import` by default as a read-only recovery
-tool. `build_import_xml` remains behind `BRIDGE_AGENT_ENABLE_IMPORT=1` for a
-command-line installation, or is enabled with Journal posting as described
-below. New file generation accepts `Journal`, `Payment`, `Receipt` and `Contra`, each
+tool, and `build_import_xml` by default because it always sets
+`BRIDGE_AGENT_ENABLE_IMPORT`. A command-line installation keeps
+`build_import_xml` behind `BRIDGE_AGENT_ENABLE_IMPORT=1`, or enables it with
+Journal posting as described below. New file generation accepts `Journal`, `Payment`, `Receipt` and `Contra`, each
 with freshly observed supported TallyPrime product and licence mode before and
 after the build reads. Release and licence tier are returned as observed facts;
 they do not independently refuse a file. `tally_status` reports the observed
@@ -191,8 +257,15 @@ The four rest on different observations, and each build reports its own in
 - `Payment`, `Receipt`, `Contra` — a licensed TallyPrime 7.1 Gold bank-statement
   import observed 2026-09-10; see
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
-  admitted only as two entries over two distinct ledgers with no voucher number
-  and no reference, and their money side must be a ledger whose live group
+  admitted with two or more entries (at least one debit and one credit, no
+  ledger on both sides; more than two is bridge#466 and rests on narrower
+  evidence: hand-built files of that shape were imported and read back
+  over the gateway ([reference §9.3](../tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md);
+  a Contra only with a repeated ledger), and one Bridge-built three-entry Receipt was imported
+  over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu,
+  so such a voucher reports `live_evidence` as `hand_built_gateway_readback` and
+  its build result warns so) with no voucher number and no reference, and every leg on
+  their money side must be a ledger whose live group
   ancestry reaches a reserved `Bank Accounts`, `Cash-in-Hand` or `Bank OD A/c`
   identity, while
   their counterparty side must be established as holding no money — money on
@@ -245,8 +318,8 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
    live read.
 4. In Tally, with the intended company open, use **Gateway of Tally → Import →
    Vouchers** to import the file. Bridge does not dispatch this manual step.
-   Alternatively, use the separately approved MCP or desktop Journal posting
-   flow below instead of importing the file manually.
+   Alternatively, use the separately approved MCP voucher posting (or, for a
+   Journal, the desktop posting) flow below instead of importing the file manually.
 5. Call `verify_import` with the company GUID and batch ID. It reads the date
    window back, compares the exact signed ledger entries, reports missing or
    divergent rows and duplicates, writes `.proof.json` and `.proof.md`, and
@@ -280,15 +353,28 @@ Tally Cloud Access, every non-loopback Tally host, and change enumeration. A
 not live-Tally qualification or a claim that every Tally configuration or
 licence mode has been qualified.
 
-## Approved Journal posting
+## Approved voucher posting
 
-The MCPB extension makes **Allow Journal posting** available by default.
-Turn it off for a read-only connector; existing saved settings remain respected.
+**Voucher posting is off by default in the MCPB extension** while two known
+limits remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher
+([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
+delete or roll back a voucher it has posted, so a wrong post must be corrected
+by hand in Tally ([#579](https://github.com/lamemustafa/bridge/issues/579)).
+The saved batch file is now checked byte for byte against the approved record
+before posting ([#575](https://github.com/lamemustafa/bridge/issues/575), fixed).
+**Allow voucher posting (Journal, Payment, Receipt, Contra)** turns it on for
+users who accept those risks. Existing
+saved settings are respected, so an installation that saved the earlier default
+may still have posting on; check the setting.
 For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
-This enables `build_import_xml` and `post_import`; `verify_import` remains
-available so an uncertain saved batch can be checked after posting is turned
-off. `BRIDGE_AGENT_ENABLE_IMPORT=true` alone exposes the manual file workflow,
-while verification remains available without either switch. Both switches
+This enables `build_import_xml`, `parse_bank_statement`, `post_import` and
+`acknowledge_post_review`, which asks the local user, in its own native dialog, to
+record that they reviewed a post whose masters check found a changed ledger. That
+record changes no verification status and nothing in Tally (#239).
+`verify_import` remains available so an uncertain saved batch can be checked
+after posting is turned off. `BRIDGE_AGENT_ENABLE_IMPORT=true` alone exposes
+the manual file workflow and bank-statement proposal preparation, while
+verification remains available without either switch. Both switches
 accept `true`/`false` or `1`/`0`; invalid values stop startup. No model-supplied argument can grant approval. Claude controls
 its own tool-call permission prompts: Bridge cannot preselect **Always allow**
 for the user. That client permission does not approve an accounting entry.
@@ -296,13 +382,42 @@ for the user. That client permission does not approve an accounting entry.
 One native-approved Journal and restart reconciliation have been observed on
 macOS against a synthetic Silver 7.1 instance. This remains a preview: Windows
 interactive approval and Gold/Education live posting have not been established.
+Native posts of a Payment, a Receipt, a Contra and a three-entry Receipt have
+been observed live on a synthetic Silver 7.1 company, each reading back
+`posted_verified` (ADR 0004, amended 2026-09-23).
 
-1. Validate the exact existing ledger names and build **one Journal** using the
-   file workflow above. A Journal is a voucher; Payment, Receipt, Contra,
-   sales, purchases, tax, inventory and master creation remain unavailable.
+1. Validate the exact existing ledger names and build **one Journal, Payment,
+   Receipt or Contra** using the file workflow above. Sales, purchases, tax,
+   inventory and master creation remain unavailable. For a Payment, Receipt or
+   Contra, `post_import` classifies every leg again from the ledgers' current
+   parents and the group tree, before approval and again after approval inside
+   the endpoint queue (before the final duplicate check and the post), and refuses with `import_bank_classification_changed` if any
+   leg changed; nothing is sent. Every post, of any type, is refused with
+   `import_multi_currency_unsupported` if the company defines more than one
+   currency: Bridge does not post into multi-currency books yet. This is checked
+   before approval and again inside the queue. A Currency read that names no
+   usable master refuses with `import_base_currency_undetermined`. Inside the
+   queue, a change to the company's masters from just before the catalogue
+   re-read to the last read before the post refuses with `post_masters_moved`
+   (`post_masters_unconfirmed` if it cannot be checked); re-run the post. This
+   sees only changes that move the company's master AlterID (`ALTMSTID`):
+   measured for ledger renames and creates made through the gateway. A regroup,
+   an edit made in Tally's own screens, and whether posting a voucher moves it
+   are not yet measured. A queue catalogue re-read that does not parse as this
+   company's catalogue refuses with `post_catalogue_unreadable`, whose `cause`
+   names why, and nothing is sent; a repeated or unusable ledger name refuses
+   again until it is corrected in Tally. Separately, the build records each ledger's GUID, and a
+   post refuses any ledger now on another GUID (renamed and replaced, or deleted
+   and recreated, since the build) with `import_masters_changed_since_build`,
+   naming it. The name now means a different ledger: confirm the intended one
+   (it may be under a new name) with `validate_masters` before building again.
+   A batch built before this record existed is refused with
+   `import_batch_predates_ledger_binding`, before any Tally request; build it
+   again. Rebuild only when `attempt_recorded` is `false`.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
-   narration, every debit/credit entry, and totals. Choose **Post Journal** on
+   narration, every debit/credit entry, and totals; for a bank voucher, also the
+   side that must be bank or cash. Choose **Post voucher** on
    macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
    declines on macOS; Return may leave the dialog open. Windows defaults to
    **No**. Long or directionally ambiguous previews are refused; use the
@@ -312,7 +427,18 @@ interactive approval and Gold/Education live posting have not been established.
    before one POST through the existing serial Tally queue. It saves response
    commitments/counters and performs mandatory accounting readback. Only a
    clean create response together with matching readback confirms the first
-   posting as `posted_verified`.
+   posting as `posted_verified`. Unless the company's master AlterID is proven
+   unmoved across the POST, Bridge re-reads the ledgers and reports it in
+   `masters_after_post`. If an approved ledger no longer resolves to its
+   approved GUID (`posted_under_changed_masters`), or that check cannot be
+   completed (`masters_after_post_unconfirmed`), the voucher is in Tally but the
+   result is `reconciliation_required`: review it in Tally, correct it there if
+   needed, and do not rebuild the event. Bridge records the check with the
+   batch. A changed ledger stays reported on every later `verify_import`, even
+   after the voucher is corrected in Tally; a check that could not finish is
+   finished by the next `verify_import` that finds the voucher. If Bridge cannot
+   record the check, the post is refused before anything is sent
+   (`post_masters_record_unavailable`).
 
 Keep the selected company free of other imports and ledger changes while posting,
 and leave Tally's product/licence mode unchanged. Bridge serializes its own writers;
@@ -324,6 +450,9 @@ approval. If dispatch has already begun, cancellation cannot undo Tally's
 work. A timeout, crash, malformed response or incomplete readback requires
 `verify_import` on the **same original batch**. Once dispatch intent exists,
 `post_import` only reconciles and never resends, including after process restart.
+Each post sends a fresh `REMOTEID`, and one that any recorded dispatch intent
+already carries is refused as `import_remote_id_reused` before any Tally request
+(protocol reference §9.3: a resend can undo a person's cancel or delete).
 If another process holds import admission, the call returns `import_admission_busy`
 without waiting for that process or scheduling a later post. Reconcile any
 recorded attempt before requesting another action. Confirmation requires all seven
@@ -340,11 +469,15 @@ response metadata helps distinguish clean counters from readback alone.
 Posting binds the saved batch to its loopback endpoint and full company tuple.
 Legacy batches without that endpoint binding remain readable/verifiable but
 cannot be posted. Only a uniquely selectable loaded company is admitted.
-Existing batch files and proofs retain their formats with additive optional
-journal metadata; no database migration or background queue is introduced.
+Existing batch files and proofs keep their formats; new journal fields are
+optional on read, and no database migration or background queue is introduced.
 Disabling the switch and restarting the connector removes posting from tool
-availability without deleting reconciliation evidence. Retain this connector
-version for recovery: older binaries may refuse the new dispatch journal records.
+availability without deleting reconciliation evidence.
+**Keep this connector version for recovery.** The journal reader refuses any
+record carrying a field it does not know. So after a native post, an older
+connector refuses the whole journal, including reconciliation of batches it
+wrote itself. Since bridge#579, each native dispatch intent records the
+REMOTEID it sent, which 0.2.0 and earlier do not know.
 
 This is a bounded first posting slice, not blanket host/licence qualification.
 A ledger mapper is unnecessary for exact existing names: `validate_masters`
@@ -363,7 +496,7 @@ user rather than silently creating or choosing a ledger.
    matching a single saved, admitted batch and its original private file.
 3. Review the company, date, reference, narration, ledger entries and totals.
    Choose **Post Journal**, then review and approve the independent native
-   dialog. The app uses the same validation, dispatch and readback service as
+   dialog (its button reads **Post voucher**). The app uses the same validation, dispatch and readback service as
    MCP. Changing app connection settings cannot redirect an open review.
 4. If an attempt is already recorded or its outcome is uncertain, use
    **Reconcile original batch**. This action only reads and cannot open an
@@ -426,7 +559,13 @@ movement with exact decimal `opening`, `debit`, `credit`, `closing`, parent,
 and `vouchers_touching`. `ledger_masters` accepts `fields: "compliance"` to
 return the paired party-master GSTIN/PAN/MSME/bank/IFSC/email/phone/state and
 address observations; `mask_parties` redacts the ledger name before it leaves
-the server. The unavailable `changed_since` implementation must not be used as
+the server. Each `ledger_masters` row's `opening_balance` is the opening at the
+start of the company's books, and `opening_balance_as_of` names that date (the
+admitted `BOOKSFROM` the request pins). On a book holding several years it is
+not the current year's opening: for a period's opening, use `trial_balance` or
+`ledger_movement` with that period's `from`.
+
+The unavailable `changed_since` implementation must not be used as
 change-enumeration evidence; its retained internal response states that
 deletion detection is unsupported.
 

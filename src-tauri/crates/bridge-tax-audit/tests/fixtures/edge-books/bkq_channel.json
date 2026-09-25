@@ -1,0 +1,584 @@
+{
+ "comment": "book_keeping_quality payment-channel section: two same-day invoices of one amount contend for one in-window receipt (the lower GUID takes it); an older invoice with a higher GUID takes a receipt before a newer one (date first); among two receipts the earlier-dated is tried first even with the higher GUID; receipt lags 0 and 3 match, 4 and -1 do not; next-day matches; a Sales voucher crediting the channel ledger is neither an invoice nor a receipt; an invoice's credit line on the channel ledger does not reduce its amount; a Sales voucher with a channel line and a cash line is a channel sale (its inventory line is priced in the channel bucket); months with one and four invoices; purchase rates as a year average over lines with a positive quantity and an amount (a zero, absent and negative quantity and an absent amount skipped); a sale line at exactly cost is not below it, one a float epsilon under cost is (0.3 units at 1234 paise cost 1234.0000000000002); a half-paisa rate makes the named-customer cost 12.5, rounded half to even to 12 (margin 769 bp, where half-up would give 0); sale lines with no purchase rate, a missing, zero or negative quantity, or no amount are skipped; cash-sale and named-customer buckets; the named-customer comparison margin.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Local Debtors": "Sundry Debtors",
+  "Stock-in-Hand": "Current Assets",
+  "Finished Goods": "Stock-in-Hand",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-0"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-1"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-bkq-2"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-bkq-3"
+  },
+  {
+   "name": "Supplier",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-4"
+  },
+  {
+   "name": "Customer",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-5"
+  },
+  {
+   "name": "Expenses",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bkq-6"
+  },
+  {
+   "name": "UPI Collections",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-7"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "p1",
+   "date": "2025-04-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     30000
+    ],
+    [
+     "Supplier",
+     -30000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 3,
+     "amount": 30000
+    }
+   ]
+  },
+  {
+   "guid": "p2",
+   "date": "2025-04-02",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     100000
+    ],
+    [
+     "Supplier",
+     -100000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 7,
+     "amount": -100000
+    },
+    {
+     "item": "Gadget",
+     "qty": 0.3,
+     "amount": 1234
+    },
+    {
+     "item": "Tiny",
+     "qty": 4,
+     "amount": 50
+    },
+    {
+     "item": "Widget",
+     "qty": 0,
+     "amount": 999
+    },
+    {
+     "item": "Widget",
+     "qty": null,
+     "amount": 999
+    },
+    {
+     "item": "Widget",
+     "qty": -2,
+     "amount": 999
+    },
+    {
+     "item": "Widget",
+     "qty": 5,
+     "amount": null
+    }
+   ]
+  },
+  {
+   "guid": "i-a",
+   "date": "2025-04-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     100000
+    ],
+    [
+     "Sales",
+     -100000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 1,
+     "amount": -12000
+    },
+    {
+     "item": "Widget",
+     "qty": 2,
+     "amount": -26000
+    },
+    {
+     "item": "Gadget",
+     "qty": 0.3,
+     "amount": -1234
+    }
+   ]
+  },
+  {
+   "guid": "i-b",
+   "date": "2025-04-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     100000
+    ],
+    [
+     "Sales",
+     -100000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Unbought",
+     "qty": 1,
+     "amount": -100
+    },
+    {
+     "item": "Widget",
+     "qty": null,
+     "amount": -100
+    },
+    {
+     "item": "Widget",
+     "qty": 1,
+     "amount": null
+    },
+    {
+     "item": "Widget",
+     "qty": 0,
+     "amount": -100
+    },
+    {
+     "item": "Widget",
+     "qty": -1,
+     "amount": -100
+    }
+   ]
+  },
+  {
+   "guid": "r-1",
+   "date": "2025-04-02",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     100000
+    ],
+    [
+     "UPI Collections",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "r-2",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     100000
+    ],
+    [
+     "UPI Collections",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "i-c",
+   "date": "2025-04-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     50000
+    ],
+    [
+     "Sales",
+     -50000
+    ]
+   ]
+  },
+  {
+   "guid": "r-3",
+   "date": "2025-04-10",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     50000
+    ],
+    [
+     "UPI Collections",
+     -50000
+    ]
+   ]
+  },
+  {
+   "guid": "i-d",
+   "date": "2025-04-20",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     70000
+    ],
+    [
+     "Cash",
+     5000
+    ],
+    [
+     "Sales",
+     -75000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 1,
+     "amount": -14000
+    }
+   ]
+  },
+  {
+   "guid": "r-4",
+   "date": "2025-04-23",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     70000
+    ],
+    [
+     "UPI Collections",
+     -70000
+    ]
+   ]
+  },
+  {
+   "guid": "i-e",
+   "date": "2025-05-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     80000
+    ],
+    [
+     "UPI Collections",
+     -1000
+    ],
+    [
+     "Sales",
+     -79000
+    ]
+   ]
+  },
+  {
+   "guid": "s-credit",
+   "date": "2025-04-03",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     -100000
+    ],
+    [
+     "Sales",
+     100000
+    ]
+   ]
+  },
+  {
+   "guid": "z-old",
+   "date": "2025-06-20",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     60000
+    ],
+    [
+     "Sales",
+     -60000
+    ]
+   ]
+  },
+  {
+   "guid": "a-new",
+   "date": "2025-06-21",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     60000
+    ],
+    [
+     "Sales",
+     -60000
+    ]
+   ]
+  },
+  {
+   "guid": "r-z",
+   "date": "2025-06-22",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     60000
+    ],
+    [
+     "UPI Collections",
+     -60000
+    ]
+   ]
+  },
+  {
+   "guid": "j-inv",
+   "date": "2025-07-01",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     65000
+    ],
+    [
+     "Sales",
+     -65000
+    ]
+   ]
+  },
+  {
+   "guid": "ra-late",
+   "date": "2025-07-04",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     65000
+    ],
+    [
+     "UPI Collections",
+     -65000
+    ]
+   ]
+  },
+  {
+   "guid": "rz-early",
+   "date": "2025-07-02",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     65000
+    ],
+    [
+     "UPI Collections",
+     -65000
+    ]
+   ]
+  },
+  {
+   "guid": "r-5",
+   "date": "2025-04-30",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     80000
+    ],
+    [
+     "UPI Collections",
+     -80000
+    ]
+   ]
+  },
+  {
+   "guid": "i-f",
+   "date": "2025-06-02",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     90000
+    ],
+    [
+     "Sales",
+     -90000
+    ]
+   ]
+  },
+  {
+   "guid": "r-b",
+   "date": "2025-06-03",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     90000
+    ],
+    [
+     "UPI Collections",
+     -90000
+    ]
+   ]
+  },
+  {
+   "guid": "r-a",
+   "date": "2025-06-03",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     90000
+    ],
+    [
+     "UPI Collections",
+     -90000
+    ]
+   ]
+  },
+  {
+   "guid": "cs-1",
+   "date": "2025-05-05",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Cash",
+     14000
+    ],
+    [
+     "Sales",
+     -14000
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Widget",
+     "qty": 1,
+     "amount": -14000
+    }
+   ]
+  },
+  {
+   "guid": "nc-1",
+   "date": "2025-05-06",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     13
+    ],
+    [
+     "Sales",
+     -13
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Tiny",
+     "qty": 1,
+     "amount": -13
+    }
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "book_keeping_quality": {
+  "payment_channel_debtors": [
+   "UPI Collections"
+  ],
+  "tax_ledgers": {},
+  "gst_payment_ledgers": [],
+  "reissue_narration_terms": [],
+  "writeoff_discount_ledgers": []
+ },
+ "tests": [
+  "book_keeping_quality"
+ ]
+}

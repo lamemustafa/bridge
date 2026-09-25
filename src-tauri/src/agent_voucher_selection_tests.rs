@@ -37,6 +37,9 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
             .with_framing(ResponseFraming::ContentLength);
         let cycle = import_cycle_plans();
         let mut plans = cycle[..4].to_vec();
+        // The pre-flight high-water read (protocol reference §11c): ten
+        // vouchers cannot exceed the budget, so the window is read whole.
+        plans.extend(cycle[10..16].iter().cloned());
         plans.extend([
             cycle[0].clone(),
             vouchers.clone(),
@@ -46,8 +49,13 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
             cycle[0].clone(),
         ]);
         let company_body = response_bytes(&plans[0]);
-        let voucher_body = response_bytes(&plans[5]);
-        let expected_hash = join_hashes(&sha256_hex(&company_body), &sha256_hex(&voucher_body));
+        let high_water_body = response_bytes(&plans[5]);
+        let voucher_body = response_bytes(&plans[11]);
+        // The window read's own evidence folds its pre-flight first.
+        let expected_hash = join_hashes(
+            &sha256_hex(&company_body),
+            &join_hashes(&sha256_hex(&high_water_body), &sha256_hex(&voucher_body)),
+        );
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let response = server_for(simulator.address(), directory.path())
@@ -68,15 +76,18 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
         assert_eq!(evidence["response_sha256"], expected_hash);
         assert_eq!(
             evidence["bytes"],
-            2 * (company_body.len() + voucher_body.len())
+            2 * (company_body.len() + high_water_body.len() + voucher_body.len())
         );
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), 10);
+        assert_eq!(observed.len(), 16);
         assert_eq!(
             evidence["request_sha256"],
             join_hashes(
                 &observed[0].request_body_sha256,
-                &observed[5].request_body_sha256
+                &join_hashes(
+                    &observed[5].request_body_sha256,
+                    &observed[11].request_body_sha256
+                )
             )
         );
     }
@@ -102,6 +113,7 @@ async fn selected_ledger_rename_or_unknown_entry_refuses_complete_selection() {
     for catalogue_changed in [false, true] {
         let cycle = import_cycle_plans();
         let mut plans = cycle[..10].to_vec();
+        plans.extend(cycle[10..16].iter().cloned());
         plans.extend([
             cycle[0].clone(),
             vouchers.clone(),
@@ -120,12 +132,17 @@ async fn selected_ledger_rename_or_unknown_entry_refuses_complete_selection() {
             }
         }
         plans.extend(after);
-        let source_bytes = [0, 5, 11, 17].map(|index| response_bytes(&plans[index]));
-        let expected_hash = source_bytes
-            .iter()
-            .map(|body| sha256_hex(body))
-            .reduce(|left, right| join_hashes(&left, &right))
-            .unwrap();
+        // Company, catalogue, high water, window, repeated catalogue. The
+        // window read folds its own pre-flight before it joins the chain.
+        let source_bytes = [0, 5, 11, 17, 23].map(|index| response_bytes(&plans[index]));
+        let hashes = source_bytes.each_ref().map(|body| sha256_hex(body));
+        let expected_hash = join_hashes(
+            &join_hashes(
+                &join_hashes(&hashes[0], &hashes[1]),
+                &join_hashes(&hashes[2], &hashes[3]),
+            ),
+            &hashes[4],
+        );
         let expected_bytes = 2 * source_bytes.iter().map(Vec::len).sum::<usize>();
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -149,12 +166,15 @@ async fn selected_ledger_rename_or_unknown_entry_refuses_complete_selection() {
         assert_eq!(evidence["response_sha256"], expected_hash);
         assert_eq!(evidence["bytes"], expected_bytes);
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), 22);
-        let request_hash = [0, 5, 11, 17]
-            .into_iter()
-            .map(|index| observed[index].request_body_sha256.clone())
-            .reduce(|left, right| join_hashes(&left, &right))
-            .unwrap();
+        assert_eq!(observed.len(), 28);
+        let requests = [0, 5, 11, 17, 23].map(|index| observed[index].request_body_sha256.clone());
+        let request_hash = join_hashes(
+            &join_hashes(
+                &join_hashes(&requests[0], &requests[1]),
+                &join_hashes(&requests[2], &requests[3]),
+            ),
+            &requests[4],
+        );
         assert_eq!(evidence["request_sha256"], request_hash);
     }
 }
@@ -188,6 +208,10 @@ async fn empty_ledger_selection_does_not_replace_source_emptiness() {
     for source_is_empty in [false, true] {
         let cycle = import_cycle_plans();
         let mut plans = cycle[..10].to_vec();
+        // The pre-flight high-water read before the window. The widened read
+        // that corroborates an empty window reuses that mark, and ten vouchers
+        // keep both windows whole.
+        plans.extend(cycle[10..16].iter().cloned());
         let paired_read = |source: &ScenarioPlan| {
             [
                 cycle[0].clone(),
@@ -235,6 +259,368 @@ async fn empty_ledger_selection_does_not_replace_source_emptiness() {
                 "complete"
             );
         }
-        assert_eq!(simulator.finish().unwrap().len(), 22);
+        assert_eq!(simulator.finish().unwrap().len(), 28);
+    }
+}
+
+/// #595, through the tool call: a `vouchers` result carries what each request
+/// of its window read cost, and so does a refusal of that read.
+#[tokio::test]
+async fn the_vouchers_tool_reports_its_window_timings_on_success_and_refusal() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    );
+    let words = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    let vouchers = ScenarioPlan::new(Fixture::SyntheticXml(String::from_utf16(&words).unwrap()))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let call = |plans: Vec<ScenarioPlan>| async move {
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let response = server_for(simulator.address(), directory.path())
+            .call_tool(
+                "vouchers",
+                json!({"company_guid":CAPTURED_GUID, "from":"20260801","to":"20260802"}),
+            )
+            .await;
+        simulator.cancel();
+        simulator.finish().unwrap();
+        response
+    };
+
+    // Ten vouchers at the mark: the window is read whole, in one part.
+    let cycle = import_cycle_plans();
+    let mut plans = cycle[..4].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans.extend([
+        cycle[0].clone(),
+        vouchers.clone(),
+        cycle[1].clone(),
+        vouchers.clone(),
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]);
+    let body = response_bytes(&plans[11]);
+    let response = call(plans).await;
+    assert_eq!(response["isError"], false, "{response}");
+    let window = &response["structuredContent"]["result"]["window"];
+    assert_eq!(window["marks"]["requests"], 1);
+    assert_eq!(window["census"]["requests"], 0);
+    let parts = window["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["from"], "20260801");
+    assert_eq!(parts[0]["to"], "20260802");
+    assert_eq!(parts[0]["served"], true);
+    assert_eq!(parts[0]["rows"], 3);
+    assert_eq!(parts[0]["bytes"], body.len());
+    assert!(parts[0]["ms"].is_u64());
+    assert_eq!(
+        (&window["from"], &window["to"]),
+        (&json!("20260801"), &json!("20260802"))
+    );
+    assert!(window.get("failed").is_none());
+
+    // A mark far over the budget needs a census, and Tally declares the census
+    // response over the transport cap: the refusal carries the timings too.
+    let heavy = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY>\
+         <GUID>{CAPTURED_GUID}</GUID><ALTVCHID>5000</ALTVCHID><ALTMSTID>7</ALTMSTID>\
+         </COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let heavy = ScenarioPlan::new(Fixture::SyntheticXml(heavy))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let mut plans = cycle[..4].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans[5] = heavy.clone();
+    plans[7] = heavy;
+    plans.extend([
+        cycle[0].clone(),
+        vouchers.with_framing(ResponseFraming::DeclaredContentLength {
+            bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+        }),
+    ]);
+    let response = call(plans).await;
+    assert_eq!(response["isError"], true, "{response}");
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], crate::agent::VOLUME_UNESTIMATED);
+    let window = &error["window"];
+    assert_eq!(window["marks"]["requests"], 1);
+    assert_eq!(window["census"]["requests"], 1);
+    assert_eq!(window["parts"], json!([]));
+    assert_eq!(window["failed"]["kind"], "census");
+    assert!(window["failed"]["ms"].is_u64());
+}
+
+/// #595: the window timings are the `vouchers` tool's alone. Another tool
+/// whose window read is refused the same way keeps its refusal shape.
+#[tokio::test]
+async fn only_the_vouchers_tool_reports_window_timings_on_a_refusal() {
+    let heavy = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY>\
+         <GUID>{CAPTURED_GUID}</GUID><ALTVCHID>5000</ALTVCHID><ALTMSTID>7</ALTMSTID>\
+         </COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let heavy = ScenarioPlan::new(Fixture::SyntheticXml(heavy))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    // The company, the ledger catalogue, the heavy mark, then a census Tally
+    // declares over the transport cap.
+    let mut plans = cycle[..10].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans[11] = heavy.clone();
+    plans[13] = heavy;
+    plans.extend([
+        cycle[0].clone(),
+        cycle[11]
+            .clone()
+            .with_framing(ResponseFraming::DeclaredContentLength {
+                bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+            }),
+    ]);
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let response = server_for(simulator.address(), directory.path())
+        .call_tool(
+            "voucher_presence",
+            json!({
+                "company_guid": CAPTURED_GUID,
+                "from": "20260801",
+                "to": "20260802",
+                "numbering": [{"voucher_type": "Journal", "numbering_method": "manual"}],
+                "vouchers": [{
+                    "date": "20260801", "voucher_type": "Journal", "voucher_number": "JV-1",
+                    "party": "Cash",
+                    "entries": [{"ledger": "Cash", "amount": "-12.50"},
+                                {"ledger": "WR2 Sales", "amount": "12.50"}],
+                }],
+            }),
+        )
+        .await;
+    simulator.cancel();
+    simulator.finish().unwrap();
+    let error = &response["structuredContent"]["result"]["error"];
+    // The same refusal the `vouchers` test reaches, so the window read ran.
+    assert_eq!(
+        error["code"],
+        crate::agent::VOLUME_UNESTIMATED,
+        "{response}"
+    );
+    assert!(error.get("window").is_none(), "{error}");
+}
+
+/// Plans for a `vouchers` call whose requested window is empty, so that the
+/// wider corroboration read runs next with `corroboration` as its paired legs.
+fn empty_window_then(corroboration: Vec<ScenarioPlan>) -> Vec<ScenarioPlan> {
+    let decode = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let empty = ScenarioPlan::new(Fixture::SyntheticXml(decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    ))))
+    .with_encoding(WireEncoding::Utf16Le)
+    .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    let mut plans = cycle[..4].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans.extend([
+        cycle[0].clone(),
+        empty.clone(),
+        cycle[1].clone(),
+        empty,
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]);
+    plans.extend(corroboration);
+    plans
+}
+
+async fn call_vouchers(plans: Vec<ScenarioPlan>) -> Value {
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let response = server_for(simulator.address(), directory.path())
+        .call_tool(
+            "vouchers",
+            json!({"company_guid":CAPTURED_GUID, "from":"20260801","to":"20260802"}),
+        )
+        .await;
+    simulator.cancel();
+    simulator.finish().unwrap();
+    response
+}
+
+/// #595: an empty requested window is corroborated by a wider read of its
+/// own. When Tally refuses that read, the error's window is the wider one, and
+/// says so by its own dates, with the part that failed.
+#[tokio::test]
+async fn a_refused_corroboration_read_reports_its_own_window() {
+    let cycle = import_cycle_plans();
+    let refused = cycle[11].clone().with_http_status(500);
+    let response = call_vouchers(empty_window_then(vec![cycle[0].clone(), refused])).await;
+    assert_eq!(response["isError"], true, "{response}");
+    // Tally's refusal of the wider read, reported as the generic read failure.
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "agent_runtime_read_failed"
+    );
+    let window = &response["structuredContent"]["result"]["error"]["window"];
+    assert_eq!(window["from"], "20260731", "{window}");
+    assert_eq!(window["to"], "20260803", "{window}");
+    assert_eq!(window["failed"]["kind"], "part", "{window}");
+    assert_eq!(window["parts"][0]["served"], false, "{window}");
+}
+
+/// #595: a corroboration read Tally served, but whose rows fail validation, is
+/// not a window-read failure: the error carries no window.
+#[tokio::test]
+async fn a_corroboration_refused_after_its_read_carries_no_window() {
+    let outside = ScenarioPlan::new(Fixture::SyntheticXml(
+        String::from_utf16(
+            &include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+            )
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        // Dated outside the wider window too.
+        .replace("20260801", "20261001"),
+    ))
+    .with_encoding(WireEncoding::Utf16Le)
+    .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    let response = call_vouchers(empty_window_then(vec![
+        cycle[0].clone(),
+        outside.clone(),
+        cycle[1].clone(),
+        outside,
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]))
+    .await;
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], "window_not_honoured", "{response}");
+    assert!(error.get("window").is_none(), "{error}");
+}
+
+/// A `vouchers` call filtered to one ledger, with every catalogue read served
+/// `catalogue`. The sequence is the rename case's: company, paired catalogue,
+/// the window's marks, the window, then the repeated catalogue.
+async fn call_filtered_vouchers(catalogue: impl Fn(&str) -> String, ledger: &str) -> Value {
+    let words = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    )
+    .chunks_exact(2)
+    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+    .collect::<Vec<_>>();
+    let vouchers = ScenarioPlan::new(Fixture::SyntheticXml(String::from_utf16(&words).unwrap()))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    let mut plans = cycle[..10].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans.extend([
+        cycle[0].clone(),
+        vouchers.clone(),
+        cycle[1].clone(),
+        vouchers,
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]);
+    plans.extend(cycle[4..10].iter().cloned());
+    for index in [5, 7, 23, 25] {
+        let body = catalogue(&plans[index].fixture.body());
+        plans[index].fixture = Fixture::SyntheticXml(body);
+    }
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let response = server_for(simulator.address(), directory.path())
+        .call_tool(
+            "vouchers",
+            json!({"company_guid":CAPTURED_GUID,
+            "from":"20260801","to":"20260802","ledger":ledger}),
+        )
+        .await;
+    simulator.cancel();
+    simulator.finish().unwrap();
+    response
+}
+
+/// bridge#634: the catalogue parser refused any book past 1,000 ledgers, as
+/// `ledger_export_invalid` whatever the names, so a book of about 9,500 ledgers lost the
+/// ledger filter. Of the capture's three vouchers only one posts to this
+/// ledger, so the filter itself is observed, not only the refusal's absence.
+#[tokio::test]
+async fn a_ledger_filter_reads_a_book_of_more_than_a_thousand_ledgers() {
+    let response = call_filtered_vouchers(
+        |catalogue| {
+            crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
+                catalogue,
+                (0..1_000)
+                    .map(|index| (format!("Bulk Ledger {index:04}"), format!("b{index:07x}"))),
+            )
+        },
+        "Café Naïve Traders",
+    )
+    .await;
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["state"], "complete", "{result}");
+    assert_eq!(result["total"], 1, "{result}");
+    let ledgers = result["items"][0]["amounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["ledger"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(ledgers.contains(&"Café Naïve Traders"), "{ledgers:?}");
+}
+
+/// bridge#634: a catalogue refused for one ledger says why in the refusal's
+/// cause, and never which ledger.
+#[tokio::test]
+async fn a_refused_ledger_catalogue_names_its_cause_and_no_ledger() {
+    for (rows, cause) in [
+        (
+            vec![
+                ("Twice Named".to_string(), "c0000001".to_string()),
+                ("Twice Named".to_string(), "c0000002".to_string()),
+            ],
+            "ledger_catalogue_duplicate_identity",
+        ),
+        (
+            vec![("Twice\u{202E}Turned".to_string(), "c0000003".to_string())],
+            "ledger_catalogue_name_unusable",
+        ),
+    ] {
+        let response = call_filtered_vouchers(
+            |catalogue| {
+                crate::tally::standard_ledger_catalog::tests::catalogue_with_extra_ledgers(
+                    catalogue,
+                    rows.clone(),
+                )
+            },
+            "WR2 Sales",
+        )
+        .await;
+        assert_eq!(response["isError"], true, "{response}");
+        let content = &response["structuredContent"];
+        let error = &content["result"]["error"];
+        // The code still names what failed, for any caller keyed on it.
+        assert_eq!(error["code"], "ledger_export_invalid", "{response}");
+        assert_eq!(error["cause"], cause, "{response}");
+        assert_eq!(content["evidence"]["reason_code"], "ledger_export_invalid");
+        assert!(!response.to_string().contains("Twice"), "{response}");
     }
 }

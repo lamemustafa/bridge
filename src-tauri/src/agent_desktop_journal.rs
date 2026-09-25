@@ -11,7 +11,6 @@ use super::*;
 use crate::tally::{TallyConfig, TallyRuntime};
 use bridge_tally_transport::canonical_loopback_origin;
 use std::env;
-use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -61,7 +60,11 @@ impl DesktopJournalService {
         company_guid: &str,
     ) -> DesktopJournalOperation {
         let args = json!({"batch_id":batch_id,"company_guid":company_guid});
-        match self.server.post_import_checked(&args, Some(sha256)).await {
+        match self
+            .server
+            .post_import_checked(&args, Some(sha256), super::post::PostScope::JournalOnly)
+            .await
+        {
             Ok(outcome) => DesktopJournalOperation::from_outcome(outcome),
             Err(failure) => {
                 // This Err boundary precedes approval/dispatch. It does not
@@ -171,32 +174,7 @@ impl DesktopJournalService {
     }
 
     fn read_persisted_xml(&self, batch_id: &str) -> Result<Vec<u8>, String> {
-        let uuid = batch_id
-            .strip_prefix("bridge-")
-            .and_then(|value| uuid::Uuid::parse_str(value).ok())
-            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
-        let path = self
-            .server
-            .imports_dir()?
-            .join(format!("bridge-{uuid}.xml"));
-        let mut file = super::super::local_file::open_local_file(&path, false)
-            .map_err(|_| "import_persisted_file_unavailable".to_string())?;
-        let length = file
-            .metadata()
-            .map_err(|_| "import_persisted_file_unavailable".to_string())?
-            .len();
-        if length > MAX_SELECTED_JOURNAL_BYTES as u64 {
-            return Err("import_persisted_file_too_large".into());
-        }
-        let mut bytes = Vec::with_capacity(length as usize);
-        std::io::Read::by_ref(&mut file)
-            .take((MAX_SELECTED_JOURNAL_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "import_persisted_file_unavailable".to_string())?;
-        if bytes.len() > MAX_SELECTED_JOURNAL_BYTES {
-            return Err("import_persisted_file_too_large".into());
-        }
-        Ok(bytes)
+        self.server.read_persisted_import_xml(batch_id)
     }
 }
 

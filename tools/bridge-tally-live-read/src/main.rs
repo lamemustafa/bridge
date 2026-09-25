@@ -53,6 +53,9 @@ async fn run() -> Result<(), &'static str> {
         "Your local profile attests no customer data: {}. Stop now if that assertion is inaccurate.",
         inputs.no_customer_data_attested()
     );
+    if let Some(notice) = inputs.education_notice() {
+        println!("{notice}");
+    }
     println!("Type this exact run-bound challenge to permit network reads:");
     println!("{}", inputs.challenge_phrase());
     let typed = read_line()?;
