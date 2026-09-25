@@ -2691,10 +2691,13 @@ fn batch_step_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
 /// existed.
 fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
     let check = read_masters_record(&masters_check_path(imports, batch_id));
-    let mut masters = read_masters_record(&masters_doubt_path(imports, batch_id))
-        .or_else(|| check.clone())?;
-    let step = read_masters_record(&batch_step_doubt_path(imports, batch_id))
-        .or_else(|| check.as_ref().and_then(|check| check.get("batch_step").cloned()));
+    let mut masters =
+        read_masters_record(&masters_doubt_path(imports, batch_id)).or_else(|| check.clone())?;
+    let step = read_masters_record(&batch_step_doubt_path(imports, batch_id)).or_else(|| {
+        check
+            .as_ref()
+            .and_then(|check| check.get("batch_step").cloned())
+    });
     if let (Some(step), Some(fields)) = (step, masters.as_object_mut()) {
         fields.insert("batch_step".into(), step);
     }
@@ -2735,6 +2738,7 @@ impl Server {
     /// crash before the check finishes, a concurrent reader, or a failed later
     /// write then reads a doubt, never an absent record; a post whose record
     /// cannot be written is not sent. It never touches an observed doubt.
+    #[cfg(test)]
     pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
         self.record_post_checks_pending(batch_id, false)
     }
@@ -2752,8 +2756,7 @@ impl Server {
         if batch {
             pending["batch_step"] = json!({"state": MASTERS_CHECK_PENDING});
         }
-        write_masters_record(&masters_check_path(&imports, batch_id), &pending)
-            .map_err(unavailable)
+        write_masters_record(&masters_check_path(&imports, batch_id), &pending).map_err(unavailable)
     }
 
     /// Record a batch's step verdict: `matched` only when the target's
@@ -2801,7 +2804,8 @@ impl Server {
         // The batch step verdict beside it is kept, never overwritten.
         let path = masters_check_path(&imports, batch_id);
         let mut verdict = verdict;
-        if let Some(step) = read_masters_record(&path).and_then(|check| check.get("batch_step").cloned())
+        if let Some(step) =
+            read_masters_record(&path).and_then(|check| check.get("batch_step").cloned())
         {
             if let Some(fields) = verdict.as_object_mut() {
                 fields.insert("batch_step".into(), step);

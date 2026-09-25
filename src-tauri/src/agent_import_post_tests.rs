@@ -1641,7 +1641,10 @@ fn a_batch_is_clean_only_with_n_creates_and_n_verified() {
         Some(&json!({"state":"unchanged"})),
         2,
     );
-    assert_eq!(payload["result"]["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(
+        payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
     assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
 }
 
@@ -1673,7 +1676,10 @@ fn a_previous_batch_attempt_reconciles_only_with_n_creates_and_n_verified() {
         Some(&json!({"state":"unchanged"})),
         2,
     );
-    assert_eq!(payload["result"]["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(
+        payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
     assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
 }
 
@@ -1685,16 +1691,29 @@ fn batch_of_every_type() -> (ImportLedgerLine, TallyEndpointConfig) {
             "voucher_type":voucher_type,"narration":"Synthetic test only","entries":entries}))
         .unwrap()
     };
-    line.vouchers.push(voucher("receipt-1", "Receipt", json!([
+    line.vouchers.push(voucher(
+        "receipt-1",
+        "Receipt",
+        json!([
         {"ledger":"Cash","amount":"40.00","side":"Dr"},
-        {"ledger":"Party A","amount":"40.00","side":"Cr"}])));
-    line.vouchers.push(voucher("payment-1", "Payment", json!([
+        {"ledger":"Party A","amount":"40.00","side":"Cr"}]),
+    ));
+    line.vouchers.push(voucher(
+        "payment-1",
+        "Payment",
+        json!([
         {"ledger":"Party B","amount":"15.00","side":"Dr"},
-        {"ledger":"Bank","amount":"15.00","side":"Cr"}])));
-    line.vouchers.push(voucher("contra-1", "Contra", json!([
+        {"ledger":"Bank","amount":"15.00","side":"Cr"}]),
+    ));
+    line.vouchers.push(voucher(
+        "contra-1",
+        "Contra",
+        json!([
         {"ledger":"Bank","amount":"5.00","side":"Dr"},
-        {"ledger":"Cash","amount":"5.00","side":"Cr"}])));
-    line.txn_ids.extend(["receipt-1", "payment-1", "contra-1"].map(String::from));
+        {"ledger":"Cash","amount":"5.00","side":"Cr"}]),
+    ));
+    line.txn_ids
+        .extend(["receipt-1", "payment-1", "contra-1"].map(String::from));
     line.date_to = "20260902".into();
     line.sha256 = sha256_hex(
         render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
@@ -1783,7 +1802,10 @@ fn a_batch_approval_summarizes_every_ledger_and_the_money_the_types_move() {
         "Journals may also move cash/bank ledgers; see the per-ledger totals",
         "After a timeout, reconcile this batch; do not rebuild or resend it.",
     ] {
-        assert!(preview.contains(expected), "missing {expected:?} in:\n{preview}");
+        assert!(
+            preview.contains(expected),
+            "missing {expected:?} in:\n{preview}"
+        );
     }
     // One voucher keeps the single-voucher approval.
     let (one, endpoint) = batch();
@@ -1810,7 +1832,9 @@ fn a_batch_approval_that_does_not_fit_is_refused_and_every_voucher_is_unnumbered
     let (mut numbered, endpoint) = batch_of_every_type();
     numbered.vouchers[2].voucher_number = Some("7".into());
     assert_eq!(
-        admit_fresh_saved_voucher(&numbered, &endpoint).err().as_deref(),
+        admit_fresh_saved_voucher(&numbered, &endpoint)
+            .err()
+            .as_deref(),
         Some("import_post_numbered_journal_unsupported")
     );
 }
@@ -1839,15 +1863,32 @@ fn records_server(directory: &std::path::Path) -> Server {
 fn a_batch_keeps_its_masters_and_step_verdicts_independently() {
     let unchanged = json!({"state":"unchanged"});
     let changed = json!({"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Cash"]});
-    let matched = json!({"before":10,"after":12,"step":2,"reported_created":2,"matches_created":true});
-    let unmatched = json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false});
+    let matched =
+        json!({"before":10,"after":12,"step":2,"reported_created":2,"matches_created":true});
+    let unmatched =
+        json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false});
     for (masters, step, step_first, expected) in [
         (&unchanged, &matched, true, None),
         (&unchanged, &matched, false, None),
         (&unchanged, &unmatched, true, Some("batch_step_unconfirmed")),
-        (&unchanged, &unmatched, false, Some("batch_step_unconfirmed")),
-        (&changed, &matched, true, Some("posted_under_changed_masters")),
-        (&changed, &unmatched, false, Some("posted_under_changed_masters")),
+        (
+            &unchanged,
+            &unmatched,
+            false,
+            Some("batch_step_unconfirmed"),
+        ),
+        (
+            &changed,
+            &matched,
+            true,
+            Some("posted_under_changed_masters"),
+        ),
+        (
+            &changed,
+            &unmatched,
+            false,
+            Some("posted_under_changed_masters"),
+        ),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let server = records_server(directory.path());
@@ -1877,7 +1918,11 @@ fn a_batch_keeps_its_masters_and_step_verdicts_independently() {
         // The step verdict is kept beside whichever masters verdict.
         assert_eq!(
             recorded["batch_step"]["state"],
-            if step["matches_created"] == true { "matched" } else { "unmatched" },
+            if step["matches_created"] == true {
+                "matched"
+            } else {
+                "unmatched"
+            },
             "{recorded}"
         );
     }

@@ -1,8 +1,8 @@
 //! bridge#583: the native post driven end to end through the `post_import`
 //! tool call against the protocol simulator, the approval answered by the
 //! test-only seam (`approved_import::test_seam`). No real Tally is involved.
-use super::{SCRIPTED_REMOTE_ID, SCRIPTED_REMOTE_IDS};
 use super::*;
+use super::{SCRIPTED_REMOTE_ID, SCRIPTED_REMOTE_IDS};
 use crate::tally::approved_import::test_seam::{ScriptedApproval, SCRIPTED_APPROVAL};
 use bridge_tally_transport::TallyEndpointConfig;
 use std::time::Duration;
@@ -478,7 +478,10 @@ fn saved_batch_of_two(server: &Server) -> (ImportLedgerLine, Value) {
     let (mut line, args) = saved_batch(server);
     let mut second = line.vouchers[0].clone();
     second.bridge_txn_id = "journal-583-2".into();
-    second.entries.iter_mut().for_each(|entry| entry.amount = "7.25".into());
+    second
+        .entries
+        .iter_mut()
+        .for_each(|entry| entry.amount = "7.25".into());
     line.vouchers.push(second);
     line.txn_ids.push("journal-583-2".into());
     let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
@@ -554,7 +557,10 @@ async fn a_batch_whose_second_remote_id_is_recorded_during_approval_is_never_sen
     assert_eq!(observed, post_at, "{response}");
     let (response, observed, post_at) =
         race_a_batch_id_during_approval(Uuid::new_v4(), minted).await;
-    assert!(observed > post_at, "the control's POST was sent: {response}");
+    assert!(
+        observed > post_at,
+        "the control's POST was sent: {response}"
+    );
 }
 
 /// With batch posting off, a batch of two is refused before any request.
@@ -571,7 +577,8 @@ async fn a_batch_is_refused_while_batch_posting_is_off() {
         )
         .await;
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"], "import_post_requires_one_voucher",
+        response["structuredContent"]["result"]["error"]["code"],
+        "import_post_requires_one_voucher",
         "{response}"
     );
     assert!(sent(simulator).is_empty());

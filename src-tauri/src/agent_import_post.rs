@@ -933,7 +933,9 @@ fn post_doubt(
 ) -> Option<(&'static str, String)> {
     masters_doubt(masters_after_post).or_else(|| {
         (voucher_count > 1)
-            .then(|| batch_step_doubt(masters_after_post.and_then(|masters| masters.get("batch_step"))))
+            .then(|| {
+                batch_step_doubt(masters_after_post.and_then(|masters| masters.get("batch_step")))
+            })
             .flatten()
     })
 }
@@ -1519,9 +1521,9 @@ fn batch_review_text(
     for voucher in &line.vouchers {
         *by_type.entry(voucher.voucher_type.as_str()).or_default() += 1;
         for entry in &voucher.entries {
-            let totals = ledgers.entry(entry.ledger.as_str()).or_insert_with(|| {
-                (ExactDecimal::zero(), ExactDecimal::zero(), 0)
-            });
+            let totals = ledgers
+                .entry(entry.ledger.as_str())
+                .or_insert_with(|| (ExactDecimal::zero(), ExactDecimal::zero(), 0));
             totals.2 += 1;
             match &entry.side {
                 EntrySide::Dr => add(&mut totals.0, &entry.amount)?,
@@ -1543,7 +1545,11 @@ fn batch_review_text(
     );
     let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
     let mut text = vec![
-        format!("Create {} vouchers in {}", line.vouchers.len(), quoted(&company.name)),
+        format!(
+            "Create {} vouchers in {}",
+            line.vouchers.len(),
+            quoted(&company.name)
+        ),
         format!("Company GUID: {}", company.guid),
         format!(
             "Company number: {}  Books from: {}",
@@ -1577,18 +1583,22 @@ fn batch_review_text(
         credit.as_str()
     ));
     if by_type.contains_key(VoucherType::Receipt.as_str()) {
-        text.push(format!("Money in by Receipt vouchers: {}", money_in.as_str()));
+        text.push(format!(
+            "Money in by Receipt vouchers: {}",
+            money_in.as_str()
+        ));
     }
     if by_type.contains_key(VoucherType::Payment.as_str()) {
-        text.push(format!("Money out by Payment vouchers: {}", money_out.as_str()));
+        text.push(format!(
+            "Money out by Payment vouchers: {}",
+            money_out.as_str()
+        ));
     }
     if by_type.contains_key(VoucherType::Contra.as_str()) {
         text.push("Contra: moves between cash/bank ledgers, net zero".into());
     }
     if by_type.contains_key(VoucherType::Journal.as_str()) {
-        text.push(
-            "Journals may also move cash/bank ledgers; see the per-ledger totals".into(),
-        );
+        text.push("Journals may also move cash/bank ledgers; see the per-ledger totals".into());
     }
     text.push(format!("Batch: {}", line.batch_id));
     text.push(String::new());
