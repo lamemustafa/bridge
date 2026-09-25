@@ -63,11 +63,87 @@ pub enum TallyImportApplicationStatus {
     NotReported,
 }
 
+/// At most this many `LINEERROR`s keep their text; `line_error_count` keeps
+/// the full count.
+pub const MAX_TALLY_LINE_ERRORS: usize = 64;
+/// At most this many characters of one `LINEERROR`'s text are kept.
+pub const MAX_TALLY_LINE_ERROR_CHARS: usize = 512;
+
+/// Tally's own text from one `LINEERROR`, trimmed of surrounding whitespace
+/// and clipped to `MAX_TALLY_LINE_ERROR_CHARS` on a character boundary, for a
+/// person to read. It names no voucher and is untrustworthy as a cause
+/// (IMPLEMENTATION_GUIDE, import success), so Bridge never decides on it.
+/// A record read back is clipped again, and a clip is always marked.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(from = "StoredTallyLineError")]
+pub struct TallyLineError {
+    text: String,
+    truncated: bool,
+}
+
+#[derive(Deserialize)]
+struct StoredTallyLineError {
+    text: String,
+    #[serde(default)]
+    truncated: bool,
+}
+
+impl From<StoredTallyLineError> for TallyLineError {
+    fn from(stored: StoredTallyLineError) -> Self {
+        let clipped = Self::clipped(&stored.text);
+        Self {
+            truncated: stored.truncated || clipped.truncated,
+            text: clipped.text,
+        }
+    }
+}
+
+impl TallyLineError {
+    fn clipped(text: &str) -> Self {
+        match text.char_indices().nth(MAX_TALLY_LINE_ERROR_CHARS) {
+            Some((cut, _)) => Self {
+                text: text[..cut].to_owned(),
+                truncated: true,
+            },
+            None => Self {
+                text: text.to_owned(),
+                truncated: false,
+            },
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+fn clipped_line_errors<'de, D>(deserializer: D) -> Result<Vec<TallyLineError>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut line_errors = Vec::<TallyLineError>::deserialize(deserializer)?;
+    line_errors.truncate(MAX_TALLY_LINE_ERRORS);
+    Ok(line_errors)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct TallyImportOutcome {
     application_status: TallyImportApplicationStatus,
     counters: TallyImportResult,
     exceptions_were_reported: bool,
+    /// The first `MAX_TALLY_LINE_ERRORS` `LINEERROR`s, in document order.
+    /// Absent from records written before it was kept, and skipped when
+    /// empty, so a response without one records exactly as before.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "clipped_line_errors"
+    )]
+    tally_line_errors: Vec<TallyLineError>,
 }
 
 impl TallyImportOutcome {
@@ -83,6 +159,11 @@ impl TallyImportOutcome {
     /// direct profile's Bridge-defaulted zero when that field is absent.
     pub fn exceptions_were_reported(&self) -> bool {
         self.exceptions_were_reported
+    }
+
+    /// Tally's `LINEERROR` text, for a person to read. Never a verdict input.
+    pub fn tally_line_errors(&self) -> &[TallyLineError] {
+        &self.tally_line_errors
     }
 
     pub fn into_counters(self) -> TallyImportResult {
@@ -179,6 +260,7 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
     let mut cancelled = None;
     let mut exceptions = None;
     let mut line_error_count = 0_u64;
+    let mut tally_line_errors = Vec::new();
     let mut documented_extra_fields = HashSet::new();
 
     loop {
@@ -276,8 +358,12 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
                             true
                         }
                         b"LINEERROR" => {
-                            read_optional_text(&mut reader, element.name())?;
+                            let text = read_optional_text(&mut reader, element.name())?;
                             line_error_count = line_error_count.saturating_add(1);
+                            if tally_line_errors.len() < MAX_TALLY_LINE_ERRORS {
+                                tally_line_errors
+                                    .push(TallyLineError::clipped(text.as_deref().unwrap_or("")));
+                            }
                             true
                         }
                         _ => false,
@@ -429,6 +515,7 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
         application_status,
         counters,
         exceptions_were_reported,
+        tally_line_errors,
     })
 }
 

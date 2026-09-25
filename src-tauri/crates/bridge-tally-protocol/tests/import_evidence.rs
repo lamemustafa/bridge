@@ -1,7 +1,8 @@
 use bridge_tally_protocol::{
-    parse_import_evidence, parse_import_outcome, parse_import_result,
-    parse_ledger_write_readback_with_evidence, TallyImportApplicationStatus,
-    TallyImportCounterPresence, TallyImportResult,
+    decode_tally_xml_response_bytes_limited, parse_import_evidence, parse_import_outcome,
+    parse_import_result, parse_ledger_write_readback_with_evidence, ExpectedTallyTextEncoding,
+    TallyImportApplicationStatus, TallyImportCounterPresence, TallyImportOutcome,
+    TallyImportResult, MAX_TALLY_LINE_ERRORS, MAX_TALLY_LINE_ERROR_CHARS,
 };
 
 const LIVE_EDUCATION_W1_LEDGER: &str =
@@ -345,4 +346,114 @@ fn write_readback_rejects_wrong_nesting_duplicate_fields_and_attributes() {
     let duplicate_status =
         wrap("", 0).replace("<STATUS>1</STATUS>", "<STATUS>0</STATUS><STATUS>1</STATUS>");
     assert!(parse_ledger_write_readback_with_evidence(&duplicate_status).is_err());
+}
+
+const PARTIAL_COMMIT_LIVE: &[u8] =
+    include_bytes!("fixtures/import_line_error_partial_commit_live.utf16le.xml");
+
+fn captured(bytes: &[u8]) -> String {
+    decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE import response")
+    .text
+}
+
+fn response_with_line_errors(texts: &[&str]) -> String {
+    let line_errors: String = texts
+        .iter()
+        .map(|text| format!("<LINEERROR>{text}</LINEERROR>"))
+        .collect();
+    format!("<RESPONSE>{line_errors}<CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>{}</EXCEPTIONS></RESPONSE>", texts.len())
+}
+
+/// The captured partial commit keeps Tally's text verbatim, unescaped, and
+/// still counts as not clean for any intended create count.
+#[test]
+fn a_captured_partial_commit_keeps_tallys_line_error_text() {
+    let outcome = parse_import_outcome(&captured(PARTIAL_COMMIT_LIVE)).expect("captured response");
+    assert_eq!(outcome.counters().created, 49);
+    assert_eq!(outcome.counters().errors, 0);
+    assert_eq!(outcome.counters().exceptions, 1);
+    assert_eq!(outcome.counters().line_error_count, 1);
+    let line_errors = outcome.tally_line_errors();
+    assert_eq!(line_errors.len(), 1);
+    assert_eq!(
+        line_errors[0].text(),
+        "Ledger 'Lane A No Such Ledger' does not exist!"
+    );
+    assert!(!line_errors[0].truncated());
+    assert!(!outcome.counters().is_clean_success_for(50, 0, 0));
+    assert!(!outcome.counters().is_clean_success_for(49, 0, 0));
+}
+
+/// The text never reaches a verdict: two responses that differ only in their
+/// LINEERROR text give equal counters, and a clean-for check reads counters.
+#[test]
+fn line_error_text_does_not_change_the_counters() {
+    let one = parse_import_outcome(&response_with_line_errors(&["first wording"])).unwrap();
+    let other = parse_import_outcome(&response_with_line_errors(&["other wording"])).unwrap();
+    assert_ne!(one.tally_line_errors(), other.tally_line_errors());
+    assert_eq!(one.counters(), other.counters());
+}
+
+/// At most 64 texts are kept, each at most 512 characters cut on a character
+/// boundary and marked; the full count stays in the counters.
+#[test]
+fn line_error_text_is_bounded_and_every_clip_is_marked() {
+    let long = "\u{20b9}".repeat(MAX_TALLY_LINE_ERROR_CHARS + 1);
+    let mut texts = vec![long.as_str(); 1];
+    texts.extend(std::iter::repeat_n("short", MAX_TALLY_LINE_ERRORS));
+    let outcome = parse_import_outcome(&response_with_line_errors(&texts)).unwrap();
+    assert_eq!(
+        outcome.counters().line_error_count,
+        (MAX_TALLY_LINE_ERRORS + 1) as u64
+    );
+    let kept = outcome.tally_line_errors();
+    assert_eq!(kept.len(), MAX_TALLY_LINE_ERRORS);
+    assert_eq!(kept[0].text().chars().count(), MAX_TALLY_LINE_ERROR_CHARS);
+    assert!(kept[0].truncated());
+    assert_eq!(kept[1].text(), "short");
+    assert!(!kept[1].truncated());
+    let exact = "a".repeat(MAX_TALLY_LINE_ERROR_CHARS);
+    let fits = parse_import_outcome(&response_with_line_errors(&[exact.as_str()])).unwrap();
+    assert!(!fits.tally_line_errors()[0].truncated());
+}
+
+/// A record without the field (written before it was kept) reads as no text,
+/// and an outcome with no LINEERROR records exactly as before: no new key.
+#[test]
+fn line_error_text_is_absent_from_old_and_clean_records() {
+    let clean = parse_import_outcome("<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>").unwrap();
+    let stored = serde_json::to_value(&clean).unwrap();
+    assert!(stored.get("tally_line_errors").is_none(), "{stored}");
+    let reread: TallyImportOutcome = serde_json::from_value(stored).unwrap();
+    assert!(reread.tally_line_errors().is_empty());
+    assert_eq!(reread, clean);
+}
+
+/// A stored record is clipped again on read, and a clip made on read is
+/// marked, so an over-long or over-many record never passes as verbatim.
+#[test]
+fn a_stored_record_is_clipped_again_on_read_and_marked() {
+    let rejected = parse_import_outcome(&response_with_line_errors(&["x"])).unwrap();
+    let mut stored = serde_json::to_value(&rejected).unwrap();
+    let long = "y".repeat(MAX_TALLY_LINE_ERROR_CHARS + 7);
+    stored["tally_line_errors"] = serde_json::Value::Array(
+        std::iter::once(serde_json::json!({"text": long, "truncated": false}))
+            .chain(std::iter::repeat_n(
+                serde_json::json!({"text": "z", "truncated": false}),
+                MAX_TALLY_LINE_ERRORS + 3,
+            ))
+            .collect(),
+    );
+    let reread: TallyImportOutcome = serde_json::from_value(stored).unwrap();
+    let kept = reread.tally_line_errors();
+    assert_eq!(kept.len(), MAX_TALLY_LINE_ERRORS);
+    assert_eq!(kept[0].text().chars().count(), MAX_TALLY_LINE_ERROR_CHARS);
+    assert!(kept[0].truncated());
+    assert!(!kept[1].truncated());
 }

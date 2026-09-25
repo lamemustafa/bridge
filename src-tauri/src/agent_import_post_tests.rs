@@ -572,6 +572,74 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     assert!(payload["result"].get("error").is_none());
 }
 
+/// Tally's LINEERROR text rides in the response for a person to read and
+/// changes no verdict: each finalizer gives the same state, response state
+/// and error with the text as without it, for a clean response and for the
+/// captured partial commit.
+#[test]
+fn line_error_text_changes_no_dispatch_verdict() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/import_line_error_partial_commit_live.utf16le.xml"
+    );
+    let xml = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE import response")
+    .text;
+    let partial = ledger::DispatchResponse {
+        outcome: Some(bridge_tally_protocol::parse_import_outcome(&xml).unwrap()),
+        ..dispatch_response("success", 0, 0)
+    };
+    let mut clean_with_text = serde_json::to_value(dispatch_response("success", 1, 0)).unwrap();
+    clean_with_text["outcome"]["tally_line_errors"] =
+        json!([{"text": "synthetic wording", "truncated": false}]);
+    let clean_with_text: ledger::DispatchResponse =
+        serde_json::from_value(clean_with_text).unwrap();
+    let without_text = |response: &ledger::DispatchResponse| {
+        let mut saved = serde_json::to_value(response).unwrap();
+        saved["outcome"]
+            .as_object_mut()
+            .unwrap()
+            .remove("tally_line_errors");
+        serde_json::from_value::<ledger::DispatchResponse>(saved).unwrap()
+    };
+    let current: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+        |payload, response| finalize_current_dispatch(payload, response, None);
+    let previous: fn(&mut Value, Option<&ledger::DispatchResponse>) =
+        |payload, response| finalize_previous_attempt_reconciliation(payload, response, None);
+    for (response, expected_current, expected_previous) in [
+        (&partial, "reconciliation_required", "reconciliation_required"),
+        (&clean_with_text, "posted_verified", "previous_attempt_reconciled"),
+    ] {
+        assert!(!response.outcome.as_ref().unwrap().tally_line_errors().is_empty());
+        let stripped = without_text(response);
+        assert!(stripped.outcome.as_ref().unwrap().tally_line_errors().is_empty());
+        for (finalize, expected) in [(current, expected_current), (previous, expected_previous)] {
+            let verdict = |response: &ledger::DispatchResponse| {
+                let mut payload =
+                    json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
+                finalize(&mut payload, Some(response));
+                (
+                    payload["result"]["dispatch"]["state"].clone(),
+                    payload["result"]["dispatch"]["response_state"].clone(),
+                    payload["result"]["error"].clone(),
+                    payload["result"]["dispatch"]["response"]["outcome"]["tally_line_errors"]
+                        .clone(),
+                )
+            };
+            let (state, response_state, error, shown) = verdict(response);
+            let (bare_state, bare_response_state, bare_error, _) = verdict(&stripped);
+            assert_eq!((&state, &response_state, &error), (&bare_state, &bare_response_state, &bare_error));
+            assert_eq!(state, expected);
+            // The text is shown to the caller, verbatim.
+            assert_eq!(shown, serde_json::to_value(response.outcome.as_ref().unwrap().tally_line_errors()).unwrap());
+        }
+    }
+}
+
 #[test]
 fn missing_counter_evidence_cannot_confirm_current_or_previous_dispatch() {
     // Mutate only the presence marker in saved response evidence. This tests
