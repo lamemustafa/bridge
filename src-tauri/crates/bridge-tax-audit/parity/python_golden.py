@@ -288,8 +288,57 @@ def _tds_tcs_26as(c):
         tcs_ledgers=tcs_ledgers, deductor_aliases=deductor_aliases, advance_tax_ledgers=advance_tax_ledgers)
 
 
+def _bank_statement(c):
+    """The bank statement bank_reconciliation takes as caller data: from --bank-statement (the JSON
+    --emit-bank-statement writes, or an invented fixture), or from the reference's own adapter with
+    --emit-bank-statement (as tae/pack.py loads it; the written file holds client data and stays on
+    the machine that read it). One of the two is required: the reference's pack runs this test only
+    when the engagement has a statement."""
+    from tae.adapters.bank_documents import BankStatementDoc, load_bank_statement_json
+    from tae.config import document_path
+    from tae.model import BankStatementRow, Period
+    a = c.args
+    if a.bank_statement and a.emit_bank_statement:
+        c.ap.error("--bank-statement and --emit-bank-statement are exclusive")
+    if not (a.bank_statement or a.emit_bank_statement):
+        c.ap.error(f"{a.test} needs --bank-statement or --emit-bank-statement")
+    if a.bank_statement:
+        d = json.loads(Path(a.bank_statement).read_text(encoding="utf-8"))
+        day = date.fromisoformat
+        rows = tuple(BankStatementRow(**{**r, "txn_date": day(r["txn_date"])}) for r in d["rows"])
+        return BankStatementDoc(
+            doc_id=d["doc_id"], source_sha256=d["source_sha256"], account_ref=d["account_ref"],
+            bank=d["bank"], period=Period(day(d["period"]["start"]), day(d["period"]["end"])),
+            opening_balance_paise=d["opening_balance_paise"],
+            closing_balance_paise=d["closing_balance_paise"], rows=rows)
+    doc = load_bank_statement_json(document_path(c.cfg, c.path.parent, "bank_statement"),
+                                   f"bank:{c.eng.assessment_year}")
+    out = {"doc_id": doc.doc_id, "source_sha256": doc.source_sha256, "account_ref": doc.account_ref,
+           "bank": doc.bank,
+           "period": {"start": doc.period.start.isoformat(), "end": doc.period.end.isoformat()},
+           "opening_balance_paise": doc.opening_balance_paise,
+           "closing_balance_paise": doc.closing_balance_paise,
+           "rows": [{f: (v.isoformat() if isinstance(v, date) else v) for f, v in vars(r).items()}
+                    for r in doc.rows]}
+    Path(a.emit_bank_statement).write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n",
+                                           encoding="utf-8")
+    return doc
+
+
+def _bank_reconciliation(c):
+    from tae.audit_tests import bank_reconciliation
+    from tae.config import bank_charge_narration_terms, bank_reconciliation_ledger
+    doc = _bank_statement(c)
+    # As tae/pack.py: eng.bank carries the statement's rows, which check_invariants (BANK-1) reads.
+    c.eng.bank = list(doc.rows)
+    return bank_reconciliation, bank_reconciliation.run(
+        c.eng, c.rules, doc, bank_reconciliation_ledger(c.cfg),
+        bank_charge_narration_terms=bank_charge_narration_terms(c.cfg))
+
+
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
+    "bank_reconciliation": _bank_reconciliation,
     "book_keeping_quality": _book_keeping_quality,
     "cash_44ab": _cash_44ab,
     "cash_book_integrity": _cash_book_integrity,
@@ -324,6 +373,10 @@ def main() -> int:
     ap.add_argument("--emit-traces-documents",
                     help="tds_tcs_26as/twentysixas_receipts: read the rows with the reference's adapters and write them "
                          "here (client data: never commit the file)")
+    ap.add_argument("--bank-statement", help="bank_reconciliation: bank statement JSON to use")
+    ap.add_argument("--emit-bank-statement",
+                    help="bank_reconciliation: read the statement with the reference's adapter and write it here "
+                         "(client data: never commit the file)")
     ap.add_argument("--emit-report-totals",
                     help="financial_statements: take report totals from the read and write them here")
     a = ap.parse_args()

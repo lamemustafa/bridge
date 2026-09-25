@@ -20,6 +20,10 @@ bank_groups = ["Bank Accounts", "Bank OD A/c"]
 # cash_payments_40a3 only: a role ledger-name set (not a group) excluded from being a s.269ST
 # party, same as a Duties & Taxes line.
 round_off_ledgers = ["Round Off"]
+# bank_reconciliation: the ledger an (invented) statement is reconciled against, and the narration
+# forms that mark a bank-only charge (matched upper-cased, so lower case here is deliberate).
+bank_reconciliation_ledger = "Lakeview Bank Current A/c"
+bank_charge_narration_terms = ["charges"]
 # creditor_ageing_43bh only: its trade creditors are every ledger under the read's own Sundry
 # Creditors group.
 creditor_groups = ["Sundry Creditors"]

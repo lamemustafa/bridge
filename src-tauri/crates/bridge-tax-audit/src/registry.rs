@@ -21,6 +21,8 @@ pub struct CallerData {
     pub turnover_inputs: TurnoverInputs,
     /// The assessee's Form 26AS/AIS/TIS rows (`tds_tcs_26as`, `twentysixas_receipts`).
     pub traces: crate::documents::TracesDocuments,
+    /// A bank statement (`bank_reconciliation`, which refuses without one).
+    pub bank_statement: Option<crate::documents::BankStatementDoc>,
 }
 
 /// One ported test.
@@ -37,6 +39,11 @@ pub const PORTED: &[PortedTest] = &[
         id: "applicability_44ab",
         min_figures: 9,
         run_on: |e, b, r, c| crate::applicability_44ab_on(e, b, r, &c.turnover_inputs),
+    },
+    PortedTest {
+        id: "bank_reconciliation",
+        min_figures: 40,
+        run_on: |e, b, r, c| crate::bank_reconciliation_on(e, b, r, c.bank_statement.as_ref()),
     },
     PortedTest {
         id: "book_keeping_quality",

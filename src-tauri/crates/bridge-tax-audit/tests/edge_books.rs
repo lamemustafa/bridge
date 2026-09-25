@@ -21,13 +21,14 @@ use bridge_tax_audit::book::{
 };
 use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
-use bridge_tax_audit::documents::traces_documents_from_json;
+use bridge_tax_audit::documents::{bank_statement_from_json, traces_documents_from_json};
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    book_keeping_quality, cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny,
-    loans_interest, partners_40b_194t, stale_balances_41_1, statutory_dues_43b, tds_payees,
-    tds_tcs_26as, trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
+    bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
+    ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1, statutory_dues_43b,
+    tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig,
+    TdsConfig,
 };
 use serde_json::Value;
 
@@ -518,6 +519,25 @@ fn check(name: &str) {
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
             }
+            "bank_reconciliation" => {
+                // The statement is caller data; its rows feed BANK-1, as the reference's pack sets
+                // `eng.bank` to them.
+                let statement = bank_statement_from_json(&s["bank_statement"]).unwrap();
+                let terms: BTreeSet<String> = strs(&s["bank_charge_terms"]).into_iter().collect();
+                let ledger = s["bank_reconciliation_ledger"].as_str().unwrap();
+                let r = bank_reconciliation::run(
+                    &book,
+                    &rules,
+                    &period(&s),
+                    &statement,
+                    ledger,
+                    &terms,
+                    bank_reconciliation::MATCH_MAX_DAYS,
+                )
+                .unwrap();
+                let c = bank_reconciliation::check_invariants(&statement.rows, &r).unwrap();
+                (r, c)
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -551,7 +571,8 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 12] = [
+const EDGE_TESTS: [&str; 13] = [
+    "bank_reconciliation",
     "book_keeping_quality",
     "cash_book_integrity",
     "creditor_ageing_43bh",
@@ -991,4 +1012,34 @@ fn a_repeated_tis_category_is_refused() {
         panic!("a repeated TIS category is refused");
     };
     assert!(format!("{err}").contains("would repeat"), "{err}");
+}
+
+/// Two matched books rows sharing a GUID would repeat `match_pair_<hash>`: the reference's `fig`
+/// raises ("duplicate figure id bank_reconciliation.match_pair_093394bf", checked on this same
+/// change to `bankrec_paths`), and the port refuses with an error rather than panicking.
+#[test]
+fn a_repeated_books_guid_is_refused_not_panicked() {
+    let mut s = spec("bankrec_paths");
+    for v in s["vouchers"].as_array_mut().unwrap() {
+        if v["guid"] == "p07" {
+            v["guid"] = Value::from("p01");
+        }
+    }
+    let (book, rules) = (build(&s), rules(&s));
+    let statement = bank_statement_from_json(&s["bank_statement"]).unwrap();
+    let terms: BTreeSet<String> = strs(&s["bank_charge_terms"]).into_iter().collect();
+    let result = std::panic::catch_unwind(|| {
+        bank_reconciliation::run(
+            &book,
+            &rules,
+            &period(&s),
+            &statement,
+            "Edge Bank",
+            &terms,
+            bank_reconciliation::MATCH_MAX_DAYS,
+        )
+    })
+    .expect("refused, not panicked");
+    let err = result.expect_err("a repeated figure id is refused");
+    assert!(format!("{err}").contains("match_pair_093394bf"), "{err}");
 }
