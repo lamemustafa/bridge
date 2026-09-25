@@ -7,6 +7,10 @@ use std::io::BufRead;
 // Bound individual records, not append-only journal history.
 pub(super) const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
 
+/// The most vouchers one native batch post may send (batch posting v2 design,
+/// measured at 50 on a synthetic book through the gateway).
+pub(super) const MAX_BATCH_POST_VOUCHERS: usize = 50;
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum StatusKind {
@@ -32,6 +36,13 @@ pub(in crate::agent) struct StatusRecord {
     /// (bridge#579). Written with the dispatch intent, before the POST.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_remote_id: Option<String>,
+    /// The REMOTEIDs a native batch post sends, one per voucher, in order.
+    /// Written with a batch's dispatch intent, before the POST, and never
+    /// beside `native_remote_id`. A binary older than this field refuses a
+    /// journal holding one (`deny_unknown_fields`): loudly, never by
+    /// skipping a record of what was sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_remote_ids: Option<Vec<String>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -65,6 +76,7 @@ impl StatusRecord {
             response: None,
             native_request_sha256: Some(request_sha256),
             native_remote_id: Some(remote_id.hyphenated().to_string()),
+            native_remote_ids: None,
         }
     }
     /// The dispatch intent of one native post, bound to the request it sends:
@@ -86,6 +98,7 @@ impl StatusRecord {
             response: Some(response),
             native_request_sha256: None,
             native_remote_id: None,
+            native_remote_ids: None,
         }
     }
 }
@@ -100,6 +113,7 @@ impl From<&ImportLedgerLine> for StatusRecord {
             response: None,
             native_request_sha256: None,
             native_remote_id: None,
+            native_remote_ids: None,
         }
     }
 }
@@ -242,14 +256,27 @@ pub(super) fn find_batch_id_by_sha256(
     }
 }
 
-/// Whether any dispatch intent in the journal already records `remote_id`.
+/// A REMOTEID as the journal records it: a canonical, lower-case, hyphenated
+/// UUID that is not nil.
+fn is_canonical_remote_id(remote_id: &str) -> bool {
+    Uuid::parse_str(remote_id)
+        .is_ok_and(|id| !id.is_nil() && id.hyphenated().to_string() == remote_id)
+}
+
+/// Whether any dispatch intent in the journal already records `remote_id`,
+/// as a single post's REMOTEID or as one of a batch's.
 /// The whole journal is admitted on the way, as for every other read.
 pub(super) fn remote_id_recorded(reader: impl BufRead, remote_id: Uuid) -> Result<bool, String> {
     let wanted = remote_id.hyphenated().to_string();
     let mut recorded = false;
     scan_records(reader, |record, _| {
         if let Record::Status(update) = record {
-            recorded |= update.native_remote_id.as_deref() == Some(wanted.as_str());
+            recorded |= update.native_remote_id.as_deref() == Some(wanted.as_str())
+                || update
+                    .native_remote_ids
+                    .iter()
+                    .flatten()
+                    .any(|recorded_id| *recorded_id == wanted);
         }
     })?;
     Ok(recorded)
@@ -288,10 +315,19 @@ fn scan_records(
             // A recorded REMOTEID belongs only to a native dispatch intent,
             // beside its request hash, and must be a canonical UUID.
             if let Some(remote_id) = &update.native_remote_id {
+                if update.native_request_sha256.is_none() || !is_canonical_remote_id(remote_id) {
+                    return Err("import_ledger_invalid".into());
+                }
+            }
+            // A batch's REMOTEIDs follow the same rule, and are distinct, at
+            // least two (one is `native_remote_id`) and at most the batch cap.
+            if let Some(remote_ids) = &update.native_remote_ids {
+                let distinct = remote_ids.iter().collect::<std::collections::BTreeSet<_>>();
                 if update.native_request_sha256.is_none()
-                    || Uuid::parse_str(remote_id)
-                        .map(|id| id.is_nil() || id.hyphenated().to_string() != *remote_id)
-                        .unwrap_or(true)
+                    || update.native_remote_id.is_some()
+                    || !(2..=MAX_BATCH_POST_VOUCHERS).contains(&remote_ids.len())
+                    || distinct.len() != remote_ids.len()
+                    || !remote_ids.iter().all(|remote_id| is_canonical_remote_id(remote_id))
                 {
                     return Err("import_ledger_invalid".into());
                 }
