@@ -535,6 +535,81 @@ Only this field tells such a ledger from a base one.
 
 ---
 
+### 8.2e A voucher type's class comes from Tally's class functions, not its display name — **VERIFIED 2026-09-24; TallyPrime 7.1, one synthetic book**
+
+**Scope:** TallyPrime 7.1 Silver, licensed, `education_mode: false`. One synthetic book (bridge#625).
+- Its reserved Purchase type was renamed to `PURCHASE A/C`, and its reserved Payment type to
+  `PAYMENT A/C`.
+- A child type `Purchase Local` was created under the renamed Purchase type.
+- A user type named exactly `Purchase` was created under Attendance.
+- One child type was created under each of the seven other classes, and one each under
+  Reversing Journal and Memorandum.
+- Three purchase vouchers were posted: two under the renamed type, one under the child.
+
+**What is committed.** Only the class-resolving voucher read's response is committed, as
+`native-vouchers-renamed-purchase-class`. It establishes, at row level, Purchase alone (three
+rows). Everything else below was measured on 2026-09-24 as one request or write at a time with
+the response inspected, but those captures are not committed.
+
+**A renamed reserved type keeps its identity.** Measured, captures not committed.
+- It keeps its `RESERVEDNAME` and GUID, and stays self-parented under its new `NAME`.
+- A child's `PARENT` is the parent's new name.
+- A voucher carries its type only by display name (`VOUCHERTYPENAME` and `@VCHTYPE`). That name
+  follows a rename at once.
+- A rename moves the company's `ALTMSTID` and the type's `ALTERID`, but no voucher `ALTERID` and
+  not `ALTVCHID`.
+- Moving a type with vouchers under another class by gateway `Alter` is refused in-band: "Cannot
+  change Type of Voucher!".
+
+**Class, per voucher row, in the same response.** Each is a COMPUTE on the voucher collection.
+
+`$GUID:VoucherType:$VoucherTypeName` (committed):
+- It returns the row's type GUID, company-prefixed like other masters.
+
+`$ReservedName:VoucherType:$VoucherTypeName` (committed):
+- It returns the type's own `RESERVEDNAME`.
+- That is empty for a child type, so on its own it misses children.
+
+`$$Is<Class>:<type name>` for Sales, Purchase, Payment, Receipt, Contra, Journal, Debit Note and
+Credit Note. Row-level `Yes` is committed for Purchase; the rest was measured, not committed.
+- **Reserved types.** Each function answers `Yes` on its own class's reserved type, including
+  Payment under its renamed name. The other seven functions answer `No` on that type.
+- **Types of no class.** Every function answers `No` on the Attendance type named `Purchase`.
+- **Children.** Every child type answers `Yes` to exactly its parent's class and `No` to the other
+  seven, for all eight classes. The Payment child sits under the renamed `PAYMENT A/C`.
+- **Other reserved types.** On the 16 other reserved types (Attendance, Delivery Note, Job Work In
+  and Out Order, Material In and Out, Memorandum, Payroll, Physical Stock, Purchase Order, Receipt
+  Note, Rejections In and Out, Reversing Journal, Sales Order, Stock Journal), all eight functions
+  answer `No`. So do children created under Reversing Journal and Memorandum.
+- The values carry `TYPE="Logical"`.
+
+**A type name is resolved ignoring case.** `$GUID:VoucherType:"purchase local"` and
+`"Purchase Local"` return the same GUID, and `$$IsPurchase:"purchase local"` answers `Yes`. This was
+measured for ASCII letters only; non-ASCII case folding is unmeasured.
+
+**Two traps.**
+- `$$Is<Class>` on a name that no type carries returns `No`, not an error. So it cannot prove a type
+  exists, and the GUID COMPUTE is what does that.
+- An unknown `$$` function omits its element from every row, rather than returning `No`. A reader
+  must treat a missing element as a refusal.
+
+**Telling an unknown name from an empty one** (committed, 2026-09-25, same book, bridge#664). The
+native `List of VoucherTypes` collection (the sync connector's request) returned every one of the
+book's 35 types in 45,776 bytes: the reserved types, the renamed ones under their new names, the
+user types and the children, each with its company-prefixed GUID. It is committed as
+`native-voucher-types-reads-lab`. Because the class functions answer `No` for a name no type
+carries (the first trap above), `vouchers` reads this list once when a `voucher_type` name selected
+no row, and refuses a name no type carries (ASCII case ignored) as `unknown_voucher_type`.
+
+**Not measured:**
+- grandchild types (a child of a child);
+- whether a voucher type copied into the book from another company keeps a foreign GUID prefix.
+  Bridge refuses a row whose type GUID is not the company's (`voucher_type_unresolved`), so such a
+  book would fail loudly on a type-filtered read, not answer wrongly;
+- releases before 7.1.
+
+---
+
 ### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
 
 **Scope: TallyPrime 7.1 Silver, licensed, one company, 28 ledger masters.** Captured from

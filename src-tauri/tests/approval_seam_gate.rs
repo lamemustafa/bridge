@@ -78,20 +78,72 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
     if source.contains("impl From<") || source.contains("impl Into<") {
         problems.push("no conversion may exist between the approval types".into());
     }
-    // Any other attribute that names `test` inside a cfg (`any(test, ..)`,
-    // `cfg_attr(test, ..)`) could widen or relocate the gate, including one on
-    // an enclosing block or wrapped over several lines, so each attribute is
-    // read whole, from `#[` to its closing bracket. Unrelated cfgs elsewhere
-    // in the file are not the seam's business.
-    for attribute in attributes(source) {
-        let names_test_in_cfg = attribute.contains("cfg")
-            && (attribute.contains("(test") || attribute.contains(",test"));
-        if names_test_in_cfg && !matches!(attribute.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]")
+    problems.extend(widened_test_gates(source));
+    problems
+}
+
+/// Any attribute that names `test` inside a cfg (`any(test, ..)`,
+/// `cfg_attr(test, ..)`) other than a bare `#[cfg(test)]` or
+/// `#[cfg(not(test))]` could widen or relocate a seam's gate, including one on
+/// an enclosing block or wrapped over several lines, so each attribute is read
+/// whole, from `#[` to its closing bracket. Unrelated cfgs are not a seam's
+/// business.
+fn widened_test_gates(source: &str) -> Vec<String> {
+    attributes(source)
+        .into_iter()
+        .filter(|attribute| {
+            attribute.contains("cfg")
+                && (attribute.contains("(test") || attribute.contains(",test"))
+                && !matches!(attribute.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]")
+        })
+        .map(|attribute| format!("`{attribute}` could widen the seam's gate"))
+        .collect()
+}
+
+/// The post's test-only REMOTEID seam (`SCRIPTED_REMOTE_ID`) lives in the post
+/// path itself, so that file may carry only bare `cfg(test)` gates, and the
+/// seam's two items must each sit under one.
+fn remote_id_seam_problems(source: &str) -> Vec<String> {
+    let mut problems = widened_test_gates(source);
+    let lines: Vec<&str> = source.lines().map(str::trim).collect();
+    for item in [
+        "tokio::task_local! {",
+        "if let Ok(scripted) = SCRIPTED_REMOTE_ID.try_with(|id| *id) {",
+    ] {
+        let at = lines.iter().position(|line| *line == item);
+        if at
+            .and_then(|at| at.checked_sub(1))
+            .map(|above| lines[above])
+            != Some("#[cfg(test)]")
         {
-            problems.push(format!("`{attribute}` could widen the seam's gate"));
+            problems.push(format!("`{item}` must sit directly under `#[cfg(test)]`"));
         }
     }
     problems
+}
+
+#[test]
+fn the_remote_id_seam_is_gated_by_bare_cfg_test() {
+    let source = read("src-tauri/src/agent_import_post.rs");
+    assert_eq!(remote_id_seam_problems(&source), Vec::<String>::new());
+    for broken in [
+        source.replacen(
+            "#[cfg(test)]\ntokio::task_local! {",
+            "#[cfg(any(test, feature = \"remote-id-seam\"))]\ntokio::task_local! {",
+            1,
+        ),
+        source.replacen(
+            "    #[cfg(test)]\n    if let Ok(scripted)",
+            "    if let Ok(scripted)",
+            1,
+        ),
+    ] {
+        assert_ne!(
+            broken, source,
+            "the fabricated breakage must change the source"
+        );
+        assert!(!remote_id_seam_problems(&broken).is_empty());
+    }
 }
 
 /// Every outer or inner attribute in `source`, read from `#[` or `#![` to the
