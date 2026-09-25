@@ -275,11 +275,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "f0a0d989078aac2eb08142bd7ed67616c00fceaea128e88e7ec5d08723ae9735"
+      "sha256": "4ea8f0ea26e849788b8d2c338a1403b480efe85aa2568c86fd9e18412e889db4"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_ledger_collection.rs",
-      "sha256": "af59e77f5786c94c8b7176a5ce206d6239a6ebcaeb905aa15f21b1212a9a44b8"
+      "sha256": "fec07b4e8d388603ae7fd42c26b4f75cbb11a1a766953d3c95f9fb03d8ca2a7f"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -295,7 +295,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/mod.rs",
-      "sha256": "3c5cb332dc52aec9c6cefaa9572506502571c0638016814a050ff433e4292788"
+      "sha256": "9047c33ca5268c0e25677e72300eea57292033912ad8da98d39fb9fa405d8755"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
@@ -307,7 +307,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
-      "sha256": "8c2f702327efb7c14c4ea71dc2360d17d76aecce64991fe8c88cc9e8a0b6281a"
+      "sha256": "602caffe04157aef3545b56acb525c7adba62c47008979a129e2cc54bb7e7448"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/mod.rs",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "f07d82c7a762661294c111c60793ad6c871898fa6c628191af2d37e9777f5e1b"
+      "sha256": "9363d4cbe3e168a9e74c9cce3769afdf798bb64154e0ee67e5a1b603b7bd7402"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "cd297d4e5ad0505fb17b5541c1a7fa9908025c6c681ebe165d4566cbd7eccb0b"
+  "manifest_sha256": "580b51d466630280aec349802ad1222d5f4cb17cf66f488246ade42236458f18"
 }
