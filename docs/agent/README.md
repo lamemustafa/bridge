@@ -8,8 +8,8 @@ The developer configuration below remains for supported client integrations.
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
 The MCPB extension also exposes voucher file preparation and bank-statement
 parsing by default. Voucher posting (one Journal, Payment, Receipt or Contra) is
-off by default while bridge#574 and bridge#579 are open; the **Allow voucher
-posting (Journal, Payment, Receipt, Contra)** setting adds it, with
+off by default because of the two limits under *Approved voucher posting* below;
+the **Allow voucher posting (Journal, Payment, Receipt, Contra)** setting adds it, with
 separate native approval for each new attempt. Command-line installations
 retain explicit environment switches.
 
