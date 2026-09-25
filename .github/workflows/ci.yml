@@ -65,7 +65,8 @@ jobs:
             exit 0
           fi
 
-          changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          # --no-renames lists a moved file under both paths, so a file moved out of a gated directory still selects it.
+          changed_files="$(git diff --name-only --no-renames "$base" "$GITHUB_SHA")"
           if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/|tools/|scripts/package-mcpb\.mjs|scripts/check-no-test-seam(\.test)?\.mjs)'; then
             echo 'native=true' >> "$GITHUB_OUTPUT"
           else
