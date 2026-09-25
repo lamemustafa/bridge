@@ -127,3 +127,13 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - the CA threshold and the s.269ST limit are both 2 lakh and the threshold is never configurable today, so swapping them is untested;
   - a zero-amount party line is untested.
 - Next: round-2 check on b09ef7c, then the E2b full mutation run (its crate tree doesn't change when #710 merges unchanged). I'll open the E2b PR only after #710 merges.
+
+## 2026-09-25 18:57 UTC — E2b frozen at fb9f6e2; sharded full run
+
+- Round-2 Opus on b09ef7c: no P1. Two doc P2s, fixed in fb9f6e2 (docs only):
+  - The new bullet claimed rows "never under-state". They do under-state: a voucher naming two or more parties gives each only its own line, and its tax goes to no party (hvr_paths h11).
+  - `s194n_terms`' own doc now lists the blank-term divergence.
+  Sonnet checks on b09ef7c and fb9f6e2 found none.
+- **Pushed `lane-e/e2b-hvr` @ fb9f6e2** (the frozen head).
+- **For Lane D, a reference-level audit concern, not fixable here without breaking parity.** `high_value_register` takes a row's amount from the party side, so an s.269ST cash row can **under-state**. Example: a multi-party cash receipt with tax whose cash per party reaches 2 lakh while each party's own line is below it. That row is missed. It can also over-state (a party paid partly in cash and partly by bank; h15). The goldens pin both. It is now documented in the module docs. It may be worth raising against the reference engine itself.
+- The container restarted a third time (about 18:50 UTC). The E2b full run is sharded to `cloud/lane-e-e2b-shards`. Shards 1 and 2 are done: 138/138 and 137/137 killed, no survivors. Shards 3 and 4 were rerun after the restart.
