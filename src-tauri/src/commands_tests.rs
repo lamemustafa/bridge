@@ -717,3 +717,31 @@ fn a_size_refused_party_master_export_names_the_size_not_a_validation_failure() 
     ));
     assert_eq!(other.code, "response_validation_failed");
 }
+
+/// bridge#551: the desktop party/ledger export withholds a workbook that would
+/// leave ledgers out, naming them: foreign-currency ledgers, and rupee ledgers
+/// with a composite balance, each under its own code.
+#[test]
+fn party_master_export_withholds_and_names_the_ledgers_it_would_leave_out() {
+    let foreign = (1..=FOREIGN_LEDGERS_NAMED + 2)
+        .map(|index| bridge_tally_protocol::native_outstandings::ForeignCurrencyLedger {
+            ledger: format!("Synthetic FX Debtor {index}"),
+            currency: "$".to_string(),
+        })
+        .collect::<Vec<_>>();
+    let error = party_ledger_master_foreign_currency_error(&foreign);
+    assert_eq!(error.code, "party_ledger_master_foreign_currency_ledgers");
+    assert!(error.message.contains("Synthetic FX Debtor 1 ($)"), "{}", error.message);
+    assert!(error.message.contains(" and 2 more"), "{}", error.message);
+
+    let mixed = vec!["Synthetic Party".to_string(), "Synthetic Sales".to_string()];
+    let error = party_ledger_master_mixed_currency_error(&mixed);
+    assert_eq!(error.code, "party_ledger_master_mixed_currency_ledgers");
+    assert!(
+        error.message.contains("Synthetic Party, Synthetic Sales"),
+        "{}",
+        error.message
+    );
+    assert!(!error.message.contains(" more"), "{}", error.message);
+    assert!(error.remediation.contains("Do not retry"), "{}", error.remediation);
+}
