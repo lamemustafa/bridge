@@ -68,8 +68,9 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 
 The ordinary default tools are `tally_status`, `list_companies`,
 `voucher_schema`, `validate_masters`, `verify_import`, `outstandings`,
-`ledger_masters`, `ledger_movement`, `trial_balance`, `vouchers`,
-`voucher_presence`, `read_evidence`, and `egress_log`. For a command-line
+`ledger_masters`, `ledger_movement`, `trial_balance`, `profit_and_loss`,
+`balance_sheet`, `vouchers`, `voucher_presence`, `read_evidence`, and
+`egress_log`. For a command-line
 installation, `BRIDGE_AGENT_ENABLE_IMPORT=true` also exposes
 `build_import_xml` and `parse_bank_statement`, which prepares local
 bank-statement voucher proposals. `BRIDGE_AGENT_ENABLE_WRITES=true` enables
@@ -175,6 +176,31 @@ It may include dormant ledgers hidden by Tally's screen. Paired response,
 company, mode and extent checks detect observed changes, but do not prove an
 atomic snapshot or voucher-level reconciliation. Keep the company quiet during
 reads. Use `ledger_movement` with narrow dates when voucher detail is needed.
+
+### Profit and Loss and Balance Sheet
+
+`profit_and_loss` and `balance_sheet` take the same `company_guid`, `from` and
+`to` as `trial_balance`, and read that Trial Balance under the same checks.
+Inside the same bracket they also read the group tree and Tally's own
+statement for the window (#692).
+
+- **Lines.** Each ledger is classified by the reserved identity of its primary
+  group, the last group in its chain. That identity survives renaming.
+  - A P&L line is the window's debit plus credit movement.
+  - A Balance Sheet line is the closing balance at `to`.
+  - Signs follow the Trial Balance: a debit is negative, so a profit is positive.
+  - Each line's `amount` counts the empty amounts it excluded; none is read as
+    zero.
+- **What is not established.**
+  - A ledger under a user-created primary group, or with an incomplete chain,
+    is listed in `unclassified`. While any such ledger carries an amount, the
+    results are `not_established`, since a statement that leaves out a line
+    must not show a result.
+  - Closing stock is not derived from the Trial Balance, so a book with a
+    Stock-in-Hand balance has no established gross or net result.
+- **`tie_out`.** It compares Tally's own statement lines with the derived lines
+  by display name, and enforces nothing. The Balance Sheet's Profit & Loss line
+  has been compared with Tally's only over a full year.
 
 ### Ledger-movement opening decision
 

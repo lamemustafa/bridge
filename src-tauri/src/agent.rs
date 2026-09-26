@@ -55,6 +55,8 @@ use outstandings::*;
 mod movement;
 #[path = "agent_trial_balance.rs"]
 mod trial_balance;
+#[path = "agent_statements.rs"]
+mod statements;
 #[cfg(test)]
 use movement::parse_movement_vouchers;
 #[path = "agent_responses.rs"]
@@ -560,6 +562,15 @@ fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
         if let Some(amount) = cause.downcast_ref::<bridge_tally_protocol::NativeLedgerAmountError>()
         {
             return Some(amount.safe_code());
+        }
+        if let Some(statement) = cause
+            .downcast_ref::<bridge_tally_protocol::native_statement_reports::NativeStatementError>()
+        {
+            return Some(statement.code());
+        }
+        if let Some(derivation) = cause.downcast_ref::<crate::reports::statements::StatementsError>()
+        {
+            return Some(derivation.code());
         }
         cause
             .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
@@ -1174,6 +1185,8 @@ impl Server {
             "outstandings" => self.outstandings(args).await,
             "ledger_movement" => self.ledger_movement(args).await,
             "trial_balance" => self.trial_balance(args).await,
+            "profit_and_loss" => self.profit_and_loss(args).await,
+            "balance_sheet" => self.balance_sheet(args).await,
             "read_evidence" => self.read_evidence(args).map_err(Into::into),
             "egress_log" => self.egress_log(args).map_err(Into::into),
             #[cfg(feature = "lab-writes")]

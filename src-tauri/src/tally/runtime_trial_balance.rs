@@ -1,8 +1,12 @@
 //! One native report operation shared by desktop and MCP callers.
 use super::*;
+use bridge_tally_protocol::native_statement_reports::{
+    parse_native_statement, render_native_statement_request, NativeStatement, NativeStatementKind,
+};
 use bridge_tally_protocol::native_trial_balance::{
     parse_native_trial_balance, render_native_trial_balance_request, NativeTrialBalance,
 };
+use bridge_tally_protocol::TallyNamedMaster;
 
 /// A completed observation, not a reusable admission for a later write.
 #[derive(Debug, Clone, Serialize)]
@@ -16,6 +20,22 @@ pub struct TrialBalanceRead {
     pub totals: crate::reports::trial_balance::TrialBalanceTotals,
     pub read_at: String,
     pub evidence: RuntimeReadEvidence,
+}
+
+/// A Profit and Loss or Balance Sheet read: the Trial Balance it derives from,
+/// the group tree that classifies it, and Tally's own statement for the same
+/// window, all read inside one identity and book-extent bracket (#692).
+#[derive(Debug, Clone, Serialize)]
+pub struct StatementsRead {
+    pub trial_balance: TrialBalanceRead,
+    pub derived: crate::reports::statements::DerivedStatements,
+    pub tie_out: crate::reports::statements::TieOut,
+}
+
+/// What a statement read adds to a Trial Balance read.
+struct StatementSources {
+    groups: Vec<TallyNamedMaster>,
+    builtin: NativeStatement,
 }
 
 /// An ordered caller-selected range. Profile-specific boundary admission stays
@@ -85,6 +105,41 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         period: TrialBalancePeriod,
     ) -> anyhow::Result<(TrialBalanceRead, CompanyBookExtent)> {
+        self.fetch_trial_balance_sources(config, identity, period, None)
+            .await
+            .map(|(read, _, extent)| (read, extent))
+    }
+
+    /// Tally's `kind` statement derived from the Trial Balance and group tree,
+    /// with Tally's own statement for the same window alongside for tie-out.
+    pub(crate) async fn fetch_statements(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        period: TrialBalancePeriod,
+        kind: NativeStatementKind,
+    ) -> anyhow::Result<StatementsRead> {
+        let (trial_balance, sources, _) = self
+            .fetch_trial_balance_sources(config, identity, period, Some(kind))
+            .await?;
+        let sources = sources.ok_or_else(|| anyhow::anyhow!("statement_sources_not_read"))?;
+        let derived =
+            crate::reports::statements::derive_statements(&trial_balance.report, &sources.groups)?;
+        let tie_out = crate::reports::statements::tie_out(&derived, &sources.builtin);
+        Ok(StatementsRead {
+            trial_balance,
+            derived,
+            tie_out,
+        })
+    }
+
+    async fn fetch_trial_balance_sources(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        period: TrialBalancePeriod,
+        statement: Option<NativeStatementKind>,
+    ) -> anyhow::Result<(TrialBalanceRead, Option<StatementSources>, CompanyBookExtent)> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -145,6 +200,36 @@ impl TallyRuntime {
                             .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
                         let report = parse_native_trial_balance(&xml, identity.company_guid())?;
                         let totals = crate::reports::trial_balance::observed_totals(&report)?;
+                        let sources = match statement {
+                            None => None,
+                            Some(kind) => {
+                                let request =
+                                    render_native_group_snapshot_request(identity.display_name());
+                                let (xml, bytes, hash) = client
+                                    .fetch_native_report_paired(request.clone())
+                                    .await?
+                                    .require_stable(PairedReadValidationError::NativeLedgerGroup)?;
+                                evidence = evidence
+                                    .clone()
+                                    .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
+                                let groups =
+                                    parse_native_group_snapshot(&xml, identity.company_guid())?;
+                                let request = render_native_statement_request(
+                                    kind,
+                                    identity.display_name(),
+                                    &period,
+                                );
+                                let (xml, bytes, hash) = client
+                                    .fetch_native_report_paired(request.clone())
+                                    .await?
+                                    .require_stable(PairedReadValidationError::NativeStatement)?;
+                                evidence = evidence
+                                    .clone()
+                                    .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
+                                let builtin = parse_native_statement(kind, &xml)?;
+                                Some(StatementSources { groups, builtin })
+                            }
+                        };
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Err(PairedReadValidationError::NativeLedgerExtent.into());
@@ -165,6 +250,7 @@ impl TallyRuntime {
                                 read_at: chrono::Utc::now().to_rfc3339(),
                                 evidence: evidence.clone(),
                             },
+                            sources,
                             extent,
                         ))
                     }

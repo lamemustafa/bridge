@@ -313,7 +313,14 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // `src-tauri/src/agent_voucher_type_class.rs` (bridge#625) decides which
 // vouchers a type filter returns, and which request is refused as ambiguous;
 // a defect there reports a class of vouchers as absent.
-pub const MAX_SURFACE_FILES: usize = 280;
+// `bridge-tally-protocol/src/native_statement_reports.rs`,
+// `src-tauri/src/reports/statements.rs` (with its tests, as every file under
+// `src-tauri/src/reports` is required) and `src-tauri/src/agent_statements.rs`
+// (bridge#692) parse Tally's own Balance Sheet and Profit and Loss, derive both
+// statements from the Trial Balance and group tree, and decide which result
+// `profit_and_loss` and `balance_sheet` report as established; a defect there
+// reports a profit that omits a line.
+pub const MAX_SURFACE_FILES: usize = 284;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

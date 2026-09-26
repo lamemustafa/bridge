@@ -61,7 +61,7 @@ const MAX_ENDPOINT_SESSIONS: usize = 32;
 #[path = "runtime_trial_balance.rs"]
 mod trial_balance;
 pub(crate) use trial_balance::TrialBalanceReadError;
-pub use trial_balance::{TrialBalancePeriod, TrialBalanceRead};
+pub use trial_balance::{StatementsRead, TrialBalancePeriod, TrialBalanceRead};
 
 #[cfg(test)]
 #[path = "runtime_trial_balance_tests.rs"]
