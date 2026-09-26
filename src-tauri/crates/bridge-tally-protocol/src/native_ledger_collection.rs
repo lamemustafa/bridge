@@ -1101,7 +1101,7 @@ fn flush_flattened_part(current: &mut String, parts: &mut Vec<String>) {
 /// (`TALLY_PROTOCOL_REFERENCE.md` section 1.1(d)), so a `GeneralRef` seen
 /// here is always either a predefined named entity or a legal numeric
 /// reference; `unescape` fails closed on anything else.
-fn resolve_party_ledger_master_reference(
+pub(crate) fn resolve_party_ledger_master_reference(
     reference: quick_xml::events::BytesRef<'_>,
 ) -> anyhow::Result<String> {
     let decoded = reference.decode()?;
@@ -1124,7 +1124,7 @@ fn resolve_party_ledger_master_reference(
 /// the same reason (see `trim_text(false)` in `agent_lab.rs`,
 /// `agent_voucher_parse.rs`, `agent_company_checkpoint.rs`, and
 /// `source_draft_xml.rs`).
-fn with_untrimmed_text<T>(
+pub(crate) fn with_untrimmed_text<T>(
     reader: &mut Reader<&[u8]>,
     body: impl FnOnce(&mut Reader<&[u8]>) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {

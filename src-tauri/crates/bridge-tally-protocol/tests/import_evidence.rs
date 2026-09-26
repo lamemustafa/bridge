@@ -548,3 +548,57 @@ fn a_stored_record_is_bounded_again_on_read_and_never_fails_over_text() {
         assert_eq!(reread.tally_line_errors_omitted(), 2);
     }
 }
+
+/// The captured partial commit with its one LINEERROR's quoted ledger name
+/// rewritten into a CDATA section (#735). Derived in memory from the capture:
+/// only that span changes. Whether Tally ever sends CDATA here is unobserved.
+fn partial_commit_with_quoted(replacement: &str) -> String {
+    let captured = captured(PARTIAL_COMMIT_LIVE);
+    let quoted = "&apos;Lane A No Such Ledger&apos;";
+    assert_eq!(
+        captured.matches(quoted).count(),
+        1,
+        "the capture's quoted name"
+    );
+    captured.replacen(quoted, replacement, 1)
+}
+
+/// #735: a CDATA section in a LINEERROR is read as its content, not kept as
+/// markup, and a bare `&` inside it no longer refuses the whole outcome.
+#[test]
+fn a_line_error_with_cdata_is_read_as_its_text() {
+    for (replacement, text) in [
+        (
+            "<![CDATA['Lane A No Such Ledger']]>",
+            "Ledger 'Lane A No Such Ledger' does not exist!",
+        ),
+        (
+            "<![CDATA['Lane A & Co']]>",
+            "Ledger 'Lane A & Co' does not exist!",
+        ),
+    ] {
+        let xml = partial_commit_with_quoted(replacement);
+        let outcome = parse_import_outcome(&xml).expect("the outcome still parses");
+        assert_eq!(outcome.counters().created, 49, "{replacement}");
+        assert_eq!(outcome.counters().line_error_count, 1, "{replacement}");
+        let texts = outcome
+            .tally_line_errors()
+            .iter()
+            .map(bridge_tally_protocol::TallyLineError::text)
+            .collect::<Vec<_>>();
+        assert_eq!(texts, [text], "{replacement}");
+        let evidence = parse_import_evidence(&xml).expect("the evidence still parses");
+        assert_eq!(evidence.line_error_sha256().len(), 1, "{replacement}");
+    }
+}
+
+/// The reader change must not move the digest of text without CDATA: the
+/// captured LINEERROR's evidence digest is the one recorded before #735.
+#[test]
+fn the_captured_line_error_digest_is_unchanged() {
+    let evidence = parse_import_evidence(&captured(PARTIAL_COMMIT_LIVE)).expect("captured");
+    assert_eq!(
+        evidence.line_error_sha256(),
+        ["c6d01348ae1f860d56234f001c712e1f7403359c412533fe929e785008df3646"]
+    );
+}

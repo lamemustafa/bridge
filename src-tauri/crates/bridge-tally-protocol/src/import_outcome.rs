@@ -337,6 +337,39 @@ impl TallyImportResult {
     }
 }
 
+/// One `LINEERROR`'s text: its text, entity references and CDATA sections in
+/// document order, trimmed as a whole (#735). Both the kept text and its
+/// evidence digest read it here. `read_optional_text` unescapes the element's
+/// raw span at once, which kept CDATA markup in the text and refused the whole
+/// response on a bare `&` inside a CDATA section. Any other markup inside the
+/// element still refuses the response.
+fn read_line_error_text(reader: &mut Reader<&[u8]>, name: QName<'_>) -> anyhow::Result<String> {
+    let expected = name.as_ref().to_ascii_uppercase();
+    crate::native_ledger_collection::with_untrimmed_text(reader, |reader| {
+        let mut text = String::new();
+        loop {
+            match reader.read_event()? {
+                Event::Text(part) => {
+                    text.push_str(&quick_xml::escape::unescape(&part.decode()?)?);
+                }
+                Event::GeneralRef(reference) => text.push_str(
+                    &crate::native_ledger_collection::resolve_party_ledger_master_reference(
+                        reference,
+                    )?,
+                ),
+                Event::CData(part) => text.push_str(&part.decode()?),
+                Event::Comment(_) => {}
+                Event::End(end) if end.name().as_ref().to_ascii_uppercase() == expected => {
+                    break;
+                }
+                Event::Eof => anyhow::bail!("Tally import LINEERROR ended before it closed"),
+                _ => anyhow::bail!("Tally import LINEERROR held markup other than text"),
+            }
+        }
+        Ok(text.trim().to_string())
+    })
+}
+
 pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
@@ -453,13 +486,10 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
                             true
                         }
                         b"LINEERROR" => {
-                            let text = read_optional_text(&mut reader, element.name())?;
+                            let text = read_line_error_text(&mut reader, element.name())?;
                             line_error_count = line_error_count.saturating_add(1);
                             if tally_line_errors.len() < MAX_TALLY_LINE_ERRORS {
-                                tally_line_errors.push(TallyLineError::bounded(
-                                    text.as_deref().unwrap_or(""),
-                                    false,
-                                ));
+                                tally_line_errors.push(TallyLineError::bounded(&text, false));
                             }
                             true
                         }
@@ -666,7 +696,7 @@ fn parse_import_evidence_inner(xml: &str) -> anyhow::Result<ParsedImportEvidence
     loop {
         match reader.read_event()? {
             Event::Start(element) if element.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") => {
-                let value = read_optional_text(&mut reader, element.name())?.unwrap_or_default();
+                let value = read_line_error_text(&mut reader, element.name())?;
                 if line_error_sha256.len() == MAX_LINE_ERRORS {
                     anyhow::bail!("Tally import response exceeded the line-error limit");
                 }
