@@ -1159,6 +1159,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     divergent.entries[0].amount = "-12.51".to_string();
     let result = verify_observed_batch(&line, &[divergent]).expect("numeric divergence");
     assert_eq!(result["vouchers"][0]["status"], "posted_divergent");
+    assert_eq!(result["vouchers"][0]["alter_id"], 11);
 }
 
 #[test]
@@ -1215,18 +1216,45 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
             ["vouchers"][0]["status"],
         "posted_verified"
     );
-    for (cancelled, optional) in [(Some(true), Some(false)), (Some(false), Some(true))] {
+    for (cancelled, optional, reason) in [
+        (Some(true), Some(false), "voucher_cancelled"),
+        (Some(false), Some(true), "voucher_optional"),
+        (Some(true), Some(true), "voucher_cancelled"),
+    ] {
         let mut ineffective = observed.clone();
         ineffective.cancelled = cancelled;
         ineffective.optional = optional;
         let result =
             verify_observed_batch(&line, &[ineffective]).expect("ineffective voucher result");
         assert_eq!(result["vouchers"][0]["status"], "posted_not_effective");
+        assert_eq!(result["vouchers"][0]["reason"], reason);
         assert_eq!(
             result["vouchers"][0]["not_observed"],
             json!(["effective_date"])
         );
         assert_eq!(result["counts"]["posted_not_effective"], 1);
+    }
+    // An optional voucher keeps its entries (observed once, 2026-09-26), so a
+    // change to them still diverges. A cancelled one loses them (bridge#758),
+    // so only its header is compared: the cancel alone shows no diff, and a
+    // re-date before the cancel still shows.
+    let mut changed = observed.clone();
+    changed.entries[0].amount = "-12.51".to_string();
+    let mut optional = changed.clone();
+    optional.optional = Some(true);
+    let result = verify_observed_batch(&line, &[optional]).expect("changed optional voucher");
+    assert_eq!(result["vouchers"][0]["status"], "posted_divergent");
+    let mut cancelled = changed;
+    cancelled.cancelled = Some(true);
+    cancelled.entries.clear();
+    for (date, diffs) in [("20260901", json!([])), ("20260902", json!(["date"]))] {
+        let mut redated = cancelled.clone();
+        redated.date = Some(date.to_string());
+        let result = verify_observed_batch(&line, &[redated]).expect("cancelled voucher");
+        let item = &result["vouchers"][0];
+        assert_eq!(item["status"], "posted_not_effective", "{result}");
+        assert_eq!(item["reason"], "voucher_cancelled", "{result}");
+        assert_eq!(item["diffs"], diffs, "{result}");
     }
     let mut missing = observed;
     missing.optional = None;

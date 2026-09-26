@@ -435,12 +435,22 @@ been observed live on a synthetic Silver 7.1 company, each reading back
    `import_batch_predates_ledger_binding`, before any Tally request; build it
    again. Any other read inside the queue that fails before the post is refused
    with `post_queue_read_failed`, with a `cause` where one is known; nothing is sent, and
-   the post can be re-run. Rebuild only when `attempt_recorded` is `false`.
+   the post can be re-run. Checked under the admission lock as the attempt is
+   about to be recorded, a batch no longer in the journal, already attempted,
+   changed since approval, or whose REMOTEID the journal already records refuses
+   with `import_batch_not_found`, `import_already_attempted`,
+   `import_batch_changed` or `import_remote_id_reused`, and this post sends
+   nothing. Rebuild only when `attempt_recorded` is `false`.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the
-   side that must be bank or cash. Choose **Post voucher** on
-   macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
+   side that must be bank or cash. A batch's dialog shows the same company and
+   endpoint, and summarises the vouchers: their count, types and date range,
+   each ledger's totals, and the overall totals. It does not show any voucher's
+   own date, amounts, entries, narration or reference: equal ledger totals do
+   not prove each voucher is right, so check those before building the batch.
+   Choose **Post voucher** (for a batch,
+   **Post N vouchers**) on macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
    declines on macOS; Return may leave the dialog open. Windows defaults to
    **No**. Long or directionally ambiguous previews are refused; use the
    manual file workflow instead. A desktop session is required.

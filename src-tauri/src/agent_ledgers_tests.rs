@@ -1052,6 +1052,42 @@ mod through_the_tool {
         assert_eq!(error["cause"], "company_currency_probe_failed");
     }
 
+    /// A basic read whose one Currency master is not INR is refused after
+    /// the currency read, before any ledger request: its bare openings would
+    /// name no currency (#716). DERIVED from the captured single-master
+    /// response with its `MAILINGNAME` changed from `INR`; no non-INR book
+    /// has been captured.
+    #[tokio::test]
+    async fn a_basic_read_of_a_non_inr_book_is_refused_before_any_ledger() {
+        let captured_currency = single_currency();
+        let inr = "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>";
+        assert_eq!(captured_currency.matches(inr).count(), 1);
+        let foreign =
+            captured_currency.replace(inr, "<MAILINGNAME TYPE=\"String\">UAE Dirham</MAILINGNAME>");
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let mut plans = identity_plans();
+        plans.extend([
+            status(),
+            company.clone(),
+            company,
+            extent.clone(),
+            status(),
+            extent,
+            status(),
+        ]);
+        pair(&mut plans, xml(foreign));
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":GUID})).await;
+        assert_eq!(requests, total, "no ledger request was sent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "company_base_currency_not_inr");
+    }
+
     /// As `basic_plans`, with the ledger export given and, when `groups` is
     /// supplied, the paired group collection a `group` filter adds inside the
     /// same extent and identity bracket.
