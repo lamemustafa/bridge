@@ -162,3 +162,6 @@ CI was green on `59cf3da`, but GitHub reported a merge conflict after master too
 
 ## 2026-09-26T12:52Z: #763 merged up with master again
 CI was green on `753d7c7` (14/14 completed, 12 passed, 2 skipped), then master took #757 and the compatibility JSON conflicted again. Same procedure: took master's surface and matrix, resealed (`--verify` clean), and pushed merge head `288c982bbdef4c0463e4d7c5ce4f3d6e15141f35`. `bridge-tally-protocol`: 350 passed; the targeted `bridge` tests: 119 passed; fmt and clippy clean. The five parked PRs are all green on their heads and were not touched. Their mergeability against current master is Lane D's, per its instruction.
+
+## 2026-09-26T13:13Z: #763 merged up with master (#755)
+CI was green on `288c982` (14/14 completed, 12 passed, 2 skipped). Master then took #755, which also touches the compatibility surface. Same resolution: took master's JSON, resealed (`--verify` clean), and pushed merge head `569abd6a0c3eb2dc469782e1e70c4c49e6c3817f`. 350 protocol tests and 119 targeted `bridge` tests passed; fmt and clippy are clean. Each master change to the surface will conflict this PR again, and each needs only a reseal.
