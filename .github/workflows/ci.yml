@@ -29,6 +29,7 @@ jobs:
     outputs:
       bundle: ${{ steps.scope.outputs.bundle }}
       native: ${{ steps.scope.outputs.native }}
+      tax_audit: ${{ steps.scope.outputs.tax_audit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -46,6 +47,7 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo 'bundle=true' >> "$GITHUB_OUTPUT"
             echo 'native=true' >> "$GITHUB_OUTPUT"
+            echo 'tax_audit=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -59,14 +61,24 @@ jobs:
           if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
             echo 'bundle=true' >> "$GITHUB_OUTPUT"
             echo 'native=true' >> "$GITHUB_OUTPUT"
+            echo 'tax_audit=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          # --no-renames lists a moved file under both paths, so a file moved out of a gated directory still selects it.
+          # -z: git would otherwise quote a path with non-ASCII bytes, and the quoted form matches no prefix below.
+          changed_files="$(git diff --name-only --no-renames -z "$base" "$GITHUB_SHA" | tr '\0' '\n')"
           if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/|tools/|scripts/package-mcpb\.mjs|scripts/check-no-test-seam(\.test)?\.mjs)'; then
             echo 'native=true' >> "$GITHUB_OUTPUT"
           else
             echo 'native=false' >> "$GITHUB_OUTPUT"
+          fi
+
+          # The mutation records check runs when the crate it guards changes, or this workflow does.
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|src-tauri/crates/bridge-tax-audit/)'; then
+            echo 'tax_audit=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'tax_audit=false' >> "$GITHUB_OUTPUT"
           fi
 
           # tools/ is deliberately excluded: it is not shipped in the bundle, which validates the artifact and its resources.
@@ -258,6 +270,8 @@ jobs:
           ../docs/tally/support-matrix.md
       - name: Enforce no-write live-read dependency boundary
         run: node scripts/check-tally-live-read-boundary.mjs
+      - name: Enforce Tally-path egress boundary
+        run: node scripts/check-tally-egress-boundary.mjs
       - name: Enforce fixture byte integrity
         run: node scripts/check-fixture-byte-integrity.mjs
       - name: Enforce fixture provenance
@@ -690,7 +704,12 @@ jobs:
   tax-audit-mutations:
     name: Tax-audit mutation records
     # No build: this checks the committed results file, never re-runs a mutation.
-    # parity/mutations.py's docstring states the guarantee it enforces.
+    # parity/mutations.py's docstring states the guarantee it enforces. Required,
+    # but only on a pull request that touches the crate (or this workflow): a
+    # master left inconsistent by a merge that bypassed it then reds crate PRs and
+    # the nightly run, not every unrelated PR.
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.tax_audit == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -733,8 +752,12 @@ jobs:
     # PRs), but any failure or cancellation fails this job. Point branch
     # protection at this context instead of the individual matrix jobs so
     # docs-only PRs are not blocked by skipped native/bundle checks.
+    # tax-audit-mutations is required too, on pull requests that touch the
+    # crate: it runs the mutation runner's tests and `--verify` (no build), so a
+    # bridge-tax-audit change merges only with its selected mutations proven on
+    # the merged tree. Skipped on other pull requests, which is a pass here.
     if: ${{ always() }}
-    needs: [changes, frontend, rust-format, workflow-consistency, tally-portable, native, bundle-smoke, compiler-cache-retention]
+    needs: [changes, frontend, rust-format, workflow-consistency, tally-portable, native, bundle-smoke, compiler-cache-retention, tax-audit-mutations]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
