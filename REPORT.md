@@ -144,3 +144,6 @@ None. No fix in this lane needed a new Tally capture.
 - The first overlap checks used a stale origin/master; they were corrected and re-run.
 - One merge commit on #731 (`5da9116`) lacks the session trailer. It was not force-pushed.
 - CI "Required checks" reds on superseded heads were cancellations. One macOS bundle-smoke failure was a runner DNS failure; it passed after one re-run.
+
+## 2026-09-26T11:31Z: #735 taken up (at Lane D's request)
+Branch `cloud-q/735-lineerror-cdata`. The five open PRs are parked; I am not re-merging master into them.
