@@ -116,9 +116,11 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
 /// name (`ack_doubt_ambiguous`). A check still pending, or a record that
 /// cannot be read, is not observed: this choice is made from the records
 /// before the read, which can finish a pending check. Two doubts that are
-/// both held only by the check record need no name: neither can be reviewed,
-/// so the first is chosen and refused as such (`ack_doubt_record_unavailable`)
-/// rather than asking for a name that could not help. With none observed, the
+/// both held only by the check record are refused here
+/// (`ack_doubt_record_unavailable`): neither can be reviewed, so a name could
+/// not help, and the refusal comes before a review record of either, which is
+/// stale without its doubt, can answer `ack_already_recorded`. With none
+/// observed, the
 /// kind whose record says why (pending, unreadable) is chosen, so the refusal
 /// names it.
 fn select_doubt(
@@ -153,7 +155,7 @@ fn select_doubt(
             .iter()
             .find(|(_, state)| *state != MastersRecord::NoDoubt)
             .map_or(DoubtKind::Masters, |(kind, _)| *kind)),
-        [first, ..] if observed.iter().all(unavailable) => Ok(*first),
+        [_, ..] if observed.iter().all(unavailable) => Err("ack_doubt_record_unavailable"),
         _ => Err("ack_doubt_ambiguous"),
     }
 }

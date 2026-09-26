@@ -862,6 +862,23 @@ async fn an_unnamed_review_beside_a_doubt_without_its_file_is_refused_before_any
             fs::remove_dir_all(&step_doubt).unwrap();
         }
         assert_eq!(step_doubt.is_file(), !step_file_fails, "{code}");
+        // The check record holds both doubts, each marked when its file failed.
+        let check: Value = serde_json::from_slice(
+            &fs::read(imports.join(format!("{}.masters_check.json", line.batch_id))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(check["state"], "posted_under_changed_masters", "{check}");
+        assert_eq!(check["doubt_record"], "unavailable", "{check}");
+        assert_eq!(check["batch_step"]["state"], "unmatched", "{check}");
+        assert_eq!(
+            check["batch_step"]["doubt_record"],
+            if step_file_fails {
+                json!("unavailable")
+            } else {
+                Value::Null
+            },
+            "{check}"
+        );
         let response = acknowledge(
             &server,
             json!({"company_guid":GUID,"batch_id":line.batch_id}),
@@ -875,6 +892,54 @@ async fn an_unnamed_review_beside_a_doubt_without_its_file_is_refused_before_any
         }
         assert!(sent(simulator).is_empty(), "{code}: no request");
     }
+}
+
+/// A masters review was recorded while its doubt file existed; that file was
+/// later lost, and the step doubt's own file was never written. An unnamed
+/// review is refused as unavailable before any request, never answered
+/// `ack_already_recorded` by the stale masters review.
+#[tokio::test]
+async fn two_doubts_without_their_files_refuse_before_a_stale_review_can_answer() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let line = dispatched_batch(&server);
+    let imports = server.imports_dir().unwrap();
+    server
+        .record_post_checks_pending(&line.batch_id, true)
+        .unwrap();
+    let step_doubt = imports.join(format!("{}.batch_step_doubt.json", line.batch_id));
+    block(step_doubt.clone());
+    server.record_batch_step_verdict(
+        &line.batch_id,
+        &json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false}),
+    );
+    server.record_masters_verdict_for(
+        &line.batch_id,
+        json!({"state":"posted_under_changed_masters","ledgers":["Cash"]}),
+        true,
+    );
+    fs::remove_dir_all(&step_doubt).unwrap();
+    let masters_doubt = imports.join(format!("{}.masters_doubt.json", line.batch_id));
+    assert!(masters_doubt.is_file(), "the masters doubt was written");
+    // A review of it recorded, then its doubt file lost.
+    fs::write(
+        imports.join(format!("{}.masters_ack.json", line.batch_id)),
+        b"{}",
+    )
+    .unwrap();
+    fs::remove_file(&masters_doubt).unwrap();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":GUID,"batch_id":line.batch_id}),
+        ScriptedApproval::approving(),
+    )
+    .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_doubt_record_unavailable",
+        "{response}"
+    );
+    assert!(sent(simulator).is_empty(), "no request");
 }
 
 /// One voucher's doubt recorded only in the check record is refused after
