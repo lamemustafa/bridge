@@ -64,3 +64,10 @@ Head `cb57941d301920b6f110cff1f912a4866fb0f73a`. Sonnet: no P1/P2. Two independe
 
 ## 2026-09-26T06:42Z: #727 merged
 #662 is fixed on master by Lane D's merge of PR #727. The session is unsubscribed from it.
+
+## 2026-09-26T07:18Z: CI status
+- #731 (`b2865cb`), #733 (`3792b5f`), #734 (`cb57941`): green.
+- #736 (`f8d904d`): green after one re-run. Bundle smoke on macOS had died in `rustup toolchain install` on a runner DNS failure before any build step; it is explained on the PR.
+- #727: merged.
+
+All four open PRs are ready and wait only on Lane D's independent reviewer. #731 is on the approval path and needs Opus.
