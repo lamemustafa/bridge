@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// A `first:100` GraphQL page hid 19 open Codex review threads on PR 228
-// (see the brain note this gate is named after in the task history); a plain
+// A `first:100` GraphQL page hid 19 open Codex review threads on PR 228; a plain
 // `gh api repos/.../pulls` without `--paginate` silently returns only the
 // first page the same way. Both look identical to a correct call until the
 // list they are reading grows past one page, at which point they are wrong

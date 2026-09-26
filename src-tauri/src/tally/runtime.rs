@@ -3262,8 +3262,8 @@ impl TallyRuntime {
     ///
     /// Unmeasured premise, for live qualification: that Tally answers
     /// `/status` quickly only once it has finished building an abandoned
-    /// response. The brain notes record `/status` both dead during a modal
-    /// hang and healthy just before one.
+    /// response. Protocol reference §1.2 (a modal error dialog blocks the
+    /// gateway) records `/status` answering nothing while a dialog is open.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "used by the audit_read orchestrator, plan step 7")
