@@ -213,7 +213,7 @@ fn journaled_outcome(
 fn assert_journaled_clean_create(directory: &std::path::Path) {
     let outcome = journaled_outcome(directory).expect("the POST answer was parsed and journaled");
     assert_eq!(outcome.counters().created, 1);
-    assert!(import_outcome_is_clean(Some(&outcome)));
+    assert!(import_outcome_is_clean(Some(&outcome), 1));
 }
 
 fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
@@ -523,7 +523,7 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     let recorded_id = intent["native_remote_id"].as_str().unwrap();
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
     let remote_id = Uuid::parse_str(recorded_id).unwrap();
-    let rendered = native_post_request(&line, remote_id).unwrap();
+    let rendered = native_post_request(&line, RemoteIds::from_ids(vec![remote_id])).unwrap();
     assert_eq!(rendered.request_sha256, recorded_sha);
     assert!(rendered
         .xml
@@ -532,11 +532,13 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     // REMOTEID renders the same bytes, and another REMOTEID different ones, so
     // the match above could not come from anything else in the request.
     assert_eq!(
-        native_post_request(&line, remote_id).unwrap().xml,
+        native_post_request(&line, RemoteIds::from_ids(vec![remote_id]))
+            .unwrap()
+            .xml,
         rendered.xml
     );
     assert_ne!(
-        native_post_request(&line, Uuid::new_v4())
+        native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()]))
             .unwrap()
             .request_sha256,
         recorded_sha
@@ -922,7 +924,7 @@ async fn each_bank_type_posts_the_request_its_intent_recorded() {
             observed[post_at].request_body_sha256, recorded_sha,
             "{type_name}"
         );
-        let rendered = native_post_request(&line, remote_id).unwrap();
+        let rendered = native_post_request(&line, RemoteIds::from_ids(vec![remote_id])).unwrap();
         assert_eq!(rendered.request_sha256, recorded_sha, "{type_name}");
         assert!(
             rendered.xml.contains(&format!("VCHTYPE=\"{type_name}\"")),
@@ -992,7 +994,7 @@ async fn a_three_entry_receipt_posts_the_request_its_intent_recorded() {
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
     let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
     assert_eq!(
-        native_post_request(&line, remote_id)
+        native_post_request(&line, RemoteIds::from_ids(vec![remote_id]))
             .unwrap()
             .request_sha256,
         recorded_sha
@@ -1084,6 +1086,57 @@ async fn a_counterparty_moved_under_cash_after_approval_is_refused_before_the_po
 #[tokio::test]
 async fn a_counterparty_group_moved_under_bank_after_approval_is_refused_before_the_post() {
     refused_in_the_queue(catalogue(), groups_with_debtor_group_under_bank()).await;
+}
+
+/// bridge#676: a group collection the classification cannot parse is refused
+/// before approval as `group_export_invalid`, and its `cause` is the group
+/// parser's own data-free code, not dropped. Nothing is read after it.
+async fn refused_on_the_group_read(groups: String, cause: &str) {
+    let mut plans = probe();
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(catalogue()));
+    plans.extend(paired(groups));
+    let expected = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_bank_batch(&server, payment());
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], "group_export_invalid", "{response}");
+    assert_eq!(error["cause"], cause, "{response}");
+    assert!(scripted.previews().is_empty(), "no approval asked");
+    assert_eq!(observed.len(), expected, "{response}");
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
+}
+
+#[tokio::test]
+async fn a_group_collection_of_another_company_is_refused_with_its_cause() {
+    let groups = groups();
+    let other = groups.replacen(
+        ">61c6de69-1748-461c-ad3f-162cb949df9f</BRIDGECOMPANYGUID>",
+        ">00000000-0000-4000-8000-000000000676</BRIDGECOMPANYGUID>",
+        1,
+    );
+    assert_ne!(other, groups, "one row's company GUID changed");
+    refused_on_the_group_read(other, "group_response_company_guid_mismatch").await;
+}
+
+#[tokio::test]
+async fn a_group_collection_that_reports_failure_is_refused_with_its_cause() {
+    let failed = replaced_once(&groups(), "<STATUS>1</STATUS>", "<STATUS>0</STATUS>");
+    refused_on_the_group_read(failed, "group_status_not_success").await;
 }
 
 /// Already changed since the build: refused before approval is asked, and no
@@ -1449,7 +1502,7 @@ async fn a_post_whose_response_cannot_be_journaled_still_reports_where_it_landed
 fn the_simulated_post_answer_parses_as_one_clean_create() {
     let outcome = parse_import_outcome(&created_one()).expect("the POST answer parses");
     assert_eq!(outcome.counters().created, 1);
-    assert!(import_outcome_is_clean(Some(&outcome)));
+    assert!(import_outcome_is_clean(Some(&outcome), 1));
 }
 
 /// A Journal Bridge posted live (bridge#582's lab qualification), as its
@@ -2214,7 +2267,7 @@ async fn a_dispatched_batch_without_identities_still_reconciles() {
     let (mut line, args) = saved_batch(&server);
     line.ledger_identities = None;
     server.append_import_ledger(&line).unwrap();
-    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    let native = native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap();
     {
         let _lock = server.lock_import_admission().unwrap();
         server
@@ -2442,7 +2495,7 @@ async fn reconcile_seeded(
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let line = saved_captured_line(&server);
-    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    let native = native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap();
     {
         let _lock = server.lock_import_admission().unwrap();
         server

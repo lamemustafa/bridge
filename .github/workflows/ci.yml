@@ -270,6 +270,8 @@ jobs:
           ../docs/tally/support-matrix.md
       - name: Enforce no-write live-read dependency boundary
         run: node scripts/check-tally-live-read-boundary.mjs
+      - name: Enforce Tally-path egress boundary
+        run: node scripts/check-tally-egress-boundary.mjs
       - name: Enforce fixture byte integrity
         run: node scripts/check-fixture-byte-integrity.mjs
       - name: Enforce fixture provenance

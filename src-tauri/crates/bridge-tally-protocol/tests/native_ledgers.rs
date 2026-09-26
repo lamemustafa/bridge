@@ -1,12 +1,13 @@
 use bridge_tally_protocol::{
     decode_tally_xml_response_bytes_limited, parse_native_ledger_source_records_with_evidence,
     parse_native_party_ledger_master_records_with_evidence, ExpectedTallyTextEncoding,
-    ParsedSourceIdentityKind, PartyLedgerMasterFieldObservation,
+    NativeLedgerAmountError, ParsedSourceIdentityKind, PartyLedgerMasterFieldObservation,
 };
 
 const AARAV: &[u8] = include_bytes!("fixtures/native/ledgers_native_aarav.utf16le.xml");
 const WR2: &[u8] = include_bytes!("fixtures/native/ledgers_native_wr2_core_window.utf16le.xml");
 const BVL: &[u8] = include_bytes!("fixtures/native/ledgers_native_bvl.utf16le.xml");
+const FOREX_LEDGERS: &[u8] = include_bytes!("fixtures/ledgers_currency_forex_live.utf16le.xml");
 const MASTER_FIELDS_LAB: &str =
     include_str!("fixtures/native/ledgers_native_master_fields_lab.utf8.xml");
 const MASTER_FIELDS_LAB_PARTIAL_ALTER_BEFORE: &str =
@@ -239,6 +240,75 @@ fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent()
     .is_err());
 }
 
+/// The one composite `OPENINGBALANCE` in the captured several-currency book,
+/// read from its bytes rather than typed here (LEDGER_CURRENCY_CAPTURE_PROVENANCE).
+fn captured_composite_opening() -> String {
+    let forex = decode_utf16le(FOREX_LEDGERS);
+    let openings = forex
+        .split("<OPENINGBALANCE")
+        .skip(1)
+        .filter_map(|tail| {
+            let text = &tail[tail.find('>')? + 1..tail.find("</OPENINGBALANCE>")?];
+            text.contains(" @ ").then(|| text.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        openings.len(),
+        1,
+        "the capture carries exactly one composite opening"
+    );
+    openings.into_iter().next().unwrap()
+}
+
+/// A foreign-currency opening still refuses the whole read, as any non-decimal
+/// does, but now with a typed cause instead of an untyped parse error (#675).
+/// The captured composite is placed in the captured basic-read row, since no
+/// basic read of the several-currency book has been captured yet.
+#[test]
+fn a_foreign_currency_opening_refuses_with_its_typed_cause() {
+    let wr2 = decode_utf16le(WR2);
+    let row = "<OPENINGBALANCE TYPE=\"Amount\">-50000.00</OPENINGBALANCE>";
+    assert_eq!(wr2.matches(row).count(), 1);
+    let composite = captured_composite_opening();
+    let foreign = wr2.replace(
+        row,
+        &format!("<OPENINGBALANCE TYPE=\"Amount\">{composite}</OPENINGBALANCE>"),
+    );
+    let error = parse_native_ledger_source_records_with_evidence(
+        &foreign,
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect_err("a composite opening is never read as a decimal");
+    assert_eq!(
+        error.downcast_ref::<NativeLedgerAmountError>(),
+        Some(&NativeLedgerAmountError::ForeignCurrencyOpening),
+        "{error:#}"
+    );
+    assert_eq!(
+        NativeLedgerAmountError::ForeignCurrencyOpening.safe_code(),
+        "foreign_currency_ledger_balance"
+    );
+
+    // Control: the same composite cut short before its base amount is not a
+    // composite. It still refuses, untyped, as before.
+    let cut = &composite[..composite
+        .find(" = ")
+        .expect("captured composite has a base")];
+    let truncated = wr2.replace(
+        row,
+        &format!("<OPENINGBALANCE TYPE=\"Amount\">{cut}</OPENINGBALANCE>"),
+    );
+    let error = parse_native_ledger_source_records_with_evidence(
+        &truncated,
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect_err("a truncated composite is still refused");
+    assert!(
+        error.downcast_ref::<NativeLedgerAmountError>().is_none(),
+        "{error:#}"
+    );
+}
+
 /// `build_core_window` treats an explicitly empty parent as a root marker.
 /// A response quietly dropping PARENT must not look identical to that
 /// genuinely root-parented ledger, so the field must be observed, not merely
@@ -347,4 +417,49 @@ fn captured_bvl_native_ledgers_preserve_the_book_openings() {
             .count(),
         2
     );
+}
+
+/// Why the basic ledger read must refuse a several-currency book (#714): the
+/// export names no currency, so the parser cannot tell a dollar ledger from a
+/// rupee one. DERIVED from captured bytes: the several-currency book's master
+/// capture with its one composite opening row removed (nothing else changed,
+/// and no amount typed by hand). The parse then succeeds, and the dollar
+/// ledgers' openings come back as bare numbers carrying no currency. In this
+/// capture they are 0.00; a non-zero bare foreign opening is UNOBSERVED (P6),
+/// so this shows the missing currency, not a captured wrong amount.
+#[test]
+fn a_several_currency_export_returns_foreign_openings_as_bare_numbers() {
+    let capture = decode_utf16le(include_bytes!(
+        "fixtures/compliance_master_forex_live.utf16le.xml"
+    ));
+    let start = capture
+        .find("<LEDGER NAME=\"BRIDGE FX DEBTOR A\"")
+        .expect("the captured composite-opening row");
+    let end = start + capture[start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
+    assert!(
+        capture[start..end].contains(" @ "),
+        "the removed row is the composite one"
+    );
+    let derived = format!("{}{}", &capture[..start], &capture[end..]);
+    assert!(!derived.contains(" @ "), "no composite left");
+    let parsed = parse_native_ledger_source_records_with_evidence(
+        &derived,
+        "b14e9b2d-8a63-4779-804d-25d59eb787eb",
+    )
+    .expect("without the composite row the export parses");
+    // FX USD Debtor 01 and 02 are kept in dollars (the book's snapshot names
+    // their CURRENCYNAME `$`), yet each comes back as a plain opening with no
+    // currency at all (0.00 here).
+    for dollar in ["FX USD Debtor 01", "FX USD Debtor 02"] {
+        let row = parsed
+            .records
+            .iter()
+            .find(|record| record.record.name == dollar)
+            .unwrap_or_else(|| panic!("{dollar} is in the export"));
+        let opening = row.record.opening_balance.as_deref().unwrap();
+        assert!(
+            bridge_tally_primitives::ExactDecimal::parse(opening.to_string()).is_ok(),
+            "{dollar}: {opening}"
+        );
+    }
 }

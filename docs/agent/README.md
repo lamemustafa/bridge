@@ -8,8 +8,8 @@ The developer configuration below remains for supported client integrations.
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
 The MCPB extension also exposes voucher file preparation and bank-statement
 parsing by default. Voucher posting (one Journal, Payment, Receipt or Contra) is
-off by default while bridge#574 and bridge#579 are open; the **Allow voucher
-posting (Journal, Payment, Receipt, Contra)** setting adds it, with
+off by default because of the two limits under *Approved voucher posting* below;
+the **Allow voucher posting (Journal, Payment, Receipt, Contra)** setting adds it, with
 separate native approval for each new attempt. Command-line installations
 retain explicit environment switches.
 
@@ -381,7 +381,12 @@ for the user. That client permission does not approve an accounting entry.
 
 One native-approved Journal and restart reconciliation have been observed on
 macOS against a synthetic Silver 7.1 instance. This remains a preview: Windows
-interactive approval and Gold/Education live posting have not been established.
+interactive approval and native posting on Gold or Education have not been
+established. What has been observed on licensed 7.1 Gold is `verify_import`
+returning `posted_verified` for Bridge-built Payment, Receipt and Contra files
+sent over the gateway by a script rather than by this tool. That was verified
+on one book, and partial on a second where larger reads failed (bridge#485); see
+[reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md).
 Native posts of a Payment, a Receipt, a Contra and a three-entry Receipt have
 been observed live on a synthetic Silver 7.1 company, each reading back
 `posted_verified` (ADR 0004, amended 2026-09-23).

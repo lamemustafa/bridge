@@ -373,7 +373,7 @@ fn parse_ledger_closing_balance(
 /// A foreign-currency ledger balance is a display expression, not a decimal:
 /// `<qualified amount> @ <qualified rate> = <qualified base amount>`. Keep
 /// this structural so the diagnostic does not depend on a particular symbol.
-fn is_foreign_currency_balance(text: &str) -> bool {
+pub(crate) fn is_foreign_currency_balance(text: &str) -> bool {
     let mut parts = text.split('@');
     let Some(foreign_amount) = parts.next() else {
         return false;
