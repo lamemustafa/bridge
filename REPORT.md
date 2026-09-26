@@ -55,3 +55,9 @@ Head `f8d904d5830e0a61a8aa9d5a9ec2cbf2242f5146`. The review found that #639 alre
 
 ## 2026-09-26T06:32Z: CI note
 The red "Required checks" events on #727 (d34e77c, 7c7a739), #731 (f222f2e) and #733 (db04bd2) were all `native`/`bundle-smoke` jobs **cancelled** by a newer push, not failures. #731's current head passes Required checks. #727's current head is Lane D's merge of master, 109d6bf.
+
+## 2026-09-26T06:37Z: #680 PR #734, ready
+Head `cb57941d301920b6f110cff1f912a4866fb0f73a`. Sonnet: no P1/P2. Two independent mutants of the pre-split predicate each fail only the new test (plus the predicate's own unit test), and the control stays green. The P3 (doc comment) is fixed.
+
+## 2026-09-26T06:37Z: all five Lane Q PRs are ready
+#727 (#662), #731 (#689, pinned, approval path: route an Opus independent reviewer), #733 (#696), #734 (#680), #736 (#632, pinned, optional). None is merged by me.
