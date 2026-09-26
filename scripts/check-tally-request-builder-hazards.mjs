@@ -28,8 +28,9 @@ const expected = new Set([
   "function-argument-with-space|src-tauri/src/tally/tdl_engine.rs::ledger_period_balances_request|$$NumItems:BRIDGE Ledger Period Collection V1",
 ]);
 
-// Method names whose value is money. `$$` functions are not matched: the
-// capture group starts after a single `$` and must be an identifier.
+// Method names whose value is money. A `$$` function's own name is not
+// matched (a `$` preceded by `$` is skipped), and a FIELD with no <SET> is
+// not scanned; neither shape carries an amount in any builder today.
 const amountMethod = /(?:Balance|Amount|Opening|Closing|Totals?|Debit|Credit|Value)$/i;
 
 const actual = new Set();
@@ -157,8 +158,12 @@ function scanRequestBuilderStrings(repositoryRoot, path, violations) {
     // and digits grouped (protocol reference §6.3). The pinned set for this
     // kind is empty: every amount FIELD must carry its TYPE.
     for (const field of literal.value.matchAll(/<FIELD\b([^>]*)>([\s\S]*?)<\/FIELD>/g)) {
-      const set = /<SET>\s*\$([A-Za-z_][A-Za-z0-9_]*)/.exec(field[2]);
-      if (!set || !amountMethod.test(set[1])) continue;
+      // Every single-`$` method anywhere in the SET counts, so an amount in a
+      // compound expression (`$Quantity + $OpeningBalance`) or inside a `$$`
+      // function's argument (`$$Abs:$ClosingBalance`) is caught too.
+      const set = /<SET>([\s\S]*?)<\/SET>/.exec(field[2]);
+      const methods = set ? [...set[1].matchAll(/(?<!\$)\$([A-Za-z_][A-Za-z0-9_]*)/g)] : [];
+      if (!methods.some((method) => amountMethod.test(method[1]))) continue;
       if (/<TYPE>\s*Amount\s*<\/TYPE>/i.test(field[2])) continue;
       const name = /NAME="([^"]*)"/.exec(field[1])?.[1] ?? "<unnamed>";
       violations.add(`amount-field-without-type|${file}::${identifier}|${name}`);
