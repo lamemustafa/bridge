@@ -19,7 +19,9 @@
 //! reference's own adapters (client data: it stays on the machine that read it). For
 //! `bank_reconciliation`, a REQUIRED seventh argument `BANK_STATEMENT_JSON` feeds the statement
 //! `parity/python_golden.py --emit-bank-statement` wrote from the reference's own adapter (client
-//! data: it stays on the machine that read it). For
+//! data: it stays on the machine that read it). For `high_value_register`, both documents are
+//! optional, as the reference's pack treats them: a seventh argument `BANK_STATEMENT_JSON` (or `-`
+//! for none) and an eighth `TRACES_DOCUMENTS_JSON`, whose AIS rows it reads. For
 //! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
 //! Profit & Loss report totals as caller data -- the file `parity/python_golden.py
 //! --emit-report-totals` wrote from the same read, so both sides tie against the same numbers;
@@ -239,14 +241,16 @@ fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), Stri
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (test_id, rules_toml, client_toml, read_dir, python_dump, rust_out, report_json) =
+    let (test_id, rules_toml, client_toml, read_dir, python_dump, rust_out, report_json, eighth) =
         match args.as_slice() {
-            [a, b, c, d, e, f] => (a, b, c, d, e, f, None),
-            [a, b, c, d, e, f, g] => (a, b, c, d, e, f, Some(g)),
+            [a, b, c, d, e, f] => (a, b, c, d, e, f, None, None),
+            [a, b, c, d, e, f, g] => (a, b, c, d, e, f, Some(g), None),
+            [a, b, c, d, e, f, g, h] => (a, b, c, d, e, f, Some(g), Some(h)),
             _ => {
                 return fail(
                     "usage: TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON \
-                     RUST_DUMP_OUT [REPORT_TOTALS_JSON | TURNOVER_INPUTS_JSON]",
+                     RUST_DUMP_OUT [REPORT_TOTALS_JSON | TURNOVER_INPUTS_JSON | ...] \
+                     [TRACES_DOCUMENTS_JSON]",
                 )
             }
         };
@@ -263,13 +267,17 @@ fn main() -> ExitCode {
             "tds_tcs_26as",
             "twentysixas_receipts",
             "bank_reconciliation",
+            "high_value_register",
         ]
         .contains(&test_id.as_str())
     {
         return fail(
             "a seventh argument applies to financial_statements, applicability_44ab, tds_tcs_26as, \
-twentysixas_receipts or bank_reconciliation only",
+twentysixas_receipts, bank_reconciliation or high_value_register only",
         );
+    }
+    if eighth.is_some() && test_id != "high_value_register" {
+        return fail("an eighth argument applies to high_value_register only");
     }
     if report_json.is_none() && ["tds_tcs_26as", "twentysixas_receipts"].contains(&test_id.as_str())
     {
@@ -283,21 +291,34 @@ twentysixas_receipts or bank_reconciliation only",
 read (parity/python_golden.py --emit-bank-statement)",
         );
     }
-    let mut caller = CallerData::default();
-    if let Some(path) = report_json {
-        let parsed: serde_json::Value = match std::fs::read_to_string(path)
+    let read_json = |path: &str| -> Result<serde_json::Value, String> {
+        std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
-        {
+            .map_err(|e| format!("{path}: {e}"))
+    };
+    let mut caller = CallerData::default();
+    if let Some(path) = eighth {
+        let filled = read_json(path).and_then(|parsed| {
+            bridge_tax_audit::documents::traces_documents_from_json(&parsed)
+                .map(|t| caller.traces = t)
+                .map_err(|e| format!("{path}: {e}"))
+        });
+        if let Err(e) = filled {
+            return fail(e);
+        }
+    }
+    if let Some(path) = report_json.filter(|p| !(test_id == "high_value_register" && *p == "-")) {
+        let parsed = match read_json(path) {
             Ok(v) => v,
-            Err(e) => return fail(format!("{path}: {e}")),
+            Err(e) => return fail(e),
         };
         let filled = if test_id == "financial_statements" {
             registry::report_totals_from_json(&parsed).map(|t| caller.report_totals = Some(t))
         } else if test_id == "tds_tcs_26as" || test_id == "twentysixas_receipts" {
             bridge_tax_audit::documents::traces_documents_from_json(&parsed)
                 .map(|t| caller.traces = t)
-        } else if test_id == "bank_reconciliation" {
+        } else if test_id == "bank_reconciliation" || test_id == "high_value_register" {
             bridge_tax_audit::documents::bank_statement_from_json(&parsed)
                 .map(|t| caller.bank_statement = Some(t))
         } else {
