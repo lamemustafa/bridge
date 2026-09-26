@@ -27,3 +27,22 @@ One dated entry per step, times from `date -u`. This branch is append-only, fast
 **Throwaway branches I created:** `cloud-p/sccache-proof-723` and `cloud-p/cache-inventory-669`. They are not for merging. Deleting them is Lane D's call.
 
 **Needs a decision:** none for #723. If the owner wants the literal "tolerate exit 2" behaviour anyway, that is a P5 downgrade and should be their explicit call.
+
+## 2026-09-26 05:59 UTC: Item 2, #688 / #527 orphaned draft → ready for review
+
+**Status: #688 is ready for review, green, no P1 or P2. Merging is Lane D's.**
+- **Brought up to master.** I merged master `8ad6544` into `claude/merge-driver-upload-pack-trust` as a merge commit `cbf06e4`, with no rebase. None of the 16 new master commits touched the file under change. No merge driver is configured in this clone, and I did not use `git merge-tree`.
+- **Re-measured on Git 2.43.0:**
+
+  | Head | Tests | Pass | Fail | Failing |
+  | --- | ---: | ---: | ---: | --- |
+  | master | 19 | 15 | 4 | the ownership test, plus the 3-entry merge-driver group |
+  | PR | 20 | 17 | 3 | only the merge-driver group |
+
+  These are the "two merge-driver-harness tests" from the brief: two subtests plus their parent.
+- **CI:** all green on `cbf06e4`.
+- **Fresh Sonnet review: no P1 or P2.** It killed both mutations. I replied on the PR to both P3s: one is a known CI-Git limitation, the other test-only duplication. Neither is changed.
+- **Does it still solve #527?** Partly, and it never claimed more.
+  - It fixes the Git 2.43 ownership failure.
+  - #527's noexec acceptance item was measured by lane T on 25 Sep. Without the exec root there are +5 failures; with it, the failing set is the Git 2.43 baseline. It passes, and that evidence is on the lane-T report branch, not yet on #527 itself.
+- **Needs an owner decision (unchanged):** Git 2.43 passes `%S/%X/%Y` to the merge driver unexpanded. The options are a documented minimum Git version (probably 2.44), and/or a driver error that names that cause. Until then the merge-driver group stays red on stock Ubuntu 24.04 Git.
