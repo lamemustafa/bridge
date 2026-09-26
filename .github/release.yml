@@ -7,6 +7,9 @@ changelog:
       - invalid
       - wontfix
   categories:
+    - title: Breaking changes
+      labels:
+        - breaking
     - title: New and changed
       labels:
         - type:feature
