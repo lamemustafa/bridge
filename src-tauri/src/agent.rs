@@ -240,6 +240,10 @@ struct Settings {
     redaction: Redaction,
     import_enabled: bool,
     writes_enabled: bool,
+    /// `BRIDGE_AGENT_ENABLE_BATCH_POST`: lets `post_import` post 2 to 50
+    /// vouchers of one batch in one import. Off by default and not in the
+    /// extension's settings until a live batch post through Bridge is proved.
+    batch_post_enabled: bool,
 }
 
 impl Settings {
@@ -283,6 +287,9 @@ impl Settings {
             redaction,
             import_enabled: enabled_setting("BRIDGE_AGENT_ENABLE_IMPORT")? || writes_enabled,
             writes_enabled,
+            // Validated even when posting is off, so a typo never hides.
+            batch_post_enabled: enabled_setting("BRIDGE_AGENT_ENABLE_BATCH_POST")?
+                && writes_enabled,
         })
     }
 }
@@ -1279,6 +1286,7 @@ pub(crate) async fn desktop_selected_vouchers(
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         },
         runtime.clone(),
     );

@@ -20,6 +20,7 @@ fn server(directory: &Path, import_enabled: bool, redaction: Redaction) -> Serve
         redaction,
         import_enabled,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 

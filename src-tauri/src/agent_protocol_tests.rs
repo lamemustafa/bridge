@@ -19,6 +19,7 @@ fn server(path: &Path) -> Server {
         redaction: Redaction::MaskParties,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 
