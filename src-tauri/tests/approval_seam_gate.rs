@@ -878,6 +878,7 @@ fn each_dialog_answers_only_on_its_positive_button() {
             "format!(\"Bridge — approve {count} vouchers\")",
             1,
         ),
+        // The Windows review dialog asks the post's question (#746).
         source.replacen(
             "format!(\"Bridge — record that you reviewed these {count} vouchers?\")",
             "format!(\"Bridge — post {count} vouchers?\")",
