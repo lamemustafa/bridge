@@ -32,8 +32,8 @@
 // --------------------------------------------------------------------
 // docs/release-process.md ("When the surface itself conflicts in a merge or
 // rebase") is explicit that these two files have a DERIVED half (every
-// sha256, manifest_sha256, compatibility_surface_sha256 -- safe to
-// regenerate) and an AUTHORED half (the surface's pin list, the matrix's
+// pinned file's sha256 -- safe to regenerate; the aggregate digest is no
+// longer stored at all, bridge#760) and an AUTHORED half (the surface's pin list, the matrix's
 // claims) that "nothing regenerates" and that a blind "take one side" can
 // silently drop. Taking either side wholesale and resealing -- literally
 // what was asked for -- is correct for the derived half (the reseal
@@ -74,7 +74,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const SURFACE_REL = "docs/tally/compatibility/compatibility-surface.json";
 const MATRIX_REL = "docs/tally/compatibility/compatibility-matrix.json";
@@ -246,43 +246,6 @@ function computeCorrectSurfaceFiles(root, refs, files) {
   return { finalFiles, conflicts };
 }
 
-// Resolves the pinned toolchain the same way scripts/reseal.sh does (see its
-// own header): a Homebrew/system rustc earlier on PATH shadows rustup, so
-// the toolchain's own bin directory has to go in front of PATH, not just
-// RUSTC/RUSTDOC.
-function pinnedToolchainEnv(root) {
-  const tomlText = readFileSync(join(root, "rust-toolchain.toml"), "utf8");
-  const match = /^channel *= *"(.*)"/m.exec(tomlText);
-  if (!match) fail("could not read [toolchain].channel from rust-toolchain.toml");
-  const channel = match[1];
-  const which = (bin) => {
-    const result = spawnSync("rustup", ["which", "--toolchain", channel, bin], { encoding: "utf8" });
-    if (result.status !== 0) fail(`rustup could not resolve ${bin} for toolchain ${channel} -- is it installed?`);
-    return result.stdout.trim();
-  };
-  const rustc = which("rustc");
-  return {
-    ...process.env,
-    PATH: `${dirname(rustc)}:${process.env.PATH ?? ""}`,
-    RUSTC: rustc,
-    RUSTDOC: which("rustdoc"),
-  };
-}
-
-// Runs one bridge-tally-compatibility subcommand directly (seal-surface,
-// repoint-matrix) -- NOT via scripts/reseal.sh, and deliberately never
-// rehash-surface: rehash-surface reads pinned files from the *working tree*,
-// which is exactly what computeCorrectSurfaceFiles() above exists to avoid
-// depending on mid-merge.
-function runCompatTool(root, env, args) {
-  const result = spawnSync("cargo", ["run", "--locked", "-p", "bridge-tally-compatibility", "--", ...args], {
-    cwd: join(root, "tools"),
-    env,
-    stdio: "inherit",
-  });
-  return result.status === 0;
-}
-
 function parseJsonOrNull(text) {
   if (text === null) return null;
   try {
@@ -433,6 +396,21 @@ function main() {
   let reconciledSurfaceFiles = null;
   let reconciledMatrixClaims = null;
 
+  // A merge across a schema change (bridge#760 moved both files to schema 2)
+  // is not reconciled: the driver would write one side's schema_version over
+  // the other side's shape, a file no tool version accepts.
+  for (const [label, triple] of [
+    ["compatibility-surface.json", surfaceTriple],
+    ["compatibility-matrix.json", matrixTriple],
+  ]) {
+    if (usable(triple) && triple.ours.schema_version !== triple.theirs.schema_version) {
+      conflicts.push(
+        `${label}: schema_version differs (ours ${triple.ours.schema_version}, theirs ` +
+          `${triple.theirs.schema_version}) -- merge master into the older side and reseal it first`,
+      );
+    }
+  }
+
   if (surfaceInputsUsable) {
     const { result, conflicts: surfaceConflicts } = reconcileKeyed(
       surfaceTriple.base?.files,
@@ -482,48 +460,35 @@ function main() {
   }
 
   // Every pinned file's hash is now already CORRECT (computed from refs
-  // above, not from disk), so sealing is the only remaining step -- no
-  // rehash-surface, and so no dependency on working-tree checkout timing.
-  const env = pinnedToolchainEnv(root);
+  // above, not from disk). The surface stores no aggregate digest and the
+  // matrix no copy of it (bridge#760), so writing the reconciled lists is the
+  // whole resolution: no tool run, and so no dependency on working-tree
+  // checkout timing. Both are written exactly as the tool writes them
+  // (two-space JSON, no trailing newline), so `scripts/reseal.sh --verify`
+  // and the CI gate check the merge result byte for byte.
   const surfacePath = join(root, SURFACE_REL);
   const matrixPath = join(root, MATRIX_REL);
 
   if (reconciledSurfaceFiles) {
     reconciledSurfaceFiles.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-    const draft = {
+    const surface = {
       schema_version: surfaceTriple.ours.schema_version,
       files: reconciledSurfaceFiles,
-      manifest_sha256: "",
     };
-    writeFileSync(surfacePath, `${JSON.stringify(draft, null, 2)}\n`);
-    if (!runCompatTool(root, env, ["seal-surface", surfacePath, "--output", surfacePath])) {
-      fail("seal-surface failed on the reconciled surface -- see output above");
-    }
+    writeFileSync(surfacePath, JSON.stringify(surface, null, 2));
   }
   if (reconciledMatrixClaims) {
     reconciledMatrixClaims.sort((a, b) => (a.claim_id < b.claim_id ? -1 : a.claim_id > b.claim_id ? 1 : 0));
-    // bridge_commit_sha is a plain scalar neither seal-surface, repoint-matrix
-    // nor reconcileKeyed touch or cross-validate (only format-checked) --
-    // "ours" is taken arbitrarily and harmlessly.
-    const draft = {
+    // bridge_commit_sha is a scalar reconcileKeyed does not touch. The gate
+    // compares it with each evidenced claim's attestation and receipt, so if
+    // the two sides disagree, "ours" is kept and a claim evidenced only for
+    // theirs fails the gate loudly; it is never silently accepted.
+    const matrix = {
       schema_version: matrixTriple.ours.schema_version,
       bridge_commit_sha: matrixTriple.ours.bridge_commit_sha,
-      compatibility_surface_sha256: "0".repeat(64), // repoint-matrix overwrites this next
       claims: reconciledMatrixClaims,
     };
-    writeFileSync(matrixPath, `${JSON.stringify(draft, null, 2)}\n`);
-  }
-  if (reconciledSurfaceFiles || reconciledMatrixClaims) {
-    // Repoint regardless of which of the two changed in THIS invocation: the
-    // real surface.json on disk is, by this point, always either what this
-    // invocation just wrote above or already the final correct content from
-    // this file's own separate invocation (or untouched, if genuinely
-    // unaffected) -- never a stale intermediate, because every invocation
-    // that reaches this point recomputes both files from refs rather than
-    // trusting whatever the OTHER invocation may or may not have written yet.
-    if (!runCompatTool(root, env, ["repoint-matrix", matrixPath, surfacePath, "--output", matrixPath])) {
-      fail("repoint-matrix failed -- see output above");
-    }
+    writeFileSync(matrixPath, JSON.stringify(matrix, null, 2));
   }
 
   // Stage both real files explicitly: whichever of the two this invocation's

@@ -4,18 +4,16 @@
 // Contract tests for scripts/reseal.sh.
 //
 // These run the real script against a fully sandboxed fixture -- not the
-// repository's actual compatibility-surface.json / compatibility-matrix.json
-// -- built from a couple of throwaway files under a temp directory. That lets
-// the tests mutate pinned-file content and force real drift without ever
-// touching the committed compatibility artifacts.
+// repository's actual compatibility-surface.json -- built from a couple of
+// throwaway files under a temp directory. That lets the tests mutate
+// pinned-file content and force real drift without ever touching the
+// committed compatibility artifacts.
 //
-// The wrapper's entire reason to exist is enforcing an order dependency
-// (rehash-surface before seal-surface) that a maintainer running the three
-// commands by hand can get wrong silently -- so these tests exercise the
-// tool for real (compiling and running `bridge-tally-compatibility` through
-// the pinned toolchain), not just the shell scripting around it. A test that
-// stubs the tool out would prove the wrapper calls *something* in the right
-// order, not that reordering the calls actually changes the result.
+// The surface stores only per-file hashes (bridge#760), so a reseal is one
+// `rehash-surface`. These tests still run the real tool (compiled through the
+// pinned toolchain), because what they prove is the tool's behaviour: real
+// hashes written, a malformed or schema-1 surface refused and left as it was,
+// and --verify never writing.
 //
 // Run: node scripts/reseal.test.mjs
 // (needs the pinned Rust toolchain from rust-toolchain.toml available via
@@ -67,54 +65,15 @@ const toolchain = pinnedToolchainAvailable();
 const skip = toolchain.ok ? false : `pinned Rust toolchain unavailable: ${toolchain.reason}`;
 
 const ZERO_SHA256 = "0".repeat(64);
-const ZERO_COMMIT = "0".repeat(40);
 
 function surfaceFixture() {
   return (
     JSON.stringify(
       {
-        schema_version: 1,
+        schema_version: 2,
         files: [
           { path: "a.txt", sha256: ZERO_SHA256 },
           { path: "b/c.txt", sha256: ZERO_SHA256 },
-        ],
-        manifest_sha256: "",
-      },
-      null,
-      2,
-    ) + "\n"
-  );
-}
-
-function matrixFixture() {
-  return (
-    JSON.stringify(
-      {
-        schema_version: 1,
-        bridge_commit_sha: ZERO_COMMIT,
-        compatibility_surface_sha256: ZERO_SHA256,
-        claims: [
-          {
-            claim_id: "test-claim-one",
-            level: "unknown",
-            promotion_eligible: true,
-            product: "tally_erp9",
-            release: "unknown",
-            mode: "education",
-            platform: "windows",
-            architecture: "x86_64",
-            transport: "xml_http",
-            endpoint_family: "ipv4",
-            odbc_state: "disabled",
-            company_state: "one",
-            locale: "english_india",
-            encoding: "utf8",
-            dataset_tier: "synthetic_small",
-            fixture_manifest_sha256: null,
-            required_profiles: [],
-            max_evidence_age_days: 180,
-            evidence_id: null,
-          },
         ],
       },
       null,
@@ -129,86 +88,89 @@ async function makeSandbox() {
   await writeFile(join(root, "a.txt"), "one");
   await writeFile(join(root, "b", "c.txt"), "two");
   const surface = join(root, "surface.json");
-  const matrix = join(root, "matrix.json");
   await writeFile(surface, surfaceFixture());
-  await writeFile(matrix, matrixFixture());
-  return { root, surface, matrix };
+  return { root, surface };
 }
 
 function run(args) {
   return spawnSync(RESEAL, args, { encoding: "utf8" });
 }
 
-test("running the ordinary order against an unsealed pin list fails closed and writes nothing", { skip }, async () => {
-  const { root, surface, matrix } = await makeSandbox();
-  try {
-    const before = await readFile(surface, "utf8");
-    const result = run(["--root", root, "--surface", surface, "--matrix", matrix]);
-    assert.notEqual(result.status, 0, "must fail when the pin list was never sealed");
-    const after = await readFile(surface, "utf8");
-    assert.equal(after, before, "a failed step must not partially overwrite the destination");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+for (const [name, edit] of [
+  [
+    "a schema-1 surface",
+    (value) => ({ ...value, schema_version: 1, manifest_sha256: "" }),
+  ],
+  [
+    "a pin with a malformed hash",
+    (value) => ({ ...value, files: [{ ...value.files[0], sha256: "zz" }, value.files[1]] }),
+  ],
+  ["an unsorted pin list", (value) => ({ ...value, files: [...value.files].reverse() })],
+]) {
+  test(`${name} is refused and left as it was`, { skip }, async () => {
+    const { root, surface } = await makeSandbox();
+    try {
+      await writeFile(surface, `${JSON.stringify(edit(JSON.parse(surfaceFixture())), null, 2)}\n`);
+      const before = await readFile(surface, "utf8");
+      const result = run(["--root", root, "--surface", surface]);
+      assert.notEqual(result.status, 0, `must refuse ${name}`);
+      assert.equal(await readFile(surface, "utf8"), before, "a refused reseal must not overwrite the surface");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
-test("--pins-changed bootstraps a fresh pin list and rehashes every entry", { skip }, async () => {
-  const { root, surface, matrix } = await makeSandbox();
-  try {
-    const result = run(["--pins-changed", "--root", root, "--surface", surface, "--matrix", matrix]);
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /rehash-surface changed 2 pinned file hash\(es\)/);
-
-    const sealed = JSON.parse(await readFile(surface, "utf8"));
-    assert.notEqual(sealed.manifest_sha256, "");
-    assert.notEqual(
-      sealed.files.find((f) => f.path === "a.txt").sha256,
-      ZERO_SHA256,
-      "a.txt must be rehashed from its real bytes, not left at the placeholder",
-    );
-
-    const repointed = JSON.parse(await readFile(matrix, "utf8"));
-    assert.equal(repointed.compatibility_surface_sha256, sealed.manifest_sha256);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+for (const flags of [[], ["--pins-changed"]]) {
+  test(`one reseal writes every pin's real hash${flags.length ? " (--pins-changed)" : ""}`, { skip }, async () => {
+    const { root, surface } = await makeSandbox();
+    try {
+      const result = run([...flags, "--root", root, "--surface", surface]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /rehash-surface changed 2 pinned file hash\(es\)/);
+      const resealed = JSON.parse(await readFile(surface, "utf8"));
+      assert.deepEqual(Object.keys(resealed), ["schema_version", "files"], "no aggregate digest is stored");
+      assert.notEqual(
+        resealed.files.find((f) => f.path === "a.txt").sha256,
+        ZERO_SHA256,
+        "a.txt must be rehashed from its real bytes, not left at the placeholder",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("--verify passes on a freshly resealed fixture and fails once a pinned file drifts", { skip }, async () => {
-  const { root, surface, matrix } = await makeSandbox();
+  const { root, surface } = await makeSandbox();
   try {
-    const bootstrap = run(["--pins-changed", "--root", root, "--surface", surface, "--matrix", matrix]);
+    const bootstrap = run(["--root", root, "--surface", surface]);
     assert.equal(bootstrap.status, 0, bootstrap.stderr);
 
     const surfaceBefore = await readFile(surface, "utf8");
-    const matrixBefore = await readFile(matrix, "utf8");
 
-    const verifyClean = run(["--verify", "--root", root, "--surface", surface, "--matrix", matrix]);
+    const verifyClean = run(["--verify", "--root", root, "--surface", surface]);
     assert.equal(verifyClean.status, 0, verifyClean.stderr);
-    assert.match(verifyClean.stdout, /compatibility surface and matrix are current/);
-    // --verify must never mutate the files it checks.
+    assert.match(verifyClean.stdout, /compatibility surface is current/);
+    // --verify must never mutate the file it checks.
     assert.equal(await readFile(surface, "utf8"), surfaceBefore);
-    assert.equal(await readFile(matrix, "utf8"), matrixBefore);
 
     // Mutate a pinned file without resealing -- the exact scenario the gate
-    // exists to catch (stale digest over changed source content).
+    // exists to catch (a stale hash over changed source content).
     await writeFile(join(root, "a.txt"), "one-mutated");
 
-    const verifyDirty = run(["--verify", "--root", root, "--surface", surface, "--matrix", matrix]);
+    const verifyDirty = run(["--verify", "--root", root, "--surface", surface]);
     assert.notEqual(verifyDirty.status, 0, "verify must fail once pinned content drifts");
     assert.match(verifyDirty.stderr, /surface\.json is stale/);
-    assert.match(verifyDirty.stderr, /matrix\.json is stale/);
-    // Still must not have touched the committed files.
+    // Still must not have touched the committed file.
     assert.equal(await readFile(surface, "utf8"), surfaceBefore);
-    assert.equal(await readFile(matrix, "utf8"), matrixBefore);
 
-    // An ordinary reseal (no flag -- the pin list itself did not change)
-    // must heal the drift and make --verify pass again.
-    const heal = run(["--root", root, "--surface", surface, "--matrix", matrix]);
+    // A reseal must heal the drift and make --verify pass again.
+    const heal = run(["--root", root, "--surface", surface]);
     assert.equal(heal.status, 0, heal.stderr);
     assert.match(heal.stderr, /rehash-surface changed 1 pinned file hash\(es\)/);
 
-    const verifyHealed = run(["--verify", "--root", root, "--surface", surface, "--matrix", matrix]);
+    const verifyHealed = run(["--verify", "--root", root, "--surface", surface]);
     assert.equal(verifyHealed.status, 0, verifyHealed.stderr);
   } finally {
     await rm(root, { recursive: true, force: true });

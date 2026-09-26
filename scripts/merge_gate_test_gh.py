@@ -49,7 +49,7 @@ DEFAULT_DIFF = (
     "@@ -0,0 +1 @@\n"
     "+Safe content line.\n"
 )
-DEFAULT_SURFACE = {"schema_version": 1, "manifest_sha256": DIGEST,
+DEFAULT_SURFACE = {"schema_version": 2,
                     "files": [{"path": "src/example.rs", "sha256": DIGEST}]}
 DEFAULT_REVIEWS = [{"user": {"login": "reviewer", "type": "User"}, "commit_id": HEAD, "state": "COMMENTED"}]
 DEFAULT_COMMENTS = []
@@ -90,7 +90,13 @@ def state():
     elif scenario == "surface-malformed":
         s["surface_head_malformed"] = True
 
+    elif scenario == "surface-head-schema1":
+        # Schema 1 is read only at the base tip (bridge#760); a head still on it is refused.
+        s["surface_head"] = {"schema_version": 1, "manifest_sha256": DIGEST,
+                             "files": [{"path": "src/example.rs", "sha256": DIGEST}]}
+
     elif scenario == "surface-unpins":
+        # A schema-1 base (the tip before bridge#760) is still read.
         s["surface_base"] = {"schema_version": 1, "manifest_sha256": DIGEST, "files": [
             {"path": "src/example.rs", "sha256": DIGEST},
             {"path": "docs/tally/compatibility/compatibility-surface.json", "sha256": DIGEST},

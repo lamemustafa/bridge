@@ -192,7 +192,7 @@ impl LiveRunInputs {
             observed_at_unix_ms,
             bridge_commit_sha,
             working_tree_dirty,
-            compatibility_surface_sha256: surface.manifest_sha256,
+            compatibility_surface_sha256: surface.digest().map_err(|_| error("surface_invalid"))?,
             executable_sha256: sha256_file(&executable)
                 .map_err(|_| error("executable_unavailable"))?,
             cargo_lock_sha256: sha256_file(&repository_root.join("src-tauri/Cargo.lock"))
@@ -1231,7 +1231,7 @@ fn validate_current_surface(
         "surface_unavailable",
     )?)
     .map_err(|_| error("surface_invalid"))?;
-    if surface.manifest_sha256 != expected_manifest_sha256 {
+    if surface.digest().map_err(|_| error("surface_invalid"))? != expected_manifest_sha256 {
         return Err(error("surface_changed_after_consent"));
     }
     surface

@@ -457,11 +457,37 @@ test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine
     assert.notEqual(merge.status, 0, "expected the merge to stop with conflicts");
     assert.match(merge.stderr ?? "", /reseal-merge-driver: refusing to auto-resolve/);
 
-    for (const file of [SURFACE, MATRIX]) {
-      const content = readFileSync(join(testRoot, file), "utf8");
-      assert.match(content, /^<<<<<<< /m, `${file} must be left with ordinary conflict markers for manual resolution`);
-    }
+    const surface = readFileSync(join(testRoot, SURFACE), "utf8");
+    assert.match(surface, /^<<<<<<< /m, `${SURFACE} must be left with ordinary conflict markers for manual resolution`);
+    // A reseal never changes the matrix (bridge#760), so it has nothing to conflict on.
+    assert.doesNotMatch(readFileSync(join(testRoot, MATRIX), "utf8"), /^<<<<<<< /m);
     fixtureGit(["merge", "--abort"]);
+  });
+
+  await t.test("the driver refuses a merge across a schema change rather than writing a mixed file", () => {
+    const older = `test/reseal-driver-schema-older-${suffix}`;
+    const newer = `test/reseal-driver-schema-newer-${suffix}`;
+    fixtureGitOk(["checkout", "-b", older, base]);
+    const surfacePath = join(testRoot, SURFACE);
+    const current = readFileSync(surfacePath, "utf8");
+    assert.equal(current.split('"schema_version": 2').length, 2, "the surface names schema 2 exactly once");
+    writeFileSync(surfacePath, current.replace('"schema_version": 2', '"schema_version": 1'));
+    fixtureGitOk(["add", "--", SURFACE]);
+    fixtureGitOk(["commit", "-m", `test: ${older}`]);
+
+    fixtureGitOk(["checkout", "-b", newer, base]);
+    appendLine(testRoot, "docs/adr/0004-tally-write-safety.md", `test ${suffix} schema newer`);
+    fixtureReseal();
+    fixtureGitOk(["add", "--", "docs/adr/0004-tally-write-safety.md", SURFACE]);
+    fixtureGitOk(["commit", "-m", `test: ${newer}`]);
+
+    fixtureGitOk(["checkout", "-b", `${newer}-merge`, newer]);
+    const merge = fixtureGit(["merge", older, "--no-edit"]);
+    assert.match(merge.stderr ?? "", /reseal-merge-driver: refusing to auto-resolve/, merge.stderr);
+    assert.match(merge.stderr ?? "", /schema_version differs \(ours 2, theirs 1\)/, merge.stderr);
+    if (fixtureGit(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).status === 0) {
+      fixtureGit(["merge", "--abort"]);
+    }
   });
 
   assert.equal(

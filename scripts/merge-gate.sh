@@ -270,8 +270,9 @@ else
     unknown "changed-file response has $changed_count unique records; PR metadata reports $changed_files_expected"
   fi
 fi
-# Read and validate the v1 surface as a required object. Any transport,
-# decoding, JSON, or schema failure is indeterminate; an unrelated nested
+# Read and validate the surface (schema 2; schema 1 only at the base tip) as a
+# required object. Any transport, decoding, JSON, or schema failure is
+# indeterminate; an unrelated nested
 # `path` must not turn an incomplete manifest into an empty pin set. Both the
 # reviewed head and captured base tip are checked: a head surface that silently
 # drops a previously pinned path is a human hold, and changed paths are tested
@@ -279,8 +280,10 @@ fi
 SURFACE="docs/tally/compatibility/compatibility-surface.json"
 read_surface_paths() {
   local ref="$1"
+  local allow_schema_1="$2"
   local response content decoded decode_status
   surface_paths_result=""
+  surface_schema_result=""
   : >"$errfile"
   response=$(gh api "repos/$REPO/contents/$SURFACE?ref=$ref" 2>"$errfile") || return 1
   content=$(jq -er 'select(.encoding == "base64") | .content | strings' <<<"$response") || return 1
@@ -291,10 +294,13 @@ read_surface_paths() {
     decode_status=0
     decoded=$(printf '%s' "${content//$'\n'/}" | base64 -D 2>"$errfile") || decode_status=$?
   fi
-  if [ "$decode_status" -ne 0 ] || ! jq -e '
+  if [ "$decode_status" -ne 0 ] || ! jq -e --arg allow_schema_1 "$allow_schema_1" '
     type == "object" and
-    .schema_version == 1 and
-    ((.manifest_sha256 | type) == "string") and (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
+    # Schema 2 stores only the pins (bridge#760). Schema 1, which also stored
+    # the aggregate digest, is read only at the base tip, which may predate it.
+    ((.schema_version == 2 and (keys == ["files", "schema_version"])) or
+     ($allow_schema_1 == "yes" and .schema_version == 1 and
+      ((.manifest_sha256 | type) == "string") and (.manifest_sha256 | test("^[0-9a-f]{64}$")))) and
     (.files | type == "array" and length > 0 and
       all(.[]; type == "object" and
         ((.path | type) == "string") and (.path | length > 0) and
@@ -304,28 +310,29 @@ read_surface_paths() {
     return 1
   fi
   surface_paths_result=$(jq -r '.files[].path' <<<"$decoded")
+  surface_schema_result=$(jq -r '.schema_version' <<<"$decoded")
 }
 
 head_surface_status=0
-read_surface_paths "$head" || head_surface_status=$?
+read_surface_paths "$head" no || head_surface_status=$?
 if [ "$head_surface_status" -ne 0 ]; then
   unknown "could not read and validate compatibility surface at $short"
   pinned=""
 else
   pinned="$surface_paths_result"
-  say "ok" "validated v1 compatibility surface at head $short"
+  say "ok" "validated schema-$surface_schema_result compatibility surface at head $short"
 fi
 
 base_surface_status=0
 if [ -n "$base_tip" ]; then
-  read_surface_paths "$base_tip" || base_surface_status=$?
+  read_surface_paths "$base_tip" yes || base_surface_status=$?
 fi
 if [ -n "$base_tip" ] && [ "$base_surface_status" -ne 0 ]; then
   unknown "could not read and validate compatibility surface at base ${base_tip:0:7}"
   base_pinned=""
 elif [ -n "$base_tip" ]; then
   base_pinned="$surface_paths_result"
-  say "ok" "validated v1 compatibility surface at base ${base_tip:0:7}"
+  say "ok" "validated schema-$surface_schema_result compatibility surface at base ${base_tip:0:7}"
 else
   base_pinned=""
 fi

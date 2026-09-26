@@ -22,10 +22,10 @@ before the claim gate can pass. That includes `package.json`,
 not only dependency updates. **The canonical `docs/tally/TALLY_PROTOCOL_REFERENCE.md`
 index and each part it declares must be pinned sources, so a documentation-only edit to either
 stales its digest and fails the gate. Adding or removing a declared part also changes the pin
-list and uses the `--pins-changed` sequence below.** Nothing in a docs diff suggests a
+list; see "Adding or removing a pin" below.** Nothing in a docs diff suggests a
 compatibility gate is involved, and PRs have failed CI for exactly this.
 
-Run these from `tools`, in order, **with the pinned toolchain**. A Homebrew
+Run this from `tools`, **with the pinned toolchain**. A Homebrew
 `rustc` earlier on `PATH` shadows rustup, and this project pins the version in
 `rust-toolchain.toml`, so check `rustc --version` first. Setting `RUSTC` alone
 is **not** enough to escape the shadow: `cargo clippy` still resolves the wrong
@@ -46,46 +46,30 @@ several and the `PATH` entry it builds points nowhere.
 
 `--output` asks the
 compatibility tool to stage and replace the destination itself, and it is
-required — without it each command prints to stdout and changes nothing on
+required — without it the command prints to stdout and changes nothing on
 disk, which looks like success:
 
 ```bash
 cargo run --locked -p bridge-tally-compatibility -- rehash-surface \
   ../docs/tally/compatibility/compatibility-surface.json .. \
   --output ../docs/tally/compatibility/compatibility-surface.json
-
-cargo run --locked -p bridge-tally-compatibility -- seal-surface \
-  ../docs/tally/compatibility/compatibility-surface.json \
-  --output ../docs/tally/compatibility/compatibility-surface.json
-
-cargo run --locked -p bridge-tally-compatibility -- repoint-matrix \
-  ../docs/tally/compatibility/compatibility-matrix.json \
-  ../docs/tally/compatibility/compatibility-surface.json \
-  --output ../docs/tally/compatibility/compatibility-matrix.json
 ```
 
 ```powershell
 cargo run --locked -p bridge-tally-compatibility -- rehash-surface `
   ../docs/tally/compatibility/compatibility-surface.json .. `
   --output ../docs/tally/compatibility/compatibility-surface.json
-
-cargo run --locked -p bridge-tally-compatibility -- seal-surface `
-  ../docs/tally/compatibility/compatibility-surface.json `
-  --output ../docs/tally/compatibility/compatibility-surface.json
-
-cargo run --locked -p bridge-tally-compatibility -- repoint-matrix `
-  ../docs/tally/compatibility/compatibility-matrix.json `
-  ../docs/tally/compatibility/compatibility-surface.json `
-  --output ../docs/tally/compatibility/compatibility-matrix.json
 ```
 
-`rehash-surface` reads the raw bytes of every existing pin and reports its
-changed-entry count; it neither adds nor removes pins. `seal-surface` then
-attests to the newly hashed manifest, and `repoint-matrix` updates the matrix
-to that sealed digest. Do not run step 2 without step 1: sealing a manifest
-whose file hashes are stale produces a valid-looking digest over stale source
-content. CI intentionally checks the resulting surface but never reseals it.
-Without `--output`, each command retains its stdout contract. With `--output`,
+`rehash-surface` reads the raw bytes of every existing pin, rewrites its
+`sha256`, and reports the changed-entry count; it neither adds nor removes
+pins. That is the whole reseal. The surface (schema 2) stores only the per-file
+hashes: the surface digest that receipts and attestations bind is computed by
+the gate from those hashes, never stored, and the matrix carries no copy of it
+(bridge#760). So a reseal never touches the matrix, and two changes that pin
+different files merge without conflict. CI intentionally checks the resulting
+surface but never reseals it. Without `--output`, the command retains its
+stdout contract. With `--output`,
 the tool writes raw UTF-8 without a BOM to a temporary file in the destination
 directory and replaces the destination only after successful serialization.
 This keeps failure fail-closed without relying on shell redirection or move
@@ -96,22 +80,13 @@ uses its normal ACL semantics rather than POSIX mode bits.
 
 #### Adding or removing a pin
 
-The three commands above assume the surface is already valid and only the
-*contents* of pinned files changed. Adding or removing an entry is different:
-editing the file list invalidates `manifest_sha256` immediately, and
-`rehash-surface` validates that checksum before it does anything. Run in the
-documented order it fails with `surface_checksum_mismatch` and changes nothing.
-
-So when the pin set itself changes, run `seal-surface` first to attest the new
-file list, then run the ordinary three-command sequence in full.
-
-This is the one case that inverts the standing rule against sealing before
-rehashing. That rule exists because `seal-surface` never reads the repository,
-so sealing stale hashes hides stale source under a fresh digest. Here the
-concern does not apply: the first seal only re-attests a file list whose one
-new digest was computed from disk, and the `rehash-surface` that follows
-re-reads every pin, including the new one, before the second seal. Never stop
-after that first seal.
+Edit the file list by hand: add the entry in sorted path order with any
+64-hex placeholder `sha256`, or delete it. Then reseal as above.
+`rehash-surface` validates the list's shape (sorted, unique, relative paths,
+64-hex hashes, within `MAX_SURFACE_FILES`) and writes every entry's real hash,
+the new one included. A malformed list is refused and left unchanged.
+`scripts/reseal.sh --pins-changed` still works and is now the same as an
+ordinary reseal.
 
 #### What the reseal reports after it succeeds
 
@@ -129,8 +104,8 @@ code moved between files that already existed; a new module declared by an
 unpinned `db/mod.rs`, say); deeper descendants of a pinned module; a pinned
 file that stops being compiled; a test-only or feature-gated module becoming
 production; or a new crate root. The script's docstring keeps the full list.
-The merge driver (`scripts/reseal-merge-driver.mjs`) calls the tool directly and
-does not print the report; run `scripts/reseal.sh` after resolving.
+The merge driver (`scripts/reseal-merge-driver.mjs`) writes the reconciled lists
+itself and does not print the report; run `scripts/reseal.sh` after resolving.
 
 Read it, then pin each listed file that decides what Bridge posts or lets leave
 the machine, and leave the rest; see the comment on `MAX_SURFACE_FILES` for the
@@ -138,16 +113,17 @@ rule and bridge#416 for the reasoning.
 
 #### When the surface itself conflicts in a merge or rebase
 
-The surface and the matrix are **generated artifacts**. Never hand-merge them.
+Every pin's `sha256` is generated: never hand-merge or hand-edit a hash. The pin
+*list* and the matrix's *claims* are authored, and a merge must reconcile them
+(below).
 
 Be precise about what the gate does and does not protect, because the two halves
 behave oppositely.
 
 **Stale bytes cannot slip through.** `validate_files` re-reads the raw bytes of
 every pinned file present and compares the SHA-256, so a surface pinning stale
-content fails with `surface_file_changed`. Resealing to silence a checksum
-complaint does not rescue it -- measured, a stale pin still fails after both
-`seal-surface` and `repoint-matrix`. For hashes the gate is byte-exact and
+content fails with `surface_file_changed`. A reseal re-reads the bytes, so the
+only way to green is a hash that matches the merged file. For hashes the gate is byte-exact and
 fail-closed, so hand-merging them is futile rather than unsafe: every wrong
 resolution is loud, and regenerating is the only route to green.
 
@@ -155,6 +131,20 @@ resolution is loud, and regenerating is the only route to green.
 still in the list, and claims that are still in the matrix. Lose one in the
 resolution and the gate passes. That asymmetry is the whole hazard, and it is why
 the authored half below must be merged rather than regenerated.
+
+**When does this section apply at all?** With schema 2, two changes that touch
+different pinned files, even adjacent entries, merge without any conflict, on
+GitHub as well as locally, because each changes only its own `sha256` line. A
+conflict here now means both sides changed the same pinned file, or both
+inserted pins at the same sorted position, or one appended a pin after the last
+entry while the other edited the last pinned file, or one renamed a pin while
+the other edited that file, or both edited the claims. One case
+merges cleanly and is still caught: one side adds a pin for a file (its hash
+from that side's bytes) while the other edits that file. The merged hash line
+and the merged bytes then disagree, and `validate_files` fails with
+`surface_file_changed` on the merge result. That rests on CI running on the
+merge result, which `strict: true` branch protection (or a merge queue)
+ensures.
 
 **What does matter is the order.** Resolve every genuine *source* conflict first,
 and only then regenerate. `tools/bridge-tally-compatibility/src/lib.rs` is itself a
@@ -165,17 +155,17 @@ but only after you have spent the cycle.
 **These two files are not wholly generated, and that is what makes the conflict
 dangerous.** Each carries two kinds of content:
 
-- **derived** -- every `sha256`, `manifest_sha256`, `compatibility_surface_sha256`.
-  Regenerating rewrites these, so conflicts in them are noise.
+- **derived** -- every pinned file's `sha256`. Regenerating rewrites these, so
+  conflicts in them are noise. (Schema 1 also stored the aggregate digest in both
+  files; schema 2 stores none, bridge#760.)
 - **authored** -- the surface's *pin list*, and the matrix's *claims and promotion
   constraints*. **Nothing regenerates these.** `rehash-surface` re-reads the bytes
   of every entry that is present; it cannot restore an entry that is absent.
-  `repoint-matrix` assigns `compatibility_surface_sha256` and touches nothing else.
 
 So "take one side wholesale" is safe for the derived half and **silently lossy for
 the authored half**, and the gate will not catch it. Measured: delete one
-judgment-pinned entry from the surface -- then seal, rehash, seal, repoint, and the
-gate returns `compatibility_gate_passed`.
+judgment-pinned entry from the surface, reseal, and the gate returns
+`compatibility_gate_passed`.
 
 **Where a pin matters enough that this is unacceptable, make it REQUIRED rather than
 relying on this procedure.** `REQUIRED_SURFACE_FILES` and `REQUIRED_SURFACE_DIRECTORIES`
@@ -244,11 +234,10 @@ absence is invisible. The matrix is worse: a dropped claim leaves no trace at al
    Do not carry a number derived from either side's cap. The ordering is not a
    preference: `tools/bridge-tally-compatibility/src/lib.rs` is itself pinned, so
    editing the constant after regenerating leaves its own digest stale and the gate
-   fails `surface_file_changed`. Sealing again does not rescue it — that re-attests
-   the stale hash. Every edit to a pinned file, the cap included, belongs before the
-   regeneration that hashes it.
-5. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
-   then the ordinary three; otherwise just the ordinary three.
+   fails `surface_file_changed` until you reseal again. Every edit to a pinned file,
+   the cap included, belongs before the regeneration that hashes it, or the
+   regeneration has to be repeated.
+5. Regenerate: `scripts/reseal.sh` (or the one `rehash-surface` command above).
 6. Run the gate, and **check the pin count against the union you computed in step
    3** -- the gate cannot do this for you.
 
@@ -256,10 +245,10 @@ absence is invisible. The matrix is worse: a dropped claim leaves no trace at al
    reasoning **once you know what it counts**: only entries already in the list
    whose digest on disk differs from the digest recorded. A newly added entry whose
    digest you computed from disk is therefore **not** counted -- it already matches.
-   So adding one pin and raising the cap normally reports **one**: the tool's own
-   pinned source, changed by the cap edit. It reports two only if the new entry was
-   added with a placeholder digest, which is a legitimate way to do it but a
-   different one. Reconcile the number with how you added the pin; do not adjust a
+   So adding one pin and raising the cap reports **one** (the tool's own pinned
+   source, changed by the cap edit) if you computed the new entry's digest from
+   disk, and **two** if you added it with a placeholder digest, as "Adding or
+   removing a pin" above suggests. Reconcile the number with how you added the pin; do not adjust a
    digest to reach an expected count.
 
 A rebase carrying several commits that touch pinned files needs this at **each**
@@ -298,21 +287,16 @@ confirm the result with `Format-Hex` and require no UTF-8 BOM (`EF BB BF`).
 
 #### `scripts/reseal.sh` (wrapper)
 
-`scripts/reseal.sh` wraps the three (or, for a pin-list change, four) commands
-above into one call, on Unix hosts. It exists because the ordering constraint
-above is a footgun a maintainer can get wrong silently -- running it by hand
-out of order does not fail loudly, it produces a valid-looking digest over
-stale content (see above). The wrapper enforces the order in code instead of
-in a maintainer's memory, and prints the tool's own changed-entry count so a
-reseal that changed nothing (a no-op run) is visible as exactly that.
+`scripts/reseal.sh` wraps the `rehash-surface` command above into one call, on
+Unix hosts. It resolves the pinned toolchain, prints the tool's own
+changed-entry count so a reseal that changed nothing (a no-op run) is visible as
+exactly that, and then prints the surface coverage report.
 
 ```sh
-scripts/reseal.sh                  # ordinary reseal: pinned file CONTENTS changed
-scripts/reseal.sh --pins-changed   # the pin LIST changed (see "Adding or
-                                    # removing a pin" above) -- runs the
-                                    # documented inverted order
+scripts/reseal.sh                  # reseal: rehash every pinned file
+scripts/reseal.sh --pins-changed   # the same; kept for existing instructions
 scripts/reseal.sh --verify         # reseals into a scratch copy and fails if
-                                    # it differs from the committed files;
+                                    # it differs from the committed surface;
                                     # never mutates the working tree. For CI --
                                     # not wired into any workflow yet, since
                                     # this repository's automation may not
@@ -324,18 +308,19 @@ scripts/reseal.sh --verify         # reseals into a scratch copy and fails if
 It resolves the pinned toolchain itself (the same `rustc --version` shadowing
 hazard described above), and always runs from the repository root regardless
 of the caller's current directory. It has no PowerShell equivalent; run the
-four raw commands by hand on Windows.
+`rehash-surface` command by hand on Windows.
 
 #### Merge driver (local only)
 
-Two PRs that each reseal after touching DIFFERENT already-pinned files always
-conflict, on exactly two lines, even though the actual pin lists underneath
-merge cleanly. This was diagnosed, then **proven** with an actual two-branch
-merge experiment: two throwaway branches, each touching a different ADR file
-and resealing, produced a merge with conflict markers on precisely
-`manifest_sha256` (in the surface) and `compatibility_surface_sha256` (in the
-matrix) -- nothing else. All 212 pinned-file entries merged without a single
-conflicting line.
+Under schema 1, two PRs that each resealed after touching DIFFERENT
+already-pinned files always conflicted, on exactly two lines: the stored
+aggregate digests `manifest_sha256` (in the surface) and
+`compatibility_surface_sha256` (in the matrix). Schema 2 stores neither
+(bridge#760), so that case no longer conflicts anywhere, and
+`scripts/reseal-merge-driver.test.mjs` checks it with the driver overridden by
+git's built-in text merge (an `info/attributes` entry `merge=text`), as GitHub
+merges. What remains for the driver is the rarer case of both sides
+changing the pin list or the claims.
 
 A git merge driver at `scripts/reseal-merge-driver.mjs`, wired via
 `.gitattributes`, resolves the common case of that automatically: it
@@ -344,13 +329,14 @@ three-way merge (independent additions and removals from either side are
 both kept/honored automatically; the SAME entry changed on both sides to
 DIFFERENT content is refused, not guessed at, and falls back to git's
 ordinary conflict markers for manual resolution exactly as described above),
-then reseals. Every pinned file's post-merge hash is computed from git refs
+then writes the reconciled lists. Every pinned file's post-merge hash is computed from git refs
 (`git diff --name-only`/`git show` against the merge base, "ours" and
 "theirs"), never from the working tree -- an earlier version of this driver
 read the working tree instead and a real merge experiment caught it sealing
 a wrong hash, because git does not guarantee every other path has already
 been checked out to its final post-merge content by the time this driver
-runs for the compatibility files specifically. See the extensive comments in
+runs for the compatibility files specifically. It runs no tool, so it needs no
+Rust toolchain. See the extensive comments in
 `scripts/reseal-merge-driver.mjs` for the exact mechanics, including why
 `.git/MERGE_HEAD` -- the seemingly obvious way to learn "ours"/"theirs" from
 inside a running merge driver -- does not work (it is not written until

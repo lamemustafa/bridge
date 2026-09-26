@@ -21,7 +21,7 @@ counterpart.
 
 Most large files here are **pinned** in `docs/tally/compatibility/compatibility-surface.json`. A
 split changes the pin set, raises `MAX_SURFACE_FILES` by one named reason per new file, and needs
-`scripts/reseal.sh --pins-changed`. The evidence that attests the old file does not automatically
+`scripts/reseal.sh`. The evidence that attests the old file does not automatically
 attest the new ones. **The cost of splitting a pinned file is not the edit; it is the
 attestation.** Everything below assumes that cost is real.
 

@@ -22,15 +22,14 @@ success. `compatibility-surface.json` binds evidence freshness to the exact
 Bridge Tally request, parser, transport, runtime, lockfile, and gate sources.
 
 When a pinned source file changes, reseal the surface deliberately before
-running this gate: first run `rehash-surface <surface.json> <repository-root>`
-to refresh every existing raw-byte file digest, then `seal-surface <surface.json>`,
-then `repoint-matrix <matrix.json> <surface.json>`. The exact staged commands
-and why that order matters are in the
+running this gate: `rehash-surface <surface.json> <repository-root>` refreshes
+every pinned file's raw-byte digest, and that is the whole reseal. The surface
+stores only those per-file digests; the surface digest that receipts and
+attestations bind is computed by the gate, never stored, and the matrix holds
+no copy of it (bridge#760). The exact command is in the
 [release process](../../release-process.md#compatibility-surface-reseal).
-`seal-surface` alone never reads the repository, so using it before rehashing
-would preserve stale file pins under a fresh manifest digest. CI validates this
-evidence boundary; it does not reseal changed sources. Changing the pin set
-itself is the one exception to that ordering -- see
+CI validates this evidence boundary; it does not reseal changed sources. To
+change the pin set itself, see
 [Adding or removing a pin](../../release-process.md#adding-or-removing-a-pin).
 
 An evidenced `observed`, `supported`, or `unsupported` cell requires all of the

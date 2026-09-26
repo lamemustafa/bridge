@@ -125,6 +125,9 @@ class MergeGateControls(unittest.TestCase):
     def test_surface_malformed_is_indeterminate(self):
         self.assert_indeterminate("surface-malformed", "could not read and validate compatibility surface at " + SHORT)
 
+    def test_surface_head_on_schema_1_is_indeterminate(self):
+        self.assert_indeterminate("surface-head-schema1", "could not read and validate compatibility surface at " + SHORT)
+
     def test_base_pinned_path_removed_from_head_is_indeterminate(self):
         self.assert_indeterminate("surface-unpins", "base-pinned path(s) are absent from the head surface")
 

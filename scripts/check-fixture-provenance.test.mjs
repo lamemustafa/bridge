@@ -27,6 +27,7 @@ const FIXTURE_DIRS = [
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",
   "scripts/fixtures",
+  "tools/bridge-tally-compatibility/tests/fixtures",
 ];
 
 async function makeTree() {

@@ -215,6 +215,11 @@ before relying on it here).
 
 ## 4. Structural option for the compatibility-surface conflict (NOT implemented)
 
+**Superseded (bridge#760).** The surface no longer stores `manifest_sha256` and the matrix no
+longer stores `compatibility_surface_sha256`; the gate computes the digest. That removes the
+conflict this section proposed to split away, without a separate digest file. The analysis
+below is kept as the record of the option not taken.
+
 This section is **analysis only**. It changes a security-relevant
 tamper-evidence artifact and needs the owner's explicit decision, not an
 agent's; nothing here is applied to `compatibility-surface.json`,

@@ -70,9 +70,8 @@ since #278; neither is how the reserve was first designed. `RESERVED_SURFACE_FIL
 (15) was introduced in #223 with the cap at exactly count + 15, and in that
 slack period #246 added eight pins without touching the cap. With no slack, a
 new pin cannot land without an edit to the constant, which is where its reason
-now goes. Use
-`scripts/reseal.sh --pins-changed`, the documented inversion for when the pin
-*list* changes rather than only the hashes.
+now goes. Then reseal with `scripts/reseal.sh`, which since bridge#760 handles a
+changed pin *list* the same way as changed hashes.
 
 Budget for that when planning. Splitting a 6,000-line module four ways is four
 surface decisions, not one refactor.
@@ -247,7 +246,7 @@ rule; check.
 Regenerate, verify, **then** stage. Every time.
 
 ```sh
-./scripts/reseal.sh            # or --pins-changed if the file list changed
+./scripts/reseal.sh            # also when the file list changed
 ./scripts/reseal.sh --verify   # read the exit status directly, never through a pipe
 git add docs/tally/compatibility/*.json
 git status --porcelain         # must be empty after committing

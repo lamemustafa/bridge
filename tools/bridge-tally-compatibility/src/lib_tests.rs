@@ -100,7 +100,7 @@ fn attestation(
         schema_version: ATTESTATION_SCHEMA_VERSION,
         evidence_id: "evidence-1".to_string(),
         receipt_sha256: receipt.receipt_sha256.clone(),
-        compatibility_surface_sha256: surface.manifest_sha256.clone(),
+        compatibility_surface_sha256: surface.digest().unwrap(),
         reviewed_at_unix_ms: NOW - 1_000,
         expires_at_unix_ms: NOW + 50_000,
         review_commit_sha: COMMIT.to_string(),
@@ -112,14 +112,10 @@ fn attestation(
     value
 }
 
-fn unsupported_manifest(
-    surface: &CompatibilitySurfaceManifest,
-    required_profile: ReadProfileId,
-) -> SupportClaimsManifest {
+fn unsupported_manifest(required_profile: ReadProfileId) -> SupportClaimsManifest {
     SupportClaimsManifest {
         schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
         bridge_commit_sha: COMMIT.to_string(),
-        compatibility_surface_sha256: surface.manifest_sha256.clone(),
         claims: vec![SupportClaim {
             claim_id: "unsupported-exact-scope".to_string(),
             level: ClaimLevel::Unsupported,
@@ -204,12 +200,9 @@ fn edit_log_education_cannot_reach_a_positive_claim_with_valid_signed_evidence()
             path: "surface.txt".to_string(),
             sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
         }],
-        manifest_sha256: String::new(),
-    }
-    .seal()
-    .unwrap();
+    };
     let receipt = receipt_for(
-        &surface.manifest_sha256,
+        &surface.digest().unwrap(),
         ProductFamily::TallyPrimeEditLog,
         TallyMode::Education,
     );
@@ -228,7 +221,6 @@ fn edit_log_education_cannot_reach_a_positive_claim_with_valid_signed_evidence()
         let manifest = SupportClaimsManifest {
             schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
             bridge_commit_sha: COMMIT.to_string(),
-            compatibility_surface_sha256: surface.manifest_sha256.clone(),
             claims: vec![SupportClaim {
                 claim_id: "edit-log-education-positive".to_string(),
                 level,
@@ -348,14 +340,10 @@ fn unknown_claims_pass_without_live_or_trusted_evidence() {
     let surface = CompatibilitySurfaceManifest {
         schema_version: SURFACE_SCHEMA_VERSION,
         files: sealed_surface_files(temp.path(), &["surface.txt"]),
-        manifest_sha256: String::new(),
-    }
-    .seal()
-    .unwrap();
+    };
     let manifest = SupportClaimsManifest {
         schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
         bridge_commit_sha: COMMIT.to_string(),
-        compatibility_surface_sha256: surface.manifest_sha256.clone(),
         claims: vec![SupportClaim {
             claim_id: "tally-prime-7-1-windows-education".to_string(),
             level: ClaimLevel::Unknown,
@@ -403,12 +391,9 @@ fn positive_claim_requires_fresh_signed_exact_scope_evidence() {
     let surface = CompatibilitySurfaceManifest {
         schema_version: SURFACE_SCHEMA_VERSION,
         files: sealed_surface_files(temp.path(), &["surface.txt"]),
-        manifest_sha256: String::new(),
-    }
-    .seal()
-    .unwrap();
+    };
     let receipt = receipt_for(
-        &surface.manifest_sha256,
+        &surface.digest().unwrap(),
         ProductFamily::TallyPrime,
         TallyMode::Licensed,
     );
@@ -427,7 +412,7 @@ fn positive_claim_requires_fresh_signed_exact_scope_evidence() {
         schema_version: ATTESTATION_SCHEMA_VERSION,
         evidence_id: "evidence-1".to_string(),
         receipt_sha256: receipt.receipt_sha256.clone(),
-        compatibility_surface_sha256: surface.manifest_sha256.clone(),
+        compatibility_surface_sha256: surface.digest().unwrap(),
         reviewed_at_unix_ms: NOW - 1_000,
         expires_at_unix_ms: NOW + 50_000,
         review_commit_sha: COMMIT.to_string(),
@@ -448,7 +433,6 @@ fn positive_claim_requires_fresh_signed_exact_scope_evidence() {
     let manifest = SupportClaimsManifest {
         schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
         bridge_commit_sha: COMMIT.to_string(),
-        compatibility_surface_sha256: surface.manifest_sha256.clone(),
         claims: vec![SupportClaim {
             claim_id: "supported-exact-scope".to_string(),
             level: ClaimLevel::Supported,
@@ -481,6 +465,56 @@ fn positive_claim_requires_fresh_signed_exact_scope_evidence() {
         NOW,
     )
     .is_ok());
+
+    // The gate binds evidence to the digest it computes from the surface
+    // (bridge#760). Evidence made for another surface is refused, whether the
+    // attestation names it or only the receipt does.
+    let other_surface = "b".repeat(64);
+    let mut attested_elsewhere = attestation.clone();
+    attested_elsewhere.compatibility_surface_sha256 = other_surface.clone();
+    attested_elsewhere.signature_hex = hex::encode(
+        signing
+            .sign(&attested_elsewhere.signing_bytes().unwrap())
+            .to_bytes(),
+    );
+    assert_eq!(
+        enforce_support_gate(
+            &manifest,
+            &surface,
+            &trust,
+            std::slice::from_ref(&receipt),
+            std::slice::from_ref(&attested_elsewhere),
+            temp.path(),
+            NOW,
+        )
+        .unwrap_err(),
+        gate("attestation_scope_mismatch")
+    );
+    let received_elsewhere = receipt_for(
+        &other_surface,
+        ProductFamily::TallyPrime,
+        TallyMode::Licensed,
+    );
+    let mut attesting_it = attestation.clone();
+    attesting_it.receipt_sha256 = received_elsewhere.receipt_sha256.clone();
+    attesting_it.signature_hex = hex::encode(
+        signing
+            .sign(&attesting_it.signing_bytes().unwrap())
+            .to_bytes(),
+    );
+    assert_eq!(
+        enforce_support_gate(
+            &manifest,
+            &surface,
+            &trust,
+            std::slice::from_ref(&received_elsewhere),
+            std::slice::from_ref(&attesting_it),
+            temp.path(),
+            NOW,
+        )
+        .unwrap_err(),
+        gate("receipt_claim_scope_mismatch")
+    );
 
     let mut review_time_invalid = trust.clone();
     review_time_invalid.keys[0].valid_from_unix_ms = NOW - 500;
@@ -530,14 +564,11 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
     let surface = CompatibilitySurfaceManifest {
         schema_version: SURFACE_SCHEMA_VERSION,
         files: sealed_surface_files(temp.path(), &["surface.txt"]),
-        manifest_sha256: String::new(),
-    }
-    .seal()
-    .unwrap();
+    };
     let signing = SigningKey::from_bytes(&[9_u8; 32]);
     let trust = trust(&signing);
 
-    let mut invented_unsupported = receipt(&surface.manifest_sha256);
+    let mut invented_unsupported = receipt(&surface.digest().unwrap());
     invented_unsupported.receipt_sha256.clear();
     let ledger = invented_unsupported
         .operations
@@ -552,7 +583,7 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
         invalid("unsupported_operation_signature_unavailable")
     );
 
-    let mut later_failure = receipt(&surface.manifest_sha256);
+    let mut later_failure = receipt(&surface.digest().unwrap());
     later_failure.receipt_sha256.clear();
     let ledger = later_failure
         .operations
@@ -575,7 +606,7 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
     }
     let later_failure = later_failure.seal().unwrap();
     let later_attestation = attestation(&later_failure, &surface, &signing);
-    let ledger_manifest = unsupported_manifest(&surface, ReadProfileId::XmlLedgerReadV1);
+    let ledger_manifest = unsupported_manifest(ReadProfileId::XmlLedgerReadV1);
     assert_eq!(
         enforce_support_gate(
             &ledger_manifest,
@@ -607,7 +638,7 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
             true,
         ),
     ] {
-        let mut non_authoritative = receipt(&surface.manifest_sha256);
+        let mut non_authoritative = receipt(&surface.digest().unwrap());
         non_authoritative.receipt_sha256.clear();
         let ledger = non_authoritative
             .operations
@@ -673,7 +704,7 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
         gate("receipt_claim_scope_mismatch")
     );
 
-    let mut missing_fixture = receipt(&surface.manifest_sha256);
+    let mut missing_fixture = receipt(&surface.digest().unwrap());
     missing_fixture.receipt_sha256.clear();
     missing_fixture.fixture_marker_verified = false;
     for profile in [
@@ -705,7 +736,7 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
         gate("fixture_marker_contract_not_verified")
     );
 
-    let mut marker_failure = receipt(&surface.manifest_sha256);
+    let mut marker_failure = receipt(&surface.digest().unwrap());
     marker_failure.receipt_sha256.clear();
     marker_failure.fixture_marker_verified = false;
     let marker = marker_failure
@@ -730,8 +761,7 @@ fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
     }
     let marker_failure = marker_failure.seal().unwrap();
     let marker_attestation = attestation(&marker_failure, &surface, &signing);
-    let marker_manifest =
-        unsupported_manifest(&surface, ReadProfileId::XmlSyntheticFixtureMarkerV1);
+    let marker_manifest = unsupported_manifest(ReadProfileId::XmlSyntheticFixtureMarkerV1);
     assert_eq!(
         enforce_support_gate(
             &marker_manifest,
@@ -755,10 +785,7 @@ fn surface_manifest_detects_compatibility_drift() {
     let surface = CompatibilitySurfaceManifest {
         schema_version: SURFACE_SCHEMA_VERSION,
         files: sealed_surface_files(temp.path(), &["surface.txt"]),
-        manifest_sha256: String::new(),
-    }
-    .seal()
-    .unwrap();
+    };
     surface.validate_files(temp.path()).unwrap();
     fs::write(temp.path().join("surface.txt"), b"after").unwrap();
     assert_eq!(
@@ -924,11 +951,10 @@ fn surface_file_cap_refuses_one_entry_above_the_cap() {
                 sha256: "0".repeat(64),
             })
             .collect(),
-        manifest_sha256: String::new(),
     };
 
     assert_eq!(
-        oversized.seal().unwrap_err(),
+        oversized.validate().unwrap_err(),
         invalid("surface_file_count_invalid")
     );
 }
@@ -952,10 +978,7 @@ fn gate_rejects_an_unpinned_selected_read_constructor() {
                 path: "surface.txt".to_string(),
                 sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
             }],
-            manifest_sha256: String::new(),
         }
-        .seal()
-        .unwrap()
         .validate_files(temp.path())
         .unwrap_err(),
         invalid("surface_required_directory_file_unpinned")
@@ -969,8 +992,6 @@ fn gate_rejects_each_omitted_required_lifecycle_path() {
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
         let mut surface = sealed_surface(temp.path(), &["surface.txt"]);
         surface.files.retain(|file| file.path != omitted_path);
-        surface.manifest_sha256.clear();
-        let surface = surface.seal().unwrap();
 
         assert_eq!(
             surface.validate_files(temp.path()).unwrap_err(),
@@ -985,10 +1006,7 @@ fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfac
     CompatibilitySurfaceManifest {
         schema_version: SURFACE_SCHEMA_VERSION,
         files: sealed_surface_files(repository_root, paths),
-        manifest_sha256: String::new(),
     }
-    .seal()
-    .unwrap()
 }
 
 fn sealed_surface_files(repository_root: &Path, paths: &[&str]) -> Vec<SurfaceFile> {
@@ -1049,11 +1067,10 @@ fn rehash_detects_a_modified_pinned_file_without_sealing_it() {
         .find(|file| file.path == "surface.txt")
         .unwrap();
     assert_ne!(rehashed_surface.sha256, original_surface.sha256);
-    assert_eq!(rehashed.manifest_sha256, surface.manifest_sha256);
-    assert_eq!(
-        rehashed.validate().unwrap_err(),
-        invalid("surface_checksum_mismatch")
-    );
+    // With no stored checksum, the rehash is the whole reseal: the result is
+    // valid as it stands, and its digest follows the new bytes.
+    rehashed.validate().unwrap();
+    assert_ne!(rehashed.digest().unwrap(), surface.digest().unwrap());
 }
 
 #[test]
@@ -1103,7 +1120,6 @@ fn rendered_claim_matrix_is_deterministic_and_drift_checked() {
     let manifest = SupportClaimsManifest {
         schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
         bridge_commit_sha: COMMIT.to_string(),
-        compatibility_surface_sha256: SHA.to_string(),
         claims: vec![SupportClaim {
             claim_id: "prime-7-1-windows-education-xml-one-company".to_string(),
             level: ClaimLevel::Unknown,
@@ -1158,5 +1174,65 @@ fn rendered_claim_matrix_is_deterministic_and_drift_checked() {
     assert_eq!(
         mixed_transport.validate().unwrap_err(),
         invalid("jsonex_claim_contains_xml_profile")
+    );
+}
+
+/// The committed schema-1 surface and matrix, byte for byte as master held
+/// them before bridge#760 (3d2a4b05).
+const SURFACE_SCHEMA_1: &str = include_str!("../tests/fixtures/compatibility-surface-schema1.json");
+const MATRIX_SCHEMA_1: &str = include_str!("../tests/fixtures/compatibility-matrix-schema1.json");
+
+#[test]
+fn the_computed_digest_is_the_checksum_schema_1_stored() {
+    // Receipts and attestations bind a surface digest. Schema 1 stored it as
+    // `manifest_sha256`; the computed digest over the same pins must equal
+    // it, or every earlier binding would silently change meaning.
+    let stored: serde_json::Value = serde_json::from_str(SURFACE_SCHEMA_1).unwrap();
+    assert_eq!(stored["schema_version"], 1);
+    let surface = CompatibilitySurfaceManifest {
+        schema_version: SURFACE_SCHEMA_VERSION,
+        files: serde_json::from_value(stored["files"].clone()).unwrap(),
+    };
+    assert_eq!(
+        surface.digest().unwrap(),
+        stored["manifest_sha256"].as_str().unwrap()
+    );
+    let matrix: serde_json::Value = serde_json::from_str(MATRIX_SCHEMA_1).unwrap();
+    assert_eq!(
+        matrix["compatibility_surface_sha256"],
+        stored["manifest_sha256"]
+    );
+}
+
+#[test]
+fn a_schema_1_surface_or_matrix_is_refused() {
+    assert_eq!(
+        CompatibilitySurfaceManifest::from_json(SURFACE_SCHEMA_1.as_bytes()).unwrap_err(),
+        invalid("artifact_json_invalid")
+    );
+    let mut without_checksum: serde_json::Value = serde_json::from_str(SURFACE_SCHEMA_1).unwrap();
+    without_checksum
+        .as_object_mut()
+        .unwrap()
+        .remove("manifest_sha256");
+    assert_eq!(
+        CompatibilitySurfaceManifest::from_json(&serde_json::to_vec(&without_checksum).unwrap())
+            .unwrap_err(),
+        invalid("surface_schema_unsupported")
+    );
+    assert_eq!(
+        SupportClaimsManifest::from_json(MATRIX_SCHEMA_1.as_bytes()).unwrap_err(),
+        invalid("artifact_json_invalid")
+    );
+    let mut matrix_without_digest: serde_json::Value =
+        serde_json::from_str(MATRIX_SCHEMA_1).unwrap();
+    matrix_without_digest
+        .as_object_mut()
+        .unwrap()
+        .remove("compatibility_surface_sha256");
+    assert_eq!(
+        SupportClaimsManifest::from_json(&serde_json::to_vec(&matrix_without_digest).unwrap())
+            .unwrap_err(),
+        invalid("support_manifest_invalid")
     );
 }
