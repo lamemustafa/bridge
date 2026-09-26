@@ -47,7 +47,7 @@ test("dry run reports exact IDs without deleting", async () => {
     assert.equal(options.method, "GET");
     return response(200, { total_count: 3, actions_caches: [cache(1), cache(2), cache(3)] });
   };
-  assert.deepEqual(await pruneCaches({ env, fetcher }), { applied: false, obsoleteIds: [1], retainedPerOS: 2 });
+  assert.deepEqual(await pruneCaches({ env, fetcher }), { applied: false, obsoleteIds: [1], retainedPerOS: 2, retainedPerRustFamily: 1 });
 });
 
 test("apply deletes only the planned ID and verifies the remaining inventory", async () => {
@@ -78,6 +78,7 @@ test("pagination is complete before selecting any deletion", async () => {
     assert.equal(options.method, "GET");
     const query = new URL(url).searchParams;
     assert.equal(query.get("ref"), "refs/heads/master");
+    if (query.get("key") === "v0-rust-") return response(200, { total_count: 0, actions_caches: [] });
     assert.equal(query.get("key"), "bridge-package-sccache-v1-");
     const page = Number(query.get("page")); pages.push(page);
     return response(200, { total_count: rows.length, actions_caches: rows.slice((page - 1) * 100, page * 100) });
@@ -101,7 +102,7 @@ test("an inconsistent listing is listed again before any plan is made", async ()
       response(200, { total_count: rows.length, actions_caches: rows });
   };
   const sleep = async (ms) => { waits.push(ms); };
-  assert.deepEqual(await pruneCaches({ env, fetcher, sleep }), { applied: false, obsoleteIds: [1], retainedPerOS: 2 });
+  assert.deepEqual(await pruneCaches({ env, fetcher, sleep }), { applied: false, obsoleteIds: [1], retainedPerOS: 2, retainedPerRustFamily: 1 });
   assert.deepEqual(waits, [10_000]);
 });
 
@@ -111,6 +112,7 @@ test("a cache repeated across shifted pages is an incomplete listing, listed aga
   const fetcher = async (url, options) => {
     assert.equal(options.method, "GET");
     const page = Number(new URL(url).searchParams.get("page"));
+    if (new URL(url).searchParams.get("key") === "v0-rust-") return response(200, { total_count: 0, actions_caches: [] });
     if (page === 1) listings += 1;
     // First listing: a cache saved between the pages raises total_count to 102 and shifts page 2,
     // so cache 100 comes back twice and the count still matches; only the repeat shows it.
@@ -135,4 +137,44 @@ test("a listing that stays incomplete refuses without deleting anything", async 
     { code: "inventory_incomplete" });
   assert.equal(gets, 6); // three listings of two pages each
   assert.deepEqual(waits, [10_000, 10_000]);
+});
+
+const rust = (id, key, extra = {}) => ({
+  id, key, ref: "refs/heads/master", created_at: new Date(Date.UTC(2026, 0, id)).toISOString(), size_in_bytes: 100, ...extra,
+});
+
+test("keeps only the newest master Rust cache per restore prefix", async () => {
+  const deps = `v0-rust-native-deps-v1-${"c".repeat(64)}-native-Windows_NT-x64`;
+  const rows = [
+    rust(1, "v0-rust-native-Darwin-arm64-f4739347-c3d09d17"),
+    rust(2, "v0-rust-native-Darwin-arm64-f4739347-6b138785"),
+    rust(3, "v0-rust-bundle-smoke-Windows_NT-x64-e17645bc-805fe0b3"),
+    rust(4, "v0-rust-bundle-smoke-Windows_NT-x64-e17645bc-f6df997b"),
+    rust(5, "v0-rust-tally-portable-Linux-x64-01b40e38-6b138785"),
+    rust(9, `${deps}-f12e7641-c3d09d17`),
+    rust(10, `${deps}-f12e7641-6b138785`),
+    // A different environment hash (another runner image) restores separately, so it is kept.
+    rust(11, `${deps}-0badcafe-c3d09d17`),
+    // A PR ref, a malformed key and a foreign namespace are never selected.
+    rust(6, "v0-rust-bundle-smoke-Windows_NT-x64-e17645bc-aaaaaaaa", { ref: "refs/pull/7/merge", created_at: new Date(Date.UTC(2025, 0, 1)).toISOString() }),
+    rust(7, "v0-rust-native-Darwin-arm64-f4739347"),
+    rust(8, "v1-rust-native-Darwin-arm64-f4739347-6b138785"),
+  ];
+  const fetcher = async (url, options) => {
+    assert.equal(options.method, "GET");
+    const key = new URL(url).searchParams.get("key");
+    const listed = key === "v0-rust-" ? rows : [];
+    return response(200, { total_count: listed.length, actions_caches: listed });
+  };
+  assert.deepEqual((await pruneCaches({ env, fetcher })).obsoleteIds, [1, 3, 9]);
+});
+
+test("an incomplete Rust cache listing refuses before any family is deleted", async () => {
+  const fetcher = async (url, options) => {
+    assert.equal(options.method, "GET", "nothing may be deleted when any family's listing is incomplete");
+    const key = new URL(url).searchParams.get("key");
+    return key === "v0-rust-" ? response(200, { total_count: 2, actions_caches: [] })
+      : response(200, { total_count: 3, actions_caches: [cache(1), cache(2), cache(3)] });
+  };
+  await assert.rejects(pruneCaches({ env, fetcher, apply: true, sleep: async () => {} }), { code: "inventory_incomplete" });
 });
