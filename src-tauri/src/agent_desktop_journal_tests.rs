@@ -200,6 +200,7 @@ fn service_at_endpoint(
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     // Fixture construction exclusively owns this temporary directory. Avoid a
     // setup lock that another parallel test's fork can transiently inherit.
