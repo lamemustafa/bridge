@@ -548,3 +548,119 @@ fn a_stored_record_is_bounded_again_on_read_and_never_fails_over_text() {
         assert_eq!(reread.tally_line_errors_omitted(), 2);
     }
 }
+
+/// The captured partial commit with its one LINEERROR's quoted ledger name
+/// rewritten into a CDATA section (#735). Derived in memory from the capture:
+/// only that span changes. Whether Tally ever sends CDATA here is unobserved.
+fn partial_commit_with_quoted(replacement: &str) -> String {
+    let captured = captured(PARTIAL_COMMIT_LIVE);
+    let quoted = "&apos;Lane A No Such Ledger&apos;";
+    assert_eq!(
+        captured.matches(quoted).count(),
+        1,
+        "the capture's quoted name"
+    );
+    captured.replacen(quoted, replacement, 1)
+}
+
+/// #735: a CDATA section in a LINEERROR is read as its content, not kept as
+/// markup, and a bare `&` inside it no longer refuses the whole outcome.
+#[test]
+fn a_line_error_with_cdata_is_read_as_its_text() {
+    for (replacement, text) in [
+        (
+            "<![CDATA['Lane A No Such Ledger']]>",
+            "Ledger 'Lane A No Such Ledger' does not exist!",
+        ),
+        (
+            "<![CDATA['Lane A & Co']]>",
+            "Ledger 'Lane A & Co' does not exist!",
+        ),
+    ] {
+        let xml = partial_commit_with_quoted(replacement);
+        let outcome = parse_import_outcome(&xml).expect("the outcome still parses");
+        assert_eq!(outcome.counters().created, 49, "{replacement}");
+        assert_eq!(outcome.counters().line_error_count, 1, "{replacement}");
+        let texts = outcome
+            .tally_line_errors()
+            .iter()
+            .map(bridge_tally_protocol::TallyLineError::text)
+            .collect::<Vec<_>>();
+        assert_eq!(texts, [text], "{replacement}");
+        let evidence = parse_import_evidence(&xml).expect("the evidence still parses");
+        assert_eq!(evidence.line_error_sha256().len(), 1, "{replacement}");
+    }
+}
+
+/// The reader change must not move the digest of text without CDATA: the
+/// captured LINEERROR's evidence digest is the one recorded before #735.
+#[test]
+fn the_captured_line_error_digest_is_unchanged() {
+    let evidence = parse_import_evidence(&captured(PARTIAL_COMMIT_LIVE)).expect("captured");
+    assert_eq!(
+        evidence.line_error_sha256(),
+        ["c6d01348ae1f860d56234f001c712e1f7403359c412533fe929e785008df3646"]
+    );
+}
+
+const CAPTURED_LINE_ERROR_SHA256: &str =
+    "c6d01348ae1f860d56234f001c712e1f7403359c412533fe929e785008df3646";
+
+/// Derived, not captured: the captured `import_line_error_partial_commit_live`
+/// response with its one `LINEERROR` element's content replaced.
+fn partial_commit_with_line_error(content: &str) -> String {
+    let captured = captured(PARTIAL_COMMIT_LIVE);
+    let element = "<LINEERROR>Ledger &apos;Lane A No Such Ledger&apos; does not exist!</LINEERROR>";
+    assert_eq!(
+        captured.matches(element).count(),
+        1,
+        "the capture's LINEERROR"
+    );
+    captured.replacen(element, &format!("<LINEERROR>{content}</LINEERROR>"), 1)
+}
+
+/// The reader trims the joined text as a whole, as `read_optional_text` did,
+/// and drops a comment: neither moves the kept text or the evidence digest.
+#[test]
+fn padding_and_a_comment_in_a_line_error_keep_the_captured_text_and_digest() {
+    for content in [
+        " \r\n\tLedger &apos;Lane A No Such Ledger&apos; does not exist!\r\n ",
+        "Ledger &apos;Lane A No Such Ledger&apos;<!-- note --> does not exist!",
+    ] {
+        let xml = partial_commit_with_line_error(content);
+        let outcome = parse_import_outcome(&xml).expect("the outcome still parses");
+        let texts = outcome
+            .tally_line_errors()
+            .iter()
+            .map(bridge_tally_protocol::TallyLineError::text)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            texts,
+            ["Ledger 'Lane A No Such Ledger' does not exist!"],
+            "{content:?}"
+        );
+        let evidence = parse_import_evidence(&xml).expect("the evidence still parses");
+        assert_eq!(
+            evidence.line_error_sha256(),
+            [CAPTURED_LINE_ERROR_SHA256],
+            "{content:?}"
+        );
+    }
+}
+
+/// A child element inside a `LINEERROR` refuses the response rather than
+/// being kept or dropped. No capture shows one; this pins the fail-closed
+/// choice. The control row differs only by the element.
+#[test]
+fn an_element_inside_a_line_error_refuses_the_response() {
+    let control =
+        partial_commit_with_line_error("Ledger &apos;Lane A No Such Ledger&apos; does not exist!");
+    assert!(parse_import_outcome(&control).is_ok());
+    assert!(parse_import_evidence(&control).is_ok());
+
+    let nested = partial_commit_with_line_error(
+        "Ledger <B>&apos;Lane A No Such Ledger&apos;</B> does not exist!",
+    );
+    assert!(parse_import_outcome(&nested).is_err());
+    assert!(parse_import_evidence(&nested).is_err());
+}

@@ -1093,15 +1093,19 @@ fn flush_flattened_part(current: &mut String, parts: &mut Vec<String>) {
 /// quick_xml 0.41 delivers an entity or numeric character reference as its
 /// own event, separate from any surrounding `Text`/`CData` for the same
 /// logical run of text. A catch-all match arm with no `GeneralRef` case
-/// silently drops it -- the bug this function's callers close. By the time a
-/// `GeneralRef` reaches either caller,
+/// silently drops it -- the bug this function's callers close. For the two
+/// callers in this file, by the time a `GeneralRef` reaches them,
 /// `tolerant_xml::sanitize_invalid_numeric_references_with_provenance` (see
 /// `parse_native_ledger_collection_with_evidence`) has already rewritten any
 /// reference to a code point XML 1.0 forbids into literal marker text
 /// (`TALLY_PROTOCOL_REFERENCE.md` section 1.1(d)), so a `GeneralRef` seen
-/// here is always either a predefined named entity or a legal numeric
-/// reference; `unescape` fails closed on anything else.
-fn resolve_party_ledger_master_reference(
+/// there is always either a predefined named entity or a legal numeric
+/// reference; `unescape` fails closed on anything else. The import outcome's
+/// `LINEERROR` reader (#735) runs no such sanitisation first: there,
+/// `unescape` rejects only code point 0 and values outside Unicode, as the
+/// `read_optional_text` it replaced did, and `TallyLineError::bounded`
+/// replaces any control character it yields.
+pub(crate) fn resolve_party_ledger_master_reference(
     reference: quick_xml::events::BytesRef<'_>,
 ) -> anyhow::Result<String> {
     let decoded = reference.decode()?;
@@ -1124,7 +1128,7 @@ fn resolve_party_ledger_master_reference(
 /// the same reason (see `trim_text(false)` in `agent_lab.rs`,
 /// `agent_voucher_parse.rs`, `agent_company_checkpoint.rs`, and
 /// `source_draft_xml.rs`).
-fn with_untrimmed_text<T>(
+pub(crate) fn with_untrimmed_text<T>(
     reader: &mut Reader<&[u8]>,
     body: impl FnOnce(&mut Reader<&[u8]>) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
