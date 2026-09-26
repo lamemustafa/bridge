@@ -297,3 +297,9 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 
 - E2b full run on d1f4c226 (4 shards on `cloud/lane-e-e2b-shards-3`): **563 run, 558 killed**, 5 accepted survivors; all 44 E2B2 killed. `--verify`: 563/563 proven on crate tree 177a5433108e94bc. Sonnet pre-push check: none. **Pushed `lane-e/e2b-hvr` @ 86bb1937**; #713 body updated (net LOC crate +7310/−565, source and tests +1641/−24, 6 tests) and commented. Waiting on Lane D's real-book re-run (against e41d9010) and independent review.
 - E3a re-stacked locally on 86bb1937 (fa07ed0a): `mutations.json` union (597 ids; E2B2-02/35 taken from E2b, the only side that changed them); 345 tests pass; clippy and fmt clean. Sonnet review of the merge running; then push and E3a's full run.
+
+## 2026-09-26 06:15 UTC — #713 (E2b) merged; E3a full run in progress
+
+- Lane D's real-book re-run at 86bb1937 against e41d9010: EQUAL on all three clients; CI green on 86bb1937 (Required checks, mutation records, native Windows/macOS). **#713 merged** as 58263156; master's crate tree equals 86bb1937's (3c2ddfb9).
+- E3a re-stack pushed: `lane-e/e3a-stock` @ fa07ed0a (Sonnet review of the merge: none). Its full run first died on a full disk (my build and worker dirs; deleted, ~20G free), and was restarted at 05:51, sharded to `cloud/lane-e-e3a-shards-3`.
+- Next: when the run finishes, merge master into E3a (crate conflicts to the branch side; crate tree unchanged, so the records stay valid), records commit, verify, Sonnet check, push, then open the E3a draft PR (with the stock-part reader's string-literal count). E4 is re-stacked locally on fa07ed0a (3ea7f045), with its gates pending until the disk is free of E3a's run.
