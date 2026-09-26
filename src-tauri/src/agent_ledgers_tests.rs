@@ -1012,7 +1012,44 @@ mod through_the_tool {
         assert_eq!(error["code"], "ledger_export_invalid");
         assert_eq!(error["cause"], "company_several_currency_masters");
         let remediation = error["remediation"].as_str().unwrap();
-        assert!(remediation.contains("fields=compliance"), "{error}");
+        assert!(remediation.contains("#551"), "{error}");
+    }
+
+    /// A basic read whose currency collection holds no master is refused
+    /// after it, before any ledger request: one master is not established.
+    /// DERIVED from the captured single-master response with its one
+    /// `CURRENCY` element removed (#714).
+    #[tokio::test]
+    async fn a_basic_read_with_no_currency_master_is_refused_before_any_ledger() {
+        let captured_currency = single_currency();
+        let start = captured_currency.find("<CURRENCY ").unwrap();
+        let end =
+            start + captured_currency[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+        let mut none = captured_currency.clone();
+        none.replace_range(start..end, "");
+        assert!(!none.contains("<CURRENCY "), "no master left");
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let mut plans = identity_plans();
+        plans.extend([
+            status(),
+            company.clone(),
+            company,
+            extent.clone(),
+            status(),
+            extent,
+            status(),
+        ]);
+        pair(&mut plans, xml(none));
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":GUID})).await;
+        assert_eq!(requests, total, "no ledger request was sent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "company_currency_probe_failed");
     }
 
     /// As `basic_plans`, with the ledger export given and, when `groups` is

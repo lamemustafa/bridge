@@ -2768,8 +2768,9 @@ impl TallyRuntime {
                         if currency_gate == LedgerCurrencyGate::SingleMasterOnly {
                             // A bare opening balance names no currency, so a
                             // book with several Currency masters is refused
-                            // before any ledger request rather than having
-                            // foreign ledgers read as rupees (bridge#714).
+                            // before any ledger request (bridge#714). A foreign
+                            // ledger's non-zero bare opening is UNOBSERVED; the
+                            // captured book's dollar openings are 0.00.
                             let request = render_company_currency_request(identity.display_name());
                             let (body, encoded_bytes, encoded_sha256) = client
                                 .fetch_native_report_paired(request.clone())

@@ -354,7 +354,9 @@ fn captured_bvl_native_ledgers_preserve_the_book_openings() {
 /// rupee one. DERIVED from captured bytes: the several-currency book's master
 /// capture with its one composite opening row removed (nothing else changed,
 /// and no amount typed by hand). The parse then succeeds, and the dollar
-/// ledgers' openings come back as bare numbers, indistinguishable from rupees.
+/// ledgers' openings come back as bare numbers carrying no currency. In this
+/// capture they are 0.00; a non-zero bare foreign opening is UNOBSERVED (P6),
+/// so this shows the missing currency, not a captured wrong amount.
 #[test]
 fn a_several_currency_export_returns_foreign_openings_as_bare_numbers() {
     let capture = decode_utf16le(include_bytes!(
@@ -377,7 +379,7 @@ fn a_several_currency_export_returns_foreign_openings_as_bare_numbers() {
     .expect("without the composite row the export parses");
     // FX USD Debtor 01 and 02 are kept in dollars (the book's snapshot names
     // their CURRENCYNAME `$`), yet each comes back as a plain opening with no
-    // currency at all.
+    // currency at all (0.00 here).
     for dollar in ["FX USD Debtor 01", "FX USD Debtor 02"] {
         let row = parsed
             .records
