@@ -22,7 +22,7 @@ DEFAULT_TOOLS = {
 # The bundle always enables file preparation and bank-statement parsing; they
 # write nothing to Tally. Posting, and recording a person's review of a doubted
 # post (bridge#239), are the tools behind the user's switch, and it is off by
-# default while bridge#574 and bridge#579 are open.
+# default while the limits recorded on bridge#574 and bridge#579 remain.
 IMPORT_TOOLS = {"build_import_xml", "parse_bank_statement"}
 POSTING_TOOLS = {"post_import", "acknowledge_post_review"}
 
@@ -207,7 +207,7 @@ def resolve_environment(manifest):
     writes = manifest["user_config"].get("enable_writes", {})
     require(writes.get("type") == "boolean" and isinstance(writes.get("default"), bool),
             "writes_default_must_be_boolean")
-    # Posting stays off by default while bridge#574 and bridge#579 are open.
+    # Posting stays off by default while the limits recorded on bridge#574 and bridge#579 remain.
     require(writes["default"] is False, "posting_must_default_off")
     require(mappings["BRIDGE_AGENT_ENABLE_WRITES"] == "${user_config.enable_writes}",
             "writes_environment_mapping_mismatch")
