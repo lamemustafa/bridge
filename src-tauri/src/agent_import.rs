@@ -2896,6 +2896,8 @@ fn batch_step_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
 /// Write an observed doubt to its own file. When that fails, the verdict that
 /// goes into the check record says so (`doubt_record: unavailable`, #722):
 /// it still holds the doubt, and it says in-band why no review can find it.
+/// The readers decide from the file's absence, not from this mark, so a file
+/// lost later is refused the same way.
 fn record_doubt(path: &Path, verdict: &mut Value) {
     if write_masters_record(path, verdict).is_err() {
         verdict["doubt_record"] = json!("unavailable");

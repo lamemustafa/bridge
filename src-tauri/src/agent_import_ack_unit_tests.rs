@@ -638,6 +638,25 @@ fn a_doubt_whose_own_file_was_not_written_reads_doubt_record_unavailable() {
         check(&single, "posted_under_changed_masters", "matched"),
         Some(unavailable)
     );
+    // A review already recorded outranks the absent file: it reads stale,
+    // as a review whose doubt can no longer be read does, for each kind.
+    for (kind, masters, step) in [
+        (
+            DoubtKind::Masters,
+            "posted_under_changed_masters",
+            "matched",
+        ),
+        (DoubtKind::BatchStep, "unchanged", "unmatched"),
+    ] {
+        fs::write(kind.ack_path(imports.path(), BATCH), b"{}").unwrap();
+        let review = check(&batch, masters, step).unwrap();
+        assert_eq!(review[kind.name()]["state"], "stale", "{review}");
+        fs::remove_file(kind.ack_path(imports.path(), BATCH)).unwrap();
+    }
+    fs::write(masters_ack_path(imports.path(), BATCH), b"{}").unwrap();
+    let review = check(&single, "posted_under_changed_masters", "matched").unwrap();
+    assert_eq!(review["state"], "stale", "{review}");
+    fs::remove_file(masters_ack_path(imports.path(), BATCH)).unwrap();
     // Control: with each doubt's own file written, the review reads it.
     fs::write(
         super::masters_doubt_path(imports.path(), BATCH),
@@ -646,6 +665,17 @@ fn a_doubt_whose_own_file_was_not_written_reads_doubt_record_unavailable() {
     .unwrap();
     let review = check(&batch, "posted_under_changed_masters", "matched").unwrap();
     assert_eq!(review["masters"]["state"], "absent", "{review}");
+    assert_eq!(
+        check(&single, "posted_under_changed_masters", "matched").unwrap()["state"],
+        "absent"
+    );
+    fs::write(
+        super::batch_step_doubt_path(imports.path(), BATCH),
+        STEP_DOUBT,
+    )
+    .unwrap();
+    let review = check(&batch, "unchanged", "unmatched").unwrap();
+    assert_eq!(review["batch_step"]["state"], "absent", "{review}");
 }
 
 /// A debit total is the negated sum of what Tally holds, never each line's

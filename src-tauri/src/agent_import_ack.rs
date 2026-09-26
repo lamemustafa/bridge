@@ -83,8 +83,9 @@ impl DoubtKind {
 }
 
 /// A batch's step records, read as [`read_masters_records`] reads the masters
-/// ones: an observed doubt (its own file, `unmatched`), a pending step, no
-/// doubt, or unreadable.
+/// ones: an observed doubt (its own file, `unmatched`), a doubt the check
+/// record holds whose own file is absent, a pending step, no doubt, or
+/// unreadable.
 fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
     let Ok(doubt) = read_masters_record_raw(&batch_step_doubt_path(imports, batch_id)) else {
         return MastersRecord::Unreadable;
@@ -150,9 +151,10 @@ enum MastersRecord {
     Doubt {
         raw: Vec<u8>,
     },
-    /// The check record holds a doubt whose own file is absent: its write
-    /// failed (#722, which marks the verdict `doubt_record: unavailable`), so
-    /// there are no doubt bytes to bind a review to.
+    /// The check record holds a doubt whose own file is absent, so there are
+    /// no doubt bytes to bind a review to (#722). Its write failed, which
+    /// marks the verdict `doubt_record: unavailable`, or the file was lost or
+    /// removed later, which leaves no mark: absence alone decides.
     DoubtRecordUnavailable,
     Unreadable,
 }
@@ -683,8 +685,9 @@ pub(super) fn operator_review(
     let record = read_masters_record_raw(&masters_ack_path(imports, &line.batch_id));
     let raw = match (masters, &record) {
         (MastersRecord::Doubt { raw }, _) => raw,
-        // A doubt whose own file was not written can take no review (#722).
-        (MastersRecord::DoubtRecordUnavailable, _) => {
+        // A doubt whose own file is absent can take no review (#722). With a
+        // review already recorded, that review reads stale below instead.
+        (MastersRecord::DoubtRecordUnavailable, Ok(None)) => {
             return Some(json!({"state":"doubt_record_unavailable"}))
         }
         (_, Ok(None)) => return None,
@@ -748,17 +751,20 @@ fn batch_operator_review(
                 any = true;
                 json!({"state":"unreadable"})
             }
-            MastersRecord::DoubtRecordUnavailable => {
-                any = true;
-                json!({"state":"doubt_record_unavailable"})
-            }
             // A review whose doubt can no longer be read answers nothing, and
-            // says so rather than disappearing.
-            MastersRecord::Pending | MastersRecord::NoDoubt
+            // says so rather than disappearing: a review record outranks a
+            // doubt file that is now absent.
+            MastersRecord::Pending
+            | MastersRecord::NoDoubt
+            | MastersRecord::DoubtRecordUnavailable
                 if kind.ack_path(imports, &line.batch_id).exists() =>
             {
                 any = true;
                 json!({"state":"stale","covers_doubt":false,"vouchers_unchanged":false})
+            }
+            MastersRecord::DoubtRecordUnavailable => {
+                any = true;
+                json!({"state":"doubt_record_unavailable"})
             }
             MastersRecord::Pending => {
                 any = true;

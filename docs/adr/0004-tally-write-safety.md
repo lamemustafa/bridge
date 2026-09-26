@@ -462,7 +462,10 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
      as its remaining record says, or as one dispatched before these records existed;
    - an observed doubt whose own file cannot be written is kept only by the check record, where
      a later verdict or a losing second post's pending mark can replace it; if neither can be
-     written, it is lost;
+     written, it is lost. Since #722 that verdict carries `doubt_record: unavailable`, and a
+     doubt the check record holds without its own file is refused for review
+     (`ack_doubt_record_unavailable`) and reported as `operator_review`
+     `doubt_record_unavailable`, rather than read as no doubt;
    - a readback that finishes a pending check in the moment before the post's own doubt lands
      can report the voucher verified once; later reads, and any amendment, see the doubt;
    - a losing second post's pending mark can replace a clean verdict, and the next readback
@@ -557,4 +560,7 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
 - **Back to a build before batch reviews (slice D2b).** That build reads a batch's
   `masters_ack.json` (version 2) as unreadable, and ignores `batch_step_ack.json`. Both are
   display-only, so no verdict changes.
+- **Back to a build before #722.** That build ignores `doubt_record` and reads a doubt the check
+  record holds without its own file as no doubt again (`ack_no_observed_doubt`, and
+  `operator_review` null). The verdict itself is unchanged.
 - Do not edit the journal or the check records by hand to get around any of these.

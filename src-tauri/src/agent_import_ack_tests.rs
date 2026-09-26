@@ -753,17 +753,15 @@ async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_requ
             if write_fails {
                 block(doubt_path.clone());
             }
-            if kind == "masters" {
-                server.record_masters_verdict_for(&line.batch_id, changed.clone(), true);
-                server.record_batch_step_verdict(&line.batch_id, &json!({"matches_created":true}));
+            // In the post's own order: the step verdict, then the masters
+            // verdict, which rewrites the check record around the step.
+            let (step, masters) = if kind == "masters" {
+                (json!({"matches_created":true}), changed.clone())
             } else {
-                server.record_masters_verdict_for(
-                    &line.batch_id,
-                    json!({"state":"unchanged"}),
-                    true,
-                );
-                server.record_batch_step_verdict(&line.batch_id, &step);
-            }
+                (step.clone(), json!({"state":"unchanged"}))
+            };
+            server.record_batch_step_verdict(&line.batch_id, &step);
+            server.record_masters_verdict_for(&line.batch_id, masters, true);
             if write_fails {
                 fs::remove_dir_all(&doubt_path).unwrap();
             }
@@ -784,6 +782,18 @@ async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_requ
                 } else {
                     Value::Null
                 },
+                "{kind}: {check}"
+            );
+            // Marked or not, the verdict is still doubt.
+            let expected = if kind == "masters" {
+                "posted_under_changed_masters"
+            } else {
+                "batch_step_unconfirmed"
+            };
+            assert_eq!(
+                post_doubt(read_masters_check(&imports, &line.batch_id).as_ref(), 2)
+                    .map(|(code, _)| code),
+                Some(expected),
                 "{kind}: {check}"
             );
             if !write_fails {
