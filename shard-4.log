@@ -1,0 +1,290 @@
+A02 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+F02 killed (full) by 1: tests/parity.rs::a_repeated_id_or_an_unknown_key_is_reported
+A01 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+F01 killed (full) by 1: tests/parity.rs::a_repeated_id_or_an_unknown_key_is_reported
+A04 survived (full)
+A05 killed (full) by 3: src/lib.rs::creditor_ageing_43bh::tests::same_day_bills_come_before_payments_and_excess_becomes_an_advance, src/lib.rs::creditor_ageing_43bh::tests::the_opening_lot_is_tracked_by_position_not_date, tests/edge_books.rs::every_edge_book_matches_the_reference
+A03 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A06 killed (full) by 3: src/lib.rs::creditor_ageing_43bh::tests::same_day_bills_come_before_payments_and_excess_becomes_an_advance, tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+A07 killed (full) by 2: src/lib.rs::creditor_ageing_43bh::tests::the_opening_lot_is_tracked_by_position_not_date, tests/edge_books.rs::every_edge_book_matches_the_reference
+A08 killed (full) by 1: src/lib.rs::creditor_ageing_43bh::tests::the_opening_lot_is_tracked_by_position_not_date
+A09 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A10 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A11 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A13 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A12 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+A14 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A15 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A16 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A17 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A18 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A19 survived (full)
+A22 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A21 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A20 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A23 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+A24 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A26 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+A25 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A31 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+A32 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R01 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R02 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R03 killed (full) by 2: src/lib.rs::creditor_ageing_43bh::tests::a_post_year_payment_settles_the_oldest_lot_first, tests/edge_books.rs::every_edge_book_matches_the_reference
+R04 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+R05 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R06 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R07 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R08 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R09 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+R22 killed (full) by 1: src/lib.rs::creditor_ageing_43bh::tests::the_opening_lot_is_tracked_by_position_not_date
+A37 killed (full) by 1: src/lib.rs::creditor_ageing_43bh::tests::a_lag_is_bounded_by_pythons_date_range
+C1-01 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-02 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-03 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-04 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-06 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-05 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-07 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-09 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-08 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-10 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-11 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-12 killed (full) by 2: src/lib.rs::tds_payees::tests::two_payees_sharing_a_figure_id_are_refused, tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-13 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-14 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-15 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-16 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-18 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-17 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-19 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-20 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-22 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-23 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-21 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-24 killed (full) by 2: src/lib.rs::tds_payees::tests::deductor_status_is_never_assumed_for_an_individual_or_huf, tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-25 killed (full) by 2: src/lib.rs::tds_payees::tests::deductor_status_is_never_assumed_for_an_individual_or_huf, tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-26 killed (full) by 2: src/lib.rs::tds_payees::tests::deductor_status_is_never_assumed_for_an_individual_or_huf, tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-27 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-28 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-29 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-30 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-31 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C1-32 killed (full) by 1: src/lib.rs::tds_payees::tests::py_format_g_matches_python
+C1-39 killed (full) by 1: src/lib.rs::tds_payees::tests::two_payees_sharing_a_figure_id_are_refused
+C2-01 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-02 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-03 killed (full) by 3: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering, tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+C2-04 killed (full) by 2: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering, tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-05 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-06 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+C2-07 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-08 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+C2-09 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-10 killed (full) by 2: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering, tests/edge_books.rs::every_edge_book_matches_the_reference
+C2-11 killed (full) by 1: tests/edge_books.rs::the_26as_invariants_catch_a_row_of_the_wrong_part
+C2-37 killed (full) by 1: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+C2-36 killed (full) by 1: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+C2-38 killed (full) by 1: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+C2-39 killed (full) by 1: tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+D1-01 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+D1-02 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-03 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-04 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-05 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-06 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-07 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-08 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-10 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-11 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-09 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-12 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-13 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-14 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-15 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-16 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-18 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-17 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+D1-19 killed (full) by 1: src/lib.rs::loans_interest::tests::two_vouchers_sharing_a_row_figure_id_are_refused
+D1-21 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+SB-09 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E2B-04 killed (full) by 1: tests/edge_books.rs::a_voucher_reference_is_built_as_text_or_refused
+E2A-01 killed (full) by 2: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order, tests/edge_books.rs::every_edge_book_matches_the_reference
+E2A-02 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+E2A-03 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+E2A-05 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-04 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-06 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E2A-07 killed (full) by 2: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows, tests/edge_books.rs::every_edge_book_matches_the_reference
+E2A-08 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+E2A-09 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::the_window_holds_its_first_and_last_days_and_lies_inside_the_year
+E2A-10 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E2A-11 killed (full) by 1: tests/edge_books.rs::every_edge_book_matches_the_reference
+E2A-12 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E2A-13 killed (full) by 1: tests/edge_books.rs::a_repeated_books_guid_is_refused_not_panicked
+E2A-14 killed (full) by 2: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows, tests/edge_books.rs::every_edge_book_matches_the_reference
+E2A-16 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::the_window_holds_its_first_and_last_days_and_lies_inside_the_year
+E2A-17 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+E2A-18 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+E2A-23 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-19 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::the_window_holds_its_first_and_last_days_and_lies_inside_the_year
+E2A-24 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+E2A-25 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+E2A-27 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-26 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-28 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-29 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-31 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-36 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-32 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-30 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-39 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-37 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-38 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-40 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-43 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-41 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-42 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-44 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-45 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-47 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E2A-46 killed (full) by 1: src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+E3A-25 killed (full) by 3: src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code, tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E3A-26 killed (full) by 1: src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+E3A-27 killed (full) by 1: src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+E3A-28 killed (full) by 2: src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E3A-29 killed (full) by 1: src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+E3A-30 killed (full) by 2: tests/edge_books.rs::every_edge_book_matches_the_reference, tests/registry.rs::every_registered_test_matches_its_synthetic_golden
+E3A-33 killed (full) by 1: src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+
+158 of 158 killed
+
+warning: 128 killed by fewer than 2 tests (a lower bound in killers-first mode):
+  F01 (full): tests/parity.rs::a_repeated_id_or_an_unknown_key_is_reported
+  F02 (full): tests/parity.rs::a_repeated_id_or_an_unknown_key_is_reported
+  A01 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A02 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A03 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A08 (full): src/lib.rs::creditor_ageing_43bh::tests::the_opening_lot_is_tracked_by_position_not_date
+  A09 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A10 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A11 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A13 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A14 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A15 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A16 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A17 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A18 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A20 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A21 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A22 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A24 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A25 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A31 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  A32 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R01 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R02 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R05 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R06 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R07 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R08 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R09 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  R22 (full): src/lib.rs::creditor_ageing_43bh::tests::the_opening_lot_is_tracked_by_position_not_date
+  A37 (full): src/lib.rs::creditor_ageing_43bh::tests::a_lag_is_bounded_by_pythons_date_range
+  C1-01 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-02 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-03 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-04 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-05 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-06 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-07 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-08 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-09 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-10 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-11 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-13 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-14 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-15 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-16 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-17 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-18 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-19 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-20 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-21 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-22 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-23 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-27 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-28 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-29 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-30 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-31 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C1-32 (full): src/lib.rs::tds_payees::tests::py_format_g_matches_python
+  C1-39 (full): src/lib.rs::tds_payees::tests::two_payees_sharing_a_figure_id_are_refused
+  C2-01 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C2-02 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C2-05 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C2-07 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C2-09 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  C2-11 (full): tests/edge_books.rs::the_26as_invariants_catch_a_row_of_the_wrong_part
+  C2-36 (full): tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+  C2-37 (full): tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+  C2-38 (full): tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+  C2-39 (full): tests/edge_books.rs::each_26as_invariant_fires_on_its_own_tampering
+  D1-02 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-03 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-04 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-05 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-06 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-07 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-08 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-09 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-10 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-11 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-12 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-13 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-14 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-15 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-16 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-17 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-18 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  D1-19 (full): src/lib.rs::loans_interest::tests::two_vouchers_sharing_a_row_figure_id_are_refused
+  D1-21 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  E2B-04 (full): tests/edge_books.rs::a_voucher_reference_is_built_as_text_or_refused
+  E2A-02 (full): src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+  E2A-03 (full): src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+  E2A-04 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-05 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-08 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  E2A-09 (full): src/lib.rs::bank_reconciliation::tests::the_window_holds_its_first_and_last_days_and_lies_inside_the_year
+  E2A-11 (full): tests/edge_books.rs::every_edge_book_matches_the_reference
+  E2A-13 (full): tests/edge_books.rs::a_repeated_books_guid_is_refused_not_panicked
+  E2A-16 (full): src/lib.rs::bank_reconciliation::tests::the_window_holds_its_first_and_last_days_and_lies_inside_the_year
+  E2A-17 (full): src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+  E2A-18 (full): src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+  E2A-19 (full): src/lib.rs::bank_reconciliation::tests::the_window_holds_its_first_and_last_days_and_lies_inside_the_year
+  E2A-23 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-24 (full): src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+  E2A-25 (full): src/lib.rs::bank_reconciliation::tests::a_match_takes_the_nearest_row_within_re_1_and_7_days_once_in_date_order
+  E2A-26 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-27 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-28 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-29 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-30 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-31 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-32 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-36 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-37 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-38 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-39 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-40 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-41 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-42 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-43 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-44 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-45 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-46 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E2A-47 (full): src/lib.rs::bank_reconciliation::tests::splits_take_the_first_combination_in_date_order_within_7_days_and_retire_their_rows
+  E3A-26 (full): src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+  E3A-27 (full): src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+  E3A-29 (full): src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
+  E3A-33 (full): src/lib.rs::stock_read::tests::the_reader_reads_what_the_reference_reads_and_refuses_by_code
