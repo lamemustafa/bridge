@@ -236,6 +236,13 @@ test("a path row resolving outside its fixture root fails with its own message",
     );
     const output = runGateExpectingFailure(root);
     assert.match(output, /scripts\/fixtures\/shared\.bin: a hash row in .* resolves outside /);
+    // The control: the same row inside its own fixture root passes.
+    await writeFile(join(fixtures, "shared.bin"), bytes);
+    await writeFile(
+      join(fixtures, "CAPTURE_PROVENANCE.md"),
+      `| \`./shared.bin\` | ${bytes.length} | \`${sha256}\` |\n`,
+    );
+    assert.match(runGate(root), /\(1 captured-fixture hash\(es\) verified/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -255,6 +262,13 @@ test("a path row naming a provenance record fails with its own message", async (
     );
     const output = runGateExpectingFailure(root);
     assert.match(output, /agent\/NOTES\.md: a hash row in .* names a provenance record/);
+    // The control: the same row naming a fixture with those bytes passes.
+    await writeFile(join(fixtures, "agent", "notes.bin"), text);
+    await writeFile(
+      join(fixtures, "CAPTURE_PROVENANCE.md"),
+      `| \`agent/notes.bin\` | ${text.length} | \`${sha256}\` |\n`,
+    );
+    assert.match(runGate(root), /\(1 captured-fixture hash\(es\) verified/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
