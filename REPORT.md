@@ -31,3 +31,21 @@ It needs a choice between a `.cmd` stand-in and a test binary, plus a Windows mu
 
 ## 2026-09-26T06:11Z: #696 draft PR #733
 Head `db04bd28aa1d61a6984fda7024ad32a0c2e3b36c`. Net -49 LOC. Sonnet review is pending.
+
+## 2026-09-26T06:27Z: #696 PR #733, ready
+Head `3792b5f84dc5e9d35cacf7812e7e648e260f27ad`. Net -33 LOC. Sonnet: a P2 (CDATA in LINEERROR, in the shared protocol reader, pre-existing for the `&` hard failure) is filed as **#735**, not fixed here. The P3 (empty LINEERROR) is fixed.
+
+## 2026-09-26T06:27Z: #680 draft PR #734
+Head `959c2e15839abfa00e5ba11eaab3b12c8cd6496b`. Test-only (+109). The mutant that disables the pre-split branch fails only the new test (151 other window tests pass). Sonnet review is pending.
+
+## 2026-09-26T06:27Z: #632 draft PR #736 (pinned; part of #632)
+Head `4e6000e944d0259fde56eff9c4a0af5dbb2fa0be`. Option (b)-text only, put in AMENDMENT_WARNING/NEXT_STEP. The catalog line is left alone because #708 edits it. (a) and the (b) refusal stay deferred. Sonnet review is pending.
+
+## 2026-09-26T06:27Z: #557 skipped
+Blocked on #686, per the owner's comment. The tool is disabled, and the fix lands with the qualification.
+
+## 2026-09-26T06:27Z: #667 skipped
+The owner's trade-off ("Not implemented; the owner's call"). The mutation runner also sits beside `lane-e`'s `mutations.json` work.
+
+## 2026-09-26T06:27Z: new issue #735
+parse_import_outcome keeps CDATA markup in LINEERROR and refuses the whole outcome on a CDATA with a bare `&`. Verified by a direct probe. Latent: not observed live.
