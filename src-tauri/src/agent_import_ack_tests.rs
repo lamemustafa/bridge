@@ -724,3 +724,183 @@ async fn a_batch_step_review_left_pending_is_refused_before_any_request() {
     );
     assert!(sent(simulator).is_empty());
 }
+
+/// The live batch post of slice D3 (a licensed TallyPrime 7.1 Silver lab, 50
+/// Journals on a synthetic company), as the journal and saved file recorded it.
+const D3_BATCH: &str = "bridge-1e5b2cd7-f5c6-4d51-adc9-53a4dfa370bb";
+const D3_GUID: &str = "17a10910-773c-42c6-bd66-7bba9a392536";
+
+/// One `verify_import` of that batch, answered in the captured order: `S` the
+/// status probe, then the company extents (`E`), the company high water
+/// (`H`), the voucher census (`C`) and the import verification read (`V`),
+/// each response as Tally sent it (fixtures `d3-batch-*`, one capture).
+fn d3_batch_readback() -> Vec<ScenarioPlan> {
+    let extent = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-company-extent.utf16le.xml"
+    ));
+    let high_water = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-company-high-water.utf16le.xml"
+    ));
+    let census = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-voucher-census.utf16le.xml"
+    ));
+    let readback = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import-verification.utf16le.xml"
+    ));
+    "SEESESEHSHSEECSCSEEVSVSEEVSVSE"
+        .chars()
+        .map(|step| match step {
+            'S' => status(),
+            'E' => xml(extent.clone()),
+            'H' => xml(high_water.clone()),
+            'C' => xml(census.clone()),
+            _ => xml(readback.clone()),
+        })
+        .collect()
+}
+
+/// The sha256 of each request that capture carried, in the same order; `None`
+/// for the status probe.
+fn d3_batch_requests() -> Vec<Option<&'static str>> {
+    "SEESESEHSHSEECSCSEEVSVSEEVSVSE"
+        .chars()
+        .map(|step| match step {
+            'S' => None,
+            'E' => Some("9df2a53f085dac2636e9435462b612c1487ec6f903677815036c9f39163f7dd8"),
+            'H' => Some("0930288f6eb531926d018cc4762288084831b8fad16a554e48fafbd694e245c2"),
+            'C' => Some("5a9690e84fef530985b2444a0bc66cd5784a4467571da04e31559c72c6ba11f1"),
+            _ => Some("c25ed5f689596b2620c58f417af74217985fbbe54a12f2c317fd537f901ed85f"),
+        })
+        .collect()
+}
+
+/// A person reviews the doubted 50-voucher batch through the whole path: the
+/// read, the dialog, the second read and the write. The record binds every
+/// voucher as Tally holds it, in batch order, and a later readback reports it
+/// current. The step doubt is a local record written here; every Tally
+/// response is captured, and every request sent equals the captured one.
+#[tokio::test]
+async fn a_review_of_the_captured_50_voucher_batch_binds_every_voucher() {
+    let mut plans = d3_batch_readback();
+    plans.extend(d3_batch_readback());
+    plans.extend(d3_batch_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let origin =
+        super::super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    fs::write(
+        directory.path().join("agent-import-ledger.jsonl"),
+        include_str!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-journal.jsonl")
+            .replace("http://127.0.0.1:9001", &origin),
+    )
+    .unwrap();
+    let imports = server.imports_dir().unwrap();
+    fs::write(
+        imports.join(format!("{D3_BATCH}.xml")),
+        include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import.xml"),
+    )
+    .unwrap();
+    let step = json!({"state":"unmatched","target_voucher_step":{
+        "before":1419,"after":1470,"step":51,"reported_created":50,"matches_created":false}});
+    fs::write(
+        imports.join(format!("{D3_BATCH}.batch_step_doubt.json")),
+        serde_json::to_vec(&step).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        imports.join(format!("{D3_BATCH}.masters_check.json")),
+        serde_json::to_vec(
+            &json!({"state":"not_checked","reason":"masters_unmoved","batch_step":step}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let args = json!({"company_guid":D3_GUID,"batch_id":D3_BATCH,"doubt":"batch_step"});
+    let approval = ScriptedApproval::approving();
+
+    let response = acknowledge(&server, args.clone(), approval.clone()).await;
+    assert!(
+        response["structuredContent"]["result"]["error"].is_null(),
+        "{response}"
+    );
+    assert_eq!(approval.reviews().len(), 1, "{response}");
+    let review = &approval.reviews()[0];
+    for shown in [
+        "Record that you reviewed 50 vouchers in \"BRIDGE AMEND LAB\"",
+        "its voucher mark moved by 51 (from 1419 to 1470); Tally reported creating 50.",
+        "Dates: 20260401 to 20260401  ALTERIDs: 1420 to 1469",
+        "50 entries  \"Test Expense B\"",
+        "50 entries  \"Cash\"",
+        "I reviewed these 50 vouchers in Tally.",
+    ] {
+        assert!(review.contains(shown), "{shown}: {review}");
+    }
+
+    // The batch record: version 2, the step doubt, every voucher in order.
+    let record: Value = serde_json::from_slice(
+        &fs::read(imports.join(format!("{D3_BATCH}.batch_step_ack.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["version"], 2, "{record}");
+    assert_eq!(record["doubt"], "batch_step");
+    assert_eq!(
+        record["doubt_sha256"],
+        crate::agent::sha256_hex(&serde_json::to_vec(&step).unwrap())
+    );
+    let vouchers = record["vouchers"].as_array().unwrap();
+    assert_eq!(
+        vouchers
+            .iter()
+            .map(|voucher| (
+                voucher["bridge_txn_id"].as_str().unwrap().to_string(),
+                voucher["alter_id"].as_u64().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        (1..=50)
+            .map(|index| (format!("D3-{index:03}"), 1419 + index))
+            .collect::<Vec<_>>()
+    );
+    assert!(!imports
+        .join(format!("{D3_BATCH}.masters_ack.json"))
+        .exists());
+
+    // A later readback keeps the batch's verdict and reports the review.
+    let verified = server
+        .call_tool(
+            "verify_import",
+            json!({"company_guid":D3_GUID,"batch_id":D3_BATCH}),
+        )
+        .await;
+    let result = &verified["structuredContent"]["result"];
+    assert_eq!(result["counts"]["posted_verified"], 50, "{verified}");
+    assert_eq!(
+        result["dispatch"]["state"], "reconciliation_required",
+        "{verified}"
+    );
+    assert_eq!(
+        result["operator_review"]["batch_step"]["state"], "current",
+        "{verified}"
+    );
+    assert_eq!(
+        result["operator_review"]["masters"],
+        Value::Null,
+        "{verified}"
+    );
+
+    // Every request Bridge sent is the one the capture answered.
+    let requests = sent(simulator);
+    let expected = [
+        d3_batch_requests(),
+        d3_batch_requests(),
+        d3_batch_requests(),
+    ]
+    .concat();
+    assert_eq!(requests.len(), expected.len(), "{requests:?}");
+    for (index, (request, expected)) in requests.iter().zip(expected).enumerate() {
+        match expected {
+            None => assert_eq!(request.method, "GET", "request {index}"),
+            Some(sha256) => assert_eq!(request.request_body_sha256, sha256, "request {index}"),
+        }
+    }
+}
