@@ -334,6 +334,24 @@ fn a_review_names_its_doubt_and_two_doubts_need_a_name() {
         (DoubtKind::BatchStep, doubt()),
     ];
     assert_eq!(select_doubt(None, &step_only), Ok(DoubtKind::BatchStep));
+    // A doubt held only by the check record is observed too (#722): beside
+    // another doubt it needs a name, and alone it is the one chosen.
+    let masters_unavailable = [
+        (DoubtKind::Masters, MastersRecord::DoubtRecordUnavailable),
+        (DoubtKind::BatchStep, doubt()),
+    ];
+    assert_eq!(
+        select_doubt(None, &masters_unavailable),
+        Err("ack_doubt_ambiguous")
+    );
+    let step_unavailable = [
+        (DoubtKind::Masters, NoDoubt),
+        (DoubtKind::BatchStep, MastersRecord::DoubtRecordUnavailable),
+    ];
+    assert_eq!(
+        select_doubt(None, &step_unavailable),
+        Ok(DoubtKind::BatchStep)
+    );
     // A single post can hold no step doubt.
     let single = [(DoubtKind::Masters, doubt())];
     assert_eq!(select_doubt(None, &single), Ok(DoubtKind::Masters));
@@ -609,6 +627,73 @@ fn a_batch_kind_whose_verdict_is_pending_reads_pending() {
     assert_eq!(review["masters"], json!({"state":"pending"}), "{review}");
     // Control: both recorded, no doubt observed, nothing to report.
     assert_eq!(check("unchanged", "matched"), None);
+}
+
+/// A doubt the check record holds whose own file is absent reads
+/// `doubt_record_unavailable`, not `null` (#722): the verdict counts it as
+/// doubt, and no review can bind to it. For each kind, and for one voucher.
+#[test]
+fn a_doubt_whose_own_file_was_not_written_reads_doubt_record_unavailable() {
+    let imports = tempfile::tempdir().unwrap();
+    let unavailable = json!({"state":"doubt_record_unavailable"});
+    let check = |line: &ImportLedgerLine, masters: &str, step: &str| {
+        fs::write(
+            masters_check_path(imports.path(), BATCH),
+            serde_json::to_vec(&json!({"state":masters,"batch_step":{"state":step}})).unwrap(),
+        )
+        .unwrap();
+        operator_review(imports.path(), line, &batch_rows(line))
+    };
+    let batch = posted_batch(2);
+    let review = check(&batch, "posted_under_changed_masters", "matched").unwrap();
+    assert_eq!(review["masters"], unavailable, "{review}");
+    assert_eq!(review["batch_step"], Value::Null, "{review}");
+    let review = check(&batch, "unchanged", "unmatched").unwrap();
+    assert_eq!(review["batch_step"], unavailable, "{review}");
+    assert_eq!(review["masters"], Value::Null, "{review}");
+    let single = posted_batch(1);
+    assert_eq!(
+        check(&single, "posted_under_changed_masters", "matched"),
+        Some(unavailable)
+    );
+    // A review already recorded outranks the absent file: it reads stale,
+    // as a review whose doubt can no longer be read does, for each kind.
+    for (kind, masters, step) in [
+        (
+            DoubtKind::Masters,
+            "posted_under_changed_masters",
+            "matched",
+        ),
+        (DoubtKind::BatchStep, "unchanged", "unmatched"),
+    ] {
+        fs::write(kind.ack_path(imports.path(), BATCH), b"{}").unwrap();
+        let review = check(&batch, masters, step).unwrap();
+        assert_eq!(review[kind.name()]["state"], "stale", "{review}");
+        fs::remove_file(kind.ack_path(imports.path(), BATCH)).unwrap();
+    }
+    fs::write(masters_ack_path(imports.path(), BATCH), b"{}").unwrap();
+    let review = check(&single, "posted_under_changed_masters", "matched").unwrap();
+    assert_eq!(review["state"], "stale", "{review}");
+    fs::remove_file(masters_ack_path(imports.path(), BATCH)).unwrap();
+    // Control: with each doubt's own file written, the review reads it.
+    fs::write(
+        super::masters_doubt_path(imports.path(), BATCH),
+        MASTERS_DOUBT,
+    )
+    .unwrap();
+    let review = check(&batch, "posted_under_changed_masters", "matched").unwrap();
+    assert_eq!(review["masters"]["state"], "absent", "{review}");
+    assert_eq!(
+        check(&single, "posted_under_changed_masters", "matched").unwrap()["state"],
+        "absent"
+    );
+    fs::write(
+        super::batch_step_doubt_path(imports.path(), BATCH),
+        STEP_DOUBT,
+    )
+    .unwrap();
+    let review = check(&batch, "unchanged", "unmatched").unwrap();
+    assert_eq!(review["batch_step"]["state"], "absent", "{review}");
 }
 
 /// A debit total is the negated sum of what Tally holds, never each line's

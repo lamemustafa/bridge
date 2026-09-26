@@ -463,7 +463,12 @@ gate (owner, 21 September): what matters is a second writer, not the licence tie
      as its remaining record says, or as one dispatched before these records existed;
    - an observed doubt whose own file cannot be written is kept only by the check record, where
      a later verdict or a losing second post's pending mark can replace it; if neither can be
-     written, it is lost;
+     written, it is lost. Since #722 that verdict carries `doubt_record: unavailable`, and a
+     doubt the check record holds without its own file, whether its write failed or the file
+     was lost later, is refused for review (`ack_doubt_record_unavailable`) and reported as
+     `operator_review` `doubt_record_unavailable`, rather than read as no doubt. A review
+     recorded before the file went missing reads stale. The same holds for a batch's step
+     doubt;
    - a readback that finishes a pending check in the moment before the post's own doubt lands
      can report the voucher verified once; later reads, and any amendment, see the doubt;
    - a losing second post's pending mark can replace a clean verdict, and the next readback
@@ -532,9 +537,12 @@ dialog has not yet been shown on Windows or macOS (UNVERIFIED).
 
 The step verdict is durable. It is recorded beside the masters verdict in the masters-check
 records, pending before the POST, and an observed mismatch is kept in its own file that nothing
-removes. So no later readback can lose it, and neither verdict masks the other. A mismatch,
-or a verdict never recorded, reads `reconciliation_required` with `batch_step_unconfirmed`. On a
-multi-user book a person's edit during the post trips it; that is accepted, and loud.
+removes. So no later readback can lose it, and neither verdict masks the other. If that file
+cannot be written, the check record keeps the mismatch, marked `doubt_record: unavailable`
+(#722), as it keeps a masters doubt (the residuals of #239's window 3, "After the POST").
+A mismatch, or a verdict never recorded, reads `reconciliation_required` with
+`batch_step_unconfirmed`. On a multi-user book a person's edit during the post trips it; that
+is accepted, and loud.
 
 **Limits.**
 - A doubted batch keeps its verdict. `acknowledge_post_review` records that a person reviewed
@@ -543,7 +551,10 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
   ALTERID and fingerprint, in batch order. A review covers only the doubt it names; an edit to
   any voucher makes it stale, naming the voucher. It is refused unless all N read back. It
   changes no verdict. A `batch_step` review attests only the batch's own vouchers, not that
-  nothing else in the company changed.
+  nothing else in the company changed. A doubt the check record holds without its own file
+  has no bytes to bind, so it is refused (`ack_doubt_record_unavailable`, #722). Beside
+  another observed doubt it needs a name; a check still pending or unreadable is not observed
+  when the choice is made, which is before the read that can finish it.
 - The N-voucher step is PARTIAL on raw-gateway lab scripts (protocol reference §11c.5).
   Through Bridge's own post path it is UNVERIFIED until the lab proof (slice D3).
 - The desktop stays single-voucher `JournalOnly`.
@@ -558,4 +569,7 @@ multi-user book a person's edit during the post trips it; that is accepted, and 
 - **Back to a build before batch reviews (slice D2b).** That build reads a batch's
   `masters_ack.json` (version 2) as unreadable, and ignores `batch_step_ack.json`. Both are
   display-only, so no verdict changes.
+- **Back to a build before #722.** That build ignores `doubt_record` and reads a doubt the check
+  record holds without its own file as no doubt again (`ack_no_observed_doubt`, and
+  `operator_review` null). The verdict itself is unchanged.
 - Do not edit the journal or the check records by hand to get around any of these.
