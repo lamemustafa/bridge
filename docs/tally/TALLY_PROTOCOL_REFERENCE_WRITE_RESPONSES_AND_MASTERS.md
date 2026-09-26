@@ -724,7 +724,7 @@ Every voucher below was imported as a file over the gateway, with no errors. The
 | uppercase plain first, then lowercase CR LF | the uppercase plain name (a Payment) | the **uppercase plain** ledger |
 | uppercase plain first, then lowercase CR LF | the lowercase CR LF name | the **lowercase CR LF** ledger, the one created **second** |
 
-**When a ledger carries exactly the imported name, the import posts to it**, and creation order does not decide. In the first three rows the matched ledger was also the older twin. The last row names the newer one and still posts to the exact match.
+**When a ledger carries exactly the imported name, the import posts to it**, and creation order does not decide. In the first three rows the matched ledger was also the older twin. The last row names the newer one and still posts to the exact match. That voucher was a probe: a file built for the uppercase ledger, before the twin existed, with its one `LEDGERNAME` then changed to the lowercase CR LF name. `verify_import` against the built batch reported it `posted_divergent`, naming both ledgers.
 
 **Not measured:**
 - a name that matches **neither** twin exactly, only folding to both (e.g. mixed case without the CR LF): which twin Tally picks there is open;
