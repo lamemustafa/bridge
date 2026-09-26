@@ -325,3 +325,14 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - E4 re-stacked on E3a's head 2ce19df6 (ec130793). Every crate file differs from E3a by exactly E4's own patch, #727's cap is present, non-crate files equal master, and mutations.json is E3a's 597 plus E4-01..35. 351 tests; clippy and fmt clean. The Sonnet review found none; pushed.
 - E4 full run on ec130793 (4 shards on `cloud/lane-e-e4-shards`): **632 run, 627 killed**, 5 accepted survivors; all 35 E4 killed. `--verify`: 632/632. Master moved to 35db3e79 with its crate unchanged since #727. Sonnet pre-push check: none. **Pushed 1ae8fca5.**
 - E4's PR opens after #744 merges (then merge master and re-check the crate tree; a crate change reruns the records).
+
+## 2026-09-26 11:00 UTC — #744: independent review answered; fixes pushed (c987d12a); records run in progress
+
+- Lane D's independent review of 2ce19df6: no P1. P2-1: five stated branches were unreached (ISINTEGRATED unknown, closing from_masters, typed-in population, nil opening seed, goods-only at close). P2-2: the went-negative limit (the reference's text) misstates the method.
+- Fixed in b87be93d, then c987d12a from an Opus check of it:
+  - tests pin all five, plus optional vouchers and the `stock_inputs` pass-through;
+  - E3A-35..41 added and E3A-31 re-pointed; all killed (sampled);
+  - one new edge-book test (E3a now has 4);
+  - module docs name the limit's three loose claims.
+  348 tests; clippy and fmt clean. Sonnet pre-push check: no P1 or P2 (one P3: c987d12a's message says `Book::from_read` for `book::load_book`). **Pushed**, and replied once on #744.
+- E3a full run on c987d12a, sharded to `cloud/lane-e-e3a-shards-5`. Next: records, #744 body update (and the `load_book` name fix), then E4 re-stack and rerun.
