@@ -187,6 +187,15 @@ fn structural_breaks_are_refused_with_their_own_codes() {
         ("<ENVELOPE><BSNAME><DSPACCNAME><DSPDISPNAME> </DSPDISPNAME></DSPACCNAME></BSNAME><BSAMT><BSSUBAMT/><BSMAINAMT/></BSAMT></ENVELOPE>".to_string(), "statement_line_name_empty"),
         ("<OTHER/>".to_string(), "statement_root_not_envelope"),
         (format!("<ENVELOPE>{name}{amounts}"), "statement_envelope_unterminated"),
+        ("<ENVELOPE><OTHER/></ENVELOPE>".to_string(), "statement_unexpected_empty_element"),
+        (format!("<ENVELOPE><BSNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_name_missing"),
+        (format!("<ENVELOPE><BSNAME><OTHER/></BSNAME>{amounts}</ENVELOPE>"), "statement_name_shape"),
+        (format!("<ENVELOPE><BSNAME><DSPACCNAME></DSPACCNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_name_missing"),
+        (format!("<ENVELOPE><BSNAME><DSPACCNAME><OTHER/></DSPACCNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_name_shape"),
+        (format!("<ENVELOPE><BSNAME><DSPACCNAME><DSPDISPNAME>A</DSPDISPNAME></DSPACCNAME><DSPACCNAME><DSPDISPNAME>B</DSPDISPNAME></DSPACCNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_duplicate_name_element"),
+        (format!("<ENVELOPE><BSNAME><DSPACCNAME><DSPDISPNAME>A</DSPDISPNAME><DSPDISPNAME>B</DSPDISPNAME></DSPACCNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_duplicate_name_element"),
+        (format!("<ENVELOPE><BSNAME><DSPACCNAME><DSPDISPNAME>A<B/></DSPDISPNAME></DSPACCNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_scalar_not_text_only"),
+        (format!("<ENVELOPE><BSNAME><DSPACCNAME><DSPDISPNAME>A &nbsp; B</DSPDISPNAME></DSPACCNAME></BSNAME>{amounts}</ENVELOPE>"), "statement_general_reference_invalid"),
     ];
     for (xml, code) in cases {
         assert_eq!(

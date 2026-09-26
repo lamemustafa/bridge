@@ -1,10 +1,13 @@
-//! Most tests pair a captured Trial Balance from one synthetic company with a
+//! Two tests use one company's captures of one window: the Trial Balance,
+//! group tree and both of Tally's own statements. They prove the derivation
+//! ties, and that the gate passes, on a full year and on a part-year window.
+//!
+//! The rest pair a captured Trial Balance from one synthetic company with a
 //! verbatim group tree captured from another. Every `PARENT` in those Trial
 //! Balances names a group Tally creates in every company, so each hop resolves
 //! through Tally's own default tree. That pairing crosses companies and proves
-//! classification and arithmetic only. The tie itself is proven by the last
-//! test, where the Trial Balance, group tree and both statements are one
-//! company's captures of one window (#692).
+//! classification, arithmetic and the gate's clauses only. Tally's Balance
+//! Sheet in those tests is synthetic, built to tie or to fail one clause.
 //!
 //! Tests marked "synthetic mutation" alter a captured row or group to reach a
 //! branch the captures do not; they make no claim about Tally output.
@@ -12,8 +15,8 @@
 use super::*;
 use bridge_tally_protocol::{
     native_outstandings::parse_native_group_snapshot,
-    native_statement_reports::{NativeStatementKind, NativeStatementLine},
-    native_trial_balance::parse_native_trial_balance,
+    native_statement_reports::{parse_native_statement, NativeStatementLine},
+    native_trial_balance::{parse_native_trial_balance, NativeTrialBalance},
     PartyLedgerMasterFieldObservation,
 };
 
@@ -34,8 +37,54 @@ fn groups() -> Vec<TallyNamedMaster> {
     parse_native_group_snapshot(GROUPS, GROUPS_GUID).unwrap()
 }
 
+fn known_lab() -> NativeTrialBalance {
+    parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap()
+}
+
+fn admitted(report: NativeTrialBalance) -> SingleCurrencyTrialBalance {
+    SingleCurrencyTrialBalance::admitted_for_tests(report)
+}
+
 fn decimal(value: &str) -> ExactDecimal {
     ExactDecimal::parse(value).unwrap()
+}
+
+fn statement(kind: NativeStatementKind, lines: &[(&str, &str, &str)]) -> NativeStatement {
+    let amount = |value: &str| {
+        if value.is_empty() {
+            NativeStatementAmount::Empty
+        } else {
+            NativeStatementAmount::Present(decimal(value))
+        }
+    };
+    NativeStatement {
+        kind,
+        lines: lines
+            .iter()
+            .map(|(name, sub, main)| NativeStatementLine {
+                name: name.to_string(),
+                sub: amount(sub),
+                main: amount(main),
+            })
+            .collect(),
+    }
+}
+
+fn balance_sheet(lines: &[(&str, &str, &str)]) -> NativeStatement {
+    statement(NativeStatementKind::BalanceSheet, lines)
+}
+
+/// A synthetic Tally Balance Sheet that ties to the known-lab derivation.
+fn known_lab_balance_sheet() -> NativeStatement {
+    balance_sheet(&[
+        ("Capital Account", "", ""),
+        ("Current Assets", "", "-11027.00"),
+        ("Profit & Loss A/c", "", "11027.00"),
+    ])
+}
+
+fn derive(report: NativeTrialBalance, tally: &NativeStatement) -> DerivedStatements {
+    derive_statements(&admitted(report), &groups(), tally).unwrap()
 }
 
 fn assert_sum(sum: &StatementSum, value: &str, present: usize, empty: usize) {
@@ -52,6 +101,26 @@ fn assert_established(result: &Established, value: &str) {
     }
 }
 
+fn blocked(reason: &'static str) -> Established {
+    Established::NotEstablished {
+        reason,
+        lines: Vec::new(),
+    }
+}
+
+fn differs(lines: &[&str]) -> Established {
+    Established::NotEstablished {
+        reason: "tally_balance_sheet_differs",
+        lines: lines.iter().map(|line| line.to_string()).collect(),
+    }
+}
+
+fn assert_every_result(derived: &DerivedStatements, expected: &Established) {
+    assert_eq!(&derived.gross_result, expected);
+    assert_eq!(&derived.net_result, expected);
+    assert_eq!(&derived.balance_sheet_profit_and_loss, expected);
+}
+
 fn line<'a>(lines: &'a [PrimaryGroupLine], reserved: &str) -> &'a PrimaryGroupLine {
     lines
         .iter()
@@ -59,10 +128,23 @@ fn line<'a>(lines: &'a [PrimaryGroupLine], reserved: &str) -> &'a PrimaryGroupLi
         .unwrap_or_else(|| panic!("no {reserved} line"))
 }
 
+fn root_parent(report: &NativeTrialBalance) -> PartyLedgerMasterFieldObservation {
+    report
+        .rows
+        .iter()
+        .find(|row| row.name == "Profit & Loss A/c")
+        .unwrap()
+        .parent
+        .clone()
+}
+
+fn row<'a>(report: &'a mut NativeTrialBalance, name: &str) -> &'a mut NativeTrialBalanceRow {
+    report.rows.iter_mut().find(|row| row.name == name).unwrap()
+}
+
 #[test]
 fn a_captured_trial_balance_splits_into_statement_lines() {
-    let report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
-    let derived = derive_statements(&report, &groups()).unwrap();
+    let derived = derive(known_lab(), &known_lab_balance_sheet());
 
     // The captured tree holds all fifteen reserved primary groups.
     assert_eq!(derived.profit_and_loss.len(), 6);
@@ -100,7 +182,13 @@ fn a_captured_trial_balance_splits_into_statement_lines() {
 #[test]
 fn an_opening_only_book_keeps_its_opening_difference_visible() {
     let report = parse_native_trial_balance(OPENING_YEAR, OPENING_YEAR_GUID).unwrap();
-    let derived = derive_statements(&report, &groups()).unwrap();
+    let tally = balance_sheet(&[
+        ("Capital Account", "", "125000.00"),
+        ("Current Liabilities", "", "88000.00"),
+        ("Profit & Loss A/c", "", ""),
+        ("Current Assets", "", "-262833.50"),
+    ]);
+    let derived = derive(report, &tally);
 
     assert!(derived.profit_and_loss.iter().all(|line| line.ledger_count == 0));
     assert_sum(&line(&derived.balance_sheet, "Capital Account").amount, "125000.00", 1, 0);
@@ -116,85 +204,147 @@ fn an_opening_only_book_keeps_its_opening_difference_visible() {
     assert_established(&derived.net_result, "0");
 }
 
-fn root_parent(report: &NativeTrialBalance) -> PartyLedgerMasterFieldObservation {
-    report
-        .rows
-        .iter()
-        .find(|row| row.name == "Profit & Loss A/c")
-        .unwrap()
-        .parent
-        .clone()
+#[test]
+fn a_p_and_l_line_is_the_window_movement_not_the_closing() {
+    // Synthetic mutation: the sales ledger opens at 100.00, so its closing
+    // (4127.00) and its movement (4027.00) differ.
+    let mut report = known_lab();
+    let sales = row(&mut report, "Ageing Sales");
+    sales.opening = NativeTrialBalanceAmount::Present(decimal("100.00"));
+    sales.closing = NativeTrialBalanceAmount::Present(decimal("4127.00"));
+    let tally = balance_sheet(&[
+        ("Current Assets", "", "-11027.00"),
+        ("Profit & Loss A/c", "", "11127.00"),
+    ]);
+    let derived = derive(report, &tally);
+
+    assert_sum(&line(&derived.profit_and_loss, "Sales Accounts").amount, "4027.00", 1, 1);
+    assert_established(&derived.net_result, "4027.00");
+    // The carried line is closings: 7000.00 on the ledger and 4127.00 of sales.
+    assert_established(&derived.balance_sheet_profit_and_loss, "11127.00");
 }
 
 #[test]
 fn a_ledger_under_a_user_created_primary_group_blocks_every_result() {
     // Synthetic mutation: a user-created primary group, and one captured
     // ledger moved under it.
-    let mut report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
+    let mut report = known_lab();
     let mut groups = groups();
     groups.push(TallyNamedMaster {
         name: "BRIDGE Synthetic Primary".to_string(),
         parent: root_parent(&report),
         reserved_name: Some(String::new()),
     });
-    let row = report.rows.iter_mut().find(|row| row.name == "Ageing Sales").unwrap();
-    row.parent = PartyLedgerMasterFieldObservation::Returned("BRIDGE Synthetic Primary".to_string());
+    row(&mut report, "Ageing Sales").parent =
+        PartyLedgerMasterFieldObservation::Returned("BRIDGE Synthetic Primary".to_string());
 
-    let derived = derive_statements(&report, &groups).unwrap();
+    let derived =
+        derive_statements(&admitted(report), &groups, &known_lab_balance_sheet()).unwrap();
     assert_eq!(line(&derived.profit_and_loss, "Sales Accounts").ledger_count, 0);
     assert_eq!(derived.unclassified.len(), 1);
     assert_eq!(derived.unclassified[0].reason, "primary_group_user_created");
-    let blocked = Established::NotEstablished {
-        reason: "unclassified_ledger_carries_an_amount",
-    };
-    assert_eq!(derived.gross_result, blocked);
-    assert_eq!(derived.net_result, blocked);
-    assert_eq!(derived.balance_sheet_profit_and_loss, blocked);
+    assert_every_result(&derived, &blocked("unclassified_ledger_carries_an_amount"));
 }
 
 #[test]
 fn an_unclassified_ledger_with_no_amount_blocks_nothing() {
     // Synthetic mutation: the captured all-empty ledger loses its parent group.
-    let mut report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
-    let row = report.rows.iter_mut().find(|row| row.name == "Ageing Bank").unwrap();
-    row.parent = PartyLedgerMasterFieldObservation::Returned("BRIDGE Absent Group".to_string());
+    let mut report = known_lab();
+    row(&mut report, "Ageing Bank").parent =
+        PartyLedgerMasterFieldObservation::Returned("BRIDGE Absent Group".to_string());
 
-    let derived = derive_statements(&report, &groups()).unwrap();
+    let derived = derive(report, &known_lab_balance_sheet());
     assert_eq!(derived.unclassified.len(), 1);
     assert_eq!(derived.unclassified[0].reason, "group_absent");
     assert_established(&derived.net_result, "4027.00");
 }
 
 #[test]
-fn a_stock_balance_blocks_the_profit_but_not_the_carried_line() {
-    // Synthetic mutation: a captured ledger with a non-zero closing moved
-    // under Stock-in-Hand.
-    let mut report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
-    let row = report.rows.iter_mut().find(|row| row.name == "Cash").unwrap();
-    row.parent = PartyLedgerMasterFieldObservation::Returned("Stock-in-Hand".to_string());
+fn a_stock_balance_blocks_every_result_including_the_carried_line() {
+    // Synthetic mutation: a captured ledger with a non-zero closing moved under
+    // Stock-in-Hand. Tally's carried line includes the change in stock, which
+    // the Trial Balance cannot give, so the carried line is blocked too.
+    let mut report = known_lab();
+    row(&mut report, "Cash").parent =
+        PartyLedgerMasterFieldObservation::Returned("Stock-in-Hand".to_string());
 
-    let derived = derive_statements(&report, &groups()).unwrap();
+    let derived = derive(report, &known_lab_balance_sheet());
     assert_eq!(derived.stock_ledger_count, 1);
-    let blocked = Established::NotEstablished {
-        reason: "closing_stock_not_derivable_from_trial_balance",
-    };
-    assert_eq!(derived.gross_result, blocked);
-    assert_eq!(derived.net_result, blocked);
-    assert_established(&derived.balance_sheet_profit_and_loss, "11027.00");
+    assert_every_result(&derived, &blocked("closing_stock_not_derivable_from_trial_balance"));
+}
+
+#[test]
+fn a_tally_line_that_differs_blocks_every_result_and_is_named() {
+    let tally = balance_sheet(&[
+        ("Current Assets", "", "-11026.00"),
+        ("Profit & Loss A/c", "", "11027.00"),
+    ]);
+    let derived = derive(known_lab(), &tally);
+    assert_every_result(&derived, &differs(&["Current Assets"]));
+}
+
+#[test]
+fn a_tally_line_with_an_amount_nothing_derived_matches_blocks_every_result() {
+    // What an inventory book's statement is expected to add: a line the Trial
+    // Balance cannot produce.
+    let tally = balance_sheet(&[
+        ("Current Assets", "", "-11027.00"),
+        ("Closing Stock", "", "500.00"),
+        ("Profit & Loss A/c", "", "11027.00"),
+    ]);
+    let derived = derive(known_lab(), &tally);
+    assert_every_result(&derived, &differs(&["Closing Stock"]));
+
+    // Both columns present is uncompared too, and carries an amount.
+    let tally = balance_sheet(&[
+        ("Current Assets", "-1.00", "-11027.00"),
+        ("Profit & Loss A/c", "", "11027.00"),
+    ]);
+    let derived = derive(known_lab(), &tally);
+    assert_every_result(&derived, &differs(&["Current Assets"]));
+}
+
+#[test]
+fn a_derived_line_that_tally_does_not_show_blocks_every_result() {
+    let tally = balance_sheet(&[("Profit & Loss A/c", "", "11027.00")]);
+    let derived = derive(known_lab(), &tally);
+    assert_every_result(&derived, &differs(&["Current Assets"]));
+}
+
+#[test]
+fn a_missing_profit_and_loss_ledger_blocks_the_carried_line() {
+    // Synthetic mutation: the reserved-root ledger removed from the capture.
+    let mut report = known_lab();
+    report.rows.retain(|row| row.name != "Profit & Loss A/c");
+    let derived = derive(report, &known_lab_balance_sheet());
+    assert_eq!(
+        derived.balance_sheet_profit_and_loss,
+        blocked("profit_and_loss_ledger_not_returned")
+    );
+    // Tally's carried line then has nothing to tie to, so the gate holds too.
+    assert_eq!(derived.net_result, differs(&["Profit & Loss A/c"]));
 }
 
 #[test]
 fn a_row_whose_columns_do_not_add_up_is_refused() {
     // Synthetic mutation: the one captured row with all four amounts present.
-    let mut report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
-    let row = report
-        .rows
-        .iter_mut()
-        .find(|row| row.name == "Ageing Customer A")
-        .unwrap();
-    row.closing = NativeTrialBalanceAmount::Present(decimal("-7277.01"));
+    let mut report = known_lab();
+    row(&mut report, "Ageing Customer A").closing =
+        NativeTrialBalanceAmount::Present(decimal("-7277.01"));
     assert_eq!(
-        derive_statements(&report, &groups()).unwrap_err(),
+        derive_statements(&admitted(report), &groups(), &known_lab_balance_sheet()).unwrap_err(),
+        StatementsError::RowInconsistent
+    );
+}
+
+#[test]
+fn a_closing_that_no_movement_explains_is_refused_even_with_empty_columns() {
+    // Synthetic mutation: the sales ledger keeps its 4027.00 closing but loses
+    // its credit, so its closing is in the carried line and not in the P&L.
+    let mut report = known_lab();
+    row(&mut report, "Ageing Sales").credit = NativeTrialBalanceAmount::PresentEmpty;
+    assert_eq!(
+        derive_statements(&admitted(report), &groups(), &known_lab_balance_sheet()).unwrap_err(),
         StatementsError::RowInconsistent
     );
 }
@@ -202,115 +352,43 @@ fn a_row_whose_columns_do_not_add_up_is_refused() {
 #[test]
 fn a_second_root_ledger_is_refused() {
     // Synthetic mutation: another captured ledger moved to the root.
-    let mut report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
+    let mut report = known_lab();
     let root = root_parent(&report);
-    report.rows.iter_mut().find(|row| row.name == "Cash").unwrap().parent = root;
+    row(&mut report, "Cash").parent = root;
     assert_eq!(
-        derive_statements(&report, &groups()).unwrap_err(),
+        derive_statements(&admitted(report), &groups(), &known_lab_balance_sheet()).unwrap_err(),
         StatementsError::RootLedgerRepeated
     );
 }
 
-fn statement(kind: NativeStatementKind, lines: &[(&str, &str, &str)]) -> NativeStatement {
-    let amount = |value: &str| {
-        if value.is_empty() {
-            NativeStatementAmount::Empty
-        } else {
-            NativeStatementAmount::Present(decimal(value))
-        }
-    };
-    NativeStatement {
-        kind,
-        lines: lines
-            .iter()
-            .map(|(name, sub, main)| NativeStatementLine {
-                name: name.to_string(),
-                sub: amount(sub),
-                main: amount(main),
-            })
-            .collect(),
-    }
+#[test]
+fn the_gate_takes_only_a_balance_sheet() {
+    let tally = statement(NativeStatementKind::ProfitAndLoss, &[("Sales Accounts", "", "4027.00")]);
+    assert_eq!(
+        derive_statements(&admitted(known_lab()), &groups(), &tally).unwrap_err(),
+        StatementsError::GateNotABalanceSheet
+    );
 }
 
 #[test]
-fn tie_out_reports_each_line_and_enforces_nothing() {
-    // Synthetic statements shaped like the captured Balance Sheet (a main
-    // amount per line), over the derived lines above.
-    let report = parse_native_trial_balance(KNOWN_LAB, KNOWN_LAB_GUID).unwrap();
-    let derived = derive_statements(&report, &groups()).unwrap();
-    let current_assets = line(&derived.balance_sheet, "Current Assets").display_name.clone();
-
-    let tie = tie_out(
+fn the_profit_and_loss_tie_is_reported_and_gates_nothing() {
+    let derived = derive(known_lab(), &known_lab_balance_sheet());
+    let tie = profit_and_loss_tie(
         &derived,
-        &statement(
-            NativeStatementKind::BalanceSheet,
-            &[
-                ("Capital Account", "", ""),
-                ("Sources of Funds :", "", "-1.00"),
-                (&current_assets, "", "-11027.00"),
-                ("Profit & Loss A/c", "", "11027.00"),
-            ],
-        ),
-    );
-    let statuses: Vec<_> = tie.lines.iter().map(|line| line.status.clone()).collect();
-    assert_eq!(
-        statuses,
-        vec![
-            // A primary group with no ledger, which Tally shows empty.
-            TieStatus::MatchedEmptyAsZero,
-            TieStatus::NotCompared {
-                reason: "no_derived_line_of_that_name"
-            },
-            TieStatus::Matched,
-            TieStatus::Matched,
-        ]
-    );
-    assert!(tie.derived_only.is_empty());
-
-    let tie = tie_out(
-        &derived,
-        &statement(
-            NativeStatementKind::BalanceSheet,
-            &[(&current_assets, "-1.00", "-11027.00"), ("Profit & Loss A/c", "", "11026.00")],
-        ),
+        &statement(NativeStatementKind::ProfitAndLoss, &[("Cost of Sales :", "", "-1.00")]),
     );
     assert_eq!(
         tie.lines[0].status,
         TieStatus::NotCompared {
-            reason: "both_tally_columns_present"
+            reason: "no_derived_line_of_that_name"
         }
     );
     assert_eq!(
-        tie.lines[1].status,
-        TieStatus::Differs {
-            derived: match &derived.balance_sheet_profit_and_loss {
-                Established::Established { value } => value.clone(),
-                other => panic!("{other:?}"),
-            }
-        }
+        tie.derived_only,
+        vec![line(&derived.profit_and_loss, "Sales Accounts").display_name.clone()]
     );
-
-    // A P&L without the derived Sales line names it as derived-only.
-    let tie = tie_out(
-        &derived,
-        &statement(NativeStatementKind::ProfitAndLoss, &[("Cost of Sales :", "", "")]),
-    );
-    assert_eq!(tie.derived_only, vec![line(&derived.profit_and_loss, "Sales Accounts").display_name.clone()]);
+    assert_established(&derived.net_result, "4027.00");
 }
-
-const READS_LAB_GUID: &str = "de2e15f2-6d42-4715-b6e7-b7a95a68abe8";
-const READS_LAB_TB: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_trial_balance_fy_live.utf16le.xml"
-);
-const READS_LAB_GROUPS: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_groups_fy_live.utf16le.xml"
-);
-const READS_LAB_BS: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_balance_sheet_fy_live.utf16le.xml"
-);
-const READS_LAB_PL: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_profit_and_loss_fy_live.utf16le.xml"
-);
 
 /// Decoded as production decodes a response: BOM-less UTF-16LE under the
 /// `charset=utf-16` content type Tally sent.
@@ -325,14 +403,61 @@ fn utf16(bytes: &[u8]) -> String {
     .text
 }
 
+struct Capture {
+    guid: &'static str,
+    trial_balance: &'static [u8],
+    groups: &'static [u8],
+    balance_sheet: &'static [u8],
+    profit_and_loss: &'static [u8],
+}
+
+impl Capture {
+    fn derive(&self) -> (DerivedStatements, TieOut) {
+        let report = parse_native_trial_balance(&utf16(self.trial_balance), self.guid).unwrap();
+        let groups = parse_native_group_snapshot(&utf16(self.groups), self.guid).unwrap();
+        let tally_balance_sheet =
+            parse_native_statement(NativeStatementKind::BalanceSheet, &utf16(self.balance_sheet))
+                .unwrap();
+        let tally_profit_and_loss = parse_native_statement(
+            NativeStatementKind::ProfitAndLoss,
+            &utf16(self.profit_and_loss),
+        )
+        .unwrap();
+        let derived =
+            derive_statements(&admitted(report), &groups, &tally_balance_sheet).unwrap();
+        let tie = profit_and_loss_tie(&derived, &tally_profit_and_loss);
+        (derived, tie)
+    }
+}
+
+fn statuses(tie: &TieOut) -> Vec<(&str, TieStatus)> {
+    tie.lines
+        .iter()
+        .map(|line| (line.name.as_str(), line.status.clone()))
+        .collect()
+}
+
 /// One company, one window, four captures read within two minutes: the Trial
-/// Balance and group tree derive the statements, and Tally's own two
-/// statements are the tie.
+/// Balance and group tree derive the statements, Tally's own Balance Sheet
+/// passes the gate, and Tally's own Profit and Loss ties.
 #[test]
-fn a_same_company_capture_ties_to_tallys_own_statements() {
-    let report = parse_native_trial_balance(&utf16(READS_LAB_TB), READS_LAB_GUID).unwrap();
-    let groups = parse_native_group_snapshot(&utf16(READS_LAB_GROUPS), READS_LAB_GUID).unwrap();
-    let derived = derive_statements(&report, &groups).unwrap();
+fn a_same_company_full_year_passes_the_gate() {
+    let (derived, tie) = Capture {
+        guid: "de2e15f2-6d42-4715-b6e7-b7a95a68abe8",
+        trial_balance: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_trial_balance_fy_live.utf16le.xml"
+        ),
+        groups: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_groups_fy_live.utf16le.xml"
+        ),
+        balance_sheet: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_balance_sheet_fy_live.utf16le.xml"
+        ),
+        profit_and_loss: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_profit_and_loss_fy_live.utf16le.xml"
+        ),
+    }
+    .derive();
 
     assert!(derived.unclassified.is_empty());
     assert_sum(&line(&derived.profit_and_loss, "Purchase Accounts").amount, "-4250.00", 1, 1);
@@ -340,20 +465,8 @@ fn a_same_company_capture_ties_to_tallys_own_statements() {
     assert_established(&derived.gross_result, "-4250.00");
     assert_established(&derived.net_result, "-4250.00");
     assert_established(&derived.balance_sheet_profit_and_loss, "-4250.00");
-
-    let balance_sheet = bridge_tally_protocol::native_statement_reports::parse_native_statement(
-        NativeStatementKind::BalanceSheet,
-        &utf16(READS_LAB_BS),
-    )
-    .unwrap();
-    let tie = tie_out(&derived, &balance_sheet);
-    let statuses: Vec<_> = tie
-        .lines
-        .iter()
-        .map(|line| (line.name.as_str(), line.status.clone()))
-        .collect();
     assert_eq!(
-        statuses,
+        statuses(&derived.balance_sheet_tie),
         vec![
             ("Capital Account", TieStatus::MatchedEmptyAsZero),
             ("Loans (Liability)", TieStatus::MatchedEmptyAsZero),
@@ -362,21 +475,9 @@ fn a_same_company_capture_ties_to_tallys_own_statements() {
             ("Current Assets", TieStatus::MatchedEmptyAsZero),
         ]
     );
-    assert!(tie.derived_only.is_empty());
-
-    let profit_and_loss = bridge_tally_protocol::native_statement_reports::parse_native_statement(
-        NativeStatementKind::ProfitAndLoss,
-        &utf16(READS_LAB_PL),
-    )
-    .unwrap();
-    let tie = tie_out(&derived, &profit_and_loss);
-    let statuses: Vec<_> = tie
-        .lines
-        .iter()
-        .map(|line| (line.name.as_str(), line.status.clone()))
-        .collect();
+    assert!(derived.balance_sheet_tie.derived_only.is_empty());
     assert_eq!(
-        statuses,
+        statuses(&tie),
         vec![
             (
                 "Cost of Sales :",
@@ -390,28 +491,27 @@ fn a_same_company_capture_ties_to_tallys_own_statements() {
     assert!(tie.derived_only.is_empty());
 }
 
-const DENSE_GUID: &str = "d45bc1b0-e5e3-4261-b3b2-cce3915f42d3";
-const DENSE_TB: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_trial_balance_dense_month_live.utf16le.xml"
-);
-const DENSE_GROUPS: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_groups_dense_live.utf16le.xml"
-);
-const DENSE_BS: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_balance_sheet_dense_month_live.utf16le.xml"
-);
-const DENSE_PL: &[u8] = include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/statement_profit_and_loss_dense_month_live.utf16le.xml"
-);
-
 /// One month of a 29,900-voucher book. In a part-year window a P&L ledger's
 /// Trial Balance covers the window only, and the year's earlier result sits in
-/// the Profit & Loss A/c ledger's opening. The carried line still ties.
+/// the Profit & Loss A/c ledger's opening. The gate still passes.
 #[test]
-fn a_part_year_window_on_a_heavy_book_ties_to_tallys_own_statements() {
-    let report = parse_native_trial_balance(&utf16(DENSE_TB), DENSE_GUID).unwrap();
-    let groups = parse_native_group_snapshot(&utf16(DENSE_GROUPS), DENSE_GUID).unwrap();
-    let derived = derive_statements(&report, &groups).unwrap();
+fn a_same_company_part_year_window_on_a_heavy_book_passes_the_gate() {
+    let (derived, tie) = Capture {
+        guid: "d45bc1b0-e5e3-4261-b3b2-cce3915f42d3",
+        trial_balance: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_trial_balance_dense_month_live.utf16le.xml"
+        ),
+        groups: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_groups_dense_live.utf16le.xml"
+        ),
+        balance_sheet: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_balance_sheet_dense_month_live.utf16le.xml"
+        ),
+        profit_and_loss: include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/statement_profit_and_loss_dense_month_live.utf16le.xml"
+        ),
+    }
+    .derive();
 
     assert!(derived.unclassified.is_empty());
     assert_sum(&line(&derived.profit_and_loss, "Sales Accounts").amount, "113726661.73", 1, 1);
@@ -423,37 +523,17 @@ fn a_part_year_window_on_a_heavy_book_ties_to_tallys_own_statements() {
     );
     assert_established(&derived.net_result, "113726661.73");
     assert_established(&derived.balance_sheet_profit_and_loss, "222962422.38");
-
-    for (kind, bytes, expected) in [
-        (
-            NativeStatementKind::BalanceSheet,
-            DENSE_BS,
-            vec![
-                ("Capital Account", TieStatus::MatchedEmptyAsZero),
-                ("Loans (Liability)", TieStatus::MatchedEmptyAsZero),
-                ("Current Liabilities", TieStatus::MatchedEmptyAsZero),
-                ("Profit & Loss A/c", TieStatus::Matched),
-                ("Current Assets", TieStatus::Matched),
-            ],
-        ),
-        (
-            NativeStatementKind::ProfitAndLoss,
-            DENSE_PL,
-            vec![("Sales Accounts", TieStatus::Matched)],
-        ),
-    ] {
-        let statement = bridge_tally_protocol::native_statement_reports::parse_native_statement(
-            kind,
-            &utf16(bytes),
-        )
-        .unwrap();
-        let tie = tie_out(&derived, &statement);
-        let statuses: Vec<_> = tie
-            .lines
-            .iter()
-            .map(|line| (line.name.as_str(), line.status.clone()))
-            .collect();
-        assert_eq!(statuses, expected, "{kind:?}");
-        assert!(tie.derived_only.is_empty(), "{kind:?}");
-    }
+    assert_eq!(
+        statuses(&derived.balance_sheet_tie),
+        vec![
+            ("Capital Account", TieStatus::MatchedEmptyAsZero),
+            ("Loans (Liability)", TieStatus::MatchedEmptyAsZero),
+            ("Current Liabilities", TieStatus::MatchedEmptyAsZero),
+            ("Profit & Loss A/c", TieStatus::Matched),
+            ("Current Assets", TieStatus::Matched),
+        ]
+    );
+    assert!(derived.balance_sheet_tie.derived_only.is_empty());
+    assert_eq!(statuses(&tie), vec![("Sales Accounts", TieStatus::Matched)]);
+    assert!(tie.derived_only.is_empty());
 }

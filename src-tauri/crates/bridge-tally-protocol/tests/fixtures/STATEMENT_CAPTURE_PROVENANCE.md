@@ -59,7 +59,7 @@ Tally's built-in Balance Sheet and Profit and Loss, requested by report name (pr
 ## Known limits
 
 - One release (7.1), Silver, two synthetic books, one full year and one month.
-  - Each statement request was run twice, hours apart, with identical bytes.
-  - Each group tree and Trial Balance request was run once.
+  - The full-year statements and the one-month heavy-book Balance Sheet were each run twice, hours apart, with identical bytes.
+  - The one-month heavy-book Profit and Loss, each group tree and each Trial Balance were run once.
 - No book here holds inventory, so no closing-stock line was observed.
 - The explode flag, Education, Gold and foreign-currency books were not measured.

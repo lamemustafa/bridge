@@ -1,5 +1,6 @@
 //! Thin MCP presentation of the shared statement read (#692).
 use super::*;
+use crate::reports::statements::{Established, TieOut};
 use bridge_tally_protocol::native_statement_reports::NativeStatementKind;
 
 /// Unclassified ledgers returned in full up to this many; the count is always
@@ -47,8 +48,8 @@ impl Server {
             NativeStatementKind::ProfitAndLoss => (
                 &derived.profit_and_loss,
                 json!({
-                    "gross_result": derived.gross_result,
-                    "net_result": derived.net_result,
+                    "gross_result": established_json(&derived.gross_result),
+                    "net_result": established_json(&derived.net_result),
                 }),
             ),
             NativeStatementKind::BalanceSheet => (
@@ -59,7 +60,7 @@ impl Server {
                             "name": party_name(ledger.name.clone()),
                             "closing": ledger.closing,
                         })),
-                        "carried": derived.balance_sheet_profit_and_loss,
+                        "carried": established_json(&derived.balance_sheet_profit_and_loss),
                     },
                 }),
             ),
@@ -90,13 +91,16 @@ impl Server {
                     "unclassified": unclassified,
                     "unclassified_total": unclassified_total,
                     "stock_ledger_count": derived.stock_ledger_count,
-                    "tie_out": read.tie_out,
+                    "balance_sheet_gate": tie_json(&derived.balance_sheet_tie),
+                    "tie_out": read.profit_and_loss_tie.as_ref().map(tie_json),
                     "verification": "stable_paired_sources_with_company_mode_and_extent_guards",
                     "limitations": [
-                        "Each line sums Trial Balance amounts under one reserved primary group; empty amounts are excluded and counted, never read as zero",
+                        "Each line sums the Trial Balance amounts Tally returned under one reserved primary group, and counts the empty amounts it left out",
                         "A ledger under a user-created primary group, or with an incomplete group chain, is listed in unclassified; while any carries an amount, no result is established",
-                        "Closing stock is not derived: with a Stock-in-Hand balance, gross and net results are not established",
-                        "tie_out compares Tally's own statement lines by display name and enforces nothing; Tally's carried Profit & Loss line has been compared over one full year on one book and one month on another",
+                        "Closing stock is not derived: with a Stock-in-Hand balance no result is established",
+                        "Every result is established only if Tally's own Balance Sheet for the window ties line for line (balance_sheet_gate); a book with stock items or a foreign-currency difference is expected to refuse, and no inventory book has been measured",
+                        "Tally's own statements carry no company identity; they are bound only by the company, mode and book-extent checks around the read",
+                        "The Balance Sheet gate has been measured over one full year on one book and one month on another; a window spanning more than one financial year is unmeasured",
                         "Not voucher-level reconciliation or an atomic snapshot",
                     ],
                 },
@@ -107,3 +111,39 @@ impl Server {
         })
     }
 }
+
+/// A result, with any line names that failed the gate masked as party names:
+/// a Tally line can name a ledger (its Profit & Loss A/c line does).
+fn established_json(result: &Established) -> Value {
+    match result {
+        Established::Established { value } => json!({"state": "established", "value": value}),
+        Established::NotEstablished { reason, lines } => json!({
+            "state": "not_established", "reason": reason,
+            "lines": lines.iter().cloned().map(party_name).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+/// A tie-out with every line name masked as a party name, for the same reason.
+fn tie_json(tie: &TieOut) -> Value {
+    json!({
+        "lines": tie.lines.iter().map(|line| {
+            let mut entry = json!({
+                "name": party_name(line.name.clone()),
+                "tally_sub": line.tally_sub, "tally_main": line.tally_main,
+            });
+            // Flattened as in `TieLine`: `status`, and `reason` or `derived`.
+            if let (Some(entry), Ok(Value::Object(status))) =
+                (entry.as_object_mut(), serde_json::to_value(&line.status))
+            {
+                entry.extend(status);
+            }
+            entry
+        }).collect::<Vec<_>>(),
+        "derived_only": tie.derived_only.iter().cloned().map(party_name).collect::<Vec<_>>(),
+    })
+}
+
+#[cfg(test)]
+#[path = "agent_statements_tests.rs"]
+mod tests;

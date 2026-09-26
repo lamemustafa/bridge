@@ -23,19 +23,46 @@ pub struct TrialBalanceRead {
 }
 
 /// A Profit and Loss or Balance Sheet read: the Trial Balance it derives from,
-/// the group tree that classifies it, and Tally's own statement for the same
-/// window, all read inside one identity and book-extent bracket (#692).
+/// the group tree that classifies it, and Tally's own Balance Sheet (the gate)
+/// and, for a P&L, Tally's own Profit and Loss, all read inside one identity and
+/// book-extent bracket (#692).
 #[derive(Debug, Clone, Serialize)]
 pub struct StatementsRead {
     pub trial_balance: TrialBalanceRead,
     pub derived: crate::reports::statements::DerivedStatements,
-    pub tie_out: crate::reports::statements::TieOut,
+    /// Tally's own Profit and Loss against the derived lines, for a P&L read.
+    pub profit_and_loss_tie: Option<crate::reports::statements::TieOut>,
+}
+
+/// A Trial Balance whose company passed the single-INR admission: every ledger
+/// of a book with one currency master. Only this module constructs it, from
+/// the admission `admit_inr` returned, so a read of a several-currency book can
+/// never become one. The statement derivation accepts nothing else (#692; the
+/// currency-scope work in #715 keeps its partial read a different type).
+#[derive(Debug, Clone)]
+pub(crate) struct SingleCurrencyTrialBalance(NativeTrialBalance);
+
+impl SingleCurrencyTrialBalance {
+    fn admitted(report: NativeTrialBalance, _admission: &PartyLedgerMasterCurrencyAssertion) -> Self {
+        Self(report)
+    }
+
+    pub(crate) fn report(&self) -> &NativeTrialBalance {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn admitted_for_tests(report: NativeTrialBalance) -> Self {
+        Self(report)
+    }
 }
 
 /// What a statement read adds to a Trial Balance read.
 struct StatementSources {
+    trial_balance: SingleCurrencyTrialBalance,
     groups: Vec<TallyNamedMaster>,
-    builtin: NativeStatement,
+    balance_sheet: NativeStatement,
+    profit_and_loss: Option<NativeStatement>,
 }
 
 /// An ordered caller-selected range. Profile-specific boundary admission stays
@@ -110,8 +137,9 @@ impl TallyRuntime {
             .map(|(read, _, extent)| (read, extent))
     }
 
-    /// Tally's `kind` statement derived from the Trial Balance and group tree,
-    /// with Tally's own statement for the same window alongside for tie-out.
+    /// Tally's `kind` statement derived from the Trial Balance and group tree.
+    /// Tally's own Balance Sheet for the same window gates every result, and for
+    /// a P&L Tally's own Profit and Loss is compared for the report.
     pub(crate) async fn fetch_statements(
         &self,
         config: TallyConfig,
@@ -123,13 +151,19 @@ impl TallyRuntime {
             .fetch_trial_balance_sources(config, identity, period, Some(kind))
             .await?;
         let sources = sources.ok_or_else(|| anyhow::anyhow!("statement_sources_not_read"))?;
-        let derived =
-            crate::reports::statements::derive_statements(&trial_balance.report, &sources.groups)?;
-        let tie_out = crate::reports::statements::tie_out(&derived, &sources.builtin);
+        let derived = crate::reports::statements::derive_statements(
+            &sources.trial_balance,
+            &sources.groups,
+            &sources.balance_sheet,
+        )?;
+        let profit_and_loss_tie = sources
+            .profit_and_loss
+            .as_ref()
+            .map(|statement| crate::reports::statements::profit_and_loss_tie(&derived, statement));
         Ok(StatementsRead {
             trial_balance,
             derived,
-            tie_out,
+            profit_and_loss_tie,
         })
     }
 
@@ -181,7 +215,7 @@ impl TallyRuntime {
                         let currency = parse_company_currency(&currency_xml)?;
                         // Reuse the observed single-INR admission used by existing
                         // monetary reports. Multiple masters cannot establish base currency.
-                        CompanyCurrencyRead {
+                        let admission = CompanyCurrencyRead {
                             currency: currency.clone(),
                             extent: extent.clone(),
                             evidence: evidence.clone(),
@@ -214,8 +248,10 @@ impl TallyRuntime {
                                     .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
                                 let groups =
                                     parse_native_group_snapshot(&xml, identity.company_guid())?;
+                                // Tally's own Balance Sheet gates both tools; its own
+                                // Profit and Loss is read only for a P&L's report.
                                 let request = render_native_statement_request(
-                                    kind,
+                                    NativeStatementKind::BalanceSheet,
                                     identity.display_name(),
                                     &period,
                                 );
@@ -226,8 +262,34 @@ impl TallyRuntime {
                                 evidence = evidence
                                     .clone()
                                     .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
-                                let builtin = parse_native_statement(kind, &xml)?;
-                                Some(StatementSources { groups, builtin })
+                                let balance_sheet =
+                                    parse_native_statement(NativeStatementKind::BalanceSheet, &xml)?;
+                                let profit_and_loss = if kind == NativeStatementKind::ProfitAndLoss {
+                                    let request = render_native_statement_request(
+                                        kind,
+                                        identity.display_name(),
+                                        &period,
+                                    );
+                                    let (xml, bytes, hash) = client
+                                        .fetch_native_report_paired(request.clone())
+                                        .await?
+                                        .require_stable(PairedReadValidationError::NativeStatement)?;
+                                    evidence = evidence
+                                        .clone()
+                                        .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
+                                    Some(parse_native_statement(kind, &xml)?)
+                                } else {
+                                    None
+                                };
+                                Some(StatementSources {
+                                    trial_balance: SingleCurrencyTrialBalance::admitted(
+                                        report.clone(),
+                                        &admission,
+                                    ),
+                                    groups,
+                                    balance_sheet,
+                                    profit_and_loss,
+                                })
                             }
                         };
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;

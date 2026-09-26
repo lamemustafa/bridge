@@ -439,7 +439,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "9a7bd1845793e7df530ec1c9246469fb027e592313d8100b7cc96bdbb4c2cabe"
+      "sha256": "352e09c3860e44c033ef28f0181c0f6d6bb476d8f704f51d5731df8945b0fcfe"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -551,7 +551,7 @@
     },
     {
       "path": "src-tauri/src/agent_statements.rs",
-      "sha256": "7c52cacc9304123bbe9e615606cd535f1562eb569e37cadc6dc1bbceff6d691b"
+      "sha256": "76945b35d5448899dd58748affd6b3dc6055d49a500686472032608c2b332407"
     },
     {
       "path": "src-tauri/src/agent_tests.rs",
@@ -827,11 +827,11 @@
     },
     {
       "path": "src-tauri/src/reports/statements.rs",
-      "sha256": "781417060dab6fcf33cfd18be852649ea33cc3860493bd7928519cfcfc37782e"
+      "sha256": "728a3be7bccbaba6270282336b356a7c5261353fc1eedcc8b870f172ca9a2b49"
     },
     {
       "path": "src-tauri/src/reports/statements_tests.rs",
-      "sha256": "f281b08578a2d2dba3a2b0dffc34098d3fb399c46bb369b382cd3d062d84b5c3"
+      "sha256": "93bcc2f0f95d281eb41ea52f281ec9cf964356ef873e64dd3e85087d3015e3f1"
     },
     {
       "path": "src-tauri/src/reports/trial_balance.rs",
@@ -927,7 +927,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "2b504a593566339ee3c29802dfa86cd2141cefdca70f92be15f87e6b40a57a7d"
+      "sha256": "92096d11ba0e0ca1ba8ec65aa62b6df752a594f831261c10569ce62cd62442a2"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -935,7 +935,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime_trial_balance.rs",
-      "sha256": "5b920e646f54ba830d75a9adbd3c4855347137551cefb1581a44d6ae0e3e933c"
+      "sha256": "a08c104792156b0d7cbf7cedb56499175bc7921376a04b8529d6d56513590dca"
     },
     {
       "path": "src-tauri/src/tally/runtime_trial_balance_tests.rs",
@@ -1138,5 +1138,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "2bd002094f81c7250b947a80663bf88657c7d2907876ea39ff024f8f6e24f329"
+  "manifest_sha256": "3243c4af40b71fb9cc43b3ec078bd6523f879bfc8abc395e205ee1ab40093f73"
 }

@@ -181,29 +181,43 @@ reads. Use `ledger_movement` with narrow dates when voucher detail is needed.
 
 `profit_and_loss` and `balance_sheet` take the same `company_guid`, `from` and
 `to` as `trial_balance`, and read that Trial Balance under the same checks.
-Inside the same bracket they also read the group tree and Tally's own
-statement for the window (#692).
+Inside the same bracket they also read the group tree and Tally's own Balance
+Sheet for the window, and `profit_and_loss` reads Tally's own Profit and Loss
+too (#692).
 
 - **Lines.** Each ledger is classified by the reserved identity of its primary
   group, the last group in its chain. That identity survives renaming.
   - A P&L line is the window's debit plus credit movement.
   - A Balance Sheet line is the closing balance at `to`.
   - Signs follow the Trial Balance: a debit is negative, so a profit is positive.
-  - Each line's `amount` counts the empty amounts it excluded; none is read as
-    zero.
-- **What is not established.**
-  - A ledger under a user-created primary group, or with an incomplete chain,
-    is listed in `unclassified`. While any such ledger carries an amount, the
-    results are `not_established`, since a statement that leaves out a line
-    must not show a result.
-  - Closing stock is not derived from the Trial Balance, so a book with a
-    Stock-in-Hand balance has no established gross or net result.
-- **`tie_out`.** It compares Tally's own statement lines with the derived lines
-  by display name, and enforces nothing. The Balance Sheet's Profit & Loss line
-  has been compared with Tally's over one full year on one book and one month
-  on another. In a part-year window a P&L ledger's Trial Balance covers the
-  window only, and the year's earlier result sits in the Profit & Loss A/c
-  ledger's opening; the carried line includes both.
+  - Each line's `amount` sums the amounts Tally returned and counts the empty
+    ones it left out.
+- **When a result is established.** Only when all of these hold:
+  - every ledger is classified; a ledger under a user-created primary group,
+    or with an incomplete chain, is listed in `unclassified`, and blocks the
+    results while it carries an amount;
+  - no Stock-in-Hand ledger carries an amount, since closing stock is not
+    derived from the Trial Balance;
+  - Tally's own Balance Sheet for the window, read in the same bracket, ties
+    line for line to the derived one (`balance_sheet_gate`). A line that
+    differs, a Tally line with an amount nothing derived matches, or a derived
+    line Tally does not show, refuses every result as
+    `tally_balance_sheet_differs`, with those lines named.
+- **Limits.**
+  - The gate is what catches what the Trial Balance cannot see, such as stock
+    valued from stock items or an unadjusted forex difference (#683). No
+    inventory book has been measured; one is expected to refuse.
+  - A book with more than one currency master is refused before the Trial
+    Balance is read.
+  - Tally's own statements carry no company identity; the company, mode and
+    book-extent checks around the read are what bind them.
+  - The gate has been measured over one full year on one book and one month on
+    another. In a part-year window a P&L ledger's Trial Balance covers the
+    window only, and the year's earlier result sits in the Profit & Loss A/c
+    ledger's opening; the carried line includes both. A window spanning more
+    than one financial year is unmeasured.
+- **`tie_out`** (P&L only) compares Tally's own Profit and Loss by display
+  name, for the report; it gates nothing.
 
 ### Ledger-movement opening decision
 
