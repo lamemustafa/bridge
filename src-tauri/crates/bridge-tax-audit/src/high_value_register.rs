@@ -1158,4 +1158,85 @@ mod tests {
         assert!(parties(&voucher("c1", "Contra")).is_empty());
         assert_eq!(parties(&voucher("r1", "Receipt")), ["Customer A"]);
     }
+    #[test]
+    fn a_row_shows_the_money_line_summed_per_voucher_when_any_voucher_differs() {
+        use crate::book::{LedgerLine, VoucherStatus};
+        // Cash received from Customer A on one day: g1 (Rs 1.5 lakh, share = line), a second
+        // voucher also filed as g1 whose cash is debited Rs 1 lakh and credited Rs 20,000 back (so
+        // its share, Rs 80,000, differs from its line, the debit only), and g3 (Rs 50,000, share =
+        // line). The row (Rs 2.8 lakh) is over the limit; its cash line is Rs 3 lakh, summed per
+        // voucher, both g1 vouchers added together.
+        let voucher = |guid: &str, lines: &[(&str, i64)]| Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse("20250601").unwrap(),
+            base_type: "Receipt".to_string(),
+            status: VoucherStatus::Regular,
+            lines: lines
+                .iter()
+                .map(|(ledger, amount_paise)| LedgerLine {
+                    ledger: (*ledger).to_string(),
+                    amount_paise: *amount_paise,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let book = Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            vouchers: vec![
+                voucher("g1", &[("Cash", 15_000_000), ("Customer A", -15_000_000)]),
+                voucher(
+                    "g1",
+                    &[
+                        ("Cash", 10_000_000),
+                        ("Cash", -2_000_000),
+                        ("Customer A", -8_000_000),
+                    ],
+                ),
+                voucher("g3", &[("Cash", 5_000_000), ("Customer A", -5_000_000)]),
+            ],
+            tb: BTreeMap::new(),
+        };
+        let (cash, bank) = (BTreeSet::from(["Cash".to_string()]), BTreeSet::new());
+        let (none, no_types) = (BTreeSet::new(), BTreeMap::new());
+        let inputs = Inputs {
+            cash: &cash,
+            bank: &bank,
+            threshold_paise: None,
+            bank_statement: None,
+            s194n_narration_terms: &none,
+            ais_rows: &[],
+            s194n_recipient_type: None,
+            round_off_ledgers: &none,
+            counterparty_type_by_ledger: &no_types,
+        };
+        let r = run(&book, &Rules::vendored().unwrap(), &inputs).unwrap();
+        let figure = |prefix: &str| {
+            let prefix = format!("{TEST_ID}.{prefix}");
+            let f = r.figures.iter().find(|f| f.id.starts_with(&prefix));
+            f.map(|f| f.value.clone())
+        };
+        assert_eq!(
+            figure("cash_receipt_day_row_amount_"),
+            Some(Value::Int(28_000_000))
+        );
+        assert_eq!(
+            figure("cash_receipt_day_row_cash_line_"),
+            Some(Value::Int(30_000_000))
+        );
+        let finding = r
+            .findings
+            .iter()
+            .find(|f| f.id.contains("cash_receipt_day_2025-06-01"));
+        let finding = finding.expect("the row is over the limit");
+        assert!(finding.facts.iter().any(|(k, _)| k == "cash_line"));
+        assert!(!finding
+            .limits
+            .iter()
+            .any(|l| l.contains("is below the threshold")));
+    }
 }
