@@ -512,14 +512,15 @@ fn batch_review_preview(
             .entry(entry.ledger.as_str())
             .or_insert_with(|| (ExactDecimal::zero(), ExactDecimal::zero(), 0));
         totals.2 += 1;
-        let side = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
-            &mut totals.0
+        // Tally signs a debit negative. The debit total is shown as the
+        // negated sum, so a person reads the same figure the post dialog
+        // showed, and a line with an unexpected sign still shows as it is.
+        let summed = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
+            totals.0.checked_subtract(&amount).map(|dr| totals.0 = dr)
         } else {
-            &mut totals.1
+            totals.1.checked_add(&amount).map(|cr| totals.1 = cr)
         };
-        *side = side
-            .checked_add(&amount)
-            .map_err(|_| "ack_readback_not_matched".to_string())?;
+        summed.map_err(|_| "ack_readback_not_matched".to_string())?;
     }
     let dates = rows.iter().filter_map(|row| row.date.as_deref());
     let alter_ids = rows.iter().filter_map(|row| row.alter_id);

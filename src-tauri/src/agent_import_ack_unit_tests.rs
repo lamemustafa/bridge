@@ -416,7 +416,7 @@ fn the_batch_review_summarizes_the_doubt_and_the_vouchers_as_read() {
         "Not shown here: narrations, voucher numbers and types.",
         "Reviewing these vouchers covers no other voucher in this company.",
         "Dates: 20260907 to 20260907  ALTERIDs: 10 to 12",
-        "Dr -3  Cr 0  3 entries  \"Ledger 0\"",
+        "Dr 3  Cr 0  3 entries  \"Ledger 0\"",
         &format!("Batch: {BATCH}"),
         "I reviewed these 3 vouchers in Tally.",
         "reconciliation_required",
@@ -609,4 +609,23 @@ fn a_batch_kind_whose_verdict_is_pending_reads_pending() {
     assert_eq!(review["masters"], json!({"state":"pending"}), "{review}");
     // Control: both recorded, no doubt observed, nothing to report.
     assert_eq!(check("unchanged", "matched"), None);
+}
+
+/// A debit total is the negated sum of what Tally holds, never each line's
+/// magnitude: a debit line with an unexpected sign still shows as it is.
+#[test]
+fn a_debit_total_is_the_negated_sum_not_each_lines_magnitude() {
+    let line = posted_batch(2);
+    let mut rows = batch_rows(&line);
+    for (row, amount) in rows.iter_mut().zip(["-5.00", "2.00"]) {
+        row.entries[0].amount = amount.into();
+        row.entries[0].ledger = "Odd".into();
+    }
+    let rows = rows.iter().collect::<Vec<_>>();
+    let step: Value = serde_json::from_slice(STEP_DOUBT).unwrap();
+    let preview = batch_review_preview(&line, DoubtKind::BatchStep, "Books", &step, &rows).unwrap();
+    assert!(
+        preview.contains("Dr 3  Cr 0  2 entries  \"Odd\""),
+        "{preview}"
+    );
 }
