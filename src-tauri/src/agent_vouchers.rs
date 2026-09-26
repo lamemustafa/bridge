@@ -33,9 +33,22 @@ pub(crate) async fn selected_voucher_operation(
             company,
             identity,
             initial_evidence: Some(accumulated),
+            composites: VoucherComposites::Withhold,
         },
     )
     .await
+}
+
+/// What a voucher whose amount Tally stored as a foreign-currency composite
+/// does to the window (#674). Each caller chooses; there is no default.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VoucherComposites {
+    /// The MCP `vouchers` tool: the voucher is withheld and listed, and the
+    /// rest of the window is returned.
+    Withhold,
+    /// A caller that cannot show a withheld voucher: the window is refused, as
+    /// before #674.
+    Refuse,
 }
 
 /// Runs the same operation after the desktop command has already admitted the
@@ -48,6 +61,7 @@ pub(crate) struct VoucherOperationScope {
     pub(crate) company: TallyCompany,
     pub(crate) identity: VerifiedCompanyIdentity,
     pub(crate) initial_evidence: Option<Evidence>,
+    pub(crate) composites: VoucherComposites,
 }
 
 pub(crate) async fn selected_voucher_operation_for_verified(
@@ -62,6 +76,7 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         company,
         identity,
         initial_evidence,
+        composites,
     } = scope;
     let mut accumulated = initial_evidence;
     let outcome = async {
@@ -98,14 +113,17 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             VoucherReadShape::EntryWildcard
         };
         let read = server
-            .read_entry_window_shaped(&identity, &company.name, &from, &to, None, shape)
+            .read_entry_window_rows(&identity, &company.name, &from, &to, shape, composites)
             .await?;
         accumulate_evidence(&mut accumulated, read.all_evidence());
         // What each request of the window read cost (#595); the empty-window
         // corroboration below is a read of its own and is not counted here.
         let window = serde_json::to_value(&read.timings).unwrap_or(Value::Null);
         let source_marks = read.witness.as_ref().map(|witness| witness.marks);
-        let mut rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
+        // A withheld voucher goes through every date, ledger and type check as
+        // a row with no amounts, and is set aside only after them (#674).
+        let rows = read.rows.into_iter().map(VoucherRow::into_filter_row).collect();
+        let mut rows = validate_then_filter_voucher_rows(rows, &from, &to, None)?;
         let mut result_state = "complete";
         let mut corroboration_reason = None;
         if rows.is_empty() {
@@ -174,6 +192,19 @@ pub(crate) async fn selected_voucher_operation_for_verified(
                 "in_scope": selection.window_types.iter().map(WindowVoucherType::json).collect::<Vec<_>>(),
             }));
         }
+        let (withheld, rows): (Vec<Value>, Vec<Value>) =
+            rows.into_iter().partition(|row| row.get(WITHHELD_MARKER).is_some());
+        let withheld_total = withheld.len();
+        if withheld_total > 0 {
+            // `items` then does not cover the window: say so in the state an
+            // agent reads first, not only in a field it might skip.
+            result_state = "partial";
+            corroboration_reason = Some("vouchers_withheld");
+            if let Some(evidence) = accumulated.as_mut() {
+                evidence.state = "partial";
+                evidence.reason_code = Some("vouchers_withheld".to_string());
+            }
+        }
         let offset = arg_usize(args, "offset", 0)?;
         let limit =
             arg_positive_usize(args, "limit", server.settings.max_rows)?.min(server.settings.max_rows);
@@ -188,6 +219,13 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": result_state, "reason": corroboration_reason, "items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters", "window": window}});
         if let Some(voucher_types) = voucher_types {
             payload["result"]["voucher_types"] = voucher_types;
+        }
+        if withheld_total > 0 {
+            payload["result"]["withheld_total"] = json!(withheld_total);
+            payload["result"]["withheld_vouchers"] = Value::Array(listed_withheld(&withheld));
+            payload["result"]["coverage"] = json!(format!(
+                "items exclude {withheld_total} voucher(s) whose amounts Tally stored in a foreign currency; they are listed in withheld_vouchers, and total counts items only"
+            ));
         }
         Ok(ToolOutcome {
             payload,
@@ -309,6 +347,36 @@ impl Server {
         .await
     }
 
+    /// The `vouchers` window in either entry-wildcard shape, parsed under
+    /// `composites` (#674).
+    pub(super) async fn read_entry_window_rows(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        shape: VoucherReadShape,
+        composites: VoucherComposites,
+    ) -> Result<WindowReadOutcome<VoucherRow>, ToolFailure> {
+        self.read_voucher_window(
+            identity,
+            company,
+            from,
+            to,
+            shape,
+            WindowPlanSource::Estimate { known_marks: None },
+            WindowReadLimits::for_shape(shape),
+            |xml| match composites {
+                VoucherComposites::Withhold => {
+                    parse_agent_rows_withholding(xml, identity.company_guid())
+                }
+                VoucherComposites::Refuse => parse_agent_rows(xml, identity.company_guid())
+                    .map(|rows| rows.into_iter().map(VoucherRow::Read).collect()),
+            },
+        )
+        .await
+    }
+
     /// [`Self::read_entry_wildcard_window`] in either entry-wildcard shape:
     /// plain, or with each row's voucher type resolved (bridge#625).
     pub(super) async fn read_entry_window_shaped(
@@ -333,3 +401,24 @@ impl Server {
         .await
     }
 }
+
+/// At most this many withheld vouchers are listed; `withheld_total` is exact.
+const MAX_WITHHELD_LISTED: usize = 100;
+
+/// The first [`MAX_WITHHELD_LISTED`] withheld vouchers, in window order.
+fn listed_withheld(withheld: &[Value]) -> Vec<Value> {
+    withheld.iter().take(MAX_WITHHELD_LISTED).map(withheld_summary).collect()
+}
+
+/// A withheld voucher as `withheld_vouchers` lists it: identity and cause,
+/// with no amount, party or ledger.
+fn withheld_summary(row: &Value) -> Value {
+    json!({
+        "guid": row["guid"], "date": row["date"], "voucher_type": row["voucher_type"],
+        "voucher_number": row["voucher_number"], "cause": row[WITHHELD_MARKER],
+    })
+}
+
+#[cfg(test)]
+#[path = "agent_vouchers_tests.rs"]
+mod tests;

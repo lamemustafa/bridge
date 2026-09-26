@@ -3,8 +3,10 @@
 //! whose own currency is the base.
 //!
 //! Captured forms (licensed TallyPrime 7.1, a synthetic several-currency book):
-//! `-$ 100.00 @ I₹ 86/$  = -I₹ 8600.00`, and with an empty rate
-//! `$ 0.00 @ I₹ /$  = I₹ 0.00`. Only the shape is classified here. No value
+//! `-$ 100.00 @ I₹ 86/$  = -I₹ 8600.00` on a voucher's entries and bill
+//! allocation (`fixtures/agent/vouchers-forex-composite-20260915`), and with an
+//! empty rate `$ 0.00 @ I₹ /$  = I₹ 0.00` in a Trial Balance
+//! (`fixtures/trial_balance_currency_forex_live`). Only the shape is classified here. No value
 //! is read from a composite, so nothing downstream can mistake one for an
 //! amount; a caller that finds a composite sets the row aside or refuses it.
 //!

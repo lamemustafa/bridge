@@ -94,7 +94,13 @@ pub(super) fn parse_import_verification_rows(
     xml: &str,
     company_guid: &str,
 ) -> Result<Vec<Value>, String> {
-    parse_voucher_rows(xml, true, true, company_guid)
+    refused_composites(parse_voucher_rows(
+        xml,
+        true,
+        true,
+        company_guid,
+        CompositePolicy::Refuse,
+    )?)
 }
 
 pub(super) fn parse_agent_rows_with_accounting_state(
@@ -102,7 +108,143 @@ pub(super) fn parse_agent_rows_with_accounting_state(
     require_change_identity: bool,
     company_guid: &str,
 ) -> Result<Vec<Value>, String> {
-    parse_voucher_rows(xml, require_change_identity, false, company_guid)
+    refused_composites(parse_voucher_rows(
+        xml,
+        require_change_identity,
+        false,
+        company_guid,
+        CompositePolicy::Refuse,
+    )?)
+}
+
+/// The `vouchers` rows (#674): a voucher whose amount Tally stored as a
+/// foreign-currency composite is withheld whole, as a [`VoucherRow::Withheld`],
+/// instead of failing the window. Every other check still applies to it, and
+/// any other bad amount still fails the window. Nothing that sums, matches or
+/// verifies amounts reads through here.
+pub(super) fn parse_agent_rows_withholding(
+    xml: &str,
+    company_guid: &str,
+) -> Result<Vec<VoucherRow>, String> {
+    Ok(
+        parse_voucher_rows(xml, false, false, company_guid, CompositePolicy::Withhold)?
+            .into_iter()
+            .map(|(row, withheld)| {
+                if withheld {
+                    VoucherRow::Withheld(WithheldVoucher::from_parsed(row))
+                } else {
+                    VoucherRow::Read(row)
+                }
+            })
+            .collect(),
+    )
+}
+
+/// What an amount that is not a plain decimal does to its voucher.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompositePolicy {
+    /// The window fails, as it always has: every caller that uses amounts.
+    Refuse,
+    /// A Tally composite withholds its voucher; anything else still fails.
+    Withhold,
+}
+
+impl CompositePolicy {
+    fn withholds(self, amount: &str) -> bool {
+        self == Self::Withhold && bridge_tally_protocol::currency_composite::is_currency_composite(amount)
+    }
+}
+
+/// Under [`CompositePolicy::Refuse`] no row is ever withheld: a composite has
+/// already failed the parse with its amount code.
+fn refused_composites(rows: Vec<(Value, bool)>) -> Result<Vec<Value>, String> {
+    rows.into_iter()
+        .map(|(row, withheld)| {
+            if withheld {
+                Err("agent_read_protocol_invalid".to_string())
+            } else {
+                Ok(row)
+            }
+        })
+        .collect()
+}
+
+/// A `vouchers` row: read in full, or withheld because an amount was stored as
+/// a foreign-currency composite (#674). A withheld voucher carries no amount,
+/// so no path that sums, matches or verifies amounts can take one.
+#[derive(Debug, Clone)]
+pub(super) enum VoucherRow {
+    Read(Value),
+    Withheld(WithheldVoucher),
+}
+
+/// A withheld voucher: its identity, type fields and entry ledgers, never an
+/// amount. The field is private; [`Self::filter_view`] is the only way out.
+#[derive(Debug, Clone)]
+pub(super) struct WithheldVoucher(Value);
+
+/// Why a voucher is withheld; the only cause so far.
+pub(super) const WITHHELD_FOREIGN_CURRENCY: &str = "foreign_currency_amount_unparsed";
+
+/// Marks a row in [`WithheldVoucher::filter_view`]; the parser never emits it.
+pub(super) const WITHHELD_MARKER: &str = "withheld_cause";
+
+impl WithheldVoucher {
+    fn from_parsed(mut row: Value) -> Self {
+        // Keep each entry's ledger (the ledger filter reads it) and drop
+        // everything that carries an amount.
+        let ledgers = row["amounts"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| json!({"ledger": entry["ledger"]}))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        row["amounts"] = Value::Array(ledgers);
+        row[WITHHELD_MARKER] = json!(WITHHELD_FOREIGN_CURRENCY);
+        Self(row)
+    }
+
+    /// The row as the date, ledger and voucher-type filters read it: identity,
+    /// type fields and entry ledgers, marked withheld, with no amount.
+    pub(super) fn filter_view(&self) -> Value {
+        self.0.clone()
+    }
+}
+
+impl super::voucher_window::WindowRow for VoucherRow {
+    fn window_date(&self) -> Option<&str> {
+        self.row().window_date()
+    }
+    fn window_alter_id(&self) -> Option<u64> {
+        self.row().window_alter_id()
+    }
+    fn window_guid(&self) -> Option<&str> {
+        self.row().window_guid()
+    }
+    fn window_master_id(&self) -> Result<Option<u64>, String> {
+        self.row().window_master_id()
+    }
+}
+
+impl VoucherRow {
+    /// The row the date, ledger and voucher-type filters read: a read voucher
+    /// whole, a withheld one as its [`WithheldVoucher::filter_view`].
+    pub(super) fn into_filter_row(self) -> Value {
+        match self {
+            Self::Read(row) => row,
+            Self::Withheld(withheld) => withheld.filter_view(),
+        }
+    }
+
+    fn row(&self) -> &Value {
+        match self {
+            Self::Read(row) => row,
+            Self::Withheld(WithheldVoucher(row)) => row,
+        }
+    }
 }
 
 fn parse_voucher_rows(
@@ -110,7 +252,8 @@ fn parse_voucher_rows(
     require_change_identity: bool,
     include_effective_date: bool,
     company_guid: &str,
-) -> Result<Vec<Value>, String> {
+    composites: CompositePolicy,
+) -> Result<Vec<(Value, bool)>, String> {
     // Tally's collection XML varies by release; use a deliberately conservative
     // extractor and never infer a missing field. Malformed rows fail before
     // optional selectors can hide them as an apparently complete empty result.
@@ -128,6 +271,8 @@ fn parse_voucher_rows(
     let mut allocations = Vec::<Value>::new();
     let mut current_tag = String::new();
     let mut scope = NativeCollectionScope::default();
+    // Set by a composite amount under `CompositePolicy::Withhold`, per voucher.
+    let mut withheld = false;
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event)) => {
@@ -156,6 +301,7 @@ fn parse_voucher_rows(
                     }
                     current = Some(row);
                     entries.clear();
+                    withheld = false;
                 }
                 if tag == "ALLLEDGERENTRIES.LIST" && scope.row("VOUCHER") {
                     entry = Some(BTreeMap::new());
@@ -241,8 +387,13 @@ fn parse_voucher_rows(
                                 .get("AMOUNT")
                                 .filter(|value| !value.trim().is_empty())
                                 .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
-                            bridge_tally_core::ExactDecimal::parse(amount.clone())
-                                .map_err(|_| "bill_allocation_amount_invalid".to_string())?;
+                            if bridge_tally_core::ExactDecimal::parse(amount.clone()).is_err() {
+                                if composites.withholds(amount) {
+                                    withheld = true;
+                                } else {
+                                    return Err("bill_allocation_amount_invalid".to_string());
+                                }
+                            }
                             let name = allocation_row
                                 .get("NAME")
                                 .filter(|value| !value.trim().is_empty());
@@ -303,8 +454,14 @@ fn parse_voucher_rows(
                             .get("AMOUNT")
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
-                        let parsed_amount = bridge_tally_core::ExactDecimal::parse(amount.clone())
-                            .map_err(|_| "voucher_amount_invalid".to_string())?;
+                        let parsed_amount = match bridge_tally_core::ExactDecimal::parse(amount.clone()) {
+                            Ok(parsed) => Some(parsed),
+                            Err(_) if composites.withholds(amount) => {
+                                withheld = true;
+                                None
+                            }
+                            Err(_) => return Err("voucher_amount_invalid".to_string()),
+                        };
                         let polarity = entry_row
                             .get("ISDEEMEDPOSITIVE")
                             .filter(|value| !value.trim().is_empty())
@@ -327,7 +484,10 @@ fn parse_voucher_rows(
                             "is_deemed_positive": if is_deemed_positive { "Yes" } else { "No" },
                             "bill_allocations": std::mem::take(&mut allocations),
                         });
-                        if !tally_entry_polarity_agrees(&parsed_amount, is_deemed_positive) {
+                        if parsed_amount
+                            .as_ref()
+                            .is_some_and(|parsed| !tally_entry_polarity_agrees(parsed, is_deemed_positive))
+                        {
                             parsed_entry["polarity_disagrees_with_amount"] = Value::Bool(true);
                         }
                         entries.push(parsed_entry);
@@ -458,7 +618,7 @@ fn parse_voucher_rows(
                         {
                             parsed["party_gstin"] = json!(party_gstin);
                         }
-                        rows.push(parsed);
+                        rows.push((parsed, withheld));
                     }
                 }
                 scope.end(&end)?;

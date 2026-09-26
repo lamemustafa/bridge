@@ -1318,6 +1318,9 @@ pub(crate) async fn desktop_selected_vouchers(
             company,
             identity,
             initial_evidence: None,
+            // The desktop screen cannot show a withheld voucher, so a
+            // foreign-currency composite still refuses its window (#674).
+            composites: vouchers::VoucherComposites::Refuse,
         },
     )
     .await

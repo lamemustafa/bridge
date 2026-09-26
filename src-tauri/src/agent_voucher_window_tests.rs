@@ -3895,3 +3895,90 @@ fn window_timings_drop_only_their_parts_when_over_the_allowance() {
         })
     );
 }
+
+// -- #674: a withheld voucher is admitted through a divided window -----------
+
+/// `xml` with its first voucher's three amounts (party entry, its bill
+/// allocation, sales entry) replaced by the composites captured from the
+/// several-currency book. A synthetic mutation of a captured response.
+fn with_first_voucher_composite(xml: &str) -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/vouchers-forex-composite-20260915.utf16le.xml"
+    );
+    let forex = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let composites: Vec<&str> = forex
+        .split("<AMOUNT")
+        .skip(1)
+        .filter_map(|tail| Some(&tail[tail.find('>')? + 1..tail.find("</AMOUNT>")?]))
+        .collect();
+    assert_eq!(composites.len(), 3);
+    let start = xml.find("<VOUCHER ").unwrap();
+    let end = start + xml[start..].find("</VOUCHER>").unwrap();
+    let mut voucher = xml[start..end].to_string();
+    let plain: Vec<String> = voucher
+        .split("<AMOUNT")
+        .skip(1)
+        .filter_map(|tail| Some(tail[tail.find('>')? + 1..tail.find("</AMOUNT>")?].to_string()))
+        .collect();
+    assert_eq!(plain.len(), 3, "{plain:?}");
+    for (plain, composite) in plain.iter().zip(&composites) {
+        let at = voucher.find(&format!(">{plain}</AMOUNT>")).unwrap();
+        voucher.replace_range(at + 1..at + 1 + plain.len(), composite);
+    }
+    format!("{}{voucher}{}", &xml[..start], &xml[end..])
+}
+
+#[tokio::test]
+async fn a_withheld_voucher_is_admitted_through_a_divided_window() {
+    // The plan of the test above, with the first voucher of the second part a
+    // composite one: the census, part spans and union checks all see it.
+    let census = WindowCensus::from_rows([
+        (day("20260801"), 1),
+        (day("20260801"), 2),
+        (day("20260801"), 3),
+        (day("20260802"), 4),
+        (day("20260802"), 5),
+    ]);
+    let mut plans = paired(&xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")])));
+    plans.extend(paired(&xml_plan(with_first_voucher_composite(&relabelled(
+        &vouchers_kept(2),
+        &[(2, "20260801"), (3, "20260801")],
+    )))));
+    plans.extend(paired(&xml_plan(relabelled(
+        &vouchers_kept(2),
+        &[(4, "20260802"), (5, "20260802")],
+    ))));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let identity = identity();
+    let outcome = server
+        .read_voucher_window(
+            &identity,
+            identity.display_name(),
+            "20260801",
+            "20260802",
+            VoucherReadShape::EntryWildcard,
+            WindowPlanSource::Counted(census),
+            three_a_read(),
+            |xml| parse_agent_rows_withholding(xml, GUID),
+        )
+        .await
+        .unwrap();
+    simulator.finish().unwrap();
+    assert_eq!(outcome.rows.len(), 5);
+    let withheld: Vec<Option<u64>> = outcome
+        .rows
+        .iter()
+        .filter(|row| matches!(row, VoucherRow::Withheld(_)))
+        .map(|row| row.window_alter_id())
+        .collect();
+    assert_eq!(withheld, vec![Some(2)]);
+    assert_eq!(outcome.reads.len(), 3);
+}

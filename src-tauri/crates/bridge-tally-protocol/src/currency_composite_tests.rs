@@ -82,3 +82,27 @@ fn a_plain_amount_is_not_a_composite() {
         assert!(!is_currency_composite(plain), "{plain:?}");
     }
 }
+
+/// A `vouchers` read of the same book (#674): the party entry, its bill
+/// allocation and the sales entry each hold a composite.
+#[test]
+fn every_composite_in_the_captured_voucher_is_classified() {
+    let bytes: &[u8] =
+        include_bytes!("../tests/fixtures/agent/vouchers-forex-composite-20260915.utf16le.xml");
+    let capture = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let amounts: Vec<&str> = capture
+        .split("<AMOUNT")
+        .skip(1)
+        .filter_map(|tail| Some(&tail[tail.find('>')? + 1..tail.find("</AMOUNT>")?]))
+        .collect();
+    assert_eq!(amounts.len(), 3, "{amounts:?}");
+    for amount in amounts {
+        assert!(is_currency_composite(amount), "{amount}");
+    }
+}

@@ -235,6 +235,25 @@ If discovery rejects company identity fields, `tally_status` reports the profile
 refusal reason and partial evidence with the completed source commitments. A
 valid empty collection remains distinguishable from invalid discovery.
 
+### Foreign-currency composites in `vouchers`
+
+A foreign amount entered on a rupee ledger can be stored by Tally as a
+composite, such as `-$ 100.00 @ I₹ 86/$  = -I₹ 8600.00` (#674).
+
+- **`vouchers` withholds that voucher.** It passes every date, ledger and
+  voucher-type check like any other, and is then listed in `withheld_vouchers`
+  instead of `items`. The listing gives its GUID, date, type, number and cause,
+  up to 100 vouchers, with an exact `withheld_total` that is the same on every
+  page.
+- **The result says so.** `state` is `partial` with `reason`
+  `vouchers_withheld`, `total` counts `items` only, and `coverage` says what
+  was left out.
+- **No amount is read from a composite.** Anything that is neither a plain
+  decimal nor an exact composite still refuses the whole window.
+- **Every other voucher reader still refuses such a window** (for example
+  `voucher_presence`, `ledger_movement`, verify_import and the Bridge app's
+  voucher screen), because each of them sums, matches or verifies amounts.
+
 ## Voucher-file preparation and verification
 
 The MCPB extension exposes `verify_import` by default as a read-only recovery
