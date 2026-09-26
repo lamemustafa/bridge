@@ -539,8 +539,8 @@ fn each_dialog_answers_with_its_own_token() {
 /// functions, `confirm` and `confirm_review`, and the two functions that
 /// decide from the child's answer (`confirm_with`, `confirm_review_with`)
 /// are pinned here verbatim, with the button labels and the functions that
-/// word each title and the post button (#746). On Windows the title is the
-/// only text that says what Yes does. The file's `cfg`
+/// word each title and the post button (#746). On Windows the post dialog's
+/// title is the only text that says what Yes does. The file's `cfg`
 /// attributes are counted as well: a platform or test split anywhere in it,
 /// such as a `#[cfg(windows)]` twin of a pinned function, must change this
 /// gate. This pins text, not the platform's behaviour.
@@ -631,7 +631,8 @@ fn post_words(count: VoucherCount) -> (String, String) {
     }
 }"#;
 
-/// Each dialog's title for one voucher and for a batch (#746).
+/// Each dialog's title for one voucher and for a batch (#746): the review's,
+/// then the Windows review's and the Windows post's questions.
 const REVIEW_TITLE: &str = r#"#[cfg(not(windows))]
 fn review_title(count: VoucherCount) -> String {
     match count.batch() {
@@ -832,7 +833,6 @@ fn each_dialog_answers_only_on_its_positive_button() {
             "Ok(_) => Ok(()),",
             1,
         ),
-        // rfd post dialog discards its answer: it still computes the comparison, then returns true.
         // A Windows-only twin that approves, beside the real one made
         // non-Windows: every pinned body is still present.
         source.replacen(
@@ -872,11 +872,18 @@ fn each_dialog_answers_only_on_its_positive_button() {
             "format!(\"Bridge — record that you reviewed these {count} vouchers?\")",
             1,
         ),
+        // A review dialog's title reads as approving a post (#746).
         source.replacen(
             "format!(\"Bridge — record that you reviewed {count} vouchers\")",
             "format!(\"Bridge — approve {count} vouchers\")",
             1,
         ),
+        source.replacen(
+            "format!(\"Bridge — record that you reviewed these {count} vouchers?\")",
+            "format!(\"Bridge — post {count} vouchers?\")",
+            1,
+        ),
+        // rfd post dialog discards its answer: it still computes the comparison, then returns true.
         source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
         // Windows post dialog discards its answer: it still computes the comparison, then returns true.
         source.replacen(POST_DIALOG_WINDOWS, &discard_answer(POST_DIALOG_WINDOWS), 1),

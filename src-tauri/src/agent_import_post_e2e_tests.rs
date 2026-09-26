@@ -580,8 +580,8 @@ async fn a_batch_post_records_its_step_verdict_before_the_readback() {
         .scope(scripted.clone(), server.call_tool("post_import", args))
         .await;
     let _ = sent(simulator);
-    // The dialog was asked about both vouchers: the count its title and
-    // button name (#746), whose words the approval's unit tests check.
+    // The dialog was asked about both vouchers, the count that its title and
+    // button name (#746); the approval's unit tests check those words.
     assert_eq!(scripted.counts(), [2]);
     let imports = server.imports_dir().unwrap();
     let doubt: Value = serde_json::from_slice(

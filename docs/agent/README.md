@@ -438,9 +438,11 @@ been observed live on a synthetic Silver 7.1 company, each reading back
    the post can be re-run. Rebuild only when `attempt_recorded` is `false`.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
-   narration, every debit/credit entry, and totals (for a batch, its summary of
-   every ledger's totals); for a bank voucher, also the side that must be bank
-   or cash. Choose **Post voucher** (for a batch,
+   narration, every debit/credit entry, and totals; for a bank voucher, also the
+   side that must be bank or cash. A batch's dialog is a summary instead: the
+   voucher count, the date range, each ledger's totals and the overall totals.
+   It does not show each voucher's date, narration or reference, so check those
+   before building the batch. Choose **Post voucher** (for a batch,
    **Post N vouchers**) on macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
    declines on macOS; Return may leave the dialog open. Windows defaults to
    **No**. Long or directionally ambiguous previews are refused; use the
