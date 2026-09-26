@@ -186,3 +186,6 @@ Lane D called #749 as the front of the pinned merge queue after #771 (`6b4cd77c`
   - full `bridge` lib: 1439 passed, 1 failed (the known root-only `readonly_directory…` red);
   - fmt and clippy `-D warnings` clean.
 - New head `b0eadd1deeca38a3556a96b507abe71b5b3df6af`, pushed as a fast-forward of `5e15d10`. Only #749 was touched.
+
+## 2026-09-26T16:43Z: #749 merged (#711)
+Lane D merged #749 at head `7ecc92c`. That is my `b0eadd1` plus Lane D's merge of #764. Still open and waiting on Lane D's pinned queue, in order: #743, #731, #736, #733, #763. Lane Q merges master into each one only when Lane D calls it.
