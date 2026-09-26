@@ -199,7 +199,7 @@ not measurement.** Treat the latter two as directional.
 > **What is held privately, and what does not depend on it.** Competitor
 > *pricing*, a synthesised UX teardown, and a deeper landscape sweep
 > (Zoho/Munim/Open/EnKash/GST connectors/Tally-native remote) live in the
-> private lamemustafa knowledge hub rather than in this public repo, because
+> project's private notes rather than in this public repo, because
 > they are commercially sensitive. **The sources and gaps above do not rest on
 > that private material.** Where private research informed a *prioritisation*
 > rather than a finding, it is marked inline as an internal hypothesis — see
