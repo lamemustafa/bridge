@@ -203,6 +203,16 @@ impl Server {
         }
     }
 
+    /// How many vouchers one post may send: 1, unless batch posting is on and
+    /// this is the MCP path (the desktop posts one Journal).
+    pub(super) fn post_voucher_limit(&self, scope: PostScope) -> usize {
+        if scope == PostScope::Vouchers && self.settings.batch_post_enabled {
+            ledger::MAX_BATCH_POST_VOUCHERS
+        } else {
+            1
+        }
+    }
+
     pub(in crate::agent) async fn post_import(
         &self,
         args: &Value,
@@ -241,7 +251,12 @@ impl Server {
         // The ledgers whose GUID changed since the build (#239).
         let mut ledgers_changed: Option<Vec<String>> = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
-            let xml = admit_saved_voucher_integrity(&line, &self.settings.endpoint, scope)?;
+            let xml = admit_saved_voucher_integrity(
+                &line,
+                &self.settings.endpoint,
+                scope,
+                self.post_voucher_limit(scope),
+            )?;
             if snapshot.dispatched {
                 return self.verify_import(args).await;
             }
@@ -412,7 +427,7 @@ impl Server {
             let _endpoint_dispatch_lease = dispatch_lease::acquire(&self.settings.endpoint)?;
             // Before anything can be sent, so a crash, a concurrent reader or a
             // failed later write reads a doubt, never an absent record (#239).
-            self.record_masters_check_pending(batch_id)?;
+            self.record_post_checks_pending(batch_id, line.vouchers.len() > 1)?;
             let posted = self
                 .runtime
                 .post_approved_import(
@@ -638,6 +653,14 @@ impl Server {
                 &company.name,
                 reported_created,
             ));
+            // A batch is clean only if the target's voucher mark moved by
+            // exactly what Tally created; recorded durably, before anything
+            // else can fail, so no later readback can lose it.
+            if line.vouchers.len() > 1 {
+                if let Some(located) = &post_location {
+                    self.record_batch_step_verdict(batch_id, &located["target_voucher_step"]);
+                }
+            }
             journaled?;
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
@@ -653,7 +676,11 @@ impl Server {
                 .await;
             // The verdict replaces the pending record before the readback, so no
             // later reconcile, which compares by name, can clear a doubt (#239).
-            let masters_after_post = self.record_masters_verdict(batch_id, masters_after_post);
+            let masters_after_post = self.record_masters_verdict_for(
+                batch_id,
+                masters_after_post,
+                line.vouchers.len() > 1,
+            );
             masters_verdict = Some(masters_after_post.clone());
             let mut proof = self
                 .verify_import_after_current_dispatch(args, masters_after_post)
@@ -932,23 +959,27 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     })
 }
 
-/// A batch's step doubt: its target's voucher mark did not move by exactly
-/// Tally's CREATED, or that was never recorded (pending, unreadable or
-/// absent). Nothing in the step says which voucher, so the review is of the
-/// whole batch.
+/// A batch's step doubt: Bridge has no record of the target's voucher mark
+/// moving by exactly Tally's CREATED. It moved otherwise, could not be read,
+/// or its verdict was never recorded or cannot be read. Both finalizers show
+/// the message only when the saved response is clean (CREATED parsed, and
+/// equal to the batch) and every voucher read back verified, so it may say
+/// that Tally reported creating the batch and that the batch is posted.
+/// Nothing in the step says which voucher, so the review is of the whole
+/// batch.
 fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
     if step.is_some_and(|step| step["state"] == "matched") {
         return None;
     }
     Some((
         "batch_step_unconfirmed",
-        "Tally reported creating the batch, but this company's voucher mark did not move by exactly that many, so another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
+        "Tally reported creating the batch, and every voucher reads back, but Bridge did not confirm that this company's voucher mark moved by exactly that many: the mark moved by another amount or backwards, it could not be read, or the check did not finish. Another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. Record that review with acknowledge_post_review.".to_string(),
     ))
 }
 
 /// Every doubt across the post: the masters check, and for a batch its step,
 /// which must be recorded as matched.
-fn post_doubt(
+pub(super) fn post_doubt(
     masters_after_post: Option<&Value>,
     voucher_count: usize,
 ) -> Option<(&'static str, String)> {
@@ -1246,6 +1277,8 @@ tokio::task_local! {
     /// Test-only: the REMOTEID a post mints, so a test can make it one the
     /// journal already records.
     pub(super) static SCRIPTED_REMOTE_ID: Uuid;
+    /// Test-only: the REMOTEIDs a batch post mints, one per voucher.
+    pub(super) static SCRIPTED_REMOTE_IDS: Vec<Uuid>;
 }
 
 /// A fresh random REMOTEID for one native post.
@@ -1268,6 +1301,12 @@ impl RemoteIds {
     pub(super) fn mint(count: usize) -> Result<Self, String> {
         if count == 0 {
             return Err("import_post_requires_one_voucher".into());
+        }
+        #[cfg(test)]
+        if let Ok(scripted) = SCRIPTED_REMOTE_IDS.try_with(Clone::clone) {
+            if scripted.len() == count {
+                return Ok(Self(scripted));
+            }
         }
         // No more than the journal will admit on read, so an intent is never
         // written that the next journal read would refuse.
@@ -1349,19 +1388,30 @@ pub(super) fn admit_saved_journal_integrity(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<String, String> {
-    admit_saved_voucher_integrity(line, endpoint, PostScope::JournalOnly)
+    admit_saved_voucher_integrity(line, endpoint, PostScope::JournalOnly, 1)
 }
 
+/// `max_vouchers` is 1 unless `BRIDGE_AGENT_ENABLE_BATCH_POST` lets the MCP
+/// path post a batch (`Server::post_voucher_limit`). Every voucher's type must
+/// be one the scope admits.
 pub(super) fn admit_saved_voucher_integrity(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
     scope: PostScope,
+    max_vouchers: usize,
 ) -> Result<String, String> {
-    if line.vouchers.len() != 1
-        || !scope.admits(&line.vouchers[0].voucher_type)
+    if line.vouchers.is_empty()
+        || (line.vouchers.len() > 1 && max_vouchers < 2)
+        || !line
+            .vouchers
+            .iter()
+            .all(|voucher| scope.admits(&voucher.voucher_type))
         || line.identity_scheme != Some(ImportIdentityScheme::BatchV1)
     {
         return Err(scope.refusal().into());
+    }
+    if line.vouchers.len() > max_vouchers.min(ledger::MAX_BATCH_POST_VOUCHERS) {
+        return Err("import_post_batch_too_large".into());
     }
     // A native post uses a fresh private REMOTEID, so it can only create. An
     // amendment exists to alter a voucher already in the book in place.
@@ -1392,15 +1442,16 @@ pub(super) fn admit_saved_journal(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<(String, String), String> {
-    admit_saved_voucher(line, endpoint, PostScope::JournalOnly)
+    admit_saved_voucher(line, endpoint, PostScope::JournalOnly, 1)
 }
 
 pub(super) fn admit_saved_voucher(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
     scope: PostScope,
+    max_vouchers: usize,
 ) -> Result<(String, String), String> {
-    let xml = admit_saved_voucher_integrity(line, endpoint, scope)?;
+    let xml = admit_saved_voucher_integrity(line, endpoint, scope, max_vouchers)?;
     let preview = admit_fresh_saved_voucher(line, endpoint)?;
     Ok((xml, preview))
 }
@@ -1428,6 +1479,9 @@ fn admit_fresh_saved_voucher(
     let origin =
         super::super::canonical_loopback_origin(endpoint).map_err(|_| "host_setting_invalid")?;
     let (debit, credit) = totals(&line.vouchers)?;
+    if line.vouchers.len() > 1 {
+        return batch_review_text(line, company, &origin, &debit, &credit);
+    }
     let voucher = &line.vouchers[0];
     let mut review_text = std::iter::once(company.name.as_str())
         .chain(voucher.voucher_number.iter().map(String::as_str))
@@ -1477,6 +1531,158 @@ fn admit_fresh_saved_voucher(
     if preview.chars().count() > 1_600
         || preview.lines().count() > 24
         || preview.lines().any(|line| line.chars().count() > 100)
+    {
+        return Err("import_review_too_large".into());
+    }
+    Ok(preview)
+}
+
+/// The most a batch's approval text may take: lines, characters, characters
+/// a line, and UTF-8 bytes (under the native dialog's 8,000). A batch whose
+/// summary does not fit is refused, never cut; the caller posts it in parts.
+pub(super) const BATCH_REVIEW_MAX_LINES: usize = 40;
+pub(super) const BATCH_REVIEW_MAX_CHARS: usize = 3_200;
+pub(super) const BATCH_REVIEW_MAX_LINE_CHARS: usize = 100;
+pub(super) const BATCH_REVIEW_MAX_BYTES: usize = 7_000;
+
+/// The approval text for a batch: a summary a person can read in one native
+/// dialog, never a listing. Every ledger's debit and credit totals and entry
+/// count, the totals by voucher type, the money the types themselves fix as
+/// moving in or out, and the standing cautions. Narrations and references
+/// are not shown; the amounts and ledgers are what the approval binds.
+fn batch_review_text(
+    line: &ImportLedgerLine,
+    company: &ImportCompanyTuple,
+    origin: &str,
+    debit: &ExactDecimal,
+    credit: &ExactDecimal,
+) -> Result<String, String> {
+    let names = std::iter::once(company.name.as_str()).chain(
+        line.vouchers
+            .iter()
+            .flat_map(|voucher| voucher.entries.iter().map(|entry| entry.ledger.as_str())),
+    );
+    if names.clone().any(has_unsafe_review_layout_character) {
+        return Err("import_review_layout_text".into());
+    }
+    if names.clone().any(has_unreviewable_format_character) {
+        return Err("import_review_format_text".into());
+    }
+    for voucher in &line.vouchers {
+        require_native_numbering(voucher)?;
+    }
+    let add = |total: &mut ExactDecimal, amount: &str| -> Result<(), String> {
+        let amount = ExactDecimal::parse(amount.to_string())
+            .map_err(|_| "voucher_amount_invalid".to_string())?;
+        *total = total
+            .checked_add(&amount)
+            .map_err(|_| "voucher_amount_overflow".to_string())?;
+        Ok(())
+    };
+    let mut by_type = BTreeMap::<&str, usize>::new();
+    let mut ledgers = BTreeMap::<&str, (ExactDecimal, ExactDecimal, usize)>::new();
+    let (mut money_in, mut money_out) = (ExactDecimal::zero(), ExactDecimal::zero());
+    for voucher in &line.vouchers {
+        *by_type.entry(voucher.voucher_type.as_str()).or_default() += 1;
+        for entry in &voucher.entries {
+            let totals = ledgers
+                .entry(entry.ledger.as_str())
+                .or_insert_with(|| (ExactDecimal::zero(), ExactDecimal::zero(), 0));
+            totals.2 += 1;
+            match &entry.side {
+                EntrySide::Dr => add(&mut totals.0, &entry.amount)?,
+                EntrySide::Cr => add(&mut totals.1, &entry.amount)?,
+            }
+            // The type fixes the cash/bank side: a Receipt's debits and a
+            // Payment's credits (checked at build and again in the queue).
+            match (&voucher.voucher_type, &entry.side) {
+                (VoucherType::Receipt, EntrySide::Dr) => add(&mut money_in, &entry.amount)?,
+                (VoucherType::Payment, EntrySide::Cr) => add(&mut money_out, &entry.amount)?,
+                _ => {}
+            }
+        }
+    }
+    let dates = line.vouchers.iter().map(|voucher| voucher.date.as_str());
+    let (first, last) = (
+        dates.clone().min().unwrap_or_default(),
+        dates.max().unwrap_or_default(),
+    );
+    let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
+    let mut text = vec![
+        format!(
+            "Create {} vouchers in {}",
+            line.vouchers.len(),
+            quoted(&company.name)
+        ),
+        format!("Company GUID: {}", company.guid),
+        format!(
+            "Company number: {}  Books from: {}",
+            company.company_number, company.books_from
+        ),
+        format!("Tally: {origin}"),
+        format!(
+            "Types: {}",
+            by_type
+                .iter()
+                .map(|(voucher_type, count)| format!("{count} {voucher_type}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        format!("Dates: {first} to {last}  Voucher numbers: Tally assigns them"),
+        "Not shown here: each voucher's own date, narration and reference.".into(),
+        String::new(),
+    ];
+    for (ledger, (dr, cr, count)) in &ledgers {
+        text.push(format!(
+            "Dr {}  Cr {}  {count} {}  {}",
+            dr.as_str(),
+            cr.as_str(),
+            if *count == 1 { "entry" } else { "entries" },
+            quoted(ledger)
+        ));
+    }
+    text.push(String::new());
+    text.push(format!(
+        "Total debit: {}  Total credit: {}",
+        debit.as_str(),
+        credit.as_str()
+    ));
+    if by_type.contains_key(VoucherType::Receipt.as_str()) {
+        text.push(format!(
+            "Money in by Receipt vouchers: {}",
+            money_in.as_str()
+        ));
+    }
+    if by_type.contains_key(VoucherType::Payment.as_str()) {
+        text.push(format!(
+            "Money out by Payment vouchers: {}",
+            money_out.as_str()
+        ));
+    }
+    if by_type.contains_key(VoucherType::Contra.as_str()) {
+        text.push("Contra: moves between cash/bank ledgers, net zero".into());
+    }
+    if by_type.contains_key(VoucherType::Journal.as_str()) {
+        text.push("Journals may also move cash/bank ledgers; see the per-ledger totals".into());
+    }
+    text.push(format!("Batch: {}", line.batch_id));
+    text.push(String::new());
+    text.push(
+        "Ledgers checked by identity against the build; Bridge adds its batch reference.".into(),
+    );
+    text.push("Do not post a file already imported manually.".into());
+    text.push(
+        "Pause other edits/imports; keep this company and Tally mode unchanged until Bridge finishes."
+            .into(),
+    );
+    text.push("After a timeout, reconcile this batch; do not rebuild or resend it.".into());
+    let preview = text.join("\n");
+    if text.len() > BATCH_REVIEW_MAX_LINES
+        || preview.chars().count() > BATCH_REVIEW_MAX_CHARS
+        || preview.len() > BATCH_REVIEW_MAX_BYTES
+        || text
+            .iter()
+            .any(|line| line.chars().count() > BATCH_REVIEW_MAX_LINE_CHARS)
     {
         return Err("import_review_too_large".into());
     }

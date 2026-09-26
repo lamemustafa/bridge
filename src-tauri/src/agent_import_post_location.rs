@@ -99,9 +99,9 @@ pub(super) fn target_masters_unchanged(
 /// measured rules out a change that leaves it still; so a match is no proof
 /// that nothing else changed. A multi-voucher import stepped by its count in
 /// lab scripts (PARTIAL, §11c.5); through this post path that is UNVERIFIED.
-/// Reported only: a single post is proved by its readback. A batch post, not
-/// yet built, is to gate on it. `Null` unless each snapshot holds exactly one
-/// target row.
+/// For one voucher it is reported only: the verdict is the readback. A batch
+/// post gates on it (`batch_step_unconfirmed` unless it matched). `Null`
+/// unless each snapshot holds exactly one target row.
 fn target_voucher_step(
     before: &[LoadedCompanyMarks],
     after: &[LoadedCompanyMarks],

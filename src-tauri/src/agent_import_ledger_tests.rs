@@ -36,6 +36,7 @@ fn server(path: &Path) -> Server {
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 

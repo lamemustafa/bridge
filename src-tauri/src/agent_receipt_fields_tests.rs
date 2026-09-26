@@ -14,6 +14,7 @@ fn receipt_for(directory: &Path, response: &Value) -> Value {
         redaction: Redaction::DropNarration,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let wire = format!("{response}\n");
     server
