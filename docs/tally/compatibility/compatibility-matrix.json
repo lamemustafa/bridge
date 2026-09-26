@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bridge_commit_sha": "be1c20cc3fd66fa1ece196505c69f26e555e4b8e",
-  "compatibility_surface_sha256": "533fa91dbd2b3d83b1919f52d409121c92819a727006fe04a74cee2aa1fae246",
+  "compatibility_surface_sha256": "331edbf181fd2b34c0fd74017b15c44d326014dfb936fb91d28a3f7326073bb6",
   "claims": [
     {
       "claim_id": "erp9-6-6-3-windows-education-xml-one-company",

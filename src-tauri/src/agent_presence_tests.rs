@@ -22,6 +22,7 @@ fn offline_server(directory: &std::path::Path) -> Server {
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 
@@ -758,6 +759,7 @@ async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issue
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let response = server
         .call_tool(
@@ -834,6 +836,7 @@ async fn a_narration_marker_decides_a_present_from_a_nonempty_partial_window() {
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let response = server
         .call_tool(
@@ -1024,6 +1027,7 @@ async fn a_ledger_missing_from_the_catalogue_fails_closed() {
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let response = server
         .call_tool_response(
@@ -1074,6 +1078,7 @@ async fn a_party_with_too_many_identifiers_costs_no_read() {
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let response = server
         .call_tool_response(
@@ -1257,6 +1262,7 @@ async fn replay_the_twenty_invoice_engagement() {
         import_enabled: false,
         // Read-only, and stated in the settings rather than only in a comment.
         writes_enabled: false,
+        batch_post_enabled: false,
     });
 
     // Scope the read to a manually numbered type. Presence by voucher number is
@@ -1686,6 +1692,7 @@ async fn a_batch_id_the_writer_could_not_have_made_is_refused() {
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     for (batch, refused) in [
         (BATCH, false),
@@ -1750,6 +1757,7 @@ async fn a_transaction_label_outside_the_published_nested_schema_is_refused_befo
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     // A space is the case the writer rejects and the declared pattern names.
     for (label, refused) in [("txn 001", true), ("txn-001", false)] {

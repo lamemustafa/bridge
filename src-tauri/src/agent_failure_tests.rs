@@ -62,6 +62,7 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
             redaction: Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let response = if malformed_catalogue {
             server
@@ -163,6 +164,7 @@ async fn a_name_the_core_refuses_costs_no_live_read() {
         redaction: Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
 
     let refused = server

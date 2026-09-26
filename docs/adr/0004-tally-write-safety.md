@@ -483,3 +483,70 @@ Receipt, a Contra and a three-entry Receipt were observed live on licensed 7.1 S
 recorded REMOTEID (#600, live-qualification comment of 2026-09-22). That three-entry Receipt was a
 native post, distinct from #466's gateway import of a Bridge-built file. The 2026-09-22
 amendment's "has not yet been observed live" is superseded.
+
+## Amendment — batch posting behind a setting (slice D2a)
+
+`post_import` may post **2 to 50** vouchers of one saved batch in one import, only when
+`BRIDGE_AGENT_ENABLE_BATCH_POST` is on together with posting. It is off by default. It is a
+command-line setting, not in the MCPB extension, until a live batch post through Bridge is
+proved. With it off, a batch of more than one voucher refuses exactly as before
+(`import_post_requires_one_voucher`), and a one-voucher post is unchanged.
+
+**Every safeguard applies to every voucher** (slice D1):
+- each voucher's type and numbering;
+- the Education boundary for every voucher's date, in the queue too;
+- duplicate absence for all N, before approval and in the queue;
+- one fresh REMOTEID per voucher, none recorded by any earlier intent, all recorded in the one
+  dispatch intent before the POST;
+- the ledger bindings, currency and bank-leg checks for every leg.
+
+**Approval.** The native dialog (#665's nonce-bound approval) shows a summary, not a listing:
+- the company;
+- the count by type and the date range;
+- one line per ledger with its debit and credit totals and entry count;
+- the grand totals;
+- "Money in by Receipt vouchers" (their debits) and "Money out by Payment vouchers" (their
+  credits), which the types fix as cash/bank and the build and queue enforce;
+- a Contra line (net zero) and, when the batch holds Journals, a line saying they may also move
+  cash/bank ledgers;
+- the standing cautions.
+
+It says, in a line of its own, that each voucher's date, narration and reference are not shown. Its budget is its own: 40 lines, 3,200 characters, 100
+a line, and 7,000 UTF-8 bytes (under the dialog's 8,000). A summary over it is refused
+(`import_review_too_large`), never cut, and the caller posts the batch in parts. A 40-line native
+dialog has not yet been shown on Windows or macOS (UNVERIFIED).
+
+**Rejected for the money line:**
+- A single "bank and cash net" computed after the catalogue and group reads was rejected. It
+  moves the approval text after two more reads, and adds a group read to Journal-only batches.
+  The per-type lines are exact without it.
+- Recording the build's leg classification in the batch record was rejected. It adds a field
+  whose only reader is this line.
+
+**Outcome.** A batch is `posted_verified` only when all of these hold:
+- Tally reports CREATED N and nothing else;
+- the readback verifies all N;
+- the masters check finds no doubt;
+- the target's voucher mark moved by exactly CREATED (`post_location.target_voucher_step`).
+
+The step verdict is durable. It is recorded beside the masters verdict in the masters-check
+records, pending before the POST, and an observed mismatch is kept in its own file that nothing
+removes. So no later readback can lose it, and neither verdict masks the other. A mismatch,
+or a verdict never recorded, reads `reconciliation_required` with `batch_step_unconfirmed`. On a
+multi-user book a person's edit during the post trips it; that is accepted, and loud.
+
+**Limits.**
+- A doubted batch has no review record yet: `acknowledge_post_review` refuses a batch, until
+  slice D2b binds a review to every voucher and to the doubt it covers.
+- The N-voucher step is PARTIAL on raw-gateway lab scripts (protocol reference §11c.5).
+  Through Bridge's own post path it is UNVERIFIED until the lab proof (slice D3).
+- The desktop stays single-voucher `JournalOnly`.
+
+**Rollback.**
+- **Back to slice D1's build.** D1 never records a step verdict. A batch whose step this build
+  recorded as matched stays clean there. Any other batch reads `reconciliation_required`
+  (`batch_step_unconfirmed`), and so does one whose verdict D1's own pending re-check drops.
+- **Back to a build older than D1.** That build refuses a journal holding a batch's dispatch
+  intent (`deny_unknown_fields`), so every import and verification stops, loudly, until a newer
+  build is back.
+- Do not edit the journal or the check records by hand to get around any of these.
