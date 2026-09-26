@@ -67,8 +67,10 @@ Contra per approval, with existing ledgers and no supplied voucher number. A
 command-line installation can also post a saved batch of 2 to 50 such vouchers
 after one approval of a summary (per-ledger totals, not each voucher's date or
 narration), when `BRIDGE_AGENT_ENABLE_BATCH_POST` is on together with posting.
-That setting is off by default, the extension does not set it, and batch posting
-has not yet been proven through Bridge against a live Tally (bridge#712). A Payment, Receipt or Contra is
+That setting is off by default and the extension does not set it (bridge#712).
+Batch posting through Bridge has run live on a synthetic company on licensed
+TallyPrime Silver, 200 Journals in one import with a test build whose cap was
+raised, and verified; it is not proven on a multi-user book (bridge#725). A Payment, Receipt or Contra is
 refused if any of its ledgers, or their groups, moved since the file was built
 so that a bank or cash leg no longer classifies as it did. Tally assigns the number. Bridge uses a private request identity
 for the native attempt; the selected XML file stays unchanged. Do not manually
