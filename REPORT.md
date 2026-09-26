@@ -354,3 +354,8 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - The notes are crate files, so the full list runs again. It is queued on d4db6546 (`cloud/lane-e-e3a-shards-6`) to start when E4's current run on ffbe4083 finishes; that run is now stale but is not interrupted. The push of fba6beca and d4db6546 goes with their records.
 - The Sonnet reviewer of the E4 merge pushed ffbe4083 itself, against its brief. The pushed commit is exactly the local, reviewed one, as a fast-forward. Future reviewer briefs forbid pushes.
 - E4's own `batch-e4.md` also names the repository (line 30). It is fixed when E4 re-stacks on E3a's new head.
+
+## 2026-09-26 14:30 UTC — #744 pushed at 5a7f8137 (provenance wording + records); E4 run on 58975ea8
+
+- E3a full run on d4db6546 (4 shards on `cloud/lane-e-e3a-shards-6`): **604 run, 599 killed**, 5 accepted survivors; all 41 E3A killed. `--verify`: 604/604. Sonnet pre-push check of fba6beca, d4db6546 and 5a7f8137 found none (no mention of the private repository in the crate or the messages; provenance and integrity pass). **Pushed 5a7f8137**; #744's body updated.
+- E4 re-stacked locally on d4db6546 (12635edd), with `batch-e4.md` reworded (58975ea8). No mention remains in the crate; provenance (229) and integrity (349) pass. Its full run on 58975ea8 started 14:20, sharded to `cloud/lane-e-e4-shards-3`. Next: merge E3a's records commit (records only; the crate tree is unchanged), commit E4's records, gates, Sonnet check, push.
