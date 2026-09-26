@@ -159,3 +159,6 @@ Head `59cf3da6a3c8e6e7b5b8b72d623f4e93588767f8`. Sonnet found no functional defe
 
 ## 2026-09-26T12:18Z: #763 merged up with master
 CI was green on `59cf3da`, but GitHub reported a merge conflict after master took #751. The conflict was only in the compatibility surface and matrix. I took master's copies, resealed (`--verify` clean), and pushed merge head `753d7c7ea7b28bd6696812d333df61ceba287dce`. `bridge-tally-protocol`: 350 passed; the targeted `bridge` tests: 119 passed; fmt and clippy clean. The five parked PRs were not touched.
+
+## 2026-09-26T12:52Z: #763 merged up with master again
+CI was green on `753d7c7` (14/14 completed, 12 passed, 2 skipped), then master took #757 and the compatibility JSON conflicted again. Same procedure: took master's surface and matrix, resealed (`--verify` clean), and pushed merge head `288c982bbdef4c0463e4d7c5ce4f3d6e15141f35`. `bridge-tally-protocol`: 350 passed; the targeted `bridge` tests: 119 passed; fmt and clippy clean. The five parked PRs are all green on their heads and were not touched. Their mergeability against current master is Lane D's, per its instruction.
