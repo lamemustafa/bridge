@@ -1,7 +1,7 @@
 {
   "name": "bridge",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Bridge is the open-source Tauri implementation of AXAL Sync with local edge-first sync workflows.",

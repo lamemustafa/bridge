@@ -39,7 +39,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "8a9de75fe9a35261049c1075e44c440bd950241ede0c408d29a7d8766014e232"
+      "sha256": "bcd86524771fdfed81a9db4d821f4c29d16f05ccc8b483ab31256f4712d701f3"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
@@ -51,11 +51,11 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "b917e2547a26effd0cd3583888801123721610f6c13bc2331b9d39223f7a8786"
+      "sha256": "58606d1c6c69b0ba702ad64daa68746716ae62373dcb950f729b667647f0530f"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
-      "sha256": "82aa81d6d4a980899993350bc732c5f6345ef838866d3ceb4e8891356d954304"
+      "sha256": "58b24ff27883a591294991a293143f94760c01f359638a005e5b96d9029e722a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
@@ -63,7 +63,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
-      "sha256": "8d093de84ae1786fba9d69295222a253f3245e300043b70c179bc12736538a3f"
+      "sha256": "8ea0d78ecff56822731e857c9dd3099cc42ed57bacac8e3fa3a1091a7fe7d11c"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -103,7 +103,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "a91ac35c2bef17c40a11d928b38a555192227b64c85b98ac265e07b07b8f2525"
+      "sha256": "40ebc1c07130b1a4eea6bd4eab99d93f0ad8c67f9a37fb3a1520e1c7572c9bd6"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -151,11 +151,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "1e4568e1b5374ff04960330918d615ed3454f74e307c0a97ffe812b9d4da3a83"
+      "sha256": "ac2dd86869e6f2a1fef36c950af6963bd458a923881b2c90bdf53f9a7233302e"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "e9b02e6cced41cb624c9fe1715f43eec67b3cabde2d48ff8ef64dbf4ee36d03d"
+      "sha256": "a9121654739b3b59f5479296c5fa22b045f504471d19d7886d9552db2f987347"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/Cargo.toml",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "5537ef4d29dc55c979d34a1428f378d2f2ca32f3d6448b2f9cdd6d916f9a038a"
+  "manifest_sha256": "c58cf9e6b3872b68195a8eadfcc955556f6ac22df299c028cb2f254b1372d0a0"
 }
