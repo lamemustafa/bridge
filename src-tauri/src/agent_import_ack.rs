@@ -112,10 +112,12 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
 
 /// Which doubt a review is for. Named, it must be one the batch can hold;
 /// unnamed, it is the one observed doubt. A doubt the check record holds
-/// without its own file is observed too (#722), so it and another doubt need
-/// a name (`ack_doubt_ambiguous`), never a silent pick. With none observed,
-/// the kind whose record says why (pending, unreadable) is chosen, so the
-/// refusal names it.
+/// without its own file is observed too (#722), so two observed doubts need a
+/// name (`ack_doubt_ambiguous`). A check still pending, or a record that
+/// cannot be read, is not observed: this choice is made from the records
+/// before the read, which can finish a pending check. With none observed, the
+/// kind whose record says why (pending, unreadable) is chosen, so the refusal
+/// names it.
 fn select_doubt(
     requested: Option<DoubtKind>,
     states: &[(DoubtKind, MastersRecord)],

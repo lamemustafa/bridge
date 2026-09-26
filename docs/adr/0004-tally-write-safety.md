@@ -551,8 +551,9 @@ is accepted, and loud.
   any voucher makes it stale, naming the voucher. It is refused unless all N read back. It
   changes no verdict. A `batch_step` review attests only the batch's own vouchers, not that
   nothing else in the company changed. A doubt the check record holds without its own file
-  has no bytes to bind, so it is refused (`ack_doubt_record_unavailable`, #722) and, beside
-  another doubt, needs a name.
+  has no bytes to bind, so it is refused (`ack_doubt_record_unavailable`, #722). Beside
+  another observed doubt it needs a name; a check still pending or unreadable is not observed
+  when the choice is made, which is before the read that can finish it.
 - The N-voucher step is PARTIAL on raw-gateway lab scripts (protocol reference §11c.5).
   Through Bridge's own post path it is UNVERIFIED until the lab proof (slice D3).
 - The desktop stays single-voucher `JournalOnly`.
