@@ -203,3 +203,6 @@ Checks on the merge:
 - fmt and clippy `-D warnings` clean.
 
 New head `30c8956459a92a93641eb93eff0691f23f9243d1`, pushed as a fast-forward of `76046e4`. Only #743 was touched.
+
+## 2026-09-26T17:24Z: #743 merged (#717 part 1)
+Lane D merged #743 at head `30c8956`. Still in Lane D's pinned queue, in this order: #731, #736, #733, #763. Each waits for Lane D's call.
