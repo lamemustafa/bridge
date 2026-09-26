@@ -4392,6 +4392,78 @@
   "to": "Some(s) if s.is_empty() => Err(AuditError::Config(format!("
  },
  {
+  "id": "E2B2-31",
+  "by": "author",
+  "what": "a row is never marked as differing",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = false && data.lines.values().any(|(share, line)| share != line);"
+ },
+ {
+  "id": "E2B2-32",
+  "by": "author",
+  "what": "a row is marked only when every voucher's line differs",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = !data.lines.is_empty() && data.lines.values().all(|(share, line)| share != line);"
+ },
+ {
+  "id": "E2B2-33",
+  "by": "author",
+  "what": "a receipt's money line counts credits on the mode's ledgers too",
+  "file": "src/high_value_register.rs",
+  "from": "                Direction::Receipt if l.amount_paise > 0 => line = add(line, l.amount_paise)?,",
+  "to": "                Direction::Receipt => line = add(line, l.amount_paise.abs())?,"
+ },
+ {
+  "id": "E2B2-34",
+  "by": "author",
+  "what": "the below-threshold sentence is added at or over the threshold too",
+  "file": "src/high_value_register.rs",
+  "from": "                        if line_total < row_threshold {",
+  "to": "                        if line_total <= row_threshold {"
+ },
+ {
+  "id": "E2B2-35",
+  "by": "author",
+  "what": "a row's vouchers' lines are not summed, only the last kept",
+  "file": "src/high_value_register.rs",
+  "from": "                        line_total = add(line_total, *line)?;",
+  "to": "                        line_total = *line;"
+ },
+ {
+  "id": "E2B2-36",
+  "by": "author",
+  "what": "two vouchers sharing a GUID keep only the last share and line",
+  "file": "src/high_value_register.rs",
+  "from": "        *slot = (add(slot.0, share)?, add(slot.1, line)?);",
+  "to": "        *slot = (share, line);"
+ },
+ {
+  "id": "E2B2-37",
+  "by": "reviewer-opus",
+  "what": "the unidentified row's line is its share, so it never differs",
+  "file": "src/high_value_register.rs",
+  "from": "row.add(v, fallback_total, line)?;",
+  "to": "row.add(v, fallback_total, fallback_total)?;"
+ },
+ {
+  "id": "E2B2-38",
+  "by": "reviewer-opus",
+  "what": "a row is marked when its totals differ, not any voucher",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = data.lines.values().map(|(s, _)| *s).sum::<i64>() != data.lines.values().map(|(_, l)| *l).sum::<i64>();"
+ },
+ {
+  "id": "E2B2-39",
+  "by": "reviewer-opus",
+  "what": "a payment's money line counts debits on the mode's ledgers too",
+  "file": "src/high_value_register.rs",
+  "from": "                Direction::Payment if l.amount_paise < 0 => {",
+  "to": "                Direction::Payment => {"
+ },
+ {
   "id": "E3A-01",
   "by": "author",
   "what": "a stock journal's IN/OUT tag is ignored",
