@@ -171,3 +171,9 @@ CI was green on `569abd6` (14/14 completed, 12 passed, 2 skipped). Master then t
 
 ## 2026-09-26T14:11Z: #763 parked; no more master re-merges
 Lane D asked me to stop re-merging #763 from master after each pinned merge: the three merge-ups today (12:52Z, 13:13Z, 13:57Z) were wasted while #763 is not at the front of the pinned queue. #763 is parked at `e7c43ed2bdf6d9b4bd0e2eab4c54bae5a37659f9`, and Lane D will update it when it is next to land. From now on Lane Q will not merge master into any of its PRs (#731, #733, #736, #743, #749, #763). The remaining credit is kept for review findings that V raises on these PRs.
+
+## 2026-09-26T15:02Z: #763 review P2/P3 from V answered
+The check-in found V's independent review of #763 unanswered: a P2 (three reader branches untested; each mutant survived all 350 tests) and a P3 (nested markup in a LINEERROR now refuses the outcome, not named in the body).
+- P2: fixed with tests only in `3197bb99a7d60e42c37c6c34ee8e8a30536320d8`. The cases are derived from the captured partial-commit response and labelled as derived: padding and a comment keep the captured text and digest, and a child element is refused, with a control row. Each of the three mutants now fails one test. 352 protocol tests pass; fmt, clippy and seal are clean.
+- P3: kept fail-closed, named in the PR body, and pinned by the refusal test.
+- No master merge (the PR is parked per Lane D). Reply: PR comment 5847290350. On the other five PRs there are no reviews, review threads or findings from anyone else. The check-in routine is not re-armed.
