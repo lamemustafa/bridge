@@ -13,12 +13,13 @@ src-tauri/crates/bridge-tally-protocol/tests/fixtures/** -text
 src-tauri/crates/tally-protocol-simulator/fixtures/** -text
 docs/tally/compatibility/fixtures/** -text
 scripts/fixtures/** -text
+tools/bridge-tally-compatibility/tests/fixtures/** -text
 
-# Concurrent PRs that each touch a DIFFERENT already-pinned file both edit the
-# same two derived lines (manifest_sha256 / compatibility_surface_sha256),
-# which git's default line-based merge always reports as conflicting even
-# though the actual pin lists merge cleanly underneath them. This driver
-# reconciles the pin lists itself and reseals -- see scripts/reseal-merge-driver.mjs
+# Since bridge#760 the surface stores only per-file hashes, so concurrent PRs
+# that touch DIFFERENT pinned files merge without conflict, here and on GitHub.
+# This driver handles what is left: both sides changing the pin list or the
+# claims. It reconciles those lists with a three-way merge and writes them --
+# see scripts/reseal-merge-driver.mjs
 # for exactly what it will and will not auto-resolve, and see
 # docs/release-process.md ("Merge driver (local only)") for the one-time
 # `git config` line this needs and, importantly, why it does NOT change what

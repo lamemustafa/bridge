@@ -430,7 +430,9 @@ impl LoadedNativeOutstandingsProbe {
         let metadata = ProbeMetadata {
             bridge_commit_sha,
             working_tree_dirty,
-            compatibility_surface_sha256: surface.manifest_sha256,
+            compatibility_surface_sha256: surface
+                .digest()
+                .map_err(|_| error("native_probe_surface_invalid"))?,
             executable_sha256: sha256_file(&executable)
                 .map_err(|_| error("native_probe_executable_unavailable"))?,
             cargo_lock_sha256: sha256_file(&repository_root.join("src-tauri/Cargo.lock"))

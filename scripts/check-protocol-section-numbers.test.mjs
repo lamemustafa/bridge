@@ -86,9 +86,8 @@ const writeSurface = (repository, paths) => {
   writeFileSync(
     join(repository, SURFACE),
     JSON.stringify({
-      schema_version: 1,
+      schema_version: 2,
       files: paths.map((path) => ({ path, sha256: TEST_SHA256 })),
-      manifest_sha256: TEST_SHA256,
     }),
   );
 };
@@ -764,9 +763,8 @@ for (const [name, example] of [
   writeFileSync(
     join(work, SURFACE),
     JSON.stringify({
-      schema_version: 1,
+      schema_version: 2,
       files: [{ path: DOC }],
-      manifest_sha256: TEST_SHA256,
     }),
   );
   out = runGate();

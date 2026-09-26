@@ -218,10 +218,9 @@ function compatibilitySurfacePaths() {
     manifest === null ||
     typeof manifest !== "object" ||
     Array.isArray(manifest) ||
-    manifest.schema_version !== 1 ||
+    manifest.schema_version !== 2 ||
     !Array.isArray(manifest.files) ||
-    typeof manifest.manifest_sha256 !== "string" ||
-    !/^[0-9a-f]{64}$/.test(manifest.manifest_sha256)
+    Object.keys(manifest).sort().join(",") !== "files,schema_version"
   ) {
     throw new Error(`invalid compatibility surface schema in ${relPath(compatibilitySurface)}`);
   }
