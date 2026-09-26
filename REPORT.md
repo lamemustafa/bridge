@@ -233,3 +233,15 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 
 - #688 (Git 2.43 upload-pack trust, #527) **merged** by Lane D at 07:46 UTC on head `926f50e`.
 - #728 and #729 are unchanged: green, and each trial-merges cleanly with master at `b5039c8`.
+
+## 2026-09-26 08:02 UTC: Check-in: both remaining PRs re-merged and resealed
+
+- Master moved to `bdab0e1` (#688, #741, #708). #728 and #729 then conflicted on exactly the two surface/matrix aggregate lines, the conflict #740 describes.
+- For each, per `release-process.md`:
+  - neither side changed the pin list or the claims (compared the base, ours and theirs stages);
+  - took master's generated files;
+  - committed the merge, then `scripts/reseal.sh` as its own commit;
+  - `--verify` reports current.
+- Diffs against master are unchanged. #729's 13 tests pass and the workflow YAML has no duplicate keys.
+- New heads: #728 `5cab138`, #729 `eab393d`. CI is re-running.
+- **Whichever of the two merges first will make the other conflict again on the same two lines.** That is item 5's bottleneck, observed live.
