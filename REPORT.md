@@ -168,3 +168,6 @@ CI was green on `288c982` (14/14 completed, 12 passed, 2 skipped). Master then t
 
 ## 2026-09-26T13:57Z: #763 merged up with master (#762)
 CI was green on `569abd6` (14/14 completed, 12 passed, 2 skipped). Master then took #762, which also touches the surface. I took master's JSON, resealed (`--verify` clean), and pushed merge head `e7c43ed2bdf6d9b4bd0e2eab4c54bae5a37659f9`. 350 protocol tests and 119 targeted `bridge` tests passed; fmt and clippy are clean.
+
+## 2026-09-26T14:11Z: #763 parked; no more master re-merges
+Lane D asked me to stop re-merging #763 from master after each pinned merge: the three merge-ups today (12:52Z, 13:13Z, 13:57Z) were wasted while #763 is not at the front of the pinned queue. #763 is parked at `e7c43ed2bdf6d9b4bd0e2eab4c54bae5a37659f9`, and Lane D will update it when it is next to land. From now on Lane Q will not merge master into any of its PRs (#731, #733, #736, #743, #749, #763). The remaining credit is kept for review findings that V raises on these PRs.
