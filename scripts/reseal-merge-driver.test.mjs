@@ -485,6 +485,7 @@ test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine
     const merge = fixtureGit(["merge", older, "--no-edit"]);
     assert.match(merge.stderr ?? "", /reseal-merge-driver: refusing to auto-resolve/, merge.stderr);
     assert.match(merge.stderr ?? "", /schema_version differs \(ours 2, theirs 1\)/, merge.stderr);
+    assert.match(merge.stderr ?? "", /Migrating an open branch across bridge#760/, merge.stderr);
     if (fixtureGit(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).status === 0) {
       fixtureGit(["merge", "--abort"]);
     }

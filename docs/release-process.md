@@ -374,6 +374,49 @@ merge`), it falls back to git's plain three-way text merge and prints why --
 resolve the conflict markers by hand following the procedure above, then run
 `scripts/reseal.sh` yourself.
 
+#### Migrating an open branch across bridge#760
+
+A branch cut before bridge#760 still carries schema-1 files and the old driver.
+During a local merge git runs the driver of the side that is **checked out**, so
+merging master into such a branch runs the *old* driver. It writes schema-1
+files, which the new tool, `scripts/reseal.sh` and the gate all refuse
+(`artifact_json_invalid`). That fails closed, but it has to be finished by hand,
+once per branch:
+
+1. Merge master without committing, and resolve every source conflict:
+
+   ```sh
+   git fetch origin
+   git merge --no-commit origin/master
+   ```
+
+2. Take master's two files, which have the schema-2 shape (`schema_version: 2`,
+   no `manifest_sha256`, no `compatibility_surface_sha256`):
+
+   ```sh
+   git checkout origin/master -- docs/tally/compatibility/compatibility-surface.json \
+     docs/tally/compatibility/compatibility-matrix.json
+   ```
+
+3. Re-apply the branch's own authored changes, if it had any: pins it added (in
+   sorted order, with any 64-hex placeholder `sha256`) or removed, and claims it
+   changed. Compare with the merge base as in "When the surface itself conflicts
+   in a merge or rebase" above. A branch that only changed the contents of
+   already-pinned files has nothing to re-apply.
+4. Reseal, verify and commit:
+
+   ```sh
+   scripts/reseal.sh
+   scripts/reseal.sh --verify
+   git add docs/tally/compatibility/compatibility-surface.json docs/tally/compatibility/compatibility-matrix.json
+   git commit
+   ```
+
+The merge commit then holds schema 2, and every later merge runs the new driver.
+Updating such a branch on GitHub ("Update branch") instead reports a conflict
+on the two files whenever the branch had resealed; resolve it locally the same
+way.
+
 Before cutting a candidate, regenerate and verify the Rust third-party notice
 with the pinned generator:
 

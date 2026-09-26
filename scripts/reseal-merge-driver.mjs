@@ -398,7 +398,11 @@ function main() {
 
   // A merge across a schema change (bridge#760 moved both files to schema 2)
   // is not reconciled: the driver would write one side's schema_version over
-  // the other side's shape, a file no tool version accepts.
+  // the other side's shape, a file no tool version accepts. This check runs
+  // only when this driver does, which is when the checked-out side already has
+  // bridge#760; a branch cut before it runs its own older driver instead. Both
+  // cases end at docs/release-process.md, "Migrating an open branch across
+  // bridge#760".
   for (const [label, triple] of [
     ["compatibility-surface.json", surfaceTriple],
     ["compatibility-matrix.json", matrixTriple],
@@ -406,7 +410,8 @@ function main() {
     if (usable(triple) && triple.ours.schema_version !== triple.theirs.schema_version) {
       conflicts.push(
         `${label}: schema_version differs (ours ${triple.ours.schema_version}, theirs ` +
-          `${triple.theirs.schema_version}) -- merge master into the older side and reseal it first`,
+          `${triple.theirs.schema_version}) -- see docs/release-process.md, "Migrating an open ` +
+          "branch across bridge#760\"",
       );
     }
   }

@@ -90,6 +90,11 @@ def state():
     elif scenario == "surface-malformed":
         s["surface_head_malformed"] = True
 
+    elif scenario == "surface-head-schema2-extra-key":
+        # Schema 2 is accepted only in its exact shape: no stored digest may ride along.
+        s["surface_head"] = {"schema_version": 2, "manifest_sha256": DIGEST,
+                             "files": [{"path": "src/example.rs", "sha256": DIGEST}]}
+
     elif scenario == "surface-head-schema1":
         # Schema 1 is read only at the base tip (bridge#760); a head still on it is refused.
         s["surface_head"] = {"schema_version": 1, "manifest_sha256": DIGEST,

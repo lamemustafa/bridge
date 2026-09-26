@@ -125,6 +125,9 @@ class MergeGateControls(unittest.TestCase):
     def test_surface_malformed_is_indeterminate(self):
         self.assert_indeterminate("surface-malformed", "could not read and validate compatibility surface at " + SHORT)
 
+    def test_surface_head_schema_2_with_an_extra_key_is_indeterminate(self):
+        self.assert_indeterminate("surface-head-schema2-extra-key", "could not read and validate compatibility surface at " + SHORT)
+
     def test_surface_head_on_schema_1_is_indeterminate(self):
         self.assert_indeterminate("surface-head-schema1", "could not read and validate compatibility surface at " + SHORT)
 
