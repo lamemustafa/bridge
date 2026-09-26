@@ -147,3 +147,6 @@ None. No fix in this lane needed a new Tally capture.
 
 ## 2026-09-26T11:31Z: #735 taken up (at Lane D's request)
 Branch `cloud-q/735-lineerror-cdata`. The five open PRs are parked; I am not re-merging master into them.
+
+## 2026-09-26T11:37Z: #735 pushed
+Branch `cloud-q/735-lineerror-cdata`, head `2e66550a4462f9434994d9e02f6a626b66a9fef1` (pinned: 2 files resealed). One LINEERROR reader for outcome and evidence, handling CDATA and references. The derived tests failed first; the captured digest is pinned unchanged; a mutant that drops the CDATA arm fails. PR and Sonnet review next.
