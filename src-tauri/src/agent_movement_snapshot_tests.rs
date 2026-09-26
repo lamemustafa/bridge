@@ -483,3 +483,37 @@ async fn a_movement_with_no_currency_master_is_refused_before_any_ledger() {
     assert_eq!(response["isError"], true, "{response}");
     assert_eq!(error["cause"], "company_currency_probe_failed");
 }
+
+/// A movement on a book whose one Currency master is not INR is refused after
+/// its currency read, before any ledger or voucher request (#716). DERIVED
+/// from the captured single-master response with its `MAILINGNAME` changed
+/// from `INR`; no non-INR book has been captured.
+#[tokio::test]
+async fn a_movement_on_a_non_inr_book_is_refused_before_any_ledger() {
+    let single = String::from_utf16(
+        &include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let inr = "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>";
+    assert_eq!(single.matches(inr).count(), 1);
+    let foreign = single.replace(inr, "<MAILINGNAME TYPE=\"String\">UAE Dirham</MAILINGNAME>");
+    let plans = opening_through_currency(
+        captured_utf8(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )),
+        captured_utf8(&foreign),
+    );
+    let total = plans.len();
+    let (response, requests) =
+        movement_call(plans, "61c6de69-1748-461c-ad3f-162cb949df9f", "WR2 Sales").await;
+    assert_eq!(requests, total, "no ledger or voucher request was sent");
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(response["isError"], true, "{response}");
+    assert_eq!(error["code"], "ledger_movement_read_failed");
+    assert_eq!(error["cause"], "company_base_currency_not_inr");
+}
