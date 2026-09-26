@@ -31,6 +31,7 @@ pub mod audit_company_part;
 pub mod bills_native_outstandings_probe;
 #[cfg(feature = "bills-payments-observation-parser")]
 pub mod bills_payments_observation;
+pub mod currency_composite;
 pub mod group_ancestry;
 pub mod gst_registration;
 mod import_outcome;
