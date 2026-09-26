@@ -680,6 +680,108 @@ fn dispatched_batch(server: &Server) -> ImportLedgerLine {
     line
 }
 
+/// A single Payment Bridge posted, captured (fixtures `wa1-payment-*`, one
+/// `verify_import`): its debit reads back from Tally as `-1.00`, with the
+/// trailing zeros the post dialog showed.
+const WA1_BATCH: &str = "bridge-78ce4328-9c2a-4827-8584-821d6d656b40";
+
+/// That readback, in the captured order, as [`d3_batch_readback`] reads its.
+fn wa1_payment_readback() -> Vec<ScenarioPlan> {
+    let extent = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-company-extent.utf16le.xml"
+    ));
+    let high_water = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-company-high-water.utf16le.xml"
+    ));
+    let census = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-voucher-census.utf16le.xml"
+    ));
+    let readback = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-import-verification.utf16le.xml"
+    ));
+    "SEESESEHSHSEECSCSEEVSVSEEVSVSE"
+        .chars()
+        .map(|step| match step {
+            'S' => status(),
+            'E' => xml(extent.clone()),
+            'H' => xml(high_water.clone()),
+            'C' => xml(census.clone()),
+            _ => xml(readback.clone()),
+        })
+        .collect()
+}
+
+/// The review shows each entry of the voucher exactly as the post dialog
+/// showed it for the same voucher (#730): the post dialog's lines, rendered
+/// from the post's own journal, are each a line of the review, read back from
+/// Tally's capture. Tally sent the debit as `-1.00`, so this proves the sign
+/// and the digits: a canonical negation would read `Dr 1`.
+#[tokio::test]
+async fn the_review_shows_each_entry_as_the_post_dialog_did() {
+    let mut plans = wa1_payment_readback();
+    plans.extend(wa1_payment_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let origin =
+        super::super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    fs::write(
+        directory.path().join("agent-import-ledger.jsonl"),
+        include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-journal.jsonl"
+        )
+        .replace("http://127.0.0.1:9102", &origin),
+    )
+    .unwrap();
+    let imports = server.imports_dir().unwrap();
+    fs::write(
+        imports.join(format!("{WA1_BATCH}.xml")),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-import.xml"
+        ),
+    )
+    .unwrap();
+    for record in ["masters_check", "masters_doubt"] {
+        fs::write(imports.join(format!("{WA1_BATCH}.{record}.json")), DOUBT).unwrap();
+    }
+    let line = server
+        .import_ledger()
+        .unwrap()
+        .into_iter()
+        .find(|line| line.batch_id == WA1_BATCH)
+        .unwrap();
+    let post = admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap();
+    let approval = ScriptedApproval::approving();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":D3_GUID,"batch_id":WA1_BATCH}),
+        approval.clone(),
+    )
+    .await;
+    assert!(
+        response["structuredContent"]["result"]["error"].is_null(),
+        "{response}"
+    );
+    assert_eq!(approval.reviews().len(), 1, "{response}");
+    let review = &approval.reviews()[0];
+    let entries = post
+        .lines()
+        .filter(|line| line.starts_with("Dr ") || line.starts_with("Cr "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        ["Dr 1.00  \"Test Expense B\"", "Cr 1.00  \"Cash\""],
+        "{post}"
+    );
+    for entry in entries {
+        assert!(
+            review.lines().any(|line| line == entry),
+            "{entry}: {review}"
+        );
+    }
+    let _ = sent(simulator);
+}
+
 /// A batch of several vouchers with no doubt recorded is refused before any
 /// request: there is nothing to review. (Before batch reviews, slice D2b,
 /// any batch was refused here as `ack_batch_not_posted`.)

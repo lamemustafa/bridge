@@ -426,19 +426,6 @@ fn render_review_text(
                 .to_string()
         }
     });
-    let entries = row
-        .entries
-        .iter()
-        .map(|entry| {
-            let side = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
-                "Dr"
-            } else {
-                "Cr"
-            };
-            format!("{side} {}  {}", entry.amount, quoted(&entry.ledger))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     let shown = |value: &Option<String>| {
         value
             .as_deref()
@@ -476,6 +463,26 @@ fn render_review_text(
     {
         return Err("ack_review_format_text".into());
     }
+    // Tally signs a debit negative. A debit is shown negated, in the digits
+    // Tally sent, and a credit as it is (#730), so a debit with an unexpected
+    // sign still shows as it is. Negated as #721's batch totals are, but not
+    // normalised: where Tally echoes the build's figure, as it did for the
+    // captured two-decimal amounts, the line reads as the post dialog's did.
+    let entries = row
+        .entries
+        .iter()
+        .map(|entry| {
+            let amount = ExactDecimal::parse(entry.amount.clone())
+                .map_err(|_| "ack_readback_not_matched".to_string())?;
+            let (side, shown) = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
+                ("Dr", negated_as_written(&amount))
+            } else {
+                ("Cr", amount.as_str().to_string())
+            };
+            Ok(format!("{side} {shown}  {}", quoted(&entry.ledger)))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .join("\n");
     let preview = format!(
         "Record that you reviewed ONE {} in {}\nBridge posted it, but these ledgers no longer resolve\nto the master you approved:\n{ledgers}\n\nAs it is in Tally now:\nDate: {}  Voucher number: {}  ALTERID: {}\nNarration:\n  {}\n{entries}\nBatch: {}\n\nChoosing \"{REVIEW_BUTTON}\" records: \"I reviewed this voucher in Tally.\nIt is correct as it stands.\" Bridge changes nothing in Tally,\nand the batch still reads reconciliation_required.",
         row.voucher_type.as_deref().unwrap_or("voucher"),
@@ -632,6 +639,18 @@ fn batch_review_preview(
         return Err("ack_review_too_large".into());
     }
     Ok(preview)
+}
+
+/// `amount` negated without normalising it: `-1.00` reads `1.00`, not `1`,
+/// so the figure keeps the digits Tally sent. A zero keeps its digits and
+/// takes no sign.
+fn negated_as_written(amount: &ExactDecimal) -> String {
+    let text = amount.as_str();
+    match text.strip_prefix('-') {
+        Some(magnitude) => magnitude.to_string(),
+        None if amount.is_zero() => text.to_string(),
+        None => format!("-{text}"),
+    }
 }
 
 /// Which of the post dialog's caps `preview` exceeds: native message boxes
