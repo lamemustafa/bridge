@@ -31,6 +31,10 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
     let ledger = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
     ));
+    // The movement read proves the book keeps one Currency master (#716).
+    let currency = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
     let voucher = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
     ));
@@ -48,6 +52,10 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
             extent.clone(),
             status.clone(),
             extent.clone(),
+            status.clone(),
+            currency.clone(),
+            status.clone(),
+            currency.clone(),
             status.clone(),
             ledger.clone(),
             status.clone(),
@@ -181,7 +189,8 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
         let observations = simulator.finish().unwrap();
         assert_eq!(
             observations.len(),
-            if change == "incomplete" { 34 } else { 58 }
+            // Each opening read now includes its paired currency read (#716).
+            if change == "incomplete" { 38 } else { 66 }
         );
     }
 }
@@ -233,6 +242,10 @@ async fn a_divided_movement_refuses_a_posting_above_the_first_reads_ceiling() {
     let ledger = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
     ));
+    // The movement read proves the book keeps one Currency master (#716).
+    let currency = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
     let voucher = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
     ));
@@ -250,6 +263,10 @@ async fn a_divided_movement_refuses_a_posting_above_the_first_reads_ceiling() {
             extent.clone(),
             status.clone(),
             extent.clone(),
+            status.clone(),
+            currency.clone(),
+            status.clone(),
+            currency.clone(),
             status.clone(),
             ledger.clone(),
             status.clone(),
