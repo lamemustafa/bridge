@@ -338,6 +338,81 @@ test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine
   // self-contained.
   fixtureGitOk(["checkout", "-b", base]);
 
+  // GitHub never runs a local merge driver. These merges run as it does: an
+  // info/attributes entry, which outranks .gitattributes, gives the surface and
+  // matrix git's own text merge. (Unsetting the driver's command instead makes
+  // git abort: "custom merge driver ... lacks command line".) Two PRs that pin
+  // different files must then merge cleanly and pass the gate on the merge
+  // result, and two that change one pinned file must still conflict (#740
+  // option A, #760).
+  const withoutDriver = (label, body) => {
+    const listed = fixtureGitOk(["rev-parse", "--git-path", "info/attributes"], `attributes path: ${label}`).trim();
+    const attributes = isAbsolute(listed) ? listed : join(testRoot, listed);
+    mkdirSync(dirname(attributes), { recursive: true });
+    writeFileSync(attributes, `${SURFACE} merge=text\n${MATRIX} merge=text\n`);
+    try {
+      body();
+    } finally {
+      // A failed assertion can leave a merge in progress; later subtests need a clean index.
+      if (fixtureGit(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).status === 0) {
+        fixtureGitOk(["merge", "--abort"], `abort merge: ${label}`);
+      }
+      rmSync(attributes, { force: true });
+    }
+  };
+  const resealedBranch = (branch, file, text) => {
+    fixtureGitOk(["checkout", "-b", branch, base]);
+    appendLine(testRoot, file, text);
+    fixtureReseal();
+    fixtureGitOk(["add", "--", file, SURFACE, MATRIX]);
+    fixtureGitOk(["commit", "-m", `test: ${branch}`]);
+  };
+
+  for (const [name, fileA, fileB] of [
+    ["far apart", "docs/adr/0004-tally-write-safety.md", "docs/adr/0015-tally-selected-read-qualification-authority.md"],
+    [
+      "adjacent in the pin list",
+      "docs/adr/0014-tally-native-outstandings-probe-authority.md",
+      "docs/adr/0015-tally-selected-read-qualification-authority.md",
+    ],
+  ]) {
+    await t.test(`without the driver, pinned files ${name} merge cleanly and pass the gate`, () => {
+      withoutDriver(name, () => {
+        const a = `test/seal-plain-a-${name.replaceAll(" ", "-")}-${suffix}`;
+        const b = `test/seal-plain-b-${name.replaceAll(" ", "-")}-${suffix}`;
+        resealedBranch(a, fileA, `test ${suffix} plain A`);
+        resealedBranch(b, fileB, `test ${suffix} plain B`);
+        fixtureGitOk(["checkout", "-b", `${a}-merge`, a]);
+        const merge = fixtureGit(["merge", b, "--no-edit"]);
+        assert.equal(merge.status, 0, `expected a clean merge; stdout:\n${merge.stdout}\nstderr:\n${merge.stderr}`);
+        const markers = fixtureGit(["grep", "-l", "-e", "<<<<<<<", "--", SURFACE, MATRIX]);
+        assert.equal(markers.status, 1, "expected no conflict markers in the surface or the matrix");
+        assert.deepEqual(hashMismatches(testRoot), [], "every pinned file's recorded hash must match its merged bytes");
+        runGate(testRoot, fixtureEnv);
+        fixtureReseal("--verify");
+      });
+    });
+  }
+
+  await t.test("without the driver, both sides changing one pinned file conflict on its hash line", () => {
+    withoutDriver("same file", () => {
+      const a = `test/seal-plain-same-a-${suffix}`;
+      const b = `test/seal-plain-same-b-${suffix}`;
+      resealedBranch(a, "docs/adr/0005-tally-snapshot-recovery.md", `test ${suffix} same A`);
+      resealedBranch(b, "docs/adr/0005-tally-snapshot-recovery.md", `test ${suffix} same B (different)`);
+      fixtureGitOk(["checkout", "-b", `${a}-merge`, a]);
+      const merge = fixtureGit(["merge", b, "--no-edit"]);
+      assert.notEqual(merge.status, 0, "expected the merge to stop with conflicts");
+      const surface = readFileSync(join(testRoot, SURFACE), "utf8");
+      const conflicted = /<<<<<<< [^\n]*\n([\s\S]*?)=======\n([\s\S]*?)>>>>>>> /.exec(surface);
+      assert.ok(conflicted, "the surface must carry a conflict");
+      for (const side of [conflicted[1], conflicted[2]]) {
+        assert.match(side, /"sha256": "[0-9a-f]{64}"/, "each side of the surface conflict is the file's hash line");
+      }
+      fixtureGit(["merge", "--abort"]);
+    });
+  });
+
   await t.test("disjoint pinned files merge cleanly with byte-correct hashes", () => {
     fixtureGitOk(["checkout", "-b", branchA, base]);
     appendLine(testRoot, "docs/adr/0014-tally-native-outstandings-probe-authority.md", `test ${suffix} branch A`);
@@ -395,6 +470,30 @@ test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine
     "real Cargo outputs must remain below the selected executable scratch root",
   );
 });
+
+// The CI gate, as ci.yml's "Enforce exact Tally compatibility claims" runs it.
+function runGate(root, env) {
+  const result = spawnSync(
+    "cargo",
+    [
+      "run",
+      "--locked",
+      "--quiet",
+      "-p",
+      "bridge-tally-compatibility",
+      "--",
+      "gate",
+      "../docs/tally/compatibility/compatibility-matrix.json",
+      "../docs/tally/compatibility/compatibility-surface.json",
+      "../docs/tally/compatibility/trusted-evidence-keys.json",
+      "../docs/tally/compatibility/evidence",
+      "..",
+    ],
+    { cwd: join(root, "tools"), encoding: "utf8", env },
+  );
+  assert.equal(result.status, 0, `the compatibility gate failed on the merge:\n${result.stderr}`);
+  assert.match(result.stdout, /compatibility_gate_passed/, `unexpected gate output:\n${result.stdout}`);
+}
 
 function appendLine(root, relativePath, text) {
   const path = join(root, relativePath);
