@@ -257,3 +257,9 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - Master took #721 and #742 (both pinned) at `4b8af05`. #728 and #729 conflicted on the two aggregate lines a **third** time since 08:00.
 - Same checked procedure. New heads: #728 `c46a6d9`, #729 `727daeb`.
 - Each round costs one full CI run per PR (about 16–20 min) and one cargo build for the reseal, for zero content change. That is measured support for #740 option A.
+
+## 2026-09-26 11:12 UTC: Check-in: fourth re-merge
+
+- Master took #734 and #750 (both pinned) at `19dd541`. #728 and #729 conflicted on the two aggregate lines a **fourth** time.
+- Same checked procedure. New heads: #728 `1c6cc6b`, #729 `53eaa29`.
+- Running total today: 4 rounds × 2 PRs = 8 forced CI runs and 8 reseal builds, with no content change.
