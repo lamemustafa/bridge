@@ -404,19 +404,6 @@ fn render_review_text(
                 .to_string()
         }
     });
-    let entries = row
-        .entries
-        .iter()
-        .map(|entry| {
-            let side = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
-                "Dr"
-            } else {
-                "Cr"
-            };
-            format!("{side} {}  {}", entry.amount, quoted(&entry.ledger))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     let shown = |value: &Option<String>| {
         value
             .as_deref()
@@ -454,6 +441,31 @@ fn render_review_text(
     {
         return Err("ack_review_format_text".into());
     }
+    // Tally signs a debit negative. A debit is shown negated, as the post
+    // dialog showed it, and a credit as it is (#730, the pattern of #721's
+    // batch totals), so a debit with an unexpected sign still shows as it is.
+    let entries = row
+        .entries
+        .iter()
+        .map(|entry| {
+            let amount = ExactDecimal::parse(entry.amount.clone())
+                .map_err(|_| "ack_readback_not_matched".to_string())?;
+            let (side, shown) = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
+                let negated = ExactDecimal::zero()
+                    .checked_subtract(&amount)
+                    .map_err(|_| "ack_readback_not_matched".to_string())?;
+                ("Dr", negated)
+            } else {
+                ("Cr", amount)
+            };
+            Ok(format!(
+                "{side} {}  {}",
+                shown.as_str(),
+                quoted(&entry.ledger)
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .join("\n");
     let preview = format!(
         "Record that you reviewed ONE {} in {}\nBridge posted it, but these ledgers no longer resolve\nto the master you approved:\n{ledgers}\n\nAs it is in Tally now:\nDate: {}  Voucher number: {}  ALTERID: {}\nNarration:\n  {}\n{entries}\nBatch: {}\n\nChoosing \"{REVIEW_BUTTON}\" records: \"I reviewed this voucher in Tally.\nIt is correct as it stands.\" Bridge changes nothing in Tally,\nand the batch still reads reconciliation_required.",
         row.voucher_type.as_deref().unwrap_or("voucher"),

@@ -32,7 +32,7 @@ fn the_review_shows_the_doubt_and_the_voucher_as_read() {
         "  \"Cash\"",
         "Date: \"20260907\"  Voucher number: \"2\"  ALTERID: 10",
         "Narration:\n  \"Paid\"",
-        "Dr -1.00  \"Ledger 0\"",
+        "Dr 1.00  \"Ledger 0\"",
         "Cr 1.00  \"Ledger 1\"",
         &format!("Batch: {BATCH}"),
         "reconciliation_required",
@@ -43,6 +43,37 @@ fn the_review_shows_the_doubt_and_the_voucher_as_read() {
     assert!(
         preview.contains(&format!("Choosing \"{REVIEW_BUTTON}\"")),
         "names the button the platform shows: {preview}"
+    );
+}
+
+/// A debit is shown negated, as the post dialog showed it (#730), so the
+/// person reads the same figure in both dialogs. A debit Tally holds with an
+/// unexpected positive sign is not rescued into looking normal: it shows
+/// negative, as it is. An amount that is not a decimal refuses.
+#[test]
+fn a_debit_reads_as_the_post_dialog_showed_it_and_an_odd_sign_shows_as_it_is() {
+    let mut voucher = row_json(3, "Paid");
+    voucher["amounts"][0]["amount"] = json!("-1234.50");
+    voucher["amounts"][1]["amount"] = json!("2.00");
+    voucher["amounts"][2]["is_deemed_positive"] = json!("No");
+    voucher["amounts"][2]["amount"] = json!("1232.50");
+    let voucher: ReadVoucher = serde_json::from_value(voucher).unwrap();
+    let preview = review_preview(BATCH, MARKER, "Books", &doubt(), &voucher).unwrap();
+    for shown in [
+        "Dr 1234.50  \"Ledger 0\"",
+        "Dr -2.00  \"Ledger 1\"",
+        "Cr 1232.50  \"Ledger 2\"",
+    ] {
+        assert!(preview.contains(shown), "{shown}: {preview}");
+    }
+    assert!(!preview.contains("Dr -1234.50"), "{preview}");
+
+    let mut unreadable = row_json(2, "Paid");
+    unreadable["amounts"][0]["amount"] = json!("one rupee");
+    let unreadable: ReadVoucher = serde_json::from_value(unreadable).unwrap();
+    assert_eq!(
+        review_preview(BATCH, MARKER, "Books", &doubt(), &unreadable),
+        Err("ack_readback_not_matched".to_string())
     );
 }
 
