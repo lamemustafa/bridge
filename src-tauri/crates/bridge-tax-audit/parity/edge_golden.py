@@ -52,13 +52,18 @@ reference's pack sets `eng.bank`; and for `high_value_register`: `bank_statement
 meaning none supplied), `ais` as above, `s194n_terms` and `round_off_ledgers` (default []),
 `counterparty_types` ({ledger: type}, the map pack.py builds from the loan ledgers and
 `[roles].counterparty_type_by_ledger`; default {}) and `s194n_recipient_type` (one of the module's two
-recipient constants or "unknown"; absent meaning derived from `entity_type` as pack.py derives it).
+recipient constants or "unknown"; absent meaning derived from `entity_type` as pack.py derives it); and
+for `stock`: `stock_items` ({name: {base_unit?, guid?, opening_qty?, opening_value?, closing_qty?,
+closing_value?}}, default {}), `stock_opening` and `stock_closing` ({as_of, rows: {name: {qty?, value?,
+rate?}}}), each quantity a number, each value or rate integer paise, absent or null meaning None, and
+`is_integrated` (true, false, or absent/null for unknown).
 """
 from __future__ import annotations
 
 import copy
 import json
 import sys
+from types import SimpleNamespace
 from datetime import date
 from pathlib import Path
 
@@ -69,10 +74,11 @@ def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
     from tae.adapters.bank_documents import BankStatementDoc
+    from tae.adapters.tally_stock import StockItemMaster, StockSnapshot, StockSnapshotRow
     from tae.adapters.traces_documents import AisRow, TisRow
     from tae.audit_tests import (bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
                                  high_value_register, ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1,
-                                 statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts)
+                                 statutory_dues_43b, stock, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts)
     from tae.model import Form26ASRow
     from tae.config import load_rules
     from tae.model import (BankStatementRow, Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period,
@@ -199,6 +205,38 @@ def main() -> int:
             s194n_recipient_type=recipient, round_off_ledgers=frozenset(spec.get("round_off_ledgers", [])),
             counterparty_type_by_ledger=dict(spec.get("counterparty_types", {})))
 
+    def stock_run():
+        # As tae/pack.py: invented masters and both Stock Summaries, typed strictly as
+        # tests/edge_books.rs reads them; STK-1 gets them bound, as pack.py passes them.
+        number = lambda x: integer(x) or isinstance(x, float)
+        text = lambda x: isinstance(x, str)
+
+        def qty(d, key):
+            q = typed(d, key, number, "a number or null")
+            return None if q is None else float(q)
+
+        items = {n: StockItemMaster(name=n, guid=typed(m, "guid", text, "text", absent="", nullable=False), parent="",
+                                     base_unit=typed(m, "base_unit", text, "text", absent="", nullable=False),
+                                     opening_qty=qty(m, "opening_qty"),
+                                     opening_value_paise=typed(m, "opening_value", integer, "an integer or null"),
+                                     closing_qty=qty(m, "closing_qty"),
+                                     closing_value_paise=typed(m, "closing_value", integer, "an integer or null"))
+                 for n, m in spec.get("stock_items", {}).items()}
+
+        def snapshot(key):
+            s = spec[key]
+            return StockSnapshot(date.fromisoformat(s["as_of"]), {
+                n: StockSnapshotRow(name=n, guid="", qty=qty(r, "qty"),
+                                    value_paise=typed(r, "value", integer, "an integer or null"),
+                                    rate_paise=typed(r, "rate", integer, "an integer or null"))
+                for n, r in s["rows"].items()})
+
+        opening, closing = snapshot("stock_opening"), snapshot("stock_closing")
+        module = SimpleNamespace(TEST_ID=stock.TEST_ID, check_invariants=lambda e, res: stock.check_invariants(
+            e, res, items, closing, opening_snapshot=opening))
+        integrated = typed(spec, "is_integrated", lambda x: isinstance(x, bool), "true, false or null")
+        return module, stock.run(eng, {"version": rules.version}, items, opening, closing, integrated)
+
     runners = {
         "bank_reconciliation": bank_reconciliation_run,
         "book_keeping_quality": lambda: (book_keeping_quality, book_keeping_quality.run(
@@ -219,6 +257,7 @@ def main() -> int:
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
         "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
             eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
+        "stock": stock_run,
         "tds_payees": lambda: (tds_payees, tds_payees.run(
             eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
             spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),

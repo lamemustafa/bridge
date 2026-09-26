@@ -218,7 +218,7 @@ pub(crate) fn is_uuid(s: &str) -> bool {
 }
 
 /// `^\d{4}-\d{2}-\d{2}$` and a real calendar date.
-fn iso_date(s: &str, at: &str) -> Result<TallyDate> {
+pub(crate) fn iso_date(s: &str, at: &str) -> Result<TallyDate> {
     let b = s.as_bytes();
     let shaped = b.len() == 10
         && b[4] == b'-'

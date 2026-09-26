@@ -118,6 +118,12 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::statutory_dues_43b_on(e, b, r),
     },
     PortedTest {
+        id: "stock",
+        // 30 on any book; one more when a Stock-in-Hand ledger has no Trial Balance row.
+        min_figures: 30,
+        run_on: |e, b, r, _| crate::stock_on(e, b, r),
+    },
+    PortedTest {
         id: "tds_payees",
         min_figures: 30,
         run_on: |e, b, r, _| crate::tds_payees_on(e, b, r),

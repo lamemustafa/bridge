@@ -1,0 +1,598 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "stock",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "107765c5153115be",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Non-goods stock items (BASEUNITS == \"Not Applicable\") excluded from every quantity-based figure.",
+  "figures": [
+    {
+      "id": "stock.became_negative_in_first_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "6a670a4836dbf27a",
+      "definition_text": "(b) Items NOT negative at opening that became negative at some point during the year, same-day inventory lines ordered stock-in before stock-out. A subset of (a).",
+      "evidence": []
+    },
+    {
+      "id": "stock.became_negative_out_first_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "d89b76db253d52c1",
+      "definition_text": "(b) Items NOT negative at opening that became negative at some point during the year, same-day inventory lines ordered stock-out before stock-in. A subset of (a).",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Gadget",
+          "label": "Gadget"
+        }
+      ]
+    },
+    {
+      "id": "stock.became_negative_range_max",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "8fdeddf8b94302db",
+      "definition_text": "(b) max(became_negative_in_first_count, became_negative_out_first_count).",
+      "evidence": []
+    },
+    {
+      "id": "stock.became_negative_range_min",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "34e35f99d5390332",
+      "definition_text": "(b) min(became_negative_in_first_count, became_negative_out_first_count).",
+      "evidence": []
+    },
+    {
+      "id": "stock.books_closing_movement_paise",
+      "value": 515000,
+      "unit": "paise",
+      "definition_sha256_16": "bac944b37e6e029d",
+      "definition_text": "Sum of (opening + period debit - period credit) of every Stock-in-Hand ledger, from the Trial Balance's own period-movement fields.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Godown Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Shop Stock",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stock.books_closing_tb_field_paise",
+      "value": 500000,
+      "unit": "paise",
+      "definition_sha256_16": "52023374a71c9c64",
+      "definition_text": "Sum of Trial Balance CLOSING balances of every Stock-in-Hand ledger, Tally's own closing field.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Godown Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Shop Stock",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stock.books_closing_tie_diff_paise",
+      "value": -15000,
+      "unit": "paise",
+      "definition_sha256_16": "395ab6e44c6896ee",
+      "definition_text": "books_closing_tb_field_paise minus books_closing_movement_paise. Non-zero shows Tally's own closing field on a Stock-in-Hand ledger does not reflect the year's movement.",
+      "evidence": []
+    },
+    {
+      "id": "stock.books_opening_paise",
+      "value": 500000,
+      "unit": "paise",
+      "definition_sha256_16": "37b32a0dcd365e77",
+      "definition_text": "Sum of Trial Balance OPENING balances of every Stock-in-Hand ledger.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Godown Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Shop Stock",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stock.gap_closing_paise",
+      "value": -255670,
+      "unit": "paise",
+      "definition_sha256_16": "78ddc8a8959d12fd",
+      "definition_text": "stock_summary_closing_total_paise minus books_closing_movement_paise. A figure, not a conclusion about which side is right.",
+      "evidence": []
+    },
+    {
+      "id": "stock.gap_opening_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "2aff8900e0c0cff8",
+      "definition_text": "stock_summary_opening_total_paise minus books_opening_paise. A figure, not a conclusion about which side is right.",
+      "evidence": []
+    },
+    {
+      "id": "stock.goods_lines_without_quantity_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "71574b520ced5e68",
+      "definition_text": "Inventory lines on goods stock items, in the books (optional, cancelled and post-dated vouchers excluded), whose quantity is empty (Tally's value-only line): they move value but no quantity, so the quantity reconstruction skips them. Evidence: the vouchers carrying them.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "s06",
+          "label": "Sales s06 on 2025-07-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "s07",
+          "label": "Purchase s07 on 2025-07-16"
+        }
+      ]
+    },
+    {
+      "id": "stock.goods_lines_without_quantity_value_paise",
+      "value": 7500,
+      "unit": "paise",
+      "definition_sha256_16": "bc050ffb441c0539",
+      "definition_text": "Total value of those lines, each taken without its sign (in and out both counted); the vouchers are listed on the line count above.",
+      "evidence": []
+    },
+    {
+      "id": "stock.is_integrated",
+      "value": "Yes",
+      "unit": "text",
+      "definition_sha256_16": "90678ff00c8256cf",
+      "definition_text": "Company feature ISINTEGRATED (F11 'Integrate accounts with inventory'), read from the company object when available; 'unknown' if the tag was not found.",
+      "evidence": []
+    },
+    {
+      "id": "stock.negative_any_point_in_first_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "fbb0b97be64c9d8c",
+      "definition_text": "(a) Items negative at some point in the year, INCLUDING an item already negative at opening, same-day inventory lines ordered stock-in before stock-out.",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Bolt",
+          "label": "Bolt"
+        }
+      ]
+    },
+    {
+      "id": "stock.negative_any_point_out_first_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "db032a74eef0bfc1",
+      "definition_text": "(a) Items negative at some point in the year, INCLUDING an item already negative at opening, same-day inventory lines ordered stock-out before stock-in.",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Bolt",
+          "label": "Bolt"
+        },
+        {
+          "kind": "stock_item",
+          "id": "Gadget",
+          "label": "Gadget"
+        }
+      ]
+    },
+    {
+      "id": "stock.negative_any_point_range_max",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "fc405e3e7994ca3a",
+      "definition_text": "(a) max(negative_any_point_in_first_count, negative_any_point_out_first_count).",
+      "evidence": []
+    },
+    {
+      "id": "stock.negative_any_point_range_min",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "a0b359b5aab41ca1",
+      "definition_text": "(a) min(negative_any_point_in_first_count, negative_any_point_out_first_count): same-day order is not recoverable from the export, so this is a range, never a single count.",
+      "evidence": []
+    },
+    {
+      "id": "stock.negative_at_close_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "764ee8e602532071",
+      "definition_text": "Goods stock items with a negative closing quantity in the Stock Summary at year end.",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Door Stop",
+          "label": "Door Stop"
+        }
+      ]
+    },
+    {
+      "id": "stock.non_goods_negative_value_item_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "870adfaa0fef9300",
+      "definition_text": "Stock items with BASEUNITS == 'Not Applicable' (Tally's own marker for a value-only, non-physical item) carrying a negative closing value at year end. Excluded from every quantity-based figure below; shown separately, not silently dropped.",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Freight Placeholder",
+          "label": "Freight Placeholder"
+        }
+      ]
+    },
+    {
+      "id": "stock.opening_seed_from_master_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "d9ca03c02671eb3c",
+      "definition_text": "Stock items the opening Stock Summary does not list, started instead from the item's own opening quantity (the quantity when it was created: the period-start quantity only if the books begin at the period start).",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Nut",
+          "label": "Nut"
+        }
+      ]
+    },
+    {
+      "id": "stock.opening_seed_from_summary_count",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "b1ed03487b92d84e",
+      "definition_text": "Stock items whose running quantity starts from the opening Stock Summary's own quantity (as at 2025-04-01; a listed item with no quantity starts at nil).",
+      "evidence": []
+    },
+    {
+      "id": "stock.opening_summary_differs_from_master_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "e8d1ebe508ebafcb",
+      "definition_text": "Stock items whose opening Stock Summary quantity differs from their own opening quantity: the items a walk started from the item's own opening would have got wrong.",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Gadget",
+          "label": "Gadget"
+        }
+      ]
+    },
+    {
+      "id": "stock.opening_summary_items_without_master_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "24c799fa87f376ed",
+      "definition_text": "Stock items the opening Stock Summary lists but the stock item masters do not: still started from the summary's quantity, which is the period-start fact, but with no master to say whether each is goods or what its unit is.",
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Mystery Item",
+          "label": "Mystery Item"
+        }
+      ]
+    },
+    {
+      "id": "stock.stock_in_hand_ledgers_without_tb_row_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "ce8db801eb4042dd",
+      "definition_text": "Stock-in-Hand ledgers with no Trial Balance row at all (opening/closing treated as nil).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Godown Stock",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stock.stock_in_hand_voucher_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "35f5f0902fe53d3d",
+      "definition_text": "Population vouchers with at least one line on a Stock-in-Hand ledger.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Godown Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Shop Stock",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "stock.stock_summary_closing_item_count",
+      "value": 8,
+      "unit": "count",
+      "definition_sha256_16": "a8321fddb0e33289",
+      "definition_text": "Stock items present in the closing Stock Summary read.",
+      "evidence": []
+    },
+    {
+      "id": "stock.stock_summary_closing_negative_paise",
+      "value": -1900,
+      "unit": "paise",
+      "definition_sha256_16": "2ccca3c5aabe1e15",
+      "definition_text": "Sum of the Stock Summary's negative-value items at year end.",
+      "evidence": []
+    },
+    {
+      "id": "stock.stock_summary_closing_positive_paise",
+      "value": 261230,
+      "unit": "paise",
+      "definition_sha256_16": "987fa0dccf5015ac",
+      "definition_text": "Sum of the Stock Summary's positive-value items at year end.",
+      "evidence": []
+    },
+    {
+      "id": "stock.stock_summary_closing_total_paise",
+      "value": 259330,
+      "unit": "paise",
+      "definition_sha256_16": "c2079cfac6297597",
+      "definition_text": "Sum of every stock item's closing value in the Stock Summary.",
+      "evidence": []
+    },
+    {
+      "id": "stock.stock_summary_opening_item_count",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "e2ad80d596322655",
+      "definition_text": "Stock items present in the opening Stock Summary read.",
+      "evidence": []
+    },
+    {
+      "id": "stock.stock_summary_opening_total_paise",
+      "value": 500000,
+      "unit": "paise",
+      "definition_sha256_16": "863b785ee3bc9496",
+      "definition_text": "Sum of every stock item's opening CLOSINGVALUE-as-of-period-start in the Stock Summary (Tally's item-level valuation, independent of the books figure above).",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "stock/clause_35_quantitative_details",
+      "clauses": [
+        "3CD-35"
+      ],
+      "confidence": "needs_document",
+      "facts": [],
+      "evidence": [],
+      "title_sha256_16": "2b1951a5a548cde1",
+      "title_text": "Clause 35 quantitative details depend on stock records that the books alone cannot confirm",
+      "limits_sha256_16": "fc40094a2db761e8",
+      "limits_text": [
+        "Clause 35 (quantitative details of principal items) needs opening stock, purchases, sales, yield and closing stock by item; this engine can show the Stock Summary and Trial Balance figures above but cannot certify completeness of the item records, particularly given the typed-in / negative-stock facts above."
+      ],
+      "ask_client_sha256_16": "94a75b0751d2220b",
+      "ask_client_text": [
+        "Quantity reconciliation or a stock register maintained outside Tally, if any."
+      ]
+    },
+    {
+      "id": "stock/negative_at_close",
+      "clauses": [
+        "3CD-14",
+        "3CD-35"
+      ],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "count",
+          "figure_id": "stock.negative_at_close_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Door Stop",
+          "label": "Door Stop"
+        }
+      ],
+      "title_sha256_16": "ed6f59a252a5a89b",
+      "title_text": "Stock items carry a negative closing quantity at year end",
+      "limits_sha256_16": "cbc9148eae800eb1",
+      "limits_text": [
+        "Read directly off the Stock Summary's own closing quantity; a negative quantity is not physically possible, so the item's record is incomplete (an opening balance, a purchase, or a stock-journal entry was not captured in Tally)."
+      ],
+      "ask_client_sha256_16": "03b95747968bfae0",
+      "ask_client_text": [
+        "Physical stock record for each item listed, or an explanation of the shortfall."
+      ]
+    },
+    {
+      "id": "stock/two_stock_figures",
+      "clauses": [
+        "3CD-14",
+        "3CD-35"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "books_closing_movement",
+          "figure_id": "stock.books_closing_movement_paise"
+        },
+        {
+          "name": "books_opening",
+          "figure_id": "stock.books_opening_paise"
+        },
+        {
+          "name": "gap_closing",
+          "figure_id": "stock.gap_closing_paise"
+        },
+        {
+          "name": "gap_opening",
+          "figure_id": "stock.gap_opening_paise"
+        },
+        {
+          "name": "summary_closing",
+          "figure_id": "stock.stock_summary_closing_total_paise"
+        },
+        {
+          "name": "summary_opening",
+          "figure_id": "stock.stock_summary_opening_total_paise"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Godown Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Shop Stock",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "e648d442c1dcfed3",
+      "title_text": "Books closing stock and the Tally Stock Summary valuation differ",
+      "limits_sha256_16": "2a9c4103d163b663",
+      "limits_text": [
+        "Both figures come from Tally; which one (if either) matches an actual physical count is not something the books can show. With 'Integrate accounts with inventory' off, the accounts use the ledger-entered figure, not the Stock Summary valuation."
+      ],
+      "ask_client_sha256_16": "30236a2c3b0a805e",
+      "ask_client_text": [
+        "Signed physical stock verification / certified stock statement for both dates.",
+        "Basis of stock valuation.",
+        "Bank drawing-power statement, if any cash credit/OD is secured on stock."
+      ]
+    },
+    {
+      "id": "stock/went_negative_during_year",
+      "clauses": [
+        "3CD-14",
+        "3CD-35"
+      ],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "any_point_range_max",
+          "figure_id": "stock.negative_any_point_range_max"
+        },
+        {
+          "name": "any_point_range_min",
+          "figure_id": "stock.negative_any_point_range_min"
+        },
+        {
+          "name": "became_negative_range_max",
+          "figure_id": "stock.became_negative_range_max"
+        },
+        {
+          "name": "became_negative_range_min",
+          "figure_id": "stock.became_negative_range_min"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "stock_item",
+          "id": "Bolt",
+          "label": "Bolt"
+        },
+        {
+          "kind": "stock_item",
+          "id": "Gadget",
+          "label": "Gadget"
+        }
+      ],
+      "title_sha256_16": "c7aea306da7a8ad6",
+      "title_text": "Stock items were negative at some point during the year",
+      "limits_sha256_16": "8966448fa72f4e9f",
+      "limits_text": [
+        "Two different counts are given, never merged into one: (a) negative at any point, including an item already negative at opening (the wider figure); (b) became negative during the year, excluding an item already negative at opening (the narrower, subset figure). Both are a reconstruction from each item's own opening quantity walked through every FY inventory voucher, direction read from the ledger-entry sign each allocation is nested under (see module docstring); same-day voucher order is not recoverable from the export, so each is a range across the two possible orderings, not exact."
+      ],
+      "ask_client_sha256_16": "be6510c036bbd45a",
+      "ask_client_text": [
+        "Physical stock record for the items listed, for the periods they show negative."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Customer",
+      "detail": "vouchers 182100 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Purchases",
+      "detail": "vouchers 172700 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Sales",
+      "detail": "vouchers -182100 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Shop Stock",
+      "detail": "vouchers 20000 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Supplier",
+      "detail": "vouchers -192700 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 500000 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "opening_paise",
+      "detail": "TB opening_paise sums to 500000 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "stock.check_invariants"
+  ],
+  "module_invariant_violations": [
+    {
+      "invariant": "stock.check_invariants",
+      "subject": "stock",
+      "detail": "STK-1: Door Stop quantity reconstructed from opening + population inventory lines (0.000) does not equal the closing Stock Summary's own quantity (-4.000); difference 4.000"
+    },
+    {
+      "invariant": "stock.check_invariants",
+      "subject": "stock",
+      "detail": "STK-1: Mystery Item quantity reconstructed from opening + population inventory lines (3.000) does not equal the closing Stock Summary's own quantity (2.000); difference 1.000"
+    }
+  ]
+}

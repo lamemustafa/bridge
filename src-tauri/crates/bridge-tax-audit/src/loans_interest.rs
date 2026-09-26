@@ -1440,6 +1440,7 @@ mod tests {
             .collect(),
             vouchers,
             tb: BTreeMap::new(),
+            ..Default::default()
         }
     }
 

@@ -282,6 +282,7 @@ mod tests {
                 voucher("left-out", VoucherStatus::Optional),
             ],
             tb: BTreeMap::new(),
+            ..Default::default()
         }
     }
 

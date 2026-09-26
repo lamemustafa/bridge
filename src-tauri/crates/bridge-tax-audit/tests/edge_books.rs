@@ -27,8 +27,8 @@ use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
     bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
     high_value_register, ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1,
-    statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts,
-    PartnersConfig, Tds26asConfig, TdsConfig,
+    statutory_dues_43b, stock, stock_read, tds_payees, tds_tcs_26as, trial_balance,
+    twentysixas_receipts, PartnersConfig, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -193,6 +193,7 @@ fn build(s: &Value) -> Book {
         ledgers,
         vouchers,
         tb,
+        ..Default::default()
     }
 }
 
@@ -374,6 +375,68 @@ fn bkq_inputs(s: &Value) -> book_keeping_quality::Inputs {
         gst_payment_ledgers: set("gst_payment_ledgers"),
         reissue_narration_terms: strs(&b["reissue_narration_terms"]),
         writeoff_discount_ledgers: set("writeoff_discount_ledgers"),
+    }
+}
+
+/// `stock`'s inputs from the spec, typed as `parity/edge_golden.py` types them: `stock_items`
+/// ({name: {base_unit?, guid?, opening_qty?, opening_value?, closing_qty?, closing_value?}}),
+/// `stock_opening`/`stock_closing` ({as_of, rows: {name: {qty?, value?, rate?}}}) and
+/// `is_integrated` (a boolean, absent or null for unknown).
+fn stock_inputs(s: &Value) -> stock_read::StockInputs {
+    let qty = |d: &Value, key: &str| typed(d, key, true, "a number or null", Value::as_f64);
+    let paise = |d: &Value, key: &str| typed(d, key, true, "an integer or null", Value::as_i64);
+    let text = |d: &Value, key: &str| {
+        typed(d, key, false, "text", |v| v.as_str().map(str::to_string)).unwrap_or_default()
+    };
+    let items = s["stock_items"]
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .map(|(n, m)| {
+                    let master = stock_read::StockItemMaster {
+                        name: n.clone(),
+                        guid: text(m, "guid"),
+                        parent: String::new(),
+                        base_unit: text(m, "base_unit"),
+                        opening_qty: qty(m, "opening_qty"),
+                        opening_value_paise: paise(m, "opening_value"),
+                        closing_qty: qty(m, "closing_qty"),
+                        closing_value_paise: paise(m, "closing_value"),
+                    };
+                    (n.clone(), master)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let snapshot = |key: &str| stock_read::StockSnapshot {
+        as_of: date(s[key]["as_of"].as_str().unwrap()),
+        rows: s[key]["rows"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(n, r)| {
+                let row = stock_read::StockSnapshotRow {
+                    name: n.clone(),
+                    guid: String::new(),
+                    qty: qty(r, "qty"),
+                    value_paise: paise(r, "value"),
+                    rate_paise: paise(r, "rate"),
+                };
+                (n.clone(), row)
+            })
+            .collect(),
+    };
+    stock_read::StockInputs {
+        items,
+        opening: snapshot("stock_opening"),
+        closing: snapshot("stock_closing"),
+        is_integrated: typed(
+            s,
+            "is_integrated",
+            true,
+            "true, false or null",
+            Value::as_bool,
+        ),
     }
 }
 
@@ -589,6 +652,12 @@ fn check(name: &str) {
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
             }
+            "stock" => {
+                let inputs = stock_inputs(&s);
+                let r = stock::run(&book, &rules, &inputs).unwrap();
+                let c = stock::check_invariants(&book, &r, &inputs).unwrap();
+                (r, c)
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -622,7 +691,7 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 14] = [
+const EDGE_TESTS: [&str; 15] = [
     "bank_reconciliation",
     "book_keeping_quality",
     "cash_book_integrity",
@@ -633,6 +702,7 @@ const EDGE_TESTS: [&str; 14] = [
     "partners_40b_194t",
     "stale_balances_41_1",
     "statutory_dues_43b",
+    "stock",
     "tds_payees",
     "tds_tcs_26as",
     "trial_balance",
@@ -1129,4 +1199,78 @@ fn a_journal_on_one_ledger_is_refused_not_panicked() {
         format!("{err}").contains("journal_transfer_amount_0bce8b28_0431f39b"),
         "{err}"
     );
+}
+
+/// Three rules no edge book reaches: the Stock-in-Hand voucher count reads the population only
+/// (not an optional or a cancelled voucher),
+/// an opening Stock Summary row with no quantity starts the walk at nil (not the master's
+/// opening), and negative at close counts goods items only.
+#[test]
+fn stock_counts_the_population_seeds_nil_and_goods_only_at_close() {
+    let mut s = spec("stock_quiet");
+    s["ledgers"].as_array_mut().unwrap().push(serde_json::json!(
+        {"name": "Shop Stock", "chain": ["Stock-in-Hand", "Current Assets"], "guid": "edge-stock_quiet-t01"}
+    ));
+    for (guid, status) in [("q02", "optional"), ("q03", "cancelled")] {
+        s["vouchers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(
+                {"guid": guid, "date": "2025-05-01", "base_type": "Journal", "status": status,
+                 "lines": [["Shop Stock", 500], ["Cash", -500]]}
+            ));
+    }
+    s["vouchers"][0]["inventory"] =
+        serde_json::json!([{"item": "Widget", "qty": 3, "amount": -300}]);
+    s["stock_items"] = serde_json::json!({
+        "Widget": {"base_unit": "Nos", "opening_qty": 5, "opening_value": 500},
+        "Freight Placeholder": {"base_unit": "\u{fffd}#4; Not Applicable"}
+    });
+    s["stock_opening"]["rows"] = serde_json::json!({"Widget": {"value": 500}});
+    s["stock_closing"]["rows"] = serde_json::json!({
+        "Widget": {"qty": 2, "value": 200},
+        "Freight Placeholder": {"qty": -1, "value": -100}
+    });
+    let (book, rules) = (build(&s), rules(&s));
+    let r = stock::run(&book, &rules, &stock_inputs(&s)).unwrap();
+    let figure = |id: &str| {
+        let f = r.figures.iter().find(|f| f.id == format!("stock.{id}"));
+        f.unwrap_or_else(|| panic!("no figure {id}")).value.clone()
+    };
+    let int = bridge_tax_audit::findings::Value::Int;
+    assert_eq!(
+        figure("stock_in_hand_voucher_count"),
+        int(0),
+        "optional and cancelled"
+    );
+    assert_eq!(figure("opening_seed_from_summary_count"), int(1));
+    // Seeded at nil, Widget goes to -3; from the master's 5 it would stay at 2.
+    assert_eq!(figure("negative_any_point_range_min"), int(1));
+    assert_eq!(
+        figure("negative_at_close_count"),
+        int(0),
+        "a value-only item"
+    );
+    assert_eq!(figure("non_goods_negative_value_item_count"), int(1));
+}
+
+/// A goods inventory line whose quantity field is absent means the read did not carry quantities:
+/// the reference raises, naming the count and the first line, and the port refuses the same book
+/// with an error rather than skipping the line as a value-only one.
+#[test]
+fn a_goods_line_without_a_quantity_field_is_refused() {
+    let mut s = spec("stock_quiet");
+    s["vouchers"][0]["inventory"] =
+        serde_json::json!([{"item": "Widget", "amount": 100, "qty_field_present": false}]);
+    let (book, rules) = (build(&s), rules(&s));
+    let err = stock::run(&book, &rules, &stock_inputs(&s)).expect_err("refused");
+    assert!(
+        format!("{err}")
+            .contains("1 goods inventory line(s) in the population carry no quantity field (BILLEDQTY/ACTUALQTY) at all, first 'Widget' on Receipt q01 on 2025-04-05;"),
+        "{err}"
+    );
+    // Outside the population (a cancelled voucher) the same line is not read.
+    s["vouchers"][0]["status"] = Value::from("cancelled");
+    let book = build(&s);
+    stock::run(&book, &rules, &stock_inputs(&s)).expect("a cancelled voucher's line is not read");
 }

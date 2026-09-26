@@ -721,6 +721,7 @@ mod tests {
             .collect(),
             vouchers: vec![voucher("v1", "Contractor C"), voucher("v2", "Contractor E")],
             tb: BTreeMap::new(),
+            ..Default::default()
         };
         let mut cfg = TdsConfig::default();
         cfg.nature_by_ledger

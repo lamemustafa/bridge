@@ -133,3 +133,11 @@ advance_tax_ledgers = []
 [tds_tcs_26as.deductor_aliases]
 "TAN-INVENTED-A" = "Pinecrest Builders"
 "TAN-INVENTED-B" = "Harborview Textiles"
+
+# stock only (invented): the opening Stock Summary is the item masters' own opening fields, the
+# closing one is the read's stock_summary part as of the period end.
+[stock]
+opening_summary = "from_masters"
+opening_date = "2025-04-01"
+closing_summary = "from_read"
+closing_date = "2026-03-31"

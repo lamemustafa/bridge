@@ -219,6 +219,7 @@ mod tests {
             ledgers: map,
             vouchers: Vec::new(),
             tb: BTreeMap::new(),
+            ..Default::default()
         }
     }
 
