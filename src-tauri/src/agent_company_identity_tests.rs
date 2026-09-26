@@ -18,6 +18,7 @@ pub(super) fn server(address: std::net::SocketAddr, path: &std::path::Path) -> S
         redaction: Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 

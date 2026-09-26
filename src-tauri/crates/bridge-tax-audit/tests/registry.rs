@@ -28,21 +28,25 @@ fn caller(id: &str) -> CallerData {
                 registry::turnover_inputs_from_json(&json("synthetic-turnover-inputs.json"))
                     .unwrap();
         }
-        "bank_reconciliation" => {
-            c.bank_statement = Some(
-                bridge_tax_audit::documents::bank_statement_from_json(&json(
-                    "synthetic-bank-statement.json",
-                ))
-                .unwrap(),
-            );
-        }
-        "tds_tcs_26as" | "twentysixas_receipts" => {
-            c.traces = bridge_tax_audit::documents::traces_documents_from_json(&json(
-                "synthetic-traces-documents.json",
-            ))
-            .unwrap();
-        }
         _ => {}
+    }
+    // `high_value_register` takes both documents, optionally; its golden is made with both.
+    if matches!(id, "bank_reconciliation" | "high_value_register") {
+        c.bank_statement = Some(
+            bridge_tax_audit::documents::bank_statement_from_json(&json(
+                "synthetic-bank-statement.json",
+            ))
+            .unwrap(),
+        );
+    }
+    if matches!(
+        id,
+        "tds_tcs_26as" | "twentysixas_receipts" | "high_value_register"
+    ) {
+        c.traces = bridge_tax_audit::documents::traces_documents_from_json(&json(
+            "synthetic-traces-documents.json",
+        ))
+        .unwrap();
     }
     c
 }

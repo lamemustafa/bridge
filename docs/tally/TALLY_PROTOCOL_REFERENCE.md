@@ -120,6 +120,9 @@ base revision.
 <a id="62-custom-reports-need-display-geometry"></a>
 
 [6.2 Custom reports need display geometry](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#62-custom-reports-need-display-geometry)
+<a id="63-a-custom-report-field-without-type-renders-money-for-display"></a>
+
+[6.3 A custom-report FIELD without `TYPE` renders money for display](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#63-a-custom-report-field-without-type-renders-money-for-display)
 <a id="7-balances"></a>
 
 [7. Balances](./TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md#7-balances)
@@ -183,6 +186,9 @@ base revision.
 <a id="94c-real-catalogues-carry-families-a-partial-name-cannot-separate"></a>
 
 [9.4c Real catalogues carry families a partial name cannot separate](./TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md#94c-real-catalogues-carry-families-a-partial-name-cannot-separate)
+<a id="94e-when-fold-equal-ledgers-coexist-an-import-binds-the-exact-name"></a>
+
+[9.4e When fold-equal ledgers coexist, an import binds the exact name](./TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md#94e-when-fold-equal-ledgers-coexist-an-import-binds-the-exact-name)
 <a id="95-identity-after-write"></a>
 
 [9.5 Identity after write](./TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md#95-identity-after-write)
@@ -357,6 +363,9 @@ base revision.
 <a id="12a10-an-opening-bill-keeps-a-date-before-booksfrom--verified-2026-09-22-single-captured-book"></a>
 
 [12a.10 An opening bill keeps a date before `BOOKSFROM` — **VERIFIED 2026-09-22; single captured book**](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#12a10-an-opening-bill-keeps-a-date-before-booksfrom--verified-2026-09-22-single-captured-book)
+<a id="12a11-balance-sheet-and-profit-and-loss-by-name-on-licensed-71"></a>
+
+[12a.11 Balance Sheet and Profit and Loss by name on licensed 7.1](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#12a11-balance-sheet-and-profit-and-loss-by-name-on-licensed-71)
 <a id="13-open-questions"></a>
 
 [13. Open questions](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#13-open-questions)

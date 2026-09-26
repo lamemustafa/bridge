@@ -11,7 +11,7 @@
 // This repo already has the fix pattern in wide use — `reader.take(N +
 // 1).read_to_end(&mut buf)`, reading one byte past a declared limit so an
 // over-limit input is detectable rather than silently truncated (see
-// src-tauri/src/dsc.rs, agent_desktop_journal.rs, source_draft/files.rs,
+// src-tauri/src/agent_bank_statement.rs, agent_desktop_journal.rs, source_draft/files.rs,
 // tools/bridge-tally-qualification). This gate checks that every such call
 // site actually uses it, so a new call site that forgets the `.take(...)` is
 // caught mechanically instead of depending on a reviewer noticing.
@@ -195,7 +195,7 @@ if (failures.length) {
     `${failures.length} unbounded Read::read_to_end/read_to_string call(s) found — each ` +
       "reads an unbounded amount of external data into memory with no `.take(N)` cap " +
       "in the same statement. Wrap the reader in `.take(limit + 1)` first (see " +
-      "src-tauri/src/dsc.rs::read_limited for the pattern — the `+ 1` lets an " +
+      "src-tauri/src/agent_bank_statement.rs for the pattern — the `+ 1` lets an " +
       "over-limit input be detected rather than silently truncated), or add a " +
       "reviewed entry to ALLOWED_UNBOUNDED in this script with the reason:\n" +
       failures.map((line) => `  - ${line}`).join("\n"),

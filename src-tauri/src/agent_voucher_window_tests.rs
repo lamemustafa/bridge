@@ -871,6 +871,7 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 
