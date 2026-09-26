@@ -550,6 +550,10 @@ fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
         {
             return Some(catalogue.safe_code());
         }
+        if let Some(amount) = cause.downcast_ref::<bridge_tally_protocol::NativeLedgerAmountError>()
+        {
+            return Some(amount.safe_code());
+        }
         cause
             .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
             .map(crate::tally::connection::PairedReadValidationError::safe_code)
@@ -588,6 +592,18 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              returns bare opening balances that name no currency, so Bridge refused before \
              reading any ledger. No ledger_masters read supports a book with several \
              Currency masters yet (#551). Retrying refuses again.",
+        ),
+        "ledger_masters_as_of_requires_compliance" => Some(
+            "`as_of` selects the date `party_gstin` is read as of, which only \
+             fields=compliance returns. Pass fields=compliance, or drop `as_of`: a basic \
+             read's opening balance is dated by `opening_balance_as_of`, not by `as_of`.",
+        ),
+        // A cause, reached through `ledger_export_invalid` (#675).
+        "foreign_currency_ledger_balance" => Some(
+            "A ledger in this company holds its opening balance in a foreign currency, which \
+             Tally writes as `<amount> @ <rate> = <base amount>` rather than a number. Bridge \
+             does not read those amounts yet (#551, #683), so this read is refused on purpose, \
+             not because the response was damaged. Retrying refuses again.",
         ),
         // A cause, reached through the shared `party_ledger_master_read_failed`.
         "ledger_masters_too_large" => Some(
@@ -1614,6 +1630,13 @@ fn redact_value(mut value: Value, redaction: Redaction) -> Value {
             }
             if redaction == Redaction::DropNarration {
                 values.remove("narration");
+            }
+            // Tally's LINEERROR text is free text that can echo any name, and
+            // no marker says which, so any redaction drops it and its omitted
+            // count; counters.line_error_count stays.
+            if redaction != Redaction::None {
+                values.remove("tally_line_errors");
+                values.remove("tally_line_errors_omitted");
             }
             for value in values.values_mut() {
                 *value = redact_value(std::mem::take(value), redaction);

@@ -28,6 +28,33 @@ fn import_name_scope_must_select_one_observed_company() {
     }
 }
 
+/// The queue's Education recheck covers every voucher's date, not only the
+/// first, and an empty list approves nothing.
+#[test]
+fn every_voucher_date_must_pass_the_education_boundary() {
+    let date = |value: &str| TallyDate::parse(value.to_string()).unwrap();
+    let education = DateBoundaryProfile::EducationRestricted;
+    assert!(every_date_accepted(education, &[date("20250401")]));
+    assert!(every_date_accepted(
+        education,
+        &[date("20250401"), date("20250502"), date("20250531")]
+    ));
+    // The second voucher's date fails, so the batch fails.
+    assert!(!every_date_accepted(
+        education,
+        &[date("20250401"), date("20250415")]
+    ));
+    assert!(!every_date_accepted(
+        education,
+        &[date("20250415"), date("20250401")]
+    ));
+    assert!(every_date_accepted(
+        DateBoundaryProfile::ModeAgnostic,
+        &[date("20250401"), date("20250415")]
+    ));
+    assert!(!every_date_accepted(DateBoundaryProfile::ModeAgnostic, &[]));
+}
+
 // #687: the child's own answer, which the parent's tests replace with a script.
 
 const NONCE: &str = "00000000-0000-4000-8000-000000000687";

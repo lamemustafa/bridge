@@ -1,6 +1,7 @@
 use bridge_tally_protocol::{
     parse_native_voucher_source_records_with_evidence,
-    parse_native_voucher_type_source_records_with_evidence, ParsedSourceIdentityKind,
+    parse_native_voucher_type_source_records_with_evidence, NativeCollectionError,
+    ParsedSourceIdentityKind,
 };
 
 const COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
@@ -99,4 +100,165 @@ fn foreign_voucher_identity_prefix_is_counted_per_row_without_erasing_binding() 
         .expect("one foreign voucher identity does not erase collection binding");
     assert_eq!(parsed.evidence.company_guid_prefix_match_count, 2);
     assert_eq!(parsed.evidence.company_guid_prefix_mismatch_count, 1);
+}
+
+/// The captured voucher-type list, changed in one place, refused for one
+/// typed reason (bridge#676). Each case asserts the variant, never text.
+fn voucher_type_refusal(xml: &str, company_guid: &str) -> NativeCollectionError {
+    parse_native_voucher_type_source_records_with_evidence(xml, company_guid)
+        .expect_err("the changed voucher-type list is refused")
+}
+
+const FIRST_VOUCHER_TYPE_GUID: &str =
+    "<GUID TYPE=\"String\">61c6de69-1748-461c-ad3f-162cb949df9f-0000004e</GUID>";
+
+#[test]
+fn a_voucher_type_list_whose_root_is_not_envelope_is_malformed() {
+    let renamed = VOUCHER_TYPES
+        .replacen("<ENVELOPE>", "<RESPONSE>", 1)
+        .replacen("</ENVELOPE>", "</RESPONSE>", 1);
+    assert_eq!(
+        voucher_type_refusal(&renamed, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_cut_off_before_its_root_closes_is_malformed() {
+    let cut = &VOUCHER_TYPES[..VOUCHER_TYPES.find("</COLLECTION>").unwrap()];
+    assert_eq!(
+        voucher_type_refusal(cut, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn an_xml_error_inside_a_voucher_type_row_is_malformed_not_the_row() {
+    // The row parser reports through anyhow; the XML error inside it is
+    // recovered by type, so a broken response is not blamed on one master.
+    let broken = VOUCHER_TYPES.replacen(
+        FIRST_VOUCHER_TYPE_GUID,
+        "<GUID TYPE=\"String\">61c6de69-1748-461c-ad3f-162cb949df9f-0000004e</MASTERID>",
+        1,
+    );
+    assert_eq!(
+        voucher_type_refusal(&broken, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_cut_off_inside_a_row_is_malformed_not_the_row() {
+    // The response ends right after the first row's GUID: quick-xml reports
+    // the end of input inside the row, and that is the response's fault.
+    let end = VOUCHER_TYPES.find(FIRST_VOUCHER_TYPE_GUID).unwrap() + FIRST_VOUCHER_TYPE_GUID.len();
+    assert_eq!(
+        voucher_type_refusal(&VOUCHER_TYPES[..end], COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_with_a_repeated_status_is_malformed() {
+    let repeated = VOUCHER_TYPES.replacen(
+        "<STATUS>1</STATUS>",
+        "<STATUS>1</STATUS><STATUS>1</STATUS>",
+        1,
+    );
+    assert_eq!(
+        voucher_type_refusal(&repeated, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_without_a_status_did_not_succeed() {
+    let silent = VOUCHER_TYPES.replacen("<STATUS>1</STATUS>", "", 1);
+    assert_ne!(silent, VOUCHER_TYPES);
+    assert_eq!(
+        voucher_type_refusal(&silent, COMPANY_GUID),
+        NativeCollectionError::NotSuccess
+    );
+}
+
+#[test]
+fn a_voucher_type_list_without_its_collection_is_malformed() {
+    let uncollected = VOUCHER_TYPES
+        .replacen("<COLLECTION ", "<ITEMS ", 1)
+        .replacen("</COLLECTION>", "</ITEMS>", 1);
+    assert_eq!(uncollected.matches("COLLECTION").count(), 0);
+    assert_eq!(
+        voucher_type_refusal(&uncollected, COMPANY_GUID),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_list_cut_off_inside_a_row_is_malformed_not_the_row() {
+    let end = VOUCHERS.find("</VOUCHERTYPENAME>").unwrap() + "</VOUCHERTYPENAME>".len();
+    assert_eq!(
+        parse_native_voucher_source_records_with_evidence(&VOUCHERS[..end], COMPANY_GUID)
+            .expect_err("a voucher list cut inside its first row is refused"),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_list_cut_off_inside_a_ledger_entry_is_malformed_not_the_row() {
+    // The cut falls inside the first voucher's first ledger entry, after its
+    // LEDGERNAME, so the entry parser is the one that reaches the end.
+    let end = VOUCHERS.find("</LEDGERNAME>").unwrap() + "</LEDGERNAME>".len();
+    assert!(VOUCHERS[..end].contains("<ALLLEDGERENTRIES.LIST>"));
+    assert_eq!(
+        parse_native_voucher_source_records_with_evidence(&VOUCHERS[..end], COMPANY_GUID)
+            .expect_err("a voucher list cut inside a ledger entry is refused"),
+        NativeCollectionError::MalformedResponse
+    );
+}
+
+#[test]
+fn a_voucher_type_list_whose_status_is_not_one_did_not_succeed() {
+    let failed = VOUCHER_TYPES.replacen("<STATUS>1</STATUS>", "<STATUS>0</STATUS>", 1);
+    assert_eq!(
+        voucher_type_refusal(&failed, COMPANY_GUID),
+        NativeCollectionError::NotSuccess
+    );
+}
+
+#[test]
+fn a_voucher_type_row_without_its_guid_is_an_unusable_row() {
+    let unidentified = VOUCHER_TYPES.replacen(FIRST_VOUCHER_TYPE_GUID, "", 1);
+    assert_ne!(unidentified, VOUCHER_TYPES, "the GUID was removed");
+    assert_eq!(
+        voucher_type_refusal(&unidentified, COMPANY_GUID),
+        NativeCollectionError::RowUnusable
+    );
+}
+
+#[test]
+fn a_voucher_type_list_with_no_row_of_the_company_is_an_identity_mismatch() {
+    assert_eq!(
+        voucher_type_refusal(VOUCHER_TYPES, "00000000-0000-0000-0000-000000000000"),
+        NativeCollectionError::CompanyIdentityMismatch
+    );
+}
+
+#[test]
+fn native_collection_causes_are_distinct_and_name_no_row() {
+    let codes = [
+        NativeCollectionError::MalformedResponse,
+        NativeCollectionError::NotSuccess,
+        NativeCollectionError::RowUnusable,
+        NativeCollectionError::CompanyIdentityMismatch,
+        NativeCollectionError::BoundsViolation,
+    ]
+    .map(NativeCollectionError::safe_code);
+    let distinct = codes.iter().collect::<std::collections::HashSet<_>>();
+    assert_eq!(distinct.len(), codes.len(), "{codes:?}");
+    assert!(codes
+        .iter()
+        .all(|code| code.starts_with("native_collection_")
+            && code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')));
 }
