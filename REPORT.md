@@ -311,3 +311,10 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - **Fixed in c49ca0f5.** `read.rs` is now the plain three-way merge (no conflict): E3a's changes plus #727's, identical to #727's own diff. Checked file by file: every crate file differs from master by exactly E3a's own changes, and non-crate files equal master. 347 tests pass (345 plus #727's 2); clippy and fmt clean.
 - The fix changes the crate tree, so the fa07ed0a records no longer apply. E3a's full run is running again on c49ca0f5, sharded to `cloud/lane-e-e3a-shards-4`. Nothing of E3a past fa07ed0a is pushed.
 - Queue note: #662's cap landed via #727 (not this lane). When the after-stack items come up, #662's issue is checked for anything left.
+
+## 2026-09-26 08:20 UTC — E3a PR opened: #744 (draft), `lane-e/e3a-stock` @ 2ce19df6
+
+- E3a's full run on c49ca0f5 (with #727 restored): **597 run, 592 killed**, 5 accepted survivors; all 34 E3A killed. Records a3f166c8; master (bdab0e10, crate unchanged since #727) merged cleanly as 2ce19df6, crate tree unchanged; `--verify`: 597/597.
+- Sonnet pre-push check of 2ce19df6: none. It confirmed, file by file, that every crate file differs from master by exactly E3a's own patch, and that non-crate files equal master. 347 tests; clippy and fmt clean.
+- **#744 "E3a: port stock"** opened as a draft and subscribed. The stock-part reader's string literals: **24 distinct**, 19 compared against input (2 Tally values, 3 config, 2 part kinds, 12 XML names) and 5 used only to build lookup keys. Real books: pending (local, Lane D).
+- Next: E4. Its local re-stack (3ea7f045, on fa07ed0a) needs master and the new E3a merged in, then gates, a full run and records. Its PR opens only after #744 merges.
