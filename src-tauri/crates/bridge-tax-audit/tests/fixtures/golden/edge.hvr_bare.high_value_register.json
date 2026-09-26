@@ -42,8 +42,16 @@
       "id": "high_value_register.bank_payment_day_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "024181f471134bd7",
-      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "1bd13eb4ccf7488b",
+      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "7f1467b3780ff4a3",
+      "definition_text": "(party, day) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -66,8 +74,16 @@
       "id": "high_value_register.bank_payment_voucher_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "6d7e29fbb39be138",
-      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "6c8371ecb3e183f8",
+      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "4ba36b97a3449dfa",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -90,8 +106,16 @@
       "id": "high_value_register.bank_receipt_day_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "024181f471134bd7",
-      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "87a06b9760e08d0d",
+      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1c372868c525ba0b",
+      "definition_text": "(party, day) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -114,8 +138,16 @@
       "id": "high_value_register.bank_receipt_voucher_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "6d7e29fbb39be138",
-      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "5fbeb43c83a4554f",
+      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "edf597b7c2eb84b8",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -146,8 +178,16 @@
       "id": "high_value_register.cash_payment_day_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "97b6b8da1e60b0dd",
-      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "39ea8e4efbc9b568",
+      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c1a0e6cd1a9f6058",
+      "definition_text": "(party, day) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -186,8 +226,16 @@
       "id": "high_value_register.cash_payment_voucher_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "a3a7abde273a3db2",
-      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "5845873aaed59edf",
+      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c7e58c6759fca5c3",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -216,8 +264,16 @@
       "id": "high_value_register.cash_receipt_day_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "97b6b8da1e60b0dd",
-      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "f97b28142fa5b340",
+      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "604120d3339d2e30",
+      "definition_text": "(party, day) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -262,8 +318,16 @@
       "id": "high_value_register.cash_receipt_voucher_at_or_over_threshold_count",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "a3a7abde273a3db2",
-      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "52677af10362cd15",
+      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "76a5c240c942f2cc",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash debited is under it; not counted as at or over.",
       "evidence": []
     },
     {

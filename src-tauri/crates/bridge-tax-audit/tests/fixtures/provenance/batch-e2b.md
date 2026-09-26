@@ -50,12 +50,16 @@ hand in a small generator, as data, then read by both sides):
 `edge.hvr_bare.high_value_register.json` regenerates byte-identical. A control run of the same commands at
 `1038dc05` reproduced all three previous goldens byte-identical.
 
+**Regenerated again 2026-09-26** at reference commit `e41d9010`, the same commands, for the reference's handling of
+a row proven under the threshold (`parity/PORT-NOTE-HVR.md`, its own section): all three goldens change as that note
+lists. A control run at `140bc7d3` reproduced the three goldens it replaces byte-identical.
+
 ## Bytes
 
 | File | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
 | `hvr_bare.json` | 1,611 | `7767924cf40a464b3fc25fdcbe870921db918f637536049537b707a4e72e2523` | `edge-books/hvr_bare.json` |
 | `hvr_paths.json` | 10,843 | `f36437bb51a2fc8c18fa8151be175d5a03fcd7d6e1fd8f5ab088636fb1582b93` | `edge-books/hvr_paths.json` |
-| `edge.hvr_bare.high_value_register.json` | 18,818 | `d28a4249f788f9e54ac3a0308c42becf03f2f6f9dadf0c5c6394340644aa441f` | `golden/edge.hvr_bare.high_value_register.json` |
-| `edge.hvr_paths.high_value_register.json` | 68,583 | `0348fa8146a9e08962854803d0adc9f00ac893ef46ddd221f78332d11d169ba1` | `golden/edge.hvr_paths.high_value_register.json` |
-| `synthetic.high_value_register.json` | 51,351 | `37f81ad426c8fba8e9729fa83bced1391ef9fa615ecc563672fae6c55efa4c83` | `golden/synthetic.high_value_register.json` |
+| `edge.hvr_bare.high_value_register.json` | 22,750 | `ffe3d4ad46240ce769ed6d7a747fc04bc42129e57ab08f1fd5be291859eb9764` | `golden/edge.hvr_bare.high_value_register.json` |
+| `edge.hvr_paths.high_value_register.json` | 72,530 | `9d9a0f59ab69a461a48ddf310e6c6428796c5b1c563a00bd4daa99ebec3fc8f1` | `golden/edge.hvr_paths.high_value_register.json` |
+| `synthetic.high_value_register.json` | 55,298 | `954fa976447f3e2c78aff4f093955119f355aa2a41a569455cba8b8bfe1967cf` | `golden/synthetic.high_value_register.json` |
