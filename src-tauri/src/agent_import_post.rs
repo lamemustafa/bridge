@@ -950,7 +950,7 @@ fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
     }
     Some((
         "batch_step_unconfirmed",
-        "Tally reported creating the batch, but this company's voucher mark did not move by exactly that many, so another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
+        "Tally reported creating the batch, but this company's voucher mark was not confirmed to have moved by exactly that many: it moved by a different amount, or the mark could not be read. Another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
     ))
 }
 
