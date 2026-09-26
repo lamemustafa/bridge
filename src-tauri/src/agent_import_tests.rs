@@ -1159,6 +1159,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     divergent.entries[0].amount = "-12.51".to_string();
     let result = verify_observed_batch(&line, &[divergent]).expect("numeric divergence");
     assert_eq!(result["vouchers"][0]["status"], "posted_divergent");
+    assert_eq!(result["vouchers"][0]["alter_id"], 11);
 }
 
 #[test]
@@ -1215,18 +1216,38 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
             ["vouchers"][0]["status"],
         "posted_verified"
     );
-    for (cancelled, optional) in [(Some(true), Some(false)), (Some(false), Some(true))] {
+    for (cancelled, optional, reason) in [
+        (Some(true), Some(false), "voucher_cancelled"),
+        (Some(false), Some(true), "voucher_optional"),
+        (Some(true), Some(true), "voucher_cancelled"),
+    ] {
         let mut ineffective = observed.clone();
         ineffective.cancelled = cancelled;
         ineffective.optional = optional;
         let result =
             verify_observed_batch(&line, &[ineffective]).expect("ineffective voucher result");
         assert_eq!(result["vouchers"][0]["status"], "posted_not_effective");
+        assert_eq!(result["vouchers"][0]["reason"], reason);
         assert_eq!(
             result["vouchers"][0]["not_observed"],
             json!(["effective_date"])
         );
         assert_eq!(result["counts"]["posted_not_effective"], 1);
+    }
+    // An optional voucher keeps its entries, so a change to them still diverges;
+    // a cancelled one loses them, so it reads as cancelled (bridge#758).
+    let mut changed = observed.clone();
+    changed.entries[0].amount = "-12.51".to_string();
+    for (cancelled, optional, status) in [
+        (Some(false), Some(true), "posted_divergent"),
+        (Some(true), Some(false), "posted_not_effective"),
+    ] {
+        let mut ineffective = changed.clone();
+        ineffective.cancelled = cancelled;
+        ineffective.optional = optional;
+        let result =
+            verify_observed_batch(&line, &[ineffective]).expect("changed voucher result");
+        assert_eq!(result["vouchers"][0]["status"], status);
     }
     let mut missing = observed;
     missing.optional = None;
