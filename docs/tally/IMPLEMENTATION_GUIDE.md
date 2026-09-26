@@ -1308,8 +1308,9 @@ rust-cache action. Workspace binaries and incremental outputs are excluded by
 its cleanup defaults. The Windows namespace includes the native prerequisite
 action digest; runner image/version, OpenSSL and libclang environment values
 join the existing toolchain/Cargo/profile fingerprints. Set up prerequisites
-before cache lookup. Windows PR runs restore without saving; master and manual
-branch runs can publish caches in their own scopes. A cache miss still runs the
+before cache lookup. PR runs of every rust-cache job restore without saving
+(bridge#669): a PR-scoped copy serves only that PR. Master and manual branch
+runs can publish caches in their own scopes. A cache miss still runs the
 complete build and gates. Keep the 50-minute job bound.
 
 The earlier multi-GB cache-save overrun is why this policy requires a measured
@@ -1364,12 +1365,16 @@ remain distinguishable from measured reuse.
 
 The local size cap does not bound accumulated remote snapshots. A separate
 master-only retention job keeps the newest two package compiler-cache snapshots
-per OS across source/toolchain generations. Its `actions:write` permission stays
+per OS across source/toolchain generations, and the newest master rust-cache
+entry per restore prefix (the key up to its environment hash; bridge#669). It
+runs after every job that saves a Rust cache. Its `actions:write` permission stays
 isolated from the package jobs. `scripts/prune-package-compiler-cache.mjs`
-defaults to dry run; its apply path validates the complete inventory, deletes
-only obsolete master entries in the exact `bridge-package-sccache-v1-` namespace,
-and verifies the remaining inventory. Preserve dependency caches, PR entries
-and unrelated namespaces. Run its focused checks with
+defaults to dry run; its apply path validates the complete inventory of both
+namespaces before deleting anything, deletes only obsolete master entries in the
+exact `bridge-package-sccache-v1-` and `v0-rust-` key shapes, and verifies the
+remaining inventory. A rust-cache entry with a different environment hash is a
+separate prefix and is never pruned against another. Preserve PR entries, other
+refs and unrelated namespaces; they expire through GitHub's unused-cache eviction. Run its focused checks with
 `node --test scripts/prune-package-compiler-cache.test.mjs`.
 
 Preserve both native platforms, test selection, doctests, warning-denying lint,
