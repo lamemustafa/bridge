@@ -111,9 +111,11 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
 }
 
 /// Which doubt a review is for. Named, it must be one the batch can hold;
-/// unnamed, it is the one observed doubt. Two observed doubts need a name
-/// (`ack_doubt_ambiguous`). With none observed, the kind whose record says
-/// why (pending, unreadable) is chosen, so the refusal names it.
+/// unnamed, it is the one observed doubt. A doubt the check record holds
+/// without its own file is observed too (#722), so it and another doubt need
+/// a name (`ack_doubt_ambiguous`), never a silent pick. With none observed,
+/// the kind whose record says why (pending, unreadable) is chosen, so the
+/// refusal names it.
 fn select_doubt(
     requested: Option<DoubtKind>,
     states: &[(DoubtKind, MastersRecord)],
@@ -127,7 +129,12 @@ fn select_doubt(
     }
     let observed = states
         .iter()
-        .filter(|(_, state)| matches!(state, MastersRecord::Doubt { .. }))
+        .filter(|(_, state)| {
+            matches!(
+                state,
+                MastersRecord::Doubt { .. } | MastersRecord::DoubtRecordUnavailable
+            )
+        })
         .map(|(kind, _)| *kind)
         .collect::<Vec<_>>();
     match observed.as_slice() {
@@ -730,8 +737,8 @@ pub(super) fn operator_review(
 /// `operator_review` for a batch: each kind of doubt reported on its own,
 /// `pending` while that kind's verdict is not recorded,
 /// `doubt_record_unavailable` where the check record holds a doubt whose own
-/// file was not written (#722), and `null` where no doubt of that kind is
-/// observed. A review covers only the doubt
+/// file is absent (#722; a review already recorded then reads stale), and
+/// `null` where no doubt of that kind is observed. A review covers only the doubt
 /// it names, and only while every voucher it bound is unchanged; a stale
 /// review names the vouchers that changed. `None` when no doubt is observed.
 fn batch_operator_review(

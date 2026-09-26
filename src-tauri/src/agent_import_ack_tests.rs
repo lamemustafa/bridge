@@ -775,6 +775,16 @@ async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_requ
             } else {
                 &check["batch_step"]
             };
+            // The verdict recorded is the doubt itself, for either kind.
+            assert_eq!(
+                verdict["state"],
+                if kind == "masters" {
+                    "posted_under_changed_masters"
+                } else {
+                    "unmatched"
+                },
+                "{kind}: {check}"
+            );
             assert_eq!(
                 verdict["doubt_record"],
                 if write_fails {
@@ -791,8 +801,11 @@ async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_requ
                 "batch_step_unconfirmed"
             };
             assert_eq!(
-                post_doubt(read_masters_check(&imports, &line.batch_id).as_ref(), 2)
-                    .map(|(code, _)| code),
+                post_doubt(
+                    read_masters_check(&imports, &line.batch_id).as_ref(),
+                    line.vouchers.len()
+                )
+                .map(|(code, _)| code),
                 Some(expected),
                 "{kind}: {check}"
             );

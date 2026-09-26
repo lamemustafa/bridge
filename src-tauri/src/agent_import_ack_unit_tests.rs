@@ -334,6 +334,24 @@ fn a_review_names_its_doubt_and_two_doubts_need_a_name() {
         (DoubtKind::BatchStep, doubt()),
     ];
     assert_eq!(select_doubt(None, &step_only), Ok(DoubtKind::BatchStep));
+    // A doubt held only by the check record is observed too (#722): beside
+    // another doubt it needs a name, and alone it is the one chosen.
+    let masters_unavailable = [
+        (DoubtKind::Masters, MastersRecord::DoubtRecordUnavailable),
+        (DoubtKind::BatchStep, doubt()),
+    ];
+    assert_eq!(
+        select_doubt(None, &masters_unavailable),
+        Err("ack_doubt_ambiguous")
+    );
+    let step_unavailable = [
+        (DoubtKind::Masters, NoDoubt),
+        (DoubtKind::BatchStep, MastersRecord::DoubtRecordUnavailable),
+    ];
+    assert_eq!(
+        select_doubt(None, &step_unavailable),
+        Ok(DoubtKind::BatchStep)
+    );
     // A single post can hold no step doubt.
     let single = [(DoubtKind::Masters, doubt())];
     assert_eq!(select_doubt(None, &single), Ok(DoubtKind::Masters));
@@ -611,7 +629,7 @@ fn a_batch_kind_whose_verdict_is_pending_reads_pending() {
     assert_eq!(check("unchanged", "matched"), None);
 }
 
-/// A doubt the check record holds whose own file was not written reads
+/// A doubt the check record holds whose own file is absent reads
 /// `doubt_record_unavailable`, not `null` (#722): the verdict counts it as
 /// doubt, and no review can bind to it. For each kind, and for one voucher.
 #[test]
