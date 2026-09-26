@@ -1,8 +1,8 @@
 //! bridge#583: the native post driven end to end through the `post_import`
 //! tool call against the protocol simulator, the approval answered by the
 //! test-only seam (`approved_import::test_seam`). No real Tally is involved.
-use super::SCRIPTED_REMOTE_ID;
 use super::*;
+use super::{SCRIPTED_REMOTE_ID, SCRIPTED_REMOTE_IDS};
 use crate::tally::approved_import::test_seam::{ScriptedApproval, SCRIPTED_APPROVAL};
 use bridge_tally_transport::TallyEndpointConfig;
 use std::time::Duration;
@@ -228,6 +228,7 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     })
 }
 
@@ -454,6 +455,174 @@ async fn race_an_intent_during_approval(
         .map(|record| record["batch_id"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     (response, observed, post_at, intents)
+}
+
+fn batch_server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
+    Server::new(crate::agent::Settings {
+        endpoint: TallyEndpointConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        },
+        data_dir: directory.to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+        batch_post_enabled: true,
+    })
+}
+
+/// `saved_batch`, with a second Journal on the same ledgers and day.
+fn saved_batch_of_two(server: &Server) -> (ImportLedgerLine, Value) {
+    let (mut line, args) = saved_batch(server);
+    let mut second = line.vouchers[0].clone();
+    second.bridge_txn_id = "journal-583-2".into();
+    second
+        .entries
+        .iter_mut()
+        .for_each(|entry| entry.amount = "7.25".into());
+    line.vouchers.push(second);
+    line.txn_ids.push("journal-583-2".into());
+    let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(rendered.as_bytes());
+    bind_to_captured_catalogue(&mut line);
+    server.append_import_ledger(&line).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    (line, args)
+}
+
+/// A batch of two, while another process records `injected` in an intent
+/// during approval; the post mints `minted`.
+async fn race_a_batch_id_during_approval(
+    injected: Uuid,
+    minted: [Uuid; 2],
+) -> (Value, usize, usize) {
+    let mut plans = before_approval();
+    let post_at = plans.len() + after_approval(xml(created_one())).len() - 1;
+    plans.extend(after_approval(xml(created_one())));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = batch_server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch_of_two(&server);
+    let mut earlier = line.clone();
+    earlier.batch_id = "bridge-00000000-0000-4000-8000-000000000585".into();
+    earlier.vouchers.truncate(1);
+    earlier.txn_ids.truncate(1);
+    let mut appended = serde_json::to_vec(&earlier).unwrap();
+    appended.push(b'\n');
+    appended.extend(
+        serde_json::to_vec(&ledger::StatusRecord::dispatch_native(
+            &earlier,
+            "c".repeat(64),
+            injected,
+        ))
+        .unwrap(),
+    );
+    appended.push(b'\n');
+    let path = directory.path().join("agent-import-ledger.jsonl");
+    let scripted = ScriptedApproval::approving_after(move || {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&appended)
+            .unwrap();
+    });
+    let response = SCRIPTED_REMOTE_IDS
+        .scope(
+            minted.to_vec(),
+            SCRIPTED_APPROVAL.scope(scripted, server.call_tool("post_import", args)),
+        )
+        .await;
+    (response, sent(simulator).len(), post_at)
+}
+
+/// A batch's SECOND REMOTEID, recorded by another process while the dialog
+/// is open, is caught inside the queue: no POST. The control, with an
+/// unrelated id recorded instead, posts. So every id is checked, not only
+/// the first.
+#[tokio::test]
+async fn a_batch_whose_second_remote_id_is_recorded_during_approval_is_never_sent() {
+    let minted = [Uuid::new_v4(), Uuid::new_v4()];
+    let (response, observed, post_at) = race_a_batch_id_during_approval(minted[1], minted).await;
+    assert_eq!(observed, post_at, "{response}");
+    let (response, observed, post_at) =
+        race_a_batch_id_during_approval(Uuid::new_v4(), minted).await;
+    assert!(
+        observed > post_at,
+        "the control's POST was sent: {response}"
+    );
+}
+
+/// A live batch post records its step verdict durably, before anything else
+/// can fail. Tally's captured answer reports one create for this batch of
+/// two, and the target's mark moves by two: the step doubt is recorded, and
+/// the batch is not verified.
+#[tokio::test]
+async fn a_batch_post_records_its_step_verdict_before_anything_else_can_fail() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(company_marks(12, 50, "WR2 Unicode Lab")));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = batch_server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch_of_two(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    let imports = server.imports_dir().unwrap();
+    let doubt: Value = serde_json::from_slice(
+        &fs::read(imports.join(format!("{}.batch_step_doubt.json", line.batch_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(doubt["state"], "unmatched", "{response}");
+    assert_eq!(doubt["target_voucher_step"]["step"], 2, "{doubt}");
+    assert_eq!(
+        doubt["target_voucher_step"]["reported_created"], 1,
+        "{doubt}"
+    );
+    assert_eq!(
+        super::super::read_masters_check(&imports, &line.batch_id).unwrap()["batch_step"]["state"],
+        "unmatched"
+    );
+    assert_ne!(
+        response["structuredContent"]["result"]["dispatch"]["state"], "posted_verified",
+        "{response}"
+    );
+}
+
+/// With batch posting off, a batch of two is refused before any request.
+#[tokio::test]
+async fn a_batch_is_refused_while_batch_posting_is_off() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch_of_two(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "import_post_requires_one_voucher",
+        "{response}"
+    );
+    assert!(sent(simulator).is_empty());
 }
 
 /// The same REMOTEID recorded by another process while the dialog is open is
@@ -752,6 +921,7 @@ async fn a_dispatch_admission_that_fails_sends_nothing() {
             redaction: crate::agent::Redaction::None,
             import_enabled: true,
             writes_enabled: true,
+            batch_post_enabled: false,
         });
         other.append_import_ledger(&changed).unwrap();
     });

@@ -14,6 +14,7 @@ fn server_for(address: std::net::SocketAddr, data_dir: &Path) -> Server {
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 

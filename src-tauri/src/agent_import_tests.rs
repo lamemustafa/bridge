@@ -54,6 +54,7 @@ async fn batch_total_overflow_is_refused_before_dispatch_or_persistence() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let mut input = payload();
     for entry in input
@@ -143,6 +144,7 @@ fn external_import_ledger_read_refuses_busy_admission_without_waiting() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     };
     let server = Server::new(settings.clone());
     let append_admission = server
@@ -181,6 +183,7 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     };
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
@@ -350,6 +353,7 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let line = ImportLedgerLine {
         ledger_identities: None,
@@ -711,6 +715,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let input = payload();
     let line = ImportLedgerLine {
@@ -1468,6 +1473,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
@@ -1889,6 +1895,7 @@ async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_vouch
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let response = server
         .call_tool_response("build_import_xml", serde_json::to_value(unique).unwrap())
@@ -1942,6 +1949,7 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
             redaction: crate::agent::Redaction::None,
             import_enabled: true,
             writes_enabled,
+            batch_post_enabled: false,
         });
         let mut input = captured_catalogue_payload();
         input.vouchers.truncate(voucher_count);
@@ -2187,6 +2195,7 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let line = ImportLedgerLine {
         ledger_identities: None,
@@ -2315,6 +2324,7 @@ fn line_error_text_does_not_count_against_a_pages_never_cut_part() {
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         })
     };
     let page = json!({"items": [], "dispatch": {"response": {"outcome": {
@@ -2359,6 +2369,7 @@ async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         })
     };
     let server = server_with(200_000);
@@ -2484,6 +2495,7 @@ async fn verify_saved_batch_after_dispatch(
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let built = server
         .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
@@ -2568,6 +2580,7 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     let built = server
         .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
@@ -2727,6 +2740,7 @@ async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
