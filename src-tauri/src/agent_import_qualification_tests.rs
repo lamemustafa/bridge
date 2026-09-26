@@ -33,6 +33,7 @@ fn the_published_rules_name_every_qualified_type_and_claim_no_other() {
         redaction: super::super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let published = server.voucher_schema().unwrap().payload;
     let prose = format!(
@@ -141,6 +142,7 @@ async fn an_unshaped_bank_voucher_is_refused_before_dispatch_or_persistence() {
                 redaction: super::super::super::Redaction::None,
                 import_enabled: true,
                 writes_enabled: false,
+                batch_post_enabled: false,
             });
             let mut input = payload();
             input.vouchers.truncate(1);

@@ -9,9 +9,8 @@
 //! tool call, matching the plan's "admits target before every batch"
 //! requirement.
 //!
-//! Input is the book model documented in
-//! `brain/50-projects/audit-sprint-2026-09-14/specs/book_schema.md`, built by
-//! `SP/code/book/build_book.py`. This module never reads a snapshot itself.
+//! Input is the book model its producer documents, outside this repository.
+//! This module never reads a snapshot itself.
 //!
 //! **What is reused, and what is not, and why:**
 //! - [`bridge_tally_protocol::parse_import_outcome`] parses every
@@ -111,8 +110,8 @@ fn amounts_equal(a: &str, b: &str) -> bool {
 
 /// Whether `value` is numerically zero (or blank/unparseable, which a master
 /// renderer treats the same as zero -- nothing to report). Used to gate
-/// `OPENINGBALANCE`/`OPENINGVALUE`: the proven-good capture
-/// (`babul-masters-complete.xml`) only ever emits an opening amount element
+/// `OPENINGBALANCE`/`OPENINGVALUE`: the proven-good capture, a masters
+/// import file, only ever emits an opening amount element
 /// when it is non-zero -- a zero-balance ledger's `<LEDGER>` carries no
 /// `OPENINGBALANCE` at all.
 fn is_zero_amount(value: &str) -> bool {
@@ -140,7 +139,7 @@ fn is_duties_and_taxes_parent(parent: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Book model (input) -- see SP/specs/book_schema.md for the full schema.
+// Book model (input) -- its producer, outside this repository, documents the full schema.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -530,7 +529,7 @@ fn ledger_parent_mismatch(book: &BookLedger, row: &BTreeMap<String, String>) -> 
 }
 
 /// Which writable field(s) on an existing ledger differ from the book and
-/// need a partial `Alter` (Brain trap: `Create` on an existing ledger
+/// need a partial `Alter` (protocol reference §9.4: `Create` on an existing ledger
 /// overwrites its opening balance instead of merging; a partial `Alter`
 /// carrying only the changed field(s) is the safe write here). Used for
 /// Tally's own default ledgers (Cash/Profit & Loss A/c) and, since
@@ -606,7 +605,7 @@ fn render_ledger_alter_xml(name: &str, fields: &[(&'static str, String)]) -> Str
     // No `xmlns:UDF`: this partial Alter carries only plain writable fields
     // (currently `OPENINGBALANCE`), never a `UDF:`-namespaced element, so the
     // namespace declaration has nothing to bind to -- see module doc / proven
-    // shape (`babul-masters-complete.xml`) for the same convention on Create.
+    // shape of the captured masters import file for the same convention on Create.
     format!(
         "<TALLYMESSAGE><LEDGER NAME=\"{name}\" ACTION=\"Alter\">{body}</LEDGER></TALLYMESSAGE>",
         name = xml_escape(name)
@@ -628,8 +627,8 @@ fn render_import_envelope(company: &str, report_name: &str, messages: &str) -> S
 // No renderer below declares `xmlns:UDF="TallyUDF"`: none of them emit a
 // `UDF:`-namespaced element (that would require a genuine User Defined
 // Field, which this book model never carries), so the earlier blanket
-// declaration bound to nothing. The proven-good capture
-// (`babul-masters-complete.xml`) confirms an ordinary ledger Create carries
+// declaration bound to nothing. The proven-good capture, a masters import
+// file, confirms an ordinary ledger Create carries
 // no such attribute at all -- only one incidental `TALLYMESSAGE` in that
 // capture (for a UDF-bearing ledger the source system emitted) has it.
 
@@ -688,8 +687,8 @@ fn render_ledger_xml(l: &BookLedger) -> String {
     // Only when the book actually carries a real GST/duty classification
     // (not empty, not Tally's own inert default "Others") AND the ledger is
     // parented under Duties & Taxes -- the 2026-09-14 rehearsal sent
-    // `<TAXTYPE>Others</TAXTYPE>` on every ledger, including "HDFC Bank
-    // 1649" and "Wages and Salary", which is not a duty head at all.
+    // `<TAXTYPE>Others</TAXTYPE>` on every ledger, including a bank ledger
+    // and a wages ledger, neither of which is a duty head.
     let tax_type = l
         .tax_type
         .as_deref()
@@ -1280,7 +1279,7 @@ pub(in crate::agent) async fn lab_import_masters(
     // ---- Ledger reconcile: partial Alter for every pre-existing ledger --
     // Tally default (Cash/Profit & Loss A/c) or ordinary (coordinator
     // instruction, 2026-09-14) -- whose only differences from the book are
-    // in writable fields (Brain trap: Create on an existing ledger
+    // in writable fields (protocol reference §9.4: Create on an existing ledger
     // overwrites its opening balance; a partial Alter carrying only the
     // changed field(s) is the safe write here). Only runs if nothing above
     // already stopped on a mismatch, and only sends an Alter for ledgers
@@ -2048,7 +2047,7 @@ fn narration_marker(narration: Option<&str>) -> Option<String> {
 /// those vouchers the marker can never be recomputed and compared on a
 /// later resume, and `marker_matches` below is permanently false. The
 /// plain narration text is not in that position: it is not among the
-/// fields `tally-rewrites-what-you-import.md` documents Tally rewriting,
+/// fields protocol reference §12a.4 records Tally rewriting,
 /// so it survives a write byte-for-byte, and this book's narration values
 /// each carry a UPI/RTGS transaction reference or equivalent, so a
 /// same-day same-type same-content collision on text alone is a materially
@@ -2086,9 +2085,10 @@ fn lab_marker_id(source_guid: &str) -> Uuid {
 /// `voucher_number` alone is not durable: TallyPrime silently reassigns it
 /// to its own per-voucher-type sequential series on Create, in **receipt**
 /// order, not the value supplied
-/// (`brain/10-domains/11-tally/tally-rewrites-what-you-import.md` #6,
-/// reproduced on both Education and licensed builds). The 2026-09-14
-/// rehearsal hit exactly this: batch 1 posted two same-date groups
+/// (protocol reference §9.8 records the supplied number being discarded
+/// under automatic numbering; the reassignment was reproduced on both
+/// Education and licensed builds in runs not recorded in this repository).
+/// The 2026-09-14 rehearsal hit exactly this: batch 1 posted two same-date groups
 /// (Payment 20250518 #98-106, Contra 20250609 #9-11) whose supplied
 /// numbers were NOT in ascending numeric order in the request (a separate,
 /// now-fixed bug -- the batch sort compared `voucher_number` as a string,
@@ -2254,7 +2254,7 @@ fn voucher_mismatch_detail(expected: &BookVoucher, observed: &[ObservedVoucher])
 /// sorted before "98" -- a batch is posted to Tally in THIS order, and
 /// TallyPrime auto-numbers Payment/Receipt/Contra by receipt order rather
 /// than by the supplied `VOUCHERNUMBER`
-/// (`tally-rewrites-what-you-import.md` #6), so a scrambled posting order
+/// (protocol reference §12a.4 row 6, §9.8), so a scrambled posting order
 /// produces Tally-assigned numbers that no longer line up with the book's
 /// own numbers. This is what actually produced the 2026-09-14 rehearsal's
 /// 11 batch-1 mismatches: two same-date groups (Payment 20250518 #98-106,

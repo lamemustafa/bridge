@@ -64,6 +64,7 @@ fn contended_post_returns_without_waiting_or_recording_a_dispatch() {
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     server.append_import_ledger(&line).unwrap();
     let journal = directory.path().join("agent-import-ledger.jsonl");
@@ -369,6 +370,7 @@ fn endpoint_lease_contention_keeps_negative_post_and_cancellation_results_uncert
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     server.append_import_ledger_while_admitted(&line).unwrap();
     let args = json!({"batch_id":&line.batch_id,"company_guid":&line.company_guid});
@@ -478,6 +480,7 @@ async fn received_response_survives_an_injected_response_journal_failure() {
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     server.append_import_ledger(&line).unwrap();
     let admission = server.lock_import_admission().unwrap();
@@ -847,6 +850,108 @@ fn native_post_refuses_supplied_numbers_without_disabling_manual_files() {
     );
 }
 
+/// bridge#626 over a batch: a folded twin of a ledger named only by the
+/// SECOND voucher refuses the post, before approval and again in the queue.
+/// Both checks read every voucher's ledgers, not the first voucher's. The
+/// twin is the same test-local rewrite of the capture as the single-voucher
+/// test (an unrelated ledger renamed `Cash` plus CR LF), no evidence of Tally
+/// behaviour.
+#[test]
+fn a_folded_twin_named_only_by_a_later_voucher_refuses_the_batch() {
+    let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let decode = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let captured = decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    ));
+    let catalogue = decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    ));
+    let single_currency = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
+    // Voucher 1 names no ledger with a twin; only voucher 2 names `Cash`.
+    let line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-00000000-0000-4000-8000-000000000626",
+        "identity_scheme":"batch_v1", "company_guid":company_guid,
+        "txn_ids":["TWIN-1","TWIN-2"],
+        "date_from":"20260907", "date_to":"20260907", "sha256":"e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef",
+        "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":219},
+        "vouchers":[
+            {"bridge_txn_id":"TWIN-1","date":"20260907","voucher_type":"Journal",
+             "narration":"first","reference":null,"voucher_number":null,
+             "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"3.00","side":"Dr"},
+                {"ledger":"Café Naïve Traders","amount":"3.00","side":"Cr"}]},
+            {"bridge_txn_id":"TWIN-2","date":"20260907","voucher_type":"Journal",
+             "narration":"second","reference":null,"voucher_number":null,
+             "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"5.00","side":"Dr"},
+                {"ledger":"Cash","amount":"5.00","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let payload = ImportPayload {
+        company_guid: company_guid.into(),
+        vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
+    };
+    let requested = requested_ledger_names(&payload);
+    assert_eq!(
+        requested,
+        ["Bridge Nested Debtor WR4", "Café Naïve Traders", "Cash"],
+        "every voucher's ledgers"
+    );
+    let ledger_binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue,
+        "WR2 Unicode Lab",
+        company_guid,
+    )
+    .unwrap()
+    .bind_selected(requested.clone())
+    .unwrap();
+    let recheck = |catalogue: &str| {
+        recheck_import_admission(
+            &line,
+            company_guid,
+            "WR2 Unicode Lab",
+            &captured,
+            &captured,
+            catalogue,
+            None,
+            &single_currency,
+            &ledger_binding,
+        )
+    };
+    // Control: the captured catalogue holds no twin of any named ledger.
+    recheck(&catalogue).expect("no twin, so the queued batch is admitted");
+    assert_eq!(
+        catalogue.matches("WR2 Sales").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = catalogue.replace("WR2 Sales", "Cash&#13;&#10;");
+    // Before approval, the post checks the names requested across the batch.
+    let twinned_parents = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &twinned,
+        "WR2 Unicode Lab",
+        company_guid,
+    )
+    .unwrap();
+    assert!(!super::super::folded_twins(&requested, twinned_parents.parents()).is_empty());
+    // In the queue, the recheck reads every voucher's ledgers again.
+    let error = recheck(&twinned).expect_err("a twin of voucher 2's ledger must refuse the batch");
+    assert!(matches!(
+        error.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::LedgerFoldedTwin)
+    ));
+}
+
 #[test]
 fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candidate() {
     let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
@@ -935,6 +1040,34 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &ledger_binding,
     )
     .expect("paired captured source establishes absence of the new candidate");
+
+    // bridge#626: a ledger added since approval that folds equal to a named one
+    // refuses the queued post. The catalogue is a test-local rewrite of the
+    // capture, an unrelated ledger renamed `Cash` plus CR LF, and no evidence
+    // of Tally behaviour. The named ledgers' binding is unchanged, so only the
+    // twin check can refuse it.
+    assert_eq!(
+        catalogue.matches("WR2 Sales").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = catalogue.replace("WR2 Sales", "Cash&#13;&#10;");
+    let error = recheck_import_admission(
+        &absent,
+        company_guid,
+        "WR2 Unicode Lab",
+        &captured,
+        &captured,
+        &twinned,
+        None,
+        &single_currency,
+        &ledger_binding,
+    )
+    .expect_err("a folded twin added since approval must refuse the queued post");
+    assert!(matches!(
+        error.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::LedgerFoldedTwin)
+    ));
 
     // A bank voucher is classified from the group collection read beside the
     // catalogue. Without that read the queue refuses rather than post on half
@@ -1034,6 +1167,7 @@ async fn a_saved_xml_file_that_differs_from_the_record_is_refused_before_tally()
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     server.append_import_ledger(&line).unwrap();
     let path = server
@@ -1479,6 +1613,21 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
     );
 }
 
+/// bridge#626 slice 1 changes no post code: this pins the refusal that already
+/// applies to a ledger name ending in CR LF. Such a name can now be built and
+/// imported from the file, but the native dialog cannot yet show it so that an
+/// operator can tell it from its twin; slice 2 changes that, and this test.
+#[test]
+fn native_preview_refuses_a_ledger_name_ending_in_a_line_break() {
+    let (mut line, endpoint) = batch();
+    line.vouchers[0].entries[0].ledger.push_str("\r\n");
+    refresh_batch_sha256(&mut line);
+    assert_eq!(
+        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        "import_review_layout_text"
+    );
+}
+
 /// A batch of two for the N-voucher paths. Admission still posts one voucher,
 /// so these call each generalized piece directly.
 fn batch_of_two() -> ImportLedgerLine {
@@ -1488,6 +1637,9 @@ fn batch_of_two() -> ImportLedgerLine {
     second.narration = Some("Synthetic second".into());
     line.vouchers.push(second);
     line.txn_ids.push("journal-test-2".into());
+    line.sha256 = sha256_hex(
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
+    );
     line
 }
 
@@ -1674,4 +1826,356 @@ fn a_previous_batch_attempt_reconciles_only_with_n_creates_and_n_verified() {
         "reconciliation_required"
     );
     assert_eq!(payload["result"]["error"]["code"], "batch_step_unconfirmed");
+}
+
+/// A batch with one voucher of each type, for the batch approval text.
+fn batch_of_every_type() -> (ImportLedgerLine, TallyEndpointConfig) {
+    let (mut line, endpoint) = batch();
+    let voucher = |id: &str, voucher_type: &str, entries: Value| -> ImportVoucher {
+        serde_json::from_value(json!({"bridge_txn_id":id,"date":"20260902",
+            "voucher_type":voucher_type,"narration":"Synthetic test only","entries":entries}))
+        .unwrap()
+    };
+    line.vouchers.push(voucher(
+        "receipt-1",
+        "Receipt",
+        json!([
+        {"ledger":"Cash","amount":"40.00","side":"Dr"},
+        {"ledger":"Party A","amount":"40.00","side":"Cr"}]),
+    ));
+    line.vouchers.push(voucher(
+        "payment-1",
+        "Payment",
+        json!([
+        {"ledger":"Party B","amount":"15.00","side":"Dr"},
+        {"ledger":"Bank","amount":"15.00","side":"Cr"}]),
+    ));
+    line.vouchers.push(voucher(
+        "contra-1",
+        "Contra",
+        json!([
+        {"ledger":"Bank","amount":"5.00","side":"Dr"},
+        {"ledger":"Cash","amount":"5.00","side":"Cr"}]),
+    ));
+    line.txn_ids
+        .extend(["receipt-1", "payment-1", "contra-1"].map(String::from));
+    line.date_to = "20260902".into();
+    line.sha256 = sha256_hex(
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
+    );
+    (line, endpoint)
+}
+
+/// Batch admission: one voucher unless batch posting lets more through, and
+/// never more than the cap.
+#[test]
+fn a_batch_is_admitted_only_under_the_batch_limit() {
+    let (_, endpoint) = batch();
+    let two = batch_of_two();
+    assert_eq!(
+        admit_saved_voucher_integrity(&two, &endpoint, PostScope::Vouchers, 1)
+            .err()
+            .as_deref(),
+        Some("import_post_requires_one_voucher")
+    );
+    assert!(admit_saved_voucher_integrity(
+        &two,
+        &endpoint,
+        PostScope::Vouchers,
+        ledger::MAX_BATCH_POST_VOUCHERS
+    )
+    .is_ok());
+    let mut many = two.clone();
+    while many.vouchers.len() <= ledger::MAX_BATCH_POST_VOUCHERS {
+        let mut extra = many.vouchers[0].clone();
+        extra.bridge_txn_id = format!("journal-extra-{}", many.vouchers.len());
+        many.txn_ids.push(extra.bridge_txn_id.clone());
+        many.vouchers.push(extra);
+    }
+    many.sha256 = sha256_hex(
+        render_import_xml("Synthetic Accounts", &many.vouchers, &many.batch_id).as_bytes(),
+    );
+    assert_eq!(
+        admit_saved_voucher_integrity(
+            &many,
+            &endpoint,
+            PostScope::Vouchers,
+            ledger::MAX_BATCH_POST_VOUCHERS
+        )
+        .err()
+        .as_deref(),
+        Some("import_post_batch_too_large")
+    );
+    // Every voucher's type is checked, not only the first's.
+    let (mixed, _) = batch_of_every_type();
+    assert_eq!(
+        admit_saved_voucher_integrity(
+            &mixed,
+            &endpoint,
+            PostScope::JournalOnly,
+            ledger::MAX_BATCH_POST_VOUCHERS
+        )
+        .err()
+        .as_deref(),
+        Some("import_post_requires_one_journal")
+    );
+    // The desktop posts one Journal, whatever the limit.
+    assert_eq!(
+        admit_saved_voucher_integrity(&two, &endpoint, PostScope::JournalOnly, 1)
+            .err()
+            .as_deref(),
+        Some("import_post_requires_one_journal")
+    );
+}
+
+/// The batch approval text: every ledger's totals and entry count, the types,
+/// the money Receipts and Payments move, and a line for Contras and Journals.
+#[test]
+fn a_batch_approval_summarizes_every_ledger_and_the_money_the_types_move() {
+    let (line, endpoint) = batch_of_every_type();
+    let preview = admit_fresh_saved_voucher(&line, &endpoint).unwrap();
+    for expected in [
+        "Create 4 vouchers in \"Synthetic Accounts\"",
+        "Types: 1 Contra, 1 Journal, 1 Payment, 1 Receipt",
+        "Dates: 20260901 to 20260902",
+        "Dr 40  Cr 17.5  3 entries  \"Cash\"",
+        "Dr 5  Cr 15  2 entries  \"Bank\"",
+        "Dr 12.5  Cr 0  1 entry  \"Expense\"",
+        "Money in by Receipt vouchers: 40",
+        "Money out by Payment vouchers: 15",
+        "Contra: moves between cash/bank ledgers, net zero",
+        "Journals may also move cash/bank ledgers; see the per-ledger totals",
+        "Not shown here: each voucher's own date, narration and reference.",
+        "After a timeout, reconcile this batch; do not rebuild or resend it.",
+    ] {
+        assert!(
+            preview.contains(expected),
+            "missing {expected:?} in:\n{preview}"
+        );
+    }
+    // One voucher keeps the single-voucher approval.
+    let (one, endpoint) = batch();
+    assert!(admit_fresh_saved_voucher(&one, &endpoint)
+        .unwrap()
+        .starts_with("Create ONE Journal"));
+}
+
+/// A batch whose summary would not fit one dialog is refused, never cut;
+/// and a numbered voucher anywhere in it is refused.
+#[test]
+fn a_batch_approval_that_does_not_fit_is_refused_and_every_voucher_is_unnumbered() {
+    let (mut line, endpoint) = batch_of_every_type();
+    for index in 0..40 {
+        let mut extra = line.vouchers[0].clone();
+        extra.bridge_txn_id = format!("journal-wide-{index}");
+        extra.entries[0].ledger = format!("Expense {index:02}");
+        line.vouchers.push(extra);
+    }
+    assert_eq!(
+        admit_fresh_saved_voucher(&line, &endpoint).err().as_deref(),
+        Some("import_review_too_large")
+    );
+    let (mut numbered, endpoint) = batch_of_every_type();
+    numbered.vouchers[2].voucher_number = Some("7".into());
+    assert_eq!(
+        admit_fresh_saved_voucher(&numbered, &endpoint)
+            .err()
+            .as_deref(),
+        Some("import_post_numbered_journal_unsupported")
+    );
+}
+
+fn records_server(directory: &std::path::Path) -> Server {
+    Server::new(crate::agent::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+        batch_post_enabled: true,
+    })
+}
+
+/// A batch's durable doubts: the masters verdict and the step verdict are
+/// kept independently and either one doubting is doubt, in all four
+/// combinations, whichever is recorded first; a crash before either is
+/// recorded is doubt; a one-voucher record has no step verdict at all.
+#[test]
+fn a_batch_keeps_its_masters_and_step_verdicts_independently() {
+    let unchanged = json!({"state":"unchanged"});
+    let changed = json!({"state":"posted_under_changed_masters","trigger":"masters_moved","ledgers":["Cash"]});
+    let matched =
+        json!({"before":10,"after":12,"step":2,"reported_created":2,"matches_created":true});
+    let unmatched =
+        json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false});
+    for (masters, step, step_first, expected) in [
+        (&unchanged, &matched, true, None),
+        (&unchanged, &matched, false, None),
+        (&unchanged, &unmatched, true, Some("batch_step_unconfirmed")),
+        (
+            &unchanged,
+            &unmatched,
+            false,
+            Some("batch_step_unconfirmed"),
+        ),
+        (
+            &changed,
+            &matched,
+            true,
+            Some("posted_under_changed_masters"),
+        ),
+        (
+            &changed,
+            &unmatched,
+            false,
+            Some("posted_under_changed_masters"),
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = records_server(directory.path());
+        server.imports_dir().unwrap();
+        server.record_post_checks_pending("batch-a", true).unwrap();
+        let recorded = if step_first {
+            server.record_batch_step_verdict("batch-a", step);
+            server.record_masters_verdict_for("batch-a", masters.clone(), true)
+        } else {
+            let verdict = server.record_masters_verdict_for("batch-a", masters.clone(), true);
+            server.record_batch_step_verdict("batch-a", step);
+            let _ = verdict;
+            super::super::read_masters_check(&server.imports_dir().unwrap(), "batch-a").unwrap()
+        };
+        assert_eq!(
+            post_doubt(Some(&recorded), 2).map(|(code, _)| code),
+            expected,
+            "{recorded}"
+        );
+        // The same doubt reads from the record alone, as an amendment's
+        // baseline check reads it.
+        assert_eq!(
+            masters_doubt(Some(&recorded)).map(|(code, _)| code),
+            expected,
+            "{recorded}"
+        );
+        // The step verdict is kept beside whichever masters verdict.
+        assert_eq!(
+            recorded["batch_step"]["state"],
+            if step["matches_created"] == true {
+                "matched"
+            } else {
+                "unmatched"
+            },
+            "{recorded}"
+        );
+    }
+    // A crash after the pending record and before any verdict: doubt.
+    let directory = tempfile::tempdir().unwrap();
+    let server = records_server(directory.path());
+    server.record_post_checks_pending("batch-a", true).unwrap();
+    let pending = super::super::read_masters_check(&server.imports_dir().unwrap(), "batch-a");
+    assert!(post_doubt(pending.as_ref(), 2).is_some());
+    // The masters check could not finish, but the step matched: still doubt.
+    server.record_batch_step_verdict("batch-a", &matched);
+    let pending = super::super::read_masters_check(&server.imports_dir().unwrap(), "batch-a");
+    assert!(post_doubt(pending.as_ref(), 2).is_some(), "{pending:?}");
+    // A one-voucher record has no step verdict, and a clean one is clean;
+    // the same record read for a batch is doubt, since it holds no step.
+    let directory = tempfile::tempdir().unwrap();
+    let server = records_server(directory.path());
+    server.record_post_checks_pending("batch-b", false).unwrap();
+    let single = server.record_masters_verdict("batch-b", unchanged.clone());
+    assert!(single.get("batch_step").is_none(), "{single}");
+    assert!(post_doubt(Some(&single), 1).is_none());
+    assert_eq!(
+        post_doubt(Some(&single), 2).map(|(code, _)| code),
+        Some("batch_step_unconfirmed")
+    );
+}
+
+/// A step Bridge never saw match is doubt, never a match: no step at all (a
+/// snapshot without exactly one target row), Tally's CREATED unreadable (a
+/// null `matches_created`), a mark that went backwards, and, defensively, a
+/// step whose `matches_created` is absent, which `target_voucher_step` never
+/// writes.
+#[test]
+fn a_step_that_was_never_observed_to_match_is_recorded_as_doubt() {
+    for step in [
+        Value::Null,
+        json!({"before":10,"after":12,"step":2,"reported_created":null,"matches_created":null}),
+        json!({"before":10,"after":12,"step":2,"reported_created":2}),
+        json!({"before":12,"after":10,"step":null,"reported_created":2,"matches_created":false}),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = records_server(directory.path());
+        server.record_post_checks_pending("batch-a", true).unwrap();
+        server.record_batch_step_verdict("batch-a", &step);
+        let imports = server.imports_dir().unwrap();
+        let doubt: Value = serde_json::from_slice(
+            &fs::read(super::super::batch_step_doubt_path(&imports, "batch-a")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(doubt["state"], "unmatched", "{step}: {doubt}");
+        let recorded =
+            server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
+        assert_eq!(
+            post_doubt(Some(&recorded), 2).map(|(code, _)| code),
+            Some("batch_step_unconfirmed"),
+            "{step}: {recorded}"
+        );
+    }
+}
+
+/// A step doubt, once observed, is never cleared by a later matched verdict.
+#[test]
+fn an_observed_step_doubt_outlives_a_later_verdict() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = records_server(directory.path());
+    server.record_post_checks_pending("batch-a", true).unwrap();
+    server.record_batch_step_verdict("batch-a", &json!({"matches_created":false}));
+    server.record_batch_step_verdict("batch-a", &json!({"matches_created":true}));
+    let recorded = server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
+    assert_eq!(
+        post_doubt(Some(&recorded), 2).map(|(code, _)| code),
+        Some("batch_step_unconfirmed"),
+        "{recorded}"
+    );
+}
+
+/// A batch whose check record cannot be read when its masters verdict is
+/// written keeps its step pending, so it stays in doubt; and a batch in
+/// doubt, or with no step verdict at all, is never an amendment baseline.
+#[test]
+fn an_unreadable_batch_record_keeps_the_step_pending_and_blocks_the_baseline() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = records_server(directory.path());
+    let imports = server.imports_dir().unwrap();
+    server.record_post_checks_pending("batch-a", true).unwrap();
+    fs::write(imports.join("batch-a.masters_check.json"), b"not json").unwrap();
+    let recorded = server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
+    assert_eq!(
+        recorded["batch_step"]["state"], "check_pending",
+        "{recorded}"
+    );
+    assert!(post_doubt(Some(&recorded), 2).is_some());
+
+    let baseline = serde_json::to_vec(&super::super::amend::VerifiedBaseline::default()).unwrap();
+    for batch in ["batch-a", "batch-b", "batch-c"] {
+        fs::write(imports.join(format!("{batch}.baseline.json")), &baseline).unwrap();
+    }
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-a", 2).is_none());
+    // A clean single post is a baseline; the same record read as a batch,
+    // holding no step verdict, is not.
+    server.record_post_checks_pending("batch-b", false).unwrap();
+    server.record_masters_verdict("batch-b", json!({"state":"unchanged"}));
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-b", 1).is_some());
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-b", 2).is_none());
+    // A batch whose masters and step both came out clean is a baseline.
+    server.record_post_checks_pending("batch-c", true).unwrap();
+    server.record_batch_step_verdict("batch-c", &json!({"matches_created":true}));
+    server.record_masters_verdict_for("batch-c", json!({"state":"unchanged"}), true);
+    assert!(super::super::read_verified_baseline_for(&imports, "batch-c", 2).is_some());
 }

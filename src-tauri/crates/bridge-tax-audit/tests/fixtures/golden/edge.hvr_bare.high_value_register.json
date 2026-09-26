@@ -1,0 +1,516 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "high_value_register",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ed45abec1d6d9d61",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout. Vouching threshold set by the CA: ₹2 lakh. Every row states its own mode (cash, bank, journal); account-payee status of a cheque/draft/ECS instrument is NOT visible in Tally and is never inferred from a ledger's group. s.269ST limb (c) (one event or occasion) is never testable from the books alone, in either direction.",
+  "figures": [
+    {
+      "id": "high_value_register.ais_other_rows_supplied_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "28877f311b2ac536",
+      "definition_text": "AIS rows supplied to this run from parts the AIS reader DOES read (B7 GST turnover/purchases, B3 advance tax, B4 refund) -- informational only; NOT SFT, never conflated with it.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.ais_sft_rows_available_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "55bab4d50e1763e0",
+      "definition_text": "AIS Part B2 (SFT) rows tied against the books -- always 0: the AIS reader used for this engagement does not load Part B2 at all (by design, stated in its own documentation). This register cannot tie AIS SFT entries against the books until that reader is extended.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_day_any_amount_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "966b984b4186bd86",
+      "definition_text": "Distinct (party, day) pairs with a bank payment on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_day_any_amount_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "08e3c6c45f7d60f8",
+      "definition_text": "Sum of bank payments across all (party, day) pairs above, any amount.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_day_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1bd13eb4ccf7488b",
+      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "7f1467b3780ff4a3",
+      "definition_text": "(party, day) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank credited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_voucher_any_amount_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "dda2eaf61d035f0e",
+      "definition_text": "Distinct (party, voucher) pairs with a bank payment on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_voucher_any_amount_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "ffa38f5bdf9d18bc",
+      "definition_text": "Sum of bank payments across all (party, voucher) pairs above, any amount.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_voucher_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "6c8371ecb3e183f8",
+      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "4ba36b97a3449dfa",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank credited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_day_any_amount_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c6ef473ff6e6db45",
+      "definition_text": "Distinct (party, day) pairs with a bank receipt on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_day_any_amount_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "5041c6598b07b72b",
+      "definition_text": "Sum of bank receipts across all (party, day) pairs above, any amount.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_day_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "87a06b9760e08d0d",
+      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1c372868c525ba0b",
+      "definition_text": "(party, day) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank debited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_voucher_any_amount_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "f3633e23f5e147ba",
+      "definition_text": "Distinct (party, voucher) pairs with a bank receipt on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_voucher_any_amount_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "fba729aa467e3a87",
+      "definition_text": "Sum of bank receipts across all (party, voucher) pairs above, any amount.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_voucher_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "5fbeb43c83a4554f",
+      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "edf597b7c2eb84b8",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank debited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.ca_threshold_paise",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "1ad60391cb266036",
+      "definition_text": "The CA-set vouching threshold used throughout this register.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_day_any_amount_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "fe60240ec4748e94",
+      "definition_text": "Distinct (party, day) pairs with a cash payment on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_day_any_amount_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "a1c58c97a74f1d11",
+      "definition_text": "Sum of cash payments across all (party, day) pairs above, any amount.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_day_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "39ea8e4efbc9b568",
+      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c1a0e6cd1a9f6058",
+      "definition_text": "(party, day) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash credited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_single_transaction_groups_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "8cc5bff32b674c9c",
+      "definition_text": "Distinct (party ledger, voucher reference) groups across every date, cash payments only, voucher.reference non-empty -- s.269ST limb (b).",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_single_transaction_no_reference_vouchers_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "969be8ee5ba0be17",
+      "definition_text": "Cash payment vouchers with a qualifying money leg whose own REFERENCE field is blank -- not linkable to any other voucher by this books-only signal; limb (b) coverage is partial, stated as this count, never silently assumed complete.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_voucher_any_amount_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "9f41d4c1cf640372",
+      "definition_text": "Distinct (party, voucher) pairs with a cash payment on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_voucher_any_amount_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "a3482efcc9f5590e",
+      "definition_text": "Sum of cash payments across all (party, voucher) pairs above, any amount.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_voucher_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "5845873aaed59edf",
+      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c7e58c6759fca5c3",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash credited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_any_amount_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "a5aeb9acf745e529",
+      "definition_text": "Distinct (party, day) pairs with a cash receipt on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_any_amount_total",
+      "value": 5000000,
+      "unit": "paise",
+      "definition_sha256_16": "ae1efbc4328f136a",
+      "definition_text": "Sum of cash receipts across all (party, day) pairs above, any amount.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "b01",
+          "label": "Receipt b01 on 2025-04-05"
+        }
+      ]
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "f97b28142fa5b340",
+      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "604120d3339d2e30",
+      "definition_text": "(party, day) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash debited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_single_transaction_groups_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "ac38baed2af52eda",
+      "definition_text": "Distinct (party ledger, voucher reference) groups across every date, cash receipts only, voucher.reference non-empty -- s.269ST limb (b).",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_single_transaction_no_reference_vouchers_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "01416de5dc863104",
+      "definition_text": "Cash receipt vouchers with a qualifying money leg whose own REFERENCE field is blank -- not linkable to any other voucher by this books-only signal; limb (b) coverage is partial, stated as this count, never silently assumed complete.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_voucher_any_amount_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "bc440322d15f3f1f",
+      "definition_text": "Distinct (party, voucher) pairs with a cash receipt on a population, non-Contra voucher.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_voucher_any_amount_total",
+      "value": 5000000,
+      "unit": "paise",
+      "definition_sha256_16": "e003e0ff061903a6",
+      "definition_text": "Sum of cash receipts across all (party, voucher) pairs above, any amount.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "b01",
+          "label": "Receipt b01 on 2025-04-05"
+        }
+      ]
+    },
+    {
+      "id": "high_value_register.cash_receipt_voucher_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "52677af10362cd15",
+      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "76a5c240c942f2cc",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash debited is under it; not counted as at or over.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.journal_transfer_lines_any_amount_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "1b77b7b46ee50c67",
+      "definition_text": "Lines on a two-line Journal voucher, neither line cash/bank, both lines under Sundry Debtors/Sundry Creditors -- a party-to-party transfer with no money-ledger movement.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.journal_transfer_lines_at_or_over_threshold_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "17f5fb1987912e1d",
+      "definition_text": "Of those, at or over the CA-set vouching threshold (20000000 paise).",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.s194n_coverage",
+      "value": "no bank statement supplied for this engagement",
+      "unit": "text",
+      "definition_sha256_16": "77b1bc28e2d03a7b",
+      "definition_text": "s.194N reads bank-statement narration only; no statement is available for this client.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.s194n_non_filer_threshold_paise",
+      "value": 200000000,
+      "unit": "paise",
+      "definition_sha256_16": "8a143a70321c283a",
+      "definition_text": "The lower threshold (rules.s194n.threshold_non_filer_paise) that applies INSTEAD of the figures above when the recipient has filed no return for ALL THREE preceding assessment years (whose s.139(1) time has expired): 2% from this figure up to s194n_threshold_paise, 5% above it.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.s194n_recipient_type",
+      "value": "unknown",
+      "unit": "text",
+      "definition_sha256_16": "167d1465d84459e3",
+      "definition_text": "Whether this assessee (the RECIPIENT of a s.194N-deducting bank when it withdraws cash) is itself a co-operative society -- derived from the engagement's own entity type; 'unknown' when not supplied or not recognised.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.s194n_threshold_co_operative_paise",
+      "value": 3000000000,
+      "unit": "paise",
+      "definition_sha256_16": "5fd514f6dc05932e",
+      "definition_text": "The s.194N fourth-proviso threshold where the RECIPIENT (the withdrawer -- this assessee) is itself a co-operative society (rules.s194n.threshold_co_operative_paise).",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.s194n_threshold_paise",
+      "value": 1000000000,
+      "unit": "paise",
+      "definition_sha256_16": "1e34865b3fe2b0cd",
+      "definition_text": "The s.194N first-proviso annual cash-withdrawal threshold for a recipient who is NOT a co-operative society (rules.s194n.threshold_paise, or this module's own DEFAULT_S194N until that key is added).",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "high_value_register/ais_sft_not_available",
+      "clauses": [],
+      "confidence": "needs_document",
+      "facts": [],
+      "evidence": [],
+      "title_sha256_16": "08e5c0c32383ff7e",
+      "title_text": "AIS SFT rows are not available to tie against this high-value register",
+      "limits_sha256_16": "319e35664178ba9b",
+      "limits_text": [
+        "The AIS reader used for this engagement loads Parts B7/B3/B4 only, not B2 (SFT) -- by that reader's own design, not a gap in this test alone."
+      ],
+      "ask_client_sha256_16": "5c02803bc941a82a",
+      "ask_client_text": [
+        "Supply the AIS Part B2 (SFT) detail export, or confirm the AIS reader should be extended to read it."
+      ]
+    },
+    {
+      "id": "high_value_register/event_occasion_question",
+      "clauses": [
+        "3CD-31(ba)",
+        "3CD-31(bc)"
+      ],
+      "confidence": "judgement_required",
+      "facts": [],
+      "evidence": [],
+      "title_sha256_16": "96d3acce19a86785",
+      "title_text": "s.269ST limb (c) (transactions relating to one event or occasion) cannot be checked from books",
+      "limits_sha256_16": "8c56d09936cf837c",
+      "limits_text": [
+        "An 'event or occasion' (e.g. one wedding covered by separate catering and decoration contracts with the same party, GN 56.11) is a fact about the world, not a ledger entry; no books signal can group transactions by it, in either direction (receipts or payments)."
+      ],
+      "ask_client_sha256_16": "109760ac266d1bce",
+      "ask_client_text": [
+        "Ask whether any party in the party-day/single-transaction rows above relates to one event or occasion with other transactions, in cash, not otherwise captured."
+      ]
+    },
+    {
+      "id": "high_value_register/s194n_filer_status_unknown",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "non_filer_threshold",
+          "figure_id": "high_value_register.s194n_non_filer_threshold_paise"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "1cbb2a526ad41f04",
+      "title_text": "s.194N non-filer band: whether the assessee filed returns for the three preceding assessment years is not a books fact",
+      "limits_sha256_16": "19353627a98f3494",
+      "limits_text": [
+        "If the assessee filed NO return for all three assessment years immediately preceding this one (whose s.139(1) filing time has expired), the lower non-filer band applies (2% from ₹20 lakh up to ₹1 crore, 5% above ₹1 crore) instead of the ordinary/co-operative threshold above -- return-filing history is not visible in these books and is never assumed either way."
+      ],
+      "ask_client_sha256_16": "9aca914a2ac222e0",
+      "ask_client_text": [
+        "Confirm return-filing status for the three assessment years immediately preceding this one."
+      ]
+    },
+    {
+      "id": "high_value_register/s194n_recipient_type_unknown",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "recipient_type",
+          "figure_id": "high_value_register.s194n_recipient_type"
+        },
+        {
+          "name": "threshold",
+          "figure_id": "high_value_register.s194n_threshold_paise"
+        },
+        {
+          "name": "threshold_co_operative",
+          "figure_id": "high_value_register.s194n_threshold_co_operative_paise"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "2348c490e184cfac",
+      "title_text": "s.194N: whether the co-operative-society (₹3 crore) or ordinary (₹1 crore) threshold applies to this recipient is not known",
+      "limits_sha256_16": "20def46773deb45e",
+      "limits_text": [
+        "s194n_recipient_type was not supplied (or not recognised) for this engagement, so which of the two thresholds above applies to this assessee as RECIPIENT of its own cash withdrawals is stated as a limit, never assumed either way."
+      ],
+      "ask_client_sha256_16": "ce355c5a4237d8f9",
+      "ask_client_text": [
+        "Confirm whether the assessee is a co-operative society for s.194N purposes."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Cash",
+      "detail": "vouchers 5000000 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Customer A",
+      "detail": "vouchers -4000000 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Supplier C",
+      "detail": "vouchers -1000000 vs TB movement 0 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [],
+  "module_invariant_violations": []
+}

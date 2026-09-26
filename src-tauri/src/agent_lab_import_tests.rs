@@ -88,20 +88,19 @@ fn godown_create_xml_golden() {
 }
 
 // Golden fixtures below are derived byte-for-byte from the proven-good,
-// live-created shape captured in
-// brain/50-projects/viniyug-fieldwork-2026-09-11/artifacts/Babul-Final-Import/
-// Babul-Rounded-2026-09-11/fresh-company-only/babul-masters-complete.xml
-// (this exact company's masters were created with it on TallyPrime 7.1):
+// live-created shape of a masters import file kept outside this repository
+// (a company's masters were created with it on TallyPrime 7.1), with the
+// ledger names replaced by synthetic ones:
 // `<NAME>` mirrors the attribute, `ISBILLWISEON` is always explicit,
 // `OPENINGBALANCE` appears only when the source ledger's balance is
 // non-zero, and no `TALLYMESSAGE` declares `xmlns:UDF`.
 
 #[test]
-fn ledger_create_xml_golden_babul_bank_ledger_with_negative_opening() {
-    // Babul's "HDFC Bank 1649": non-zero (negative) opening balance, no GST
+fn ledger_create_xml_golden_captured_bank_ledger_with_negative_opening() {
+    // "Test Bank 0001" (synthetic name, captured shape): non-zero (negative) opening balance, no GST
     // fields, ISBILLWISEON explicit No.
     let l = BookLedger {
-        name: "HDFC Bank 1649".into(),
+        name: "Test Bank 0001".into(),
         parent: Some("Bank Accounts".into()),
         opening_balance: Some("-5013.35".into()),
         is_billwise_on: Some(false),
@@ -112,15 +111,15 @@ fn ledger_create_xml_golden_babul_bank_ledger_with_negative_opening() {
     };
     assert_eq!(
         render_ledger_xml(&l),
-        "<TALLYMESSAGE><LEDGER NAME=\"HDFC Bank 1649\" ACTION=\"Create\">\
-<NAME>HDFC Bank 1649</NAME><PARENT>Bank Accounts</PARENT><ISBILLWISEON>No</ISBILLWISEON>\
+        "<TALLYMESSAGE><LEDGER NAME=\"Test Bank 0001\" ACTION=\"Create\">\
+<NAME>Test Bank 0001</NAME><PARENT>Bank Accounts</PARENT><ISBILLWISEON>No</ISBILLWISEON>\
 <OPENINGBALANCE>-5013.35</OPENINGBALANCE></LEDGER></TALLYMESSAGE>"
     );
 }
 
 #[test]
-fn ledger_create_xml_golden_babul_zero_balance_ledger_omits_opening_balance() {
-    // Babul's "Sales": zero opening balance -- the proven capture carries no
+fn ledger_create_xml_golden_captured_zero_balance_ledger_omits_opening_balance() {
+    // "Sales" (synthetic name, captured shape): zero opening balance -- the proven capture carries no
     // `OPENINGBALANCE` element at all for this ledger.
     let l = BookLedger {
         name: "Sales".into(),
@@ -140,12 +139,12 @@ fn ledger_create_xml_golden_babul_zero_balance_ledger_omits_opening_balance() {
 }
 
 #[test]
-fn ledger_create_xml_golden_babul_billwise_party_with_gstin() {
-    // Babul's "Sri Ram Cables Private Limited": ISBILLWISEON=Yes, zero
+fn ledger_create_xml_golden_captured_billwise_party_with_gstin() {
+    // "Sample Cables Private Limited" (synthetic name, captured shape): ISBILLWISEON=Yes, zero
     // opening balance (so still no OPENINGBALANCE), plus a GSTIN this
-    // module's own book model carries that the Babul capture itself did not.
+    // module's own book model carries that the capture itself did not.
     let l = BookLedger {
-        name: "Sri Ram Cables Private Limited".into(),
+        name: "Sample Cables Private Limited".into(),
         parent: Some("Sundry Debtors".into()),
         opening_balance: Some("0.00".into()),
         is_billwise_on: Some(true),
@@ -156,8 +155,8 @@ fn ledger_create_xml_golden_babul_billwise_party_with_gstin() {
     };
     assert_eq!(
         render_ledger_xml(&l),
-        "<TALLYMESSAGE><LEDGER NAME=\"Sri Ram Cables Private Limited\" ACTION=\"Create\">\
-<NAME>Sri Ram Cables Private Limited</NAME><PARENT>Sundry Debtors</PARENT>\
+        "<TALLYMESSAGE><LEDGER NAME=\"Sample Cables Private Limited\" ACTION=\"Create\">\
+<NAME>Sample Cables Private Limited</NAME><PARENT>Sundry Debtors</PARENT>\
 <ISBILLWISEON>Yes</ISBILLWISEON><PARTYGSTIN>27ZZZZZ0000Z1Z5</PARTYGSTIN></LEDGER></TALLYMESSAGE>"
     );
 }
@@ -209,7 +208,7 @@ fn ledger_create_xml_never_emits_taxtype_others() {
     // inert default, not a real classification, and not appropriate outside
     // Duties & Taxes. Tally answered CREATED=0 EXCEPTIONS=17.
     let l = BookLedger {
-        name: "HDFC Bank 1649".into(),
+        name: "Test Bank 0001".into(),
         parent: Some("Bank Accounts".into()),
         opening_balance: Some("-5013.35".into()),
         is_billwise_on: Some(false),
@@ -290,11 +289,11 @@ fn payment_voucher() -> BookVoucher {
         date: "2026-04-05".into(),
         voucher_number: Some("59".into()),
         narration: Some("UPI payment".into()),
-        party: Some("HDFC Bank 1649".into()),
+        party: Some("Test Bank 0001".into()),
         is_invoice_mode: false,
         ledger_lines: vec![
             BookLedgerLine {
-                ledger: "HDFC Bank 1649".into(),
+                ledger: "Test Bank 0001".into(),
                 side: "Cr".into(),
                 amount: "30000.00".into(),
                 bill_allocations: vec![],
@@ -317,7 +316,7 @@ fn payment_voucher_xml_is_dr_first_with_effective_date_and_counterparty_party() 
     // §9.13: Dr leg first regardless of input order; EFFECTIVEDATE present;
     // PARTYLEDGERNAME is the counterparty (Dr side for a Payment), not the bank.
     let dr_pos = xml.find("Labour Charges").unwrap();
-    let cr_pos = xml.find("HDFC Bank 1649</LEDGERNAME>").unwrap();
+    let cr_pos = xml.find("Test Bank 0001</LEDGERNAME>").unwrap();
     assert!(dr_pos < cr_pos, "Dr leg must render before Cr leg");
     assert!(xml.contains("<EFFECTIVEDATE>20260405</EFFECTIVEDATE>"));
     assert!(xml.contains("<PARTYLEDGERNAME>Labour Charges</PARTYLEDGERNAME>"));
@@ -342,7 +341,7 @@ fn contra_voucher_has_no_party_ledger_name() {
             bill_allocations: vec![],
         },
         BookLedgerLine {
-            ledger: "HDFC Bank 1649".into(),
+            ledger: "Test Bank 0001".into(),
             side: "Cr".into(),
             amount: "100000.00".into(),
             bill_allocations: vec![],
@@ -364,7 +363,7 @@ fn journal_voucher_keeps_book_order_and_has_no_effective_date_or_party() {
     let xml = render_accounting_voucher_xml(&voucher, REMOTE_ID, ATTRIBUTION_ID).unwrap();
     let first = xml.find("LEDGERNAME").unwrap();
     assert!(
-        xml[first..].starts_with("LEDGERNAME>HDFC Bank 1649"),
+        xml[first..].starts_with("LEDGERNAME>Test Bank 0001"),
         "Journal preserves input order"
     );
     assert!(!xml.contains("EFFECTIVEDATE"));
@@ -379,11 +378,11 @@ fn accounting_mode_sales_carries_bill_allocations_with_matching_sign() {
         date: "2025-05-09".into(),
         voucher_number: Some("1".into()),
         narration: Some("Invoice 21".into()),
-        party: Some("Sri Ram Cables Private Limited".into()),
+        party: Some("Sample Cables Private Limited".into()),
         is_invoice_mode: false,
         ledger_lines: vec![
             BookLedgerLine {
-                ledger: "Sri Ram Cables Private Limited".into(),
+                ledger: "Sample Cables Private Limited".into(),
                 side: "Dr".into(),
                 amount: "673364.64".into(),
                 bill_allocations: vec![BookBillAllocation {
@@ -627,7 +626,7 @@ fn voucher_already_verified_matches_by_narration_marker_and_amounts() {
         Some("59"),
         Some(&format!("UPI payment [BRIDGE-LAB:{ATTRIBUTION_ID}]")),
         &[
-            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Test Bank 0001", "No", "30000.00"),
             ("Labour Charges", "Yes", "-30000.00"),
         ],
     );
@@ -650,7 +649,7 @@ fn voucher_already_verified_rejects_a_content_only_match_without_number_or_marke
         None,
         Some("An unrelated payment, same date and amount"),
         &[
-            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Test Bank 0001", "No", "30000.00"),
             ("Labour Charges", "Yes", "-30000.00"),
         ],
     );
@@ -670,7 +669,7 @@ fn voucher_already_verified_ignores_a_cancelled_voucher() {
         Some("59"),
         Some("UPI payment"),
         &[
-            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Test Bank 0001", "No", "30000.00"),
             ("Labour Charges", "Yes", "-30000.00"),
         ],
     );
@@ -715,7 +714,7 @@ fn voucher_already_verified_matches_via_the_deterministic_marker_when_the_number
         Some("999"), // Tally's own reassigned number -- deliberately not "59"
         Some(&format!("UPI payment [BRIDGE-LAB:{marker}]")),
         &[
-            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Test Bank 0001", "No", "30000.00"),
             ("Labour Charges", "Yes", "-30000.00"),
         ],
     );
@@ -741,8 +740,8 @@ fn narration_text_strips_the_marker_suffix_and_trims() {
 #[test]
 fn voucher_already_verified_matches_via_narration_text_when_tally_reassigned_the_number() {
     // Reproduces the exact 2026-09-14 rehearsal batch-1 failure: Tally
-    // silently reassigned VOUCHERNUMBER (tally-rewrites-what-you-import.md
-    // #6) and the observed marker is a stale random one from a write
+    // silently reassigned VOUCHERNUMBER (protocol reference §12a.4 row 6,
+    // §9.8) and the observed marker is a stale random one from a write
     // attempt that predates the `lab_marker_id` fix -- so neither the
     // number nor the marker matches. The narration TEXT (minus any marker
     // suffix) is the only surviving identity signal, and it must still be
@@ -754,7 +753,7 @@ fn voucher_already_verified_matches_via_narration_text_when_tally_reassigned_the
         Some("57"), // NOT "59" -- Tally's own receipt-order number
         Some("UPI payment [BRIDGE-LAB:11111111-1111-4111-8111-111111111111]"), // stale, pre-fix marker
         &[
-            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Test Bank 0001", "No", "30000.00"),
             ("Labour Charges", "Yes", "-30000.00"),
         ],
     );
@@ -773,7 +772,7 @@ fn voucher_already_verified_still_refuses_a_narration_collision_with_wrong_ledge
         Some("57"),
         Some("UPI payment [BRIDGE-LAB:11111111-1111-4111-8111-111111111111]"),
         &[
-            ("HDFC Bank 1649", "No", "5.00"),
+            ("Test Bank 0001", "No", "5.00"),
             ("Labour Charges", "Yes", "-5.00"),
         ],
     );
@@ -840,7 +839,7 @@ fn voucher_mismatch_detail_names_the_voucher_number_field_for_a_tally_renumbered
         Some("57"),
         Some("UPI payment [BRIDGE-LAB:11111111-1111-4111-8111-111111111111]"),
         &[
-            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Test Bank 0001", "No", "30000.00"),
             ("Labour Charges", "Yes", "-30000.00"),
         ],
     );
@@ -865,7 +864,7 @@ fn parses_ledger_entries_and_bill_allocations_per_voucher() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
 <VOUCHER><DATE>20260405</DATE><VOUCHERNUMBER>59</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>\
 <PARTYLEDGERNAME>Labour Charges</PARTYLEDGERNAME><GUID>g-1</GUID><ISCANCELLED>No</ISCANCELLED>\
-<ALLLEDGERENTRIES.LIST><LEDGERNAME>HDFC Bank 1649</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>30000.00</AMOUNT></ALLLEDGERENTRIES.LIST>\
+<ALLLEDGERENTRIES.LIST><LEDGERNAME>Test Bank 0001</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>30000.00</AMOUNT></ALLLEDGERENTRIES.LIST>\
 <ALLLEDGERENTRIES.LIST><LEDGERNAME>Labour Charges</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-30000.00</AMOUNT></ALLLEDGERENTRIES.LIST>\
 </VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     let rows = parse_voucher_readback_nested(xml).unwrap();
@@ -1172,7 +1171,7 @@ fn is_default_ledger_rejects_a_same_name_ledger_under_a_different_parent() {
 #[test]
 fn is_default_ledger_does_not_recognise_an_unrelated_name() {
     assert!(!is_default_ledger(
-        "Sri Ram Cables Private Limited",
+        "Sample Cables Private Limited",
         "Primary"
     ));
 }
@@ -1700,11 +1699,11 @@ fn default_ledger_and_default_group_precheck_classification_end_to_end() {
 
     // "true collision still refused": a non-default same-name ledger.
     let existing_debtor_rows = vec![row(&[
-        ("NAME", "Sri Ram Cables Private Limited"),
+        ("NAME", "Sample Cables Private Limited"),
         ("PARENT", "Sundry Debtors"),
     ])];
     let requested_debtor = BookLedger {
-        name: "Sri Ram Cables Private Limited".into(),
+        name: "Sample Cables Private Limited".into(),
         parent: Some("Sundry Debtors".into()),
         opening_balance: None,
         is_billwise_on: None,

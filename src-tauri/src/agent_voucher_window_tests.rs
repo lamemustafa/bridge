@@ -871,6 +871,7 @@ fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Serv
         redaction: Redaction::None,
         import_enabled: false,
         writes_enabled: false,
+        batch_post_enabled: false,
     })
 }
 
@@ -1533,6 +1534,115 @@ fn split_read_checks(
             shape
                 .render(&company(), "20260802", "20260802", None)
                 .unwrap(),
+        ],
+    );
+}
+
+/// #680: the carry-forward #494 added, driven through the reader. A 4-day
+/// window is refused, and so is its left 2-day half. The right 2-day half is
+/// as wide as a span already refused on this call, so it is split without
+/// being sent, and all four days are read singly, in date order.
+#[tokio::test]
+async fn a_sibling_as_wide_as_a_refused_part_is_split_without_being_sent() {
+    let shape = VoucherReadShape::ImportVerification;
+    let mut plans = oversized();
+    plans.extend(oversized());
+    plans.extend(paired(&xml_plan(three_vouchers())));
+    for _ in 0..3 {
+        plans.extend(paired(&xml_plan(empty_collection())));
+    }
+    plans.extend(paired(&mark(1)));
+    let (outcome, observed) = read_window(
+        plans,
+        ("20260801", "20260804"),
+        shape,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(1)),
+        },
+        WindowReadLimits::for_shape(shape),
+    )
+    .await;
+    let outcome = outcome.expect("the window is read in single days");
+    assert_eq!(
+        outcome.reads,
+        ["20260801", "20260802", "20260803", "20260804"].map(|day| part(day, day, None))
+    );
+    let render = |from, to| shape.render(&company(), from, to, None).unwrap();
+    assert_eq!(observed.len(), 34);
+    assert_requests(
+        &observed,
+        &[1, 3, 5, 11, 17, 23],
+        &[
+            render("20260801", "20260804"),
+            render("20260801", "20260802"),
+            render("20260801", "20260801"),
+            render("20260802", "20260802"),
+            render("20260803", "20260803"),
+            render("20260804", "20260804"),
+        ],
+    );
+    let right_half = request_sha(&render("20260803", "20260804"));
+    assert!(
+        observed
+            .iter()
+            .all(|request| request.request_body_sha256 != right_half),
+        "the right half was sent, though a part as wide was already refused"
+    );
+    assert_eq!(
+        observed[29].request_body_sha256,
+        request_sha(&render_agent_company_high_water(&company()))
+    );
+    // Every row one undivided read would have returned, in date order.
+    assert_eq!(
+        outcome.rows,
+        parse_agent_rows(&three_vouchers(), GUID).unwrap()
+    );
+}
+
+/// The control for the test above: a sibling narrower than every part refused
+/// so far is read, not split. A 5-day window divides 3/2; the 3-day half is
+/// refused, so its 2-day left part and the window's 2-day right half are both
+/// read whole.
+#[tokio::test]
+async fn a_sibling_narrower_than_every_refused_part_is_read() {
+    let shape = VoucherReadShape::ImportVerification;
+    let mut plans = oversized();
+    plans.extend(oversized());
+    plans.extend(paired(&xml_plan(three_vouchers())));
+    for _ in 0..2 {
+        plans.extend(paired(&xml_plan(empty_collection())));
+    }
+    plans.extend(paired(&mark(1)));
+    let (outcome, observed) = read_window(
+        plans,
+        ("20260801", "20260805"),
+        shape,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(1)),
+        },
+        WindowReadLimits::for_shape(shape),
+    )
+    .await;
+    let outcome = outcome.expect("the window is read in three parts");
+    assert_eq!(
+        outcome.reads,
+        [
+            part("20260801", "20260802", None),
+            part("20260803", "20260803", None),
+            part("20260804", "20260805", None),
+        ]
+    );
+    let render = |from, to| shape.render(&company(), from, to, None).unwrap();
+    assert_eq!(observed.len(), 28);
+    assert_requests(
+        &observed,
+        &[1, 3, 5, 11, 17],
+        &[
+            render("20260801", "20260805"),
+            render("20260801", "20260803"),
+            render("20260801", "20260802"),
+            render("20260803", "20260803"),
+            render("20260804", "20260805"),
         ],
     );
 }
