@@ -336,3 +336,9 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - module docs name the limit's three loose claims.
   348 tests; clippy and fmt clean. Sonnet pre-push check: no P1 or P2 (one P3: c987d12a's message says `Book::from_read` for `book::load_book`). **Pushed**, and replied once on #744.
 - E3a full run on c987d12a, sharded to `cloud/lane-e-e3a-shards-5`. Next: records, #744 body update (and the `load_book` name fix), then E4 re-stack and rerun.
+
+## 2026-09-26 12:20 UTC — #744 records pushed (fb872300), body updated; E4 re-stacked on it (local)
+
+- E3a full run on c987d12a (4 shards on `cloud/lane-e-e3a-shards-5`): **604 run, 599 killed**, 5 accepted survivors; all 41 E3A killed. `--verify`: 604/604 (master's crate is still unchanged since #727). Sonnet pre-push check: none. **Pushed fb872300.**
+- #744's body is updated: candidate fb872300, 348 tests, 4 tests added, E3A-01..41, the review record, the P3s left, and "For Lane D" (the went-negative limit's three loose claims). It also corrects `Book::from_read` to `book::load_book`. #744 waits on CI for fb872300, Lane D's real books, and review.
+- E4 re-stacked on fb872300 (ffbe4083, local): mutations.json is E3a's 604 plus E4-01..35; every crate file differs from E3a by exactly E4's own patch. 352 tests; clippy and fmt clean. A Sonnet review is running (push only if clean). E4's full run on ffbe4083 is running, sharded to `cloud/lane-e-e4-shards-2`.
