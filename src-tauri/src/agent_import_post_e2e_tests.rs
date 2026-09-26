@@ -580,8 +580,8 @@ async fn a_batch_post_records_its_step_verdict_before_the_readback() {
         .scope(scripted.clone(), server.call_tool("post_import", args))
         .await;
     let _ = sent(simulator);
-    // The dialog was asked about both vouchers, so its title and button name
-    // two (#746).
+    // The dialog was asked about both vouchers: the count its title and
+    // button name (#746), whose words the approval's unit tests check.
     assert_eq!(scripted.counts(), [2]);
     let imports = server.imports_dir().unwrap();
     let doubt: Value = serde_json::from_slice(
@@ -850,7 +850,11 @@ async fn a_declined_post_sends_nothing_and_journals_no_intent() {
         scripted.previews(),
         [admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap()]
     );
-    assert_eq!(scripted.counts(), [1], "one voucher keeps its own words");
+    assert_eq!(
+        scripted.counts(),
+        [1],
+        "the dialog is asked about one voucher"
+    );
 }
 
 /// The dispatch intent is in the journal before the POST is received. The

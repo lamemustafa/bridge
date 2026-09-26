@@ -538,7 +538,9 @@ fn each_dialog_answers_with_its_own_token() {
 /// and the parent's stub tests run only on unix. So the four native dialog
 /// functions, `confirm` and `confirm_review`, and the two functions that
 /// decide from the child's answer (`confirm_with`, `confirm_review_with`)
-/// are pinned here verbatim, with the button labels. The file's `cfg`
+/// are pinned here verbatim, with the button labels and the functions that
+/// word each title and the post button (#746). On Windows the title is the
+/// only text that says what Yes does. The file's `cfg`
 /// attributes are counted as well: a platform or test split anywhere in it,
 /// such as a `#[cfg(windows)]` twin of a pinned function, must change this
 /// gate. This pins text, not the platform's behaviour.
@@ -629,6 +631,31 @@ fn post_words(count: VoucherCount) -> (String, String) {
     }
 }"#;
 
+/// Each dialog's title for one voucher and for a batch (#746).
+const REVIEW_TITLE: &str = r#"#[cfg(not(windows))]
+fn review_title(count: VoucherCount) -> String {
+    match count.batch() {
+        None => "Bridge — record that you reviewed one voucher".into(),
+        Some(count) => format!("Bridge — record that you reviewed {count} vouchers"),
+    }
+}"#;
+
+const REVIEW_QUESTION: &str = r#"#[cfg(windows)]
+fn review_question(count: VoucherCount) -> String {
+    match count.batch() {
+        None => "Bridge — record that you reviewed this voucher?".into(),
+        Some(count) => format!("Bridge — record that you reviewed these {count} vouchers?"),
+    }
+}"#;
+
+const POST_QUESTION: &str = r#"#[cfg(windows)]
+fn post_question(count: VoucherCount) -> String {
+    match count.batch() {
+        None => "Bridge — post this voucher?".into(),
+        Some(count) => format!("Bridge — post {count} vouchers?"),
+    }
+}"#;
+
 const CONFIRM_WITH: &str = r#"async fn confirm_with(
     executable: &std::path::Path,
     count: VoucherCount,
@@ -682,7 +709,7 @@ const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(
     }
 }"#;
 
-const DIALOG_ANSWER_PINS: [(&str, usize); 12] = [
+const DIALOG_ANSWER_PINS: [(&str, usize); 15] = [
     ("const POST_LABEL: &str = \"Post voucher\";", 1),
     (
         "pub(crate) const REVIEW_BUTTON: &str = \"I reviewed it\";",
@@ -690,6 +717,9 @@ const DIALOG_ANSWER_PINS: [(&str, usize); 12] = [
     ),
     (POST_DIALOG, 1),
     (POST_WORDS, 1),
+    (POST_QUESTION, 1),
+    (REVIEW_TITLE, 1),
+    (REVIEW_QUESTION, 1),
     (POST_DIALOG_WINDOWS, 1),
     (REVIEW_ACK_DIALOG, 1),
     (REVIEW_ACK_DIALOG_WINDOWS, 1),
@@ -830,6 +860,23 @@ fn each_dialog_answers_only_on_its_positive_button() {
         // button and compares against another (#746).
         source.replacen("format!(\"Post {count} vouchers\")", "\"Cancel\".into()", 1),
         source.replacen("            button.clone(),\n", "            \"Post\".into(),\n", 1),
+        // The Windows post dialog asks the review's question, so Yes reads as
+        // recording a review while it posts (#746).
+        source.replacen(
+            "None => \"Bridge — post this voucher?\".into(),",
+            "None => \"Bridge — record that you reviewed this voucher?\".into(),",
+            1,
+        ),
+        source.replacen(
+            "format!(\"Bridge — post {count} vouchers?\")",
+            "format!(\"Bridge — record that you reviewed these {count} vouchers?\")",
+            1,
+        ),
+        source.replacen(
+            "format!(\"Bridge — record that you reviewed {count} vouchers\")",
+            "format!(\"Bridge — approve {count} vouchers\")",
+            1,
+        ),
         source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
         // Windows post dialog discards its answer: it still computes the comparison, then returns true.
         source.replacen(POST_DIALOG_WINDOWS, &discard_answer(POST_DIALOG_WINDOWS), 1),

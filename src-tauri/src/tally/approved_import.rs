@@ -648,35 +648,37 @@ pub(crate) mod test_seam {
     }
 
     /// Each dialog child is told the voucher count its title and button
-    /// name, on the line after the nonce, and then the preview (#746).
+    /// name, on the line after the nonce, and then the preview (#746). The
+    /// stand-in saves the bytes the parent sent, and the child's own parser
+    /// reads them, so the writer and the parser are tested together.
     #[cfg(unix)]
     #[tokio::test]
     async fn each_dialog_child_is_told_the_voucher_count() {
         let directory = tempfile::tempdir().unwrap();
-        let seen = directory.path().join("counts");
-        for (prefix, review) in [
-            ("bridge-post-approved:", false),
-            ("bridge-review-acknowledged:", true),
+        for (prefix, review, sent, preview) in [
+            ("bridge-post-approved:", false, 200, "Post"),
+            ("bridge-review-acknowledged:", true, 7, "Review"),
         ] {
+            let input = directory.path().join(format!("input-{sent}"));
             let answers = stub(
                 directory.path(),
                 &format!(
-                    "read nonce; read count; rest=$(cat); printf '%s|%s\\n' \"$count\" \"$rest\" >> '{}'; printf '{prefix}%s\\n' \"$nonce\"",
-                    seen.display()
+                    "cat > '{}'; nonce=$(head -n 1 '{}'); printf '{prefix}%s\\n' \"$nonce\"",
+                    input.display(),
+                    input.display()
                 ),
             );
             let result = if review {
-                super::confirm_review_with(&answers, count(7), "Review").await
+                super::confirm_review_with(&answers, count(sent), preview).await
             } else {
-                super::confirm_with(&answers, count(200), "Post").await
+                super::confirm_with(&answers, count(sent), preview).await
             };
             assert_eq!(result, Ok(()), "{prefix}");
             assert!(stub_ran(&answers), "{prefix}");
+            let input = std::fs::read_to_string(&input).unwrap();
+            let (_, shown, text) = super::dialog_input(&input).expect("the parent's shape");
+            assert_eq!((shown, text), (count(sent), preview), "{prefix}");
         }
-        assert_eq!(
-            std::fs::read_to_string(&seen).unwrap(),
-            "200|Post\n7|Review\n"
-        );
     }
 
     /// One voucher keeps the single-voucher words. A batch names its count in

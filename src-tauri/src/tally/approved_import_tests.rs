@@ -115,7 +115,7 @@ fn an_approved_dialog_writes_exactly_the_token_for_its_nonce() {
 }
 
 #[test]
-fn the_dialog_shows_the_preview_after_the_nonce_line() {
+fn the_dialog_shows_the_preview_after_the_count_line() {
     let (approved, _) = child_answer(
         |_, preview| preview == "Post one voucher\nsecond line",
         &format!("{NONCE}\n1\nPost one voucher\nsecond line"),
