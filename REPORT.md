@@ -359,3 +359,9 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 
 - E3a full run on d4db6546 (4 shards on `cloud/lane-e-e3a-shards-6`): **604 run, 599 killed**, 5 accepted survivors; all 41 E3A killed. `--verify`: 604/604. Sonnet pre-push check of fba6beca, d4db6546 and 5a7f8137 found none (no mention of the private repository in the crate or the messages; provenance and integrity pass). **Pushed 5a7f8137**; #744's body updated.
 - E4 re-stacked locally on d4db6546 (12635edd), with `batch-e4.md` reworded (58975ea8). No mention remains in the crate; provenance (229) and integrity (349) pass. Its full run on 58975ea8 started 14:20, sharded to `cloud/lane-e-e4-shards-3`. Next: merge E3a's records commit (records only; the crate tree is unchanged), commit E4's records, gates, Sonnet check, push.
+
+## 2026-09-26 15:50 UTC — E4 pushed at a59eeb58 (on E3a 5a7f8137, provenance wording, records)
+
+- E4 full run on 58975ea8 (4 shards on `cloud/lane-e-e4-shards-3`): **639 run, 634 killed**, 5 accepted survivors; all 35 E4 killed. Then E3a's records commit was merged, keeping E4's records; the crate tree is unchanged. `--verify`: 639/639.
+- `batch-e4.md` is reworded (58975ea8); no mention of the private repository in the crate or the messages. Provenance (229) and integrity (349) pass. 352 tests; clippy and fmt clean. Read-only Sonnet pre-push check: none. **Pushed a59eeb58.**
+- State: #744 (E3a) is green on 5a7f8137 and waits on Lane D (real books, review). E4's PR opens after #744 merges; then #644, #662 (check what #727 left), #658, #667.
