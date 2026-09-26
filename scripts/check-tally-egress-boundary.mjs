@@ -33,7 +33,8 @@
 //    edges alike: a dev- or build-dependency on reqwest in a crate outside
 //    the allow-list is refused too, since a test double or build script
 //    that can open a connection is still egress from a developer's machine.
-//    The sets are pinned exactly and the tree must be seen: a crate that
+//    It resolves every target platform, so a Windows- or macOS-only
+//    dependency is seen from the Linux CI job. The sets are pinned exactly and the tree must be seen: a crate that
 //    drops out, a missing root line, a failed `cargo` or an unparseable line
 //    all fail, so "nothing found" cannot stand in for "nothing was read".
 //
@@ -127,6 +128,10 @@ function directDependents(manifestPath, packageName) {
       "1",
       "--edges",
       "normal,build,dev",
+      // Every platform, not only the host: CI runs on Linux, and a
+      // `[target.'cfg(windows)'.dependencies]` edge is otherwise invisible.
+      "--target",
+      "all",
       "--prefix",
       "none",
       "--format",

@@ -17,29 +17,36 @@ const gate = fileURLToPath(new URL("./check-tally-egress-boundary.mjs", import.m
 const skip = process.platform === "win32" && "the stand-in cargo is a POSIX shell script";
 
 // Each call records its package, then prints `<workspace>.<package>.out`
-// from the row's directory, if the row wrote one.
+// from the row's directory, if the row wrote one. A call without
+// `--target all` fails, so the control row also guards that flag.
 const STAND_IN = `#!/bin/sh
-manifest=""; package=""
+manifest=""; package=""; target=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --manifest-path) manifest="$2"; shift ;;
     -p) package="$2"; shift ;;
+    --target) target="$2"; shift ;;
   esac
   shift
 done
 echo "\${manifest%%/*}.$package" >> "$0.calls"
+if [ "$target" != "all" ]; then
+  echo "stand-in cargo: expected --target all, got '$target'" >&2
+  exit 2
+fi
 [ -f "$TREES/\${manifest%%/*}.$package.out" ] && cat "$TREES/\${manifest%%/*}.$package.out"
 [ -n "$STAND_IN_STDERR" ] && echo "$STAND_IN_STDERR" >&2
 exit "\${STAND_IN_EXIT:-0}"
 `;
 
-// As printed by `cargo tree --invert --depth 1 --prefix none --format {p}`
-// on 2026-09-26.
+// As printed by `cargo tree --invert --depth 1 --prefix none --format {p}
+// --target all` on 2026-09-26.
 const TODAY = {
   "src-tauri.reqwest": [
     "reqwest v0.13.5",
     `bridge v0.2.0 (${root}/src-tauri)`,
     `bridge-tally-transport v0.1.0 (${root}/src-tauri/crates/bridge-tally-transport)`,
+    "tauri v2.11.5",
   ],
   "src-tauri.hyper": ["hyper v1.11.0", "hyper-rustls v0.27.9", "hyper-util v0.1.20", "reqwest v0.13.5"],
   "tools.reqwest": [
