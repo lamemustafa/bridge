@@ -563,12 +563,11 @@ async fn a_batch_whose_second_remote_id_is_recorded_during_approval_is_never_sen
     );
 }
 
-/// A live batch post records its step verdict durably, before anything else
-/// can fail. Tally's captured answer reports one create for this batch of
+/// A live batch post records its step verdict durably, before the readback. Tally's captured answer reports one create for this batch of
 /// two, and the target's mark moves by two: the step doubt is recorded, and
 /// the batch is not verified.
 #[tokio::test]
-async fn a_batch_post_records_its_step_verdict_before_anything_else_can_fail() {
+async fn a_batch_post_records_its_step_verdict_before_the_readback() {
     let mut plans = before_approval();
     plans.extend(after_approval(xml(created_one())));
     plans.push(xml(company_marks(12, 50, "WR2 Unicode Lab")));

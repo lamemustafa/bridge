@@ -988,7 +988,7 @@ fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
     }
     Some((
         "batch_step_unconfirmed",
-        "Tally reported creating the batch, and every voucher reads back, but Bridge did not confirm that this company's voucher mark moved by exactly that many: the mark moved by another amount or backwards, it could not be read, or the check did not finish. Another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
+        "Tally reported creating the batch, and every voucher reads back, but Bridge did not confirm that this company's voucher mark moved by exactly that many: the mark moved by another amount or backwards, it could not be read, or the check did not finish. Another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. Record that review with acknowledge_post_review.".to_string(),
     ))
 }
 
@@ -1558,10 +1558,10 @@ fn admit_fresh_saved_voucher(
 /// The most a batch's approval text may take: lines, characters, characters
 /// a line, and UTF-8 bytes (under the native dialog's 8,000). A batch whose
 /// summary does not fit is refused, never cut; the caller posts it in parts.
-const BATCH_REVIEW_MAX_LINES: usize = 40;
-const BATCH_REVIEW_MAX_CHARS: usize = 3_200;
-const BATCH_REVIEW_MAX_LINE_CHARS: usize = 100;
-const BATCH_REVIEW_MAX_BYTES: usize = 7_000;
+pub(super) const BATCH_REVIEW_MAX_LINES: usize = 40;
+pub(super) const BATCH_REVIEW_MAX_CHARS: usize = 3_200;
+pub(super) const BATCH_REVIEW_MAX_LINE_CHARS: usize = 100;
+pub(super) const BATCH_REVIEW_MAX_BYTES: usize = 7_000;
 
 /// The approval text for a batch: a summary a person can read in one native
 /// dialog, never a listing. Every ledger's debit and credit totals and entry
