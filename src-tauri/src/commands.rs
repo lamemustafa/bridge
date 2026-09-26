@@ -17,13 +17,16 @@ use crate::reports::outstandings_working_paper_store::{
     WorkingPaperExportStoreError,
 };
 use crate::reports::outstandings_working_paper_xlsx::render_outstandings_working_paper_xlsx;
-use crate::reports::party_ledger_master::build_party_ledger_master_workbook;
+use crate::reports::party_ledger_master::{
+    build_party_ledger_master_workbook, PartyLedgerMasterWorkbook,
+};
 use crate::reports::party_ledger_master_xlsx::render_party_ledger_master_xlsx;
 use crate::reports::party_statement::{
     build_party_statement_with_ageing_anchor, PartyStatementError,
 };
 use crate::reports::party_statement_pdf::render_party_statement_pdf;
 use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
+use crate::reports::schedule_iii::{BookKey, DecisionInput, DecisionsUnavailable, FinancialYear};
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
 use crate::sync::reconciliation::ExternalReferenceCatalog;
 use crate::sync::snapshot::{
@@ -53,6 +56,9 @@ use tauri::State;
 
 #[path = "commands_trial_balance.rs"]
 pub(crate) mod trial_balance;
+
+#[path = "commands_grouping_decisions.rs"]
+pub(crate) mod grouping_decisions;
 
 pub mod all_clients;
 
@@ -1846,19 +1852,17 @@ fn verify_observed_company_tuple_from_companies(
     })
 }
 
-/// Reads and writes one columnar party/ledger master workbook. The workbook
-/// is built only from the runtime's verified, paired source; this command
-/// accepts no ledger row or amount from the webview.
-#[tauri::command]
-pub async fn export_party_ledger_master(
-    app: tauri::AppHandle,
-    request: CompanyRequest,
-    runtime: State<'_, TallyRuntime>,
-) -> Result<String, TallyCommandError> {
-    let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
+/// The verified company and its party/ledger master, read through the one
+/// sized path: company tuple check, currency admission, then the paired
+/// source. The export and a grouping-decision save both read through here.
+pub(crate) async fn fetch_verified_party_ledger_master(
+    runtime: &TallyRuntime,
+    config: TallyConfig,
+    selected_company: &SelectedCompanyIdentity,
+) -> Result<(VerifiedCompanyIdentity, PartyLedgerMasterWorkbook), TallyCommandError> {
+    let identity = verify_observed_company_tuple(runtime, &config, selected_company).await?;
     let currency_read = runtime
-        .detect_party_ledger_master_currency(request.config.clone(), &identity)
+        .detect_party_ledger_master_currency(config.clone(), &identity)
         .await
         .map_err(party_ledger_master_runtime_command_error)?;
     let currency_assertion =
@@ -1866,7 +1870,7 @@ pub async fn export_party_ledger_master(
             .map_err(party_ledger_master_currency_admission_error)?;
     let currency_assertion = currency_read.bind_party_ledger_master_assertion(currency_assertion);
     let source = runtime
-        .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
+        .fetch_party_ledger_master_source(config, &identity, currency_assertion)
         .await
         .map_err(party_ledger_master_runtime_command_error)?;
     let workbook = build_party_ledger_master_workbook(source)
@@ -1877,8 +1881,50 @@ pub async fn export_party_ledger_master(
                 "Refresh the selected Tally company and retry the export after reviewing its runtime status.",
             )
         })?;
-    // CA grouping decisions are not stored yet (#737), so none is presented.
-    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).map_err(|_| {
+    Ok((identity, workbook))
+}
+
+/// The financial year a party/ledger master's balance date falls in.
+pub(crate) fn party_ledger_master_year(
+    workbook: &PartyLedgerMasterWorkbook,
+) -> Result<FinancialYear, TallyCommandError> {
+    FinancialYear::containing(&workbook.source().to).ok_or_else(|| {
+        party_ledger_master_local_export_error(
+            "party_ledger_master_period_invalid",
+            "Bridge could not place the read's balance date in a financial year.",
+            "Refresh the selected Tally company and retry.",
+        )
+    })
+}
+
+/// Reads and writes one columnar party/ledger master workbook. The workbook
+/// is built only from the runtime's verified, paired source; this command
+/// accepts no ledger row or amount from the webview. CA grouping decisions
+/// come from the encrypted store; if they cannot be read, the workbook says
+/// so and is NOT FINAL.
+#[tauri::command]
+pub async fn export_party_ledger_master(
+    app: tauri::AppHandle,
+    request: CompanyRequest,
+    runtime: State<'_, TallyRuntime>,
+    mirror: State<'_, crate::LazyTallyMirror>,
+) -> Result<String, TallyCommandError> {
+    let (identity, workbook) =
+        fetch_verified_party_ledger_master(&runtime, request.config, &request.selected_company)
+            .await?;
+    let year = party_ledger_master_year(&workbook)?;
+    let loaded = match mirror.get().await {
+        Ok(repository) => repository
+            .grouping_decision_set(&BookKey::of(&identity), year)
+            .await
+            .map_err(|error| error.unavailable()),
+        Err(_) => Err(DecisionsUnavailable::StoreUnavailable),
+    };
+    let decisions = match &loaded {
+        Ok(set) => DecisionInput::Read(set),
+        Err(why) => DecisionInput::Unavailable(*why),
+    };
+    let bytes = render_party_ledger_master_xlsx(&workbook, decisions).map_err(|_| {
         party_ledger_master_local_export_error(
             "party_ledger_master_render_failed",
             "Bridge could not build the party/ledger master workbook safely.",

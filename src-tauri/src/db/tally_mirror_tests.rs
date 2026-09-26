@@ -2326,13 +2326,13 @@ async fn migration_is_versioned_and_idempotent() {
     .expect("count mirror tables");
     let migration_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM tally_schema_migrations \
-         WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27)",
+         WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28)",
     )
     .fetch_one(&repository.pool)
     .await
     .expect("count migration marker");
     assert_eq!(table_count, 6);
-    assert_eq!(migration_count, 24);
+    assert_eq!(migration_count, 25);
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",

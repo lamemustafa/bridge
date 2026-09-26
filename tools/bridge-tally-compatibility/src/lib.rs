@@ -313,7 +313,12 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // `src-tauri/src/agent_voucher_type_class.rs` (bridge#625) decides which
 // vouchers a type filter returns, and which request is refused as ambiguous;
 // a defect there reports a class of vouchers as absent.
-pub const MAX_SURFACE_FILES: usize = 280;
+// `src-tauri/src/db/migrations/0028_schedule_iii_grouping_events.sql` (bridge#737)
+// is required by `REQUIRED_SURFACE_DIRECTORIES`. It creates the append-only
+// store of a CA's Schedule III grouping decisions, which decides which head an
+// exported Schedule III view presents a ledger under; a defect there could
+// apply, or silently drop, a CA's recorded decision.
+pub const MAX_SURFACE_FILES: usize = 281;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

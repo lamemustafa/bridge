@@ -9,6 +9,15 @@ use crate::reports::party_ledger_master::{
 };
 use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
+fn render_with(
+    workbook: &crate::reports::party_ledger_master::PartyLedgerMasterWorkbook,
+    decisions: &[crate::reports::schedule_iii::Decision],
+) -> Result<Vec<u8>, PartyLedgerMasterXlsxError> {
+    let set = crate::reports::schedule_iii::DecisionSet::for_tests(workbook, decisions.to_vec())
+        .expect("a valid synthetic decision set");
+    render_party_ledger_master_xlsx(workbook, DecisionInput::Read(&set))
+}
+
 fn source_with_precision(decimal_places: u8) -> PartyLedgerMasterSource {
     PartyLedgerMasterSource {
         company: "Synthetic Books".to_string(),
@@ -42,7 +51,7 @@ fn source_with_precision(decimal_places: u8) -> PartyLedgerMasterSource {
 #[test]
 fn three_decimal_currency_renders_1234_without_a_two_decimal_format() {
     let workbook = build_party_ledger_master_workbook(source_with_precision(3)).unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
+    let bytes = render_with(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut sheet = String::new();
     std::io::Read::read_to_string(
@@ -103,7 +112,7 @@ fn renders_evidence_currency_and_returned_fields_in_the_workbook() {
         groups: vec![],
     })
     .unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
+    let bytes = render_with(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     for name in [
@@ -167,7 +176,7 @@ fn normally_signed_sundry_debtor_renders_as_a_group_subtotal_not_trade_receivabl
     })
     .unwrap();
 
-    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
+    let bytes = render_with(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     for name in [
@@ -227,7 +236,7 @@ fn gstin_not_observed_is_labeled_while_an_explicit_empty_gstin_is_not() {
         groups: vec![],
     })
     .unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
+    let bytes = render_with(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut sheet = String::new();
     std::io::Read::read_to_string(
@@ -288,7 +297,7 @@ fn worksheet_with_parent(parent: PartyLedgerMasterFieldObservation) -> (String, 
         groups: vec![],
     })
     .unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
+    let bytes = render_with(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut sheet = String::new();
     std::io::Read::read_to_string(
@@ -349,8 +358,8 @@ fn explicitly_empty_parent_renders_an_empty_group_cell() {
 #[test]
 fn decided_heads_their_basis_and_a_stale_decision_reach_the_group_subtotal_sheet() {
     use crate::reports::schedule_iii::{
-        DecisionId, Derivation, DerivedOutcome, FinancialYear, GroupSubtotalKind, LedgerGuid,
-        ScheduleIIIHead,
+        Decision, DecisionId, Derivation, DerivedOutcome, FinancialYear, GroupSubtotalKind,
+        LedgerGuid, ScheduleIIIHead,
     };
     let ledger = |name: &str, guid: &str, balance: &str| PartyLedgerMasterRow {
         name: name.to_string(),
@@ -400,7 +409,7 @@ fn decided_heads_their_basis_and_a_stale_decision_reach_the_group_subtotal_sheet
         ),
     ];
 
-    let bytes = render_party_ledger_master_xlsx(&workbook, &decisions).unwrap();
+    let bytes = render_with(&workbook, &decisions).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     for name in ["xl/worksheets/sheet2.xml", "xl/sharedStrings.xml"] {
@@ -422,8 +431,8 @@ fn decided_heads_their_basis_and_a_stale_decision_reach_the_group_subtotal_sheet
 #[test]
 fn a_decision_whose_ledger_moved_between_subgroups_reports_the_change_on_the_row_and_in_the_list() {
     use crate::reports::schedule_iii::{
-        DecisionId, Derivation, DerivedOutcome, FinancialYear, GroupSubtotalKind, LedgerGuid,
-        ScheduleIIIHead,
+        Decision, DecisionId, Derivation, DerivedOutcome, FinancialYear, GroupSubtotalKind,
+        LedgerGuid, ScheduleIIIHead,
     };
     let group =
         |name: &str, parent: &str, reserved: &str| bridge_tally_protocol::TallyNamedMaster {
@@ -453,7 +462,7 @@ fn a_decision_whose_ledger_moved_between_subgroups_reports_the_change_on_the_row
         year: FinancialYear::beginning_in(2026),
     }];
 
-    let bytes = render_party_ledger_master_xlsx(&workbook, &decisions).unwrap();
+    let bytes = render_with(&workbook, &decisions).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut strings = String::new();
     std::io::Read::read_to_string(
@@ -472,4 +481,32 @@ fn a_decision_whose_ledger_moved_between_subgroups_reports_the_change_on_the_row
     assert!(strings.contains("CA grouping decision. Ancestry changed since the decision"));
     assert!(strings.contains("Applied. Ancestry changed since the decision"));
     assert!(strings.contains("Nothing needs attention."));
+}
+
+#[test]
+fn decisions_that_could_not_be_read_are_never_reported_as_absent() {
+    use crate::reports::schedule_iii::DecisionsUnavailable;
+    let workbook = build_party_ledger_master_workbook(source_with_precision(2)).unwrap();
+    for (why, text) in [
+        (
+            DecisionsUnavailable::StoreUnavailable,
+            "Could not be read: the encrypted store could not be opened or read. NOT FINAL",
+        ),
+        (
+            DecisionsUnavailable::Unreadable,
+            "Could not be read: the stored decisions could not be read by this version of ComplyEaze Bridge. NOT FINAL",
+        ),
+    ] {
+        let bytes =
+            render_party_ledger_master_xlsx(&workbook, DecisionInput::Unavailable(why)).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut strings = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("xl/sharedStrings.xml").unwrap(),
+            &mut strings,
+        )
+        .unwrap();
+        assert!(strings.contains(text), "{why:?}");
+        assert!(!strings.contains("None were applied"));
+    }
 }

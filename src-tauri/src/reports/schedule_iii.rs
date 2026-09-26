@@ -16,10 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::group_ancestry::{AncestryGap, GroupIndex};
 use bridge_tally_protocol::{is_tally_reserved_root, TallyNamedMaster};
+use serde::{Deserialize, Serialize};
 
 use super::party_ledger_master::{
     PartyLedgerMasterRow, PartyLedgerMasterSource, PartyLedgerMasterWorkbook,
 };
+use crate::tally::VerifiedCompanyIdentity;
 
 const NO_HEAD_FROM_GROUPS: &str =
     "Group hierarchy does not determine a Schedule III head; client mapping decision required.";
@@ -32,6 +34,7 @@ pub(crate) struct ScheduleIIIView {
     exclusions: Vec<ScheduleIIIExclusion>,
     /// One entry per decision given, in the order given.
     decisions: Vec<DecisionStatus>,
+    decision_source: DecisionSource,
     finality: Finality,
     debit_total: ExactDecimal,
     credit_total: ExactDecimal,
@@ -50,6 +53,10 @@ impl ScheduleIIIView {
     /// One status per decision given, in the order the decisions were given.
     pub(crate) fn decisions(&self) -> &[DecisionStatus] {
         &self.decisions
+    }
+
+    pub(crate) fn decision_source(&self) -> DecisionSource {
+        self.decision_source
     }
 
     pub(crate) fn finality(&self) -> Finality {
@@ -126,11 +133,38 @@ pub(crate) enum LineBasis {
     Decided(ScheduleIIIHead),
 }
 
-/// A view is final only when every decision for its period applied.
+/// A view is final only when its decisions could be read and every decision
+/// for its period applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Finality {
     Final,
     NotFinal,
+}
+
+/// Whether the decisions for a view could be read at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DecisionSource {
+    Read,
+    Unavailable(DecisionsUnavailable),
+}
+
+/// Why no decision could be read. Either way the view is NOT FINAL: it never
+/// claims that no decision exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DecisionsUnavailable {
+    /// The encrypted store could not be opened.
+    StoreUnavailable,
+    /// The store opened, but its decisions could not be read, for example
+    /// because a newer build wrote a head this build does not know.
+    Unreadable,
+}
+
+/// What a view is built with: one book's decisions, or the fact that they
+/// could not be read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DecisionInput<'a> {
+    Read(&'a DecisionSet),
+    Unavailable(DecisionsUnavailable),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -141,6 +175,10 @@ pub(crate) enum ScheduleIIIError {
     UnestablishedBalance,
     #[error("two grouping decisions for this period name the same ledger")]
     DecisionRepeated,
+    #[error("the grouping decisions belong to another book")]
+    DecisionsForAnotherBook,
+    #[error("the grouping decisions belong to another financial year")]
+    DecisionsForAnotherYear,
     #[error("the Schedule III view did not place every ledger exactly once with its read balance")]
     NotConserved,
 }
@@ -163,7 +201,8 @@ impl Side {
 }
 
 /// A built-in group whose identity and balance side the read establishes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum GroupSubtotalKind {
     SundryDebtors,
     SundryCreditors,
@@ -235,8 +274,6 @@ impl GroupSubtotalKind {
 /// heads exist, with Division I captions. The full catalogue is transcribed
 /// from the chosen Guidance Note before this reaches a CA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Built only by the decision store (#737), which does not exist yet.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum ScheduleIIIHead {
     TradeReceivables,
     CashAndCashEquivalents,
@@ -246,6 +283,30 @@ pub(crate) enum ScheduleIIIHead {
 }
 
 impl ScheduleIIIHead {
+    const ALL: [Self; 5] = [
+        Self::TradeReceivables,
+        Self::CashAndCashEquivalents,
+        Self::ShortTermLoansAndAdvances,
+        Self::TradePayables,
+        Self::OtherCurrentLiabilities,
+    ];
+
+    /// The code the store keeps. Stable: a stored code this build does not
+    /// know makes the stored decisions unreadable, never silently dropped.
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::TradeReceivables => "trade_receivables",
+            Self::CashAndCashEquivalents => "cash_and_cash_equivalents",
+            Self::ShortTermLoansAndAdvances => "short_term_loans_and_advances",
+            Self::TradePayables => "trade_payables",
+            Self::OtherCurrentLiabilities => "other_current_liabilities",
+        }
+    }
+
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|head| head.code() == code)
+    }
+
     fn side(self) -> Side {
         match self {
             Self::TradeReceivables
@@ -276,7 +337,8 @@ impl ScheduleIIIHead {
 /// What the read alone says about one ledger. A decision records the outcome
 /// it was made against, and applies only while the ledger keeps the same
 /// standing (see [`Standing`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum DerivedOutcome {
     GroupSubtotal(GroupSubtotalKind),
     Undetermined(Undetermined),
@@ -338,7 +400,8 @@ impl DerivedOutcome {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Undetermined {
     /// A built-in group this view maps, with the balance on the other side.
     OppositeSide(GroupSubtotalKind),
@@ -356,7 +419,8 @@ pub(crate) enum Undetermined {
     ReadIncomplete(ReadGap),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ReadGap {
     /// A user-created group whose parent Tally did not return.
     ///
@@ -428,18 +492,34 @@ impl LedgerGuid {
 }
 
 /// An Indian financial year, 1 April to 31 March, named by its first year.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Built only by the decision store (#737), which does not exist yet.
-#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct FinancialYear {
     first_year: u16,
 }
 
 impl FinancialYear {
-    // Called only by the decision store (#737), which does not exist yet.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn beginning_in(first_year: u16) -> Self {
+    pub(crate) const fn beginning_in(first_year: u16) -> Self {
         Self { first_year }
+    }
+
+    /// The year a balance date falls in.
+    pub(crate) fn containing(date: &TallyDate) -> Option<Self> {
+        let text = date.as_str();
+        let year = text[..4].parse::<u16>().ok()?;
+        let first_year = if &text[4..] >= "0401" {
+            year
+        } else {
+            year.checked_sub(1)?
+        };
+        Some(Self { first_year })
+    }
+
+    pub(crate) fn first_year(self) -> u16 {
+        self.first_year
+    }
+
+    fn previous(self) -> Option<Self> {
+        self.first_year.checked_sub(1).map(Self::beginning_in)
     }
 
     /// Whether a balance date falls inside this year.
@@ -454,13 +534,13 @@ impl FinancialYear {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-// Built only by the decision store (#737), which does not exist yet.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct DecisionId(pub(crate) u64);
 
 /// What the read says of one ledger: the outcome, and the names of the
-/// groups above it, nearest first. A decision is made against this.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// groups above it, nearest first. A decision is made against this. Its
+/// serialized form is what the store keeps, so its codes are stable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Derivation {
     pub(crate) outcome: DerivedOutcome,
     /// Up to and including the nearest predefined group, which is as far as
@@ -475,8 +555,6 @@ pub(crate) struct Derivation {
 /// it is for. Who made it, when and why are recorded with it where it is
 /// stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-// Built only by the decision store (#737), which does not exist yet.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Decision {
     pub(crate) id: DecisionId,
     pub(crate) ledger: LedgerGuid,
@@ -484,6 +562,186 @@ pub(crate) struct Decision {
     pub(crate) made_against: Derivation,
     pub(crate) head: ScheduleIIIHead,
     pub(crate) year: FinancialYear,
+}
+
+/// The book a set of decisions belongs to (ADR 0020 item 3): the observed
+/// company tuple without its display name, so a company rename keeps its
+/// decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BookKey {
+    company_guid: String,
+    company_number: String,
+    books_from_yyyymmdd: String,
+}
+
+impl BookKey {
+    pub(crate) fn of(identity: &VerifiedCompanyIdentity) -> Self {
+        Self {
+            company_guid: identity.company_guid().to_ascii_lowercase(),
+            company_number: identity.company_number().to_string(),
+            books_from_yyyymmdd: identity.books_from_yyyymmdd().to_string(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(company_guid: &str, company_number: &str, books_from: &str) -> Self {
+        Self {
+            company_guid: company_guid.to_ascii_lowercase(),
+            company_number: company_number.to_string(),
+            books_from_yyyymmdd: books_from.to_string(),
+        }
+    }
+
+    pub(crate) fn company_guid(&self) -> &str {
+        &self.company_guid
+    }
+
+    pub(crate) fn company_number(&self) -> &str {
+        &self.company_number
+    }
+
+    pub(crate) fn books_from_yyyymmdd(&self) -> &str {
+        &self.books_from_yyyymmdd
+    }
+}
+
+/// One book's decisions for one year, plus the previous year's, which are
+/// offered and never applied. At most one decision per ledger per year: a
+/// view can only be built from a set that holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DecisionSet {
+    book: BookKey,
+    year: FinancialYear,
+    decisions: Vec<Decision>,
+}
+
+impl DecisionSet {
+    pub(crate) fn new(
+        book: BookKey,
+        year: FinancialYear,
+        decisions: Vec<Decision>,
+    ) -> Result<Self, ScheduleIIIError> {
+        let mut seen = BTreeSet::new();
+        for decision in &decisions {
+            if decision.year != year && Some(decision.year) != year.previous() {
+                return Err(ScheduleIIIError::DecisionsForAnotherYear);
+            }
+            if !seen.insert((decision.year, &decision.ledger)) {
+                return Err(ScheduleIIIError::DecisionRepeated);
+            }
+        }
+        Ok(Self {
+            book,
+            year,
+            decisions,
+        })
+    }
+
+    pub(crate) fn decisions(&self) -> &[Decision] {
+        &self.decisions
+    }
+}
+
+#[cfg(test)]
+impl DecisionSet {
+    /// A set for a synthetic workbook: its GUID, a fixed number and
+    /// books-from, and the year of its balance date. Built through `new`, so
+    /// the same validation holds.
+    pub(crate) fn for_tests(
+        workbook: &PartyLedgerMasterWorkbook,
+        decisions: Vec<Decision>,
+    ) -> Result<Self, ScheduleIIIError> {
+        let source = workbook.source();
+        Self::new(
+            BookKey::for_tests(&source.company_guid, "1", "20250401"),
+            FinancialYear::containing(&source.to).expect("a valid balance date"),
+            decisions,
+        )
+    }
+}
+
+/// A ledger's derivation, confirmed against a fresh read to be what the CA
+/// saw. Only [`confirm_seen`] makes one, so a decision is never recorded
+/// against a state the CA did not see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfirmedDerivation {
+    ledger: LedgerGuid,
+    ledger_name: String,
+    derivation: Derivation,
+}
+
+impl ConfirmedDerivation {
+    pub(crate) fn ledger(&self) -> &LedgerGuid {
+        &self.ledger
+    }
+
+    pub(crate) fn ledger_name(&self) -> &str {
+        &self.ledger_name
+    }
+
+    pub(crate) fn derivation(&self) -> &Derivation {
+        &self.derivation
+    }
+}
+
+/// A ledger whose read changed between what the CA saw and the save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SeenMismatch {
+    LedgerMissing {
+        ledger: LedgerGuid,
+    },
+    Moved {
+        ledger: LedgerGuid,
+        ledger_name: String,
+        seen: Derivation,
+        now: Derivation,
+    },
+}
+
+/// Confirms, ledger by ledger, that a fresh read still says what the CA saw.
+/// Any difference refuses the whole save, listing every ledger that moved.
+pub(crate) fn confirm_seen(
+    workbook: &PartyLedgerMasterWorkbook,
+    seen: &[(LedgerGuid, Derivation)],
+) -> Result<Vec<ConfirmedDerivation>, Vec<SeenMismatch>> {
+    let source = workbook.source();
+    let derived = derive(source);
+    let rows_by_guid: BTreeMap<LedgerGuid, usize> = source
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| Some((LedgerGuid::new(&row.guid)?, index)))
+        .collect();
+    let mut confirmed = Vec::with_capacity(seen.len());
+    let mut mismatches = Vec::new();
+    for (ledger, saw) in seen {
+        let Some(&row_index) = rows_by_guid.get(ledger) else {
+            mismatches.push(SeenMismatch::LedgerMissing {
+                ledger: ledger.clone(),
+            });
+            continue;
+        };
+        let now = &derived[row_index];
+        if now == saw {
+            confirmed.push(ConfirmedDerivation {
+                ledger: ledger.clone(),
+                ledger_name: source.rows[row_index].name.clone(),
+                derivation: now.clone(),
+            });
+        } else {
+            mismatches.push(SeenMismatch::Moved {
+                ledger: ledger.clone(),
+                ledger_name: source.rows[row_index].name.clone(),
+                seen: saw.clone(),
+                now: now.clone(),
+            });
+        }
+    }
+    if mismatches.is_empty() {
+        Ok(confirmed)
+    } else {
+        Err(mismatches)
+    }
 }
 
 /// The groups above a ledger when a decision was made and now, nearest first.
@@ -537,7 +795,8 @@ impl NotApplied {
 
 /// What the read alone says about each row, in row order. A decision is made
 /// against this, so whoever records one reads it from here.
-// Called only by decision authoring (#737), which does not exist yet.
+// Called by decision authoring (#737, H3) to show the CA what a save must
+// match; until then only tests call it.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn derivations(workbook: &PartyLedgerMasterWorkbook) -> Vec<Derivation> {
     derive(workbook.source())
@@ -567,11 +826,23 @@ fn derive(source: &PartyLedgerMasterSource) -> Vec<Derivation> {
 /// unique, so a decision binds to at most one row.
 pub(crate) fn build_schedule_iii_view(
     workbook: &PartyLedgerMasterWorkbook,
-    decisions: &[Decision],
+    decisions: DecisionInput<'_>,
 ) -> Result<ScheduleIIIView, ScheduleIIIError> {
     let source = workbook.source();
+    let (decision_source, given) = match decisions {
+        DecisionInput::Read(set) => {
+            if set.book.company_guid != source.company_guid.to_ascii_lowercase() {
+                return Err(ScheduleIIIError::DecisionsForAnotherBook);
+            }
+            if !set.year.contains(&source.to) {
+                return Err(ScheduleIIIError::DecisionsForAnotherYear);
+            }
+            (DecisionSource::Read, set.decisions.as_slice())
+        }
+        DecisionInput::Unavailable(why) => (DecisionSource::Unavailable(why), &[][..]),
+    };
     let derived = derive(source);
-    let (decisions, decided) = bind(source, &derived, decisions)?;
+    let (decisions, decided) = bind(source, &derived, given);
 
     let mut debit_total = ExactDecimal::zero();
     let mut credit_total = ExactDecimal::zero();
@@ -634,9 +905,11 @@ pub(crate) fn build_schedule_iii_view(
     let difference = credit_total
         .checked_subtract(&debit_total)
         .map_err(|_| ScheduleIIIError::Arithmetic)?;
-    let finality = if decisions.iter().any(|status| {
-        matches!(status, DecisionStatus::NotApplied { reason, .. } if reason.needs_attention())
-    }) {
+    let finality = if decision_source != DecisionSource::Read
+        || decisions.iter().any(|status| {
+            matches!(status, DecisionStatus::NotApplied { reason, .. } if reason.needs_attention())
+        })
+    {
         Finality::NotFinal
     } else {
         Finality::Final
@@ -645,6 +918,7 @@ pub(crate) fn build_schedule_iii_view(
         lines,
         exclusions,
         decisions,
+        decision_source,
         finality,
         debit_total,
         credit_total,
@@ -658,7 +932,7 @@ fn bind(
     source: &PartyLedgerMasterSource,
     derived: &[Derivation],
     decisions: &[Decision],
-) -> Result<(Vec<DecisionStatus>, BTreeMap<usize, ScheduleIIIHead>), ScheduleIIIError> {
+) -> (Vec<DecisionStatus>, BTreeMap<usize, ScheduleIIIHead>) {
     let rows_by_guid: BTreeMap<LedgerGuid, usize> = source
         .rows
         .iter()
@@ -666,7 +940,6 @@ fn bind(
         .filter_map(|(index, row)| Some((LedgerGuid::new(&row.guid)?, index)))
         .collect();
 
-    let mut decided_ledgers = BTreeSet::new();
     let mut decided = BTreeMap::new();
     let mut statuses = Vec::with_capacity(decisions.len());
     for decision in decisions {
@@ -677,9 +950,6 @@ fn bind(
         if !decision.year.contains(&source.to) {
             statuses.push(not_applied(NotApplied::OtherYear));
             continue;
-        }
-        if !decided_ledgers.insert(&decision.ledger) {
-            return Err(ScheduleIIIError::DecisionRepeated);
         }
         let Some(&row_index) = rows_by_guid.get(&decision.ledger) else {
             statuses.push(not_applied(NotApplied::LedgerMissing));
@@ -719,7 +989,7 @@ fn bind(
         };
         statuses.push(status);
     }
-    Ok((statuses, decided))
+    (statuses, decided)
 }
 
 /// Every row is placed exactly once, checked against the read's own row count
