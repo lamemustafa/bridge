@@ -165,3 +165,6 @@ CI was green on `753d7c7` (14/14 completed, 12 passed, 2 skipped), then master t
 
 ## 2026-09-26T13:13Z: #763 merged up with master (#755)
 CI was green on `288c982` (14/14 completed, 12 passed, 2 skipped). Master then took #755, which also touches the compatibility surface. Same resolution: took master's JSON, resealed (`--verify` clean), and pushed merge head `569abd6a0c3eb2dc469782e1e70c4c49e6c3817f`. 350 protocol tests and 119 targeted `bridge` tests passed; fmt and clippy are clean. Each master change to the surface will conflict this PR again, and each needs only a reseal.
+
+## 2026-09-26T13:57Z: #763 merged up with master (#762)
+CI was green on `569abd6` (14/14 completed, 12 passed, 2 skipped). Master then took #762, which also touches the surface. I took master's JSON, resealed (`--verify` clean), and pushed merge head `e7c43ed2bdf6d9b4bd0e2eab4c54bae5a37659f9`. 350 protocol tests and 119 targeted `bridge` tests passed; fmt and clippy are clean.
