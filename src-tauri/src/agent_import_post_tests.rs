@@ -1950,9 +1950,11 @@ fn a_batch_keeps_its_masters_and_step_verdicts_independently() {
     );
 }
 
-/// A step Bridge never observed is doubt, never a match: the after-snapshot
-/// unreadable (no step at all), Tally's CREATED unreadable (a null
-/// `matches_created`), the field absent, or a mark that went backwards.
+/// A step Bridge never saw match is doubt, never a match: no step at all (a
+/// snapshot without exactly one target row), Tally's CREATED unreadable (a
+/// null `matches_created`), a mark that went backwards, and, defensively, a
+/// step whose `matches_created` is absent, which `target_voucher_step` never
+/// writes.
 #[test]
 fn a_step_that_was_never_observed_to_match_is_recorded_as_doubt() {
     for step in [
