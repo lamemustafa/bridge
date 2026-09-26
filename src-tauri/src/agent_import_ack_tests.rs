@@ -117,6 +117,7 @@ async fn an_approved_review_is_recorded_once_and_changes_no_verdict() {
     let result = &response["structuredContent"]["result"];
     assert_eq!(result["operator_review"]["state"], "current", "{response}");
     assert_eq!(approval.reviews().len(), 1, "{response}");
+    assert_eq!(approval.review_counts(), [1], "{response}");
     assert!(approval.previews().is_empty(), "no post dialog: {response}");
     let review = &approval.reviews()[0];
     assert!(review.contains("Cash"), "the doubt is shown: {review}");
@@ -827,6 +828,124 @@ async fn a_batch_step_review_left_pending_is_refused_before_any_request() {
     assert!(sent(simulator).is_empty());
 }
 
+/// A doubt whose own file cannot be written (#722): the write is made to fail
+/// by a directory standing where the file goes. The check record keeps the
+/// doubt and says why no review can find it, and a review of that doubt is
+/// refused before any request, for each kind. The control is the same doubt
+/// with its file written, whose check record carries no mark; that such a
+/// doubt reads as reviewable is the unit tests' control.
+#[tokio::test]
+async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_request() {
+    let changed = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
+    let step =
+        json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false});
+    for (kind, blocked) in [
+        ("masters", "masters_doubt.json"),
+        ("batch_step", "batch_step_doubt.json"),
+    ] {
+        for write_fails in [true, false] {
+            let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let server = server_at(simulator.address(), directory.path());
+            let line = dispatched_batch(&server);
+            let imports = server.imports_dir().unwrap();
+            server
+                .record_post_checks_pending(&line.batch_id, true)
+                .unwrap();
+            let doubt_path = imports.join(format!("{}.{blocked}", line.batch_id));
+            if write_fails {
+                block(doubt_path.clone());
+            }
+            // In the post's own order: the step verdict, then the masters
+            // verdict, which rewrites the check record around the step.
+            let (step, masters) = if kind == "masters" {
+                (json!({"matches_created":true}), changed.clone())
+            } else {
+                (step.clone(), json!({"state":"unchanged"}))
+            };
+            server.record_batch_step_verdict(&line.batch_id, &step);
+            server.record_masters_verdict_for(&line.batch_id, masters, true);
+            if write_fails {
+                fs::remove_dir_all(&doubt_path).unwrap();
+            }
+            assert_eq!(doubt_path.is_file(), !write_fails, "{kind}");
+            let check: Value = serde_json::from_slice(
+                &fs::read(imports.join(format!("{}.masters_check.json", line.batch_id))).unwrap(),
+            )
+            .unwrap();
+            let verdict = if kind == "masters" {
+                &check
+            } else {
+                &check["batch_step"]
+            };
+            // The verdict recorded is the doubt itself, for either kind.
+            assert_eq!(
+                verdict["state"],
+                if kind == "masters" {
+                    "posted_under_changed_masters"
+                } else {
+                    "unmatched"
+                },
+                "{kind}: {check}"
+            );
+            assert_eq!(
+                verdict["doubt_record"],
+                if write_fails {
+                    json!("unavailable")
+                } else {
+                    Value::Null
+                },
+                "{kind}: {check}"
+            );
+            // Marked or not, the verdict is still doubt.
+            let expected = if kind == "masters" {
+                "posted_under_changed_masters"
+            } else {
+                "batch_step_unconfirmed"
+            };
+            assert_eq!(
+                post_doubt(
+                    read_masters_check(&imports, &line.batch_id).as_ref(),
+                    line.vouchers.len()
+                )
+                .map(|(code, _)| code),
+                Some(expected),
+                "{kind}: {check}"
+            );
+            if !write_fails {
+                continue;
+            }
+            let response = acknowledge(
+                &server,
+                json!({"company_guid":GUID,"batch_id":line.batch_id,"doubt":kind}),
+                ScriptedApproval::approving(),
+            )
+            .await;
+            assert_eq!(
+                response["structuredContent"]["result"]["error"]["code"],
+                "ack_doubt_record_unavailable",
+                "{kind}: {response}"
+            );
+            assert!(sent(simulator).is_empty(), "{kind}: no request");
+        }
+    }
+}
+
+/// One voucher's doubt recorded only in the check record is refused after
+/// the read, as every single-voucher refusal is, and never as no doubt.
+#[tokio::test]
+async fn a_doubt_recorded_only_in_the_check_record_is_refused() {
+    let marked = br#"{"state":"posted_under_changed_masters","ledgers":["Cash"],"doubt_record":"unavailable"}"#;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(marked),
+        None,
+        "ack_doubt_record_unavailable",
+    )
+    .await;
+}
+
 /// The live batch post of slice D3 (a licensed TallyPrime 7.1 Silver lab, 50
 /// Journals on a synthetic company), as the journal and saved file recorded it.
 const D3_BATCH: &str = "bridge-1e5b2cd7-f5c6-4d51-adc9-53a4dfa370bb";
@@ -927,6 +1046,8 @@ async fn a_review_of_the_captured_50_voucher_batch_binds_every_voucher() {
         "{response}"
     );
     assert_eq!(approval.reviews().len(), 1, "{response}");
+    // The dialog's title names the fifty vouchers it shows (#746).
+    assert_eq!(approval.review_counts(), [50], "{response}");
     let review = &approval.reviews()[0];
     for shown in [
         "Record that you reviewed 50 vouchers in \"BRIDGE AMEND LAB\"",
