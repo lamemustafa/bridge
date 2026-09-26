@@ -206,3 +206,16 @@ New head `30c8956459a92a93641eb93eff0691f23f9243d1`, pushed as a fast-forward of
 
 ## 2026-09-26T17:24Z: #743 merged (#717 part 1)
 Lane D merged #743 at head `30c8956`. Still in Lane D's pinned queue, in this order: #731, #736, #733, #763. Each waits for Lane D's call.
+
+## 2026-09-26T17:32Z: #731 merged up with master for the pinned queue (Lane D)
+Lane D called #731 next, after #743 merged (`dfabb447`). I merged master into `cloud-q/689-review-unavailable`. Conflicts and how each was resolved:
+- the compatibility surface and matrix: took master's copies and resealed (`--verify` clean);
+- `approved_import.rs`: kept #757's `VoucherCount` parameter on `confirm_review`/`confirm_review_with`, together with #689's clean-exit-is-unavailable arm, its doc sentence and the per-row test expectations. The seam gate's `CONFIRM_REVIEW_WITH` pin merged cleanly and holds both.
+
+Checks on the merge:
+- `approval_seam_gate`: 10 passed;
+- targeted tests (`approved_import`, `agent_import`, `tally::runtime`): 531 passed;
+- full `bridge` lib: 1441 passed, 1 failed (the known root-only `readonly_directory…` red);
+- fmt and clippy `-D warnings` clean.
+
+New head `5697ff1542ca151b07df02d5959874b1c3ce0a61`, pushed as a fast-forward of `267c603`. Only #731 was touched.
