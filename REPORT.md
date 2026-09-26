@@ -97,3 +97,8 @@ Master gained #712 (batch posting D2a), #688 and #741. #731, #736 and #743 confl
 - #733 and #734: trial merges with master are clean; left for Lane D.
 
 No human review threads are open.
+
+## 2026-09-26T10:20Z: check-in, and #711 taken up
+Master gained #721 (batch posting D2b) and #742. I merged master again into #731 (`a13239a26e1dedbf56a4213e9028c683d01b927f`), #736 (`6b8e1a358364c78c3809b0ef1ef771ec97912dce`) and #743 (`69c1f6a09d75dd3c269bc892d8c9cea609e86e10`). Each conflicted only in the surface JSON and was resealed and tested; the full suite passes on #743's tree. #733 and #734 trial-merge cleanly.
+
+With #712 and #721 merged, #711 was no longer blocked by overlap. **Draft PR #749** is at head `5e9ba027bca141a7b9cae4ea801365b5fa38a63e` (pinned, posting path). The four under-lock refusals keep their own codes, and the append and later steps keep the catch-all. The approval seam gate caught an `impl From` in approved_import.rs, and I reworked the code to build the variants explicitly. `attempt_recorded` reports what the journal shows (null / true / false / false), not false in every case as the issue asked; the reason is in the PR. The mutant proof is in the PR. Sonnet and Opus reviews are pending. ADR 0004 row 12 is one line that #743 also edits, so whichever merges second needs a line merge.
