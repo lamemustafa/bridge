@@ -1227,20 +1227,16 @@ pub(in crate::agent) async fn lab_import_masters(
                 // mandatory read-back rather than after it: a read-back can
                 // only ever say "not found", which does not distinguish a
                 // rejected write from one that was never sent.
-                let line_errors = extract_line_error_texts(&response);
                 batches.push(json!({
                     "kind": kind.tally_type(),
                     "requested": chunk_len,
                     "state": "tally_rejected",
                     "counters": tally_import_counters_json(counters),
-                    "line_errors": line_errors,
+                    "tally_line_errors": outcome.tally_line_errors(),
+                    "tally_line_errors_omitted": outcome.tally_line_errors_omitted(),
                     "ok": false,
                 }));
-                mismatches.push(tally_rejection_message(
-                    kind.tally_type(),
-                    counters,
-                    &line_errors,
-                ));
+                mismatches.push(tally_rejection_message(kind.tally_type(), &outcome));
                 break 'kinds;
             }
 
@@ -1317,20 +1313,16 @@ pub(in crate::agent) async fn lab_import_masters(
         let counters = outcome.counters();
         counts.insert("LedgerReconcileAlter".to_string(), json!(to_alter.len()));
         if tally_rejected(counters) {
-            let line_errors = extract_line_error_texts(&response);
             batches.push(json!({
                 "kind": "LedgerReconcileAlter",
                 "requested": to_alter.len(),
                 "state": "tally_rejected",
                 "counters": tally_import_counters_json(counters),
-                "line_errors": line_errors,
+                "tally_line_errors": outcome.tally_line_errors(),
+                "tally_line_errors_omitted": outcome.tally_line_errors_omitted(),
                 "ok": false,
             }));
-            mismatches.push(tally_rejection_message(
-                "LedgerReconcileAlter",
-                counters,
-                &line_errors,
-            ));
+            mismatches.push(tally_rejection_message("LedgerReconcileAlter", &outcome));
         } else {
             let clean = counters.is_clean_success_for(0, to_alter.len() as u64, 0);
             batches.push(json!({
@@ -1559,75 +1551,6 @@ fn chunked_masters(
 // sent at all).
 // ---------------------------------------------------------------------------
 
-/// Best-effort extraction of every `<LINEERROR>` element's text from a raw
-/// import response. Deliberately separate from
-/// `bridge_tally_protocol::ParsedImportEvidence`, which redacts this text by
-/// design (retaining only a sha256 digest) for persisted evidence -- this is
-/// a one-shot diagnostic surfaced directly in the tool's own JSON result, not
-/// persisted evidence, so the raw text is exactly what a caller needs to act
-/// on a rejection.
-///
-/// quick_xml delivers an entity or numeric character reference (`&amp;`,
-/// `&#4;`, ...) as its own `GeneralRef` event, separate from any surrounding
-/// `Text`/`CData` for the same message. Earlier this only handled `Text`, so
-/// one `LINEERROR` whose message happened to contain a reference (e.g. a
-/// ledger name quoted in the rejection) was silently split into several
-/// entries in `errors` -- each one pushed as its own element -- which then
-/// read as multiple, garbled messages once `tally_rejection_message` joined
-/// them with `"; "`. Buffering per `LINEERROR` and flushing once at its `End`
-/// keeps one message as one entry regardless of how many events it arrives
-/// in. `trim_text(false)` (rather than `true`) is deliberate for the same
-/// reason `native_ledger_collection.rs`'s field readers disable it: quick_xml
-/// would otherwise trim each `Text` fragment independently, eating
-/// whitespace that sat next to the split.
-fn extract_line_error_texts(xml: &str) -> Vec<String> {
-    let marked = mark_agent_xml(xml);
-    let mut reader = quick_xml::Reader::from_str(marked.as_ref());
-    reader.config_mut().trim_text(false);
-    let mut errors = Vec::new();
-    let mut in_line_error = false;
-    let mut current = String::new();
-    loop {
-        match reader.read_event() {
-            Ok(quick_xml::events::Event::Start(event))
-                if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
-            {
-                in_line_error = true;
-                current.clear();
-            }
-            Ok(quick_xml::events::Event::End(event))
-                if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
-            {
-                in_line_error = false;
-                let trimmed = current.trim();
-                if !trimmed.is_empty() {
-                    errors.push(trimmed.to_string());
-                }
-                current.clear();
-            }
-            Ok(quick_xml::events::Event::Text(text)) if in_line_error => {
-                if let Ok(value) = decoded_agent_text(text) {
-                    current.push_str(&value);
-                }
-            }
-            Ok(quick_xml::events::Event::GeneralRef(reference)) if in_line_error => {
-                if let Ok(value) = decoded_agent_reference(reference) {
-                    current.push_str(&value);
-                }
-            }
-            Ok(quick_xml::events::Event::CData(text)) if in_line_error => {
-                if let Ok(value) = text.decode() {
-                    current.push_str(&value);
-                }
-            }
-            Ok(quick_xml::events::Event::Eof) => break,
-            Ok(_) => {}
-            Err(_) => break,
-        }
-    }
-    errors
-}
-
 fn tally_import_counters_json(counters: &bridge_tally_protocol::TallyImportResult) -> Value {
     json!({
         "created": counters.created,
@@ -1640,16 +1563,30 @@ fn tally_import_counters_json(counters: &bridge_tally_protocol::TallyImportResul
     })
 }
 
+/// The rejection as one line, with Tally's `LINEERROR` text as the import
+/// outcome bounded it (the one reader of that text) and a count of any it
+/// kept none of.
 fn tally_rejection_message(
     label: &str,
-    counters: &bridge_tally_protocol::TallyImportResult,
-    line_errors: &[String],
+    outcome: &bridge_tally_protocol::TallyImportOutcome,
 ) -> String {
-    let suffix = if line_errors.is_empty() {
+    let counters = outcome.counters();
+    let texts = outcome
+        .tally_line_errors()
+        .iter()
+        .map(bridge_tally_protocol::TallyLineError::text)
+        .collect::<Vec<_>>();
+    let mut suffix = if texts.is_empty() {
         String::new()
     } else {
-        format!(" LINEERROR: {}", line_errors.join("; "))
+        format!(" LINEERROR: {}", texts.join("; "))
     };
+    if outcome.tally_line_errors_omitted() > 0 {
+        suffix.push_str(&format!(
+            " ({} LINEERROR text(s) not kept)",
+            outcome.tally_line_errors_omitted()
+        ));
+    }
     format!(
         "{label} rejected by Tally: CREATED={} ALTERED={} ERRORS={} EXCEPTIONS={}{suffix}",
         counters.created, counters.altered, counters.errors, counters.exceptions
@@ -2428,13 +2365,13 @@ pub(in crate::agent) async fn lab_import_vouchers(
             // Same explicit-rejection reporting as lab_import_masters: a
             // read-back after this can only ever say "not found", so report
             // the rejection itself, with any LINEERROR text, and stop.
-            let line_errors = extract_line_error_texts(&response);
             batch_reports.push(json!({
                 "batch": batch_index,
                 "count": batch.len(),
                 "state": "tally_rejected",
                 "counters": tally_import_counters_json(counters),
-                "line_errors": line_errors,
+                "tally_line_errors": outcome.tally_line_errors(),
+                "tally_line_errors_omitted": outcome.tally_line_errors_omitted(),
                 "posted": true,
                 "source_guids": source_guids,
             }));

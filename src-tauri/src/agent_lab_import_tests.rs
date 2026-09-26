@@ -1785,12 +1785,11 @@ fn tally_rejected_true_when_errors_reported_even_with_zero_exceptions() {
 fn tally_rejection_message_reports_counters_and_no_line_errors_when_absent() {
     let outcome = bridge_tally_protocol::parse_import_outcome(REHEARSAL_REJECTION_RESPONSE)
         .expect("valid RESPONSE shape");
-    let line_errors = extract_line_error_texts(REHEARSAL_REJECTION_RESPONSE);
     assert!(
-        line_errors.is_empty(),
+        outcome.tally_line_errors().is_empty(),
         "the captured rehearsal response carried no LINEERROR text"
     );
-    let message = tally_rejection_message("Ledger", outcome.counters(), &line_errors);
+    let message = tally_rejection_message("Ledger", &outcome);
     assert_eq!(
         message,
         "Ledger rejected by Tally: CREATED=0 ALTERED=0 ERRORS=0 EXCEPTIONS=17"
@@ -1798,48 +1797,75 @@ fn tally_rejection_message_reports_counters_and_no_line_errors_when_absent() {
     assert!(!message.contains("LINEERROR"));
 }
 
-#[test]
-fn extract_line_error_texts_reads_every_lineerror_element() {
-    let response = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
-<LASTVCHID>0</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED><IGNORED>0</IGNORED>\
-<ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>2</EXCEPTIONS>\
-<LINEERROR>Could not set OPENINGBALANCE : Duplicate name</LINEERROR>\
-<LINEERROR>Vch/Ledger deletion/alteration is not permitted</LINEERROR></RESPONSE>";
-    let errors = extract_line_error_texts(response);
-    assert_eq!(
-        errors,
-        vec![
-            "Could not set OPENINGBALANCE : Duplicate name".to_string(),
-            "Vch/Ledger deletion/alteration is not permitted".to_string(),
-        ]
-    );
-    let outcome =
-        bridge_tally_protocol::parse_import_outcome(response).expect("valid RESPONSE shape");
-    let message = tally_rejection_message("Ledger", outcome.counters(), &errors);
-    assert!(message.contains(
-        "LINEERROR: Could not set OPENINGBALANCE : Duplicate name; \
-Vch/Ledger deletion/alteration is not permitted"
-    ));
+/// The rehearsal's counters with `lineerrors` appended: synthetic text in a
+/// derived response, since no captured rejection carries a LINEERROR.
+fn rejection_with_line_errors(lineerrors: &str) -> String {
+    REHEARSAL_REJECTION_RESPONSE.replace("</RESPONSE>", &format!("{lineerrors}</RESPONSE>"))
 }
 
 #[test]
-fn extract_line_error_texts_keeps_one_message_split_by_a_reference_as_one_entry() {
-    // Regression: quick_xml delivers `&amp;` as its own `GeneralRef` event,
-    // separate from the surrounding `Text`. Before buffering per `LINEERROR`,
-    // a single message containing a reference -- e.g. quoting a ledger name
-    // with an ampersand, invented here as "RAM & SONS" -- was silently split
-    // into multiple entries in `errors`, then read back as several garbled
-    // messages once joined with `"; "`.
-    let response = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
-<LASTVCHID>0</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED><IGNORED>0</IGNORED>\
-<ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>1</EXCEPTIONS>\
-<LINEERROR>Ledger &quot;RAM &amp; SONS&quot; already exists</LINEERROR></RESPONSE>";
-    let errors = extract_line_error_texts(response);
-    assert_eq!(
-        errors,
-        vec!["Ledger \"RAM & SONS\" already exists".to_string()],
-        "a reference-split message must stay one entry, not several"
+fn the_rejection_message_reads_every_lineerror_from_the_import_outcome() {
+    let response = rejection_with_line_errors(
+        "<LINEERROR>Could not set OPENINGBALANCE : Duplicate name</LINEERROR>\
+<LINEERROR>Vch/Ledger deletion/alteration is not permitted</LINEERROR>",
     );
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(&response).expect("valid RESPONSE shape");
+    let message = tally_rejection_message("Ledger", &outcome);
+    assert_eq!(
+        message,
+        "Ledger rejected by Tally: CREATED=0 ALTERED=0 ERRORS=0 EXCEPTIONS=17 \
+LINEERROR: Could not set OPENINGBALANCE : Duplicate name; \
+Vch/Ledger deletion/alteration is not permitted"
+    );
+}
+
+#[test]
+fn a_lineerror_split_by_a_reference_stays_one_text() {
+    // quick_xml delivers `&amp;` as its own `GeneralRef` event, separate from
+    // the surrounding `Text`. The ledger name "RAM & SONS" is invented.
+    let response = rejection_with_line_errors(
+        "<LINEERROR>Ledger &quot;RAM &amp; SONS&quot; already exists</LINEERROR>",
+    );
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(&response).expect("valid RESPONSE shape");
+    let texts = outcome
+        .tally_line_errors()
+        .iter()
+        .map(bridge_tally_protocol::TallyLineError::text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        vec!["Ledger \"RAM & SONS\" already exists"],
+        "a reference-split message must stay one text, not several"
+    );
+}
+
+/// The lab tools carry the import outcome's bounds (#696): at most
+/// `MAX_TALLY_LINE_ERRORS` texts, each clipped and with control characters
+/// replaced, and the rest counted, never a second, unbounded reading.
+#[test]
+fn the_rejection_message_is_bounded_as_the_import_outcome_bounds_it() {
+    let clipped = "x".repeat(bridge_tally_protocol::MAX_TALLY_LINE_ERROR_CHARS + 1);
+    let mut lineerrors = format!("<LINEERROR>{clipped}</LINEERROR><LINEERROR>a\u{7}b</LINEERROR>");
+    for _ in 0..bridge_tally_protocol::MAX_TALLY_LINE_ERRORS {
+        lineerrors.push_str("<LINEERROR>e</LINEERROR>");
+    }
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(&rejection_with_line_errors(&lineerrors))
+            .expect("valid RESPONSE shape");
+    let kept = outcome.tally_line_errors();
+    assert!(kept.len() <= bridge_tally_protocol::MAX_TALLY_LINE_ERRORS);
+    assert!(outcome.tally_line_errors_omitted() >= 2);
+    assert!(kept[0].truncated());
+    assert_eq!(kept[1].text(), "a\u{fffd}b");
+    let message = tally_rejection_message("Ledger", &outcome);
+    assert!(!message.contains(&clipped));
+    assert!(!message.contains('\u{7}'));
+    assert!(message.ends_with(&format!(
+        " ({} LINEERROR text(s) not kept)",
+        outcome.tally_line_errors_omitted()
+    )));
 }
 
 #[test]
@@ -1902,18 +1928,6 @@ fn a_captured_forbidden_reference_in_voucher_read_back_reads_as_the_marker() {
         assert_eq!(was.voucher_number, now.voucher_number);
         assert_eq!(was.ledger_entries, now.ledger_entries);
     }
-}
-
-#[test]
-fn line_error_text_keeps_a_forbidden_reference_as_the_marker() {
-    // Synthetic: no committed import response carries `&#4;` in a LINEERROR.
-    // Before the one rule, the reference arrived as its own event and this
-    // diagnostic dropped it; now it reads as the marker the other readers use.
-    let xml = "<RESPONSE><LINEERROR>Group &#4; Primary cannot be altered</LINEERROR></RESPONSE>";
-    assert_eq!(
-        extract_line_error_texts(xml),
-        vec!["Group \u{fffd}#4; Primary cannot be altered".to_string()]
-    );
 }
 
 fn book_start(yyyymmdd: &str) -> NativeLedgerExportPeriod {
