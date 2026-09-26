@@ -168,8 +168,9 @@ nothing is deliberately unexposed.
 ## Amendment (2026-09-26, #732): the runtime qualification path is deleted
 
 The 2026-09-17 amendment left the runtime layer "a separate decision". #732 made it. The path's
-ledger read (`ledgers_v1`) carried an amount FIELD without `<TYPE>Amount</TYPE>`, and a FIELD
-without it returns money as a display string, sign dropped (protocol reference §6.3). Tracing who
+ledger read (`ledgers_v1`) SETs `$OpeningBalance` in a FIELD without `<TYPE>Amount</TYPE>`. For
+`$ClosingBalance`, such a FIELD was measured returning a display string with the sign dropped
+(protocol reference §6.3). The same for `$OpeningBalance` is inferred, not measured. Tracing who
 consumed that read showed nothing live reached the path. Following AGENTS.md P4, the path is
 deleted rather than fixed.
 
@@ -187,6 +188,8 @@ deleted rather than fixed.
   - `EducationReportFamilyRefusal` and `refuse_report_formula_in_education`;
   - `CachedProbeReservation::authorize`;
   - the `runtime_identity` fields that only `authorize` read.
+- `tdl_engine::sales_vouchers_request` and `tdl_engine::selected_vouchers_request`, which nothing
+  called. `tdl_engine::ledgers_request` is now `#[cfg(test)]`, as `groups_request` already was.
 - The five tests that called the deleted methods. A sixth test,
   `ordinary_read_admission_and_review_reservation_are_mutually_exclusive`, keeps its live
   assertions and drops the two that called `authorize`.
@@ -194,9 +197,15 @@ deleted rather than fixed.
 **Kept:**
 - `CachedProbeReservation`, which `reserve_cached_probe_fresh` still creates for two commands.
 - The `db::tally_mirror` commitment material.
-- The `ledgers_v1` and voucher profiles in `bridge-tally-protocol`, which the live-read tools still
-  send. `ledgers_v1`'s opening-balance FIELD now declares `<TYPE>Amount</TYPE>`. Its sealed
-  template digest and the ledger canary's, which derives from it, are updated deliberately.
+- The `ledgers_v1` and `vouchers_v2` profiles in `bridge-tally-protocol`, which
+  `tools/bridge-tally-live-read` still sends. `ledgers_v1`'s opening-balance FIELD now declares
+  `<TYPE>Amount</TYPE>`. Its sealed template digest and the ledger canary's, which derives from it,
+  are updated deliberately.
+
+**Gated:** `scripts/check-tally-request-builder-hazards.mjs` now fails on any request-builder FIELD
+that SETs an amount-valued method without `<TYPE>Amount</TYPE>`. Its pinned set for that kind is
+empty. Removing the TYPE from `ledgers_v1`, or from the period-balance request's closing FIELD,
+makes it fail.
 
 **How this was measured:**
 - **Compiler.** `cargo check --locked --workspace --all-targets --all-features` for `src-tauri/`

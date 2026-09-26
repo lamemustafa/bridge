@@ -1479,7 +1479,14 @@ fn ordinary_read_admission_and_review_reservation_are_mutually_exclusive() {
         .reserve_cached_probe_fresh(&config, "review-lease", 300_000)
         .expect("reserve after read")
         .expect("fresh review");
-    assert!(runtime.begin_ordinary_read(&config).is_err());
+    let refused = runtime
+        .begin_ordinary_read(&config)
+        .err()
+        .expect("an ordinary read is refused while a review is reserved");
+    assert_eq!(
+        refused.to_string(),
+        "Tally reviewed setup operation is in progress"
+    );
     drop(reservation);
 }
 

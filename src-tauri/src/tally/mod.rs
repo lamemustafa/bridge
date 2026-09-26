@@ -13,7 +13,7 @@ pub mod serial_queue;
 pub mod tdl_engine;
 pub mod validators;
 pub mod xml_parser;
-// Crate-internal only: `tally::connector` and `tally::connection` are the sole consumers.
+// Crate-internal only: `tally::connector` is the sole consumer.
 mod canonical_window;
 
 pub use bridge_tally_core as core;

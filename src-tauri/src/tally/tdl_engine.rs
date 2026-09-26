@@ -75,46 +75,10 @@ fn legacy_company_list_request() -> String {
     .to_string()
 }
 
-pub fn sales_vouchers_request(company: &str, from: &str, to: &str) -> String {
-    format!(
-        r#"
-<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>EXPORT</TALLYREQUEST>
-    <TYPE>COLLECTION</TYPE>
-    <ID>Sales Vouchers</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY>
-        <SVFROMDATE>{}</SVFROMDATE>
-        <SVTODATE>{}</SVTODATE>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="Sales Vouchers">
-            <TYPE>Voucher</TYPE>
-            <FILTERS>SalesOnly</FILTERS>
-            <FETCH>Date, VoucherTypeName, VoucherNumber, PartyLedgerName</FETCH>
-          </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="SalesOnly">$$IsSales:$VoucherTypeName</SYSTEM>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
-</ENVELOPE>
-"#,
-        xml_escape(company),
-        xml_escape(from),
-        xml_escape(to)
-    )
-    .trim()
-    .to_string()
-}
-
+/// No production path sends this: the live-read tool renders `ledgers_v1`
+/// through `ReadOnlyProfile::LedgersV1`. It compiles only for the tests below
+/// that check its formula hazard and escaping.
+#[cfg(test)]
 pub fn ledgers_request(company: &str) -> String {
     bridge_tally_protocol::xml_read_profiles::compatibility::ledgers_request(company)
 }
@@ -206,12 +170,6 @@ pub fn groups_request(company: &str) -> String {
     )
     .trim()
     .to_string()
-}
-
-pub fn selected_vouchers_request(company: &str, from: &str, to: &str) -> String {
-    bridge_tally_protocol::xml_read_profiles::compatibility::selected_vouchers_request(
-        company, from, to,
-    )
 }
 
 /// Experimental Bridge-defined ledger-balance cross-view. The request emits no
