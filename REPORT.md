@@ -108,3 +108,39 @@ Head `463d2aed62bd5a3f63196a9454247c0852f37e26`. Opus found no P1. Its P2 (ADR r
 
 ## 2026-09-26T10:38Z: #734 merged
 #680 is fixed on master. Lane D merged master into the branch (`3b45db6`) and then merged it. The session is unsubscribed.
+
+## 2026-09-26T11:25Z: FINAL (budget end)
+
+### PRs
+| PR | Issue | Head | State |
+|---|---|---|---|
+| #727 | #662 unbounded manifest.json read | `b5039c8` on master | **merged** |
+| #734 | #680 pre-split carry-forward test | `bd0d4077` on master | **merged** |
+| #731 | #689 review child exits 0 without its token → unavailable | `267c603965b58a6bb453221dab879735575e924c` | ready, pinned; **approval path: needs an Opus independent reviewer** |
+| #733 | #696 lab tools read LINEERROR from the bounded outcome | `8831cc9c088a81a5a983045a70dfed097a6bec6a` | ready; Lane D's merge-of-master head is green |
+| #736 | #632 (b)-text in the build result (partial) | `b2e689b9938a0dfabf9ce7fac9dc7f66bb1fc4f9` | ready, pinned; **optional**, since #639 already covers the tool description |
+| #743 | #717 part 1: cause on the in-queue group re-read | `76046e4c7b77090ca21d3ee05e8945dee5ed93bb` | ready, pinned; **posting path: needs Opus** |
+| #749 | #711 under-lock refusals keep their own codes | `5e15d1000d56348d838acab5d7d6f6ce65def181` | ready, pinned; **posting path: needs Opus** |
+
+In this final check-in I merged master (#739, #734, #750) into #731, #736, #743 and #749. Each conflicted only in the surface JSON, was resealed with `--verify` clean, and passed its targeted tests and the seam gate. Their CI is re-running on these heads. #733 merges cleanly.
+#743 and #749 both edit ADR 0004 row 12, which is one line, so whichever merges second needs a line merge.
+None of the open PRs has an open review thread. Every Sonnet/Opus finding was answered on its PR.
+
+### Skipped
+- #644: owned by Lane E per the plan on the issue (crate-wide `fig`→`Result`), and overlaps the lane-e files.
+- #717 part 2: STATUS classing is a design decision; the question is on the issue.
+- #718: over 300 lines plus overlap with #715; a 3-slice split is proposed on the issue.
+- #702: design choice (`.cmd` or a test binary) plus a Windows mutation run; the question is on the issue.
+- #557: blocked on #686 (tool disabled).
+- #667: the owner's trade-off.
+
+### Needs lab
+None. No fix in this lane needed a new Tally capture.
+
+### New issue
+- #735: `parse_import_outcome` keeps CDATA markup in LINEERROR text, and refuses the whole outcome when a CDATA holds a bare `&`. Verified by a direct probe. Latent: not observed live.
+
+### Process notes
+- The first overlap checks used a stale origin/master; they were corrected and re-run.
+- One merge commit on #731 (`5da9116`) lacks the session trailer. It was not force-pushed.
+- CI "Required checks" reds on superseded heads were cancellations. One macOS bundle-smoke failure was a runner DNS failure; it passed after one re-run.
