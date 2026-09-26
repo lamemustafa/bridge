@@ -251,3 +251,13 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   2. rerun E2b's full list;
   3. re-stack E3a, then E4, redoing their records;
   4. open each PR in turn.
+
+## 2026-09-26 01:59 UTC — E2b: Lane D's reference change ported (local, reviews running)
+
+- Lane D pushed df9ac5e7 on `lane-e/e2b-hvr`: `parity/PORT-NOTE-HVR.md` and the two regenerated goldens (reference 140bc7d3).
+- **Ported** in 01cc4d46:
+  - each row keeps per-GUID (share, money line), added per occurrence;
+  - a (party, day) row that raises a finding and differs gains the definition suffix, the `{mode}_line` figure and fact, and the limit line (the below-threshold sentence only when the line total is under the threshold), placed before the unidentified-party limit;
+  - both regenerated goldens now match byte-for-byte.
+- E2B2-31..36 record the new logic. Four of them survived the goldens (marking on any vs all vouchers, the line's direction, the line summed per voucher, a repeated GUID). One unit test pins them (59577a29), which is the 6th test E2b adds, all small. **All 36 E2B2 killed.** 342 tests pass; clippy and fmt clean.
+- Fresh Sonnet and Opus reviews of the port against the note are running. Next: push, the E2b full mutation run (sharded to `cloud/lane-e-e2b-shards-2`), records, then the fresh independent review Lane D asked for on #713. After that, re-stack E3a and E4 and redo their records.
