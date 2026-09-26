@@ -1,0 +1,29 @@
+# Groups GitHub's generated release notes by the repository's existing labels.
+# The human-written summary goes above this list; see docs/release-process.md.
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: New and changed
+      labels:
+        - type:feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - type:bug
+        - type:rectify
+        - bug
+    - title: Dependencies and CI
+      labels:
+        - dependencies
+        - github_actions
+        - infra
+    - title: Maintenance
+      labels:
+        - type:chore
+    - title: Other changes
+      labels:
+        - "*"

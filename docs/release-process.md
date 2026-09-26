@@ -492,6 +492,59 @@ this repository, it resolves GitHub Release assets by exact release tag and
 labels prerelease downloads as unsigned previews. It does not proxy Tally,
 create an account, or run a cloud relay.
 
+## Release rhythm and notes
+
+A release is how a CA, an accountant or a developer learns what changed. Write
+every note for them first, and for maintainers second.
+
+**Rhythm**
+
+- Cut an `mcp-preview-*` build at most every two weeks, and only when both of
+  these hold: at least one user-visible change has landed, and CI is green on
+  both hosts.
+- Mark the newest preview as the repository's latest release, so the
+  releases page never opens on an older line.
+- Once a month, add a "what changed" entry to `CHANGELOG.md`, even in a month
+  without a build.
+
+**Every release note has four parts, in this order**
+
+1. **What you can do now.** Plain sentences a CA would say, one per change.
+   Each line names its pull requests.
+2. **Safer or fixed.** Refusals, safety checks and bug fixes, described by
+   what the user sees.
+3. **Known limits.** Name what still does not work, and link the issue.
+4. **All changes.** Paste GitHub's generated list here. `.github/release.yml`
+   groups it by the existing `type:*` labels.
+
+**`CHANGELOG.md`**
+
+- Each release gets an "In plain words" section above the detailed entries,
+  written from the merged pull requests since the last build.
+- Keep the detailed entries as they are. They serve maintainers and
+  integrators.
+
+**Writing rules for notes, the install page and posts**
+
+- Say "ComplyEaze Bridge" at first mention.
+- Name the build that each capability sentence describes. The install page,
+  the README and the repository description must agree with the newest
+  published build.
+- Make no accuracy claim without a published method and result.
+- Never say "signed" or "production" about an unsigned preview (see *Signing
+  and publication*).
+- Put no customer, company or client names, no local paths, and no
+  private-repository references in any note.
+- Before publishing, check the text for AI-writing patterns and unclear
+  phrasing. Offline prose linters such as `write-good` help. Keep an exact
+  safety or capability claim even where a linter flags it.
+
+**When a listing exists**
+
+- If the MCP registry or another directory lists the build, update that
+  listing's version and SHA-256 in the same release. A listing that points at
+  an older package is a stale claim.
+
 ## Rollback
 
 1. Mark the affected GitHub release as withdrawn and remove unsafe downloadable
