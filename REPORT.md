@@ -46,3 +46,36 @@ One dated entry per step, times from `date -u`. This branch is append-only, fast
   - It fixes the Git 2.43 ownership failure.
   - #527's noexec acceptance item was measured by lane T on 25 Sep. Without the exec root there are +5 failures; with it, the failing set is the Git 2.43 baseline. It passes, and that evidence is on the lane-T report branch, not yet on #527 itself.
 - **Needs an owner decision (unchanged):** Git 2.43 passes `%S/%X/%Y` to the merge driver unexpanded. The options are a documented minimum Git version (probably 2.44), and/or a driver error that names that cause. Until then the merge-driver group stays red on stock Ubuntu 24.04 Git.
+
+## 2026-09-26 06:18 UTC: Item 4, #669 Actions caches → proposal PR #729 (draft, owner's decision)
+
+**Measured read-only** (throwaway workflow with `actions: read`, run 36221828972, 05:47 UTC): 9.90 GiB in 20 entries.
+
+| Class | Entries | MiB |
+| --- | ---: | ---: |
+| Live (newest per family) | 11 | 4,610 |
+| Package sccache, 2nd-newest per OS | 2 | 114 |
+| **Superseded master Rust caches** (same restore prefix, older lockfile hash) | 5 | **3,986** |
+| **PR-only Rust caches** (#695 and #707, both merged; the *same key* as master's live entry) | 2 | **1,430** |
+
+Removing the two waste classes leaves **4.61 GiB**.
+
+**Proposed rule, [#729](https://github.com/lamemustafa/bridge/pull/729):**
+1. rust-cache `save-if: github.event_name != 'pull_request'` on all 3 jobs;
+2. the existing fail-closed retention script also keeps only the newest master `v0-rust-*` entry per restore prefix, env hash included;
+3. the retention job `needs` every Rust-cache-saving job.
+
+**No cache deleted by hand.** A dry run of the script against the measured inventory selects exactly the 5 superseded ids.
+
+**Reviews:**
+- Round 1 (Opus + Sonnet) found a **real P1 in my change.** A duplicate `save-if` key made GitHub reject `ci.yml`, so Bridge CI ran with 0 jobs. `check-ci-workflow-consistency.mjs` does not parse YAML, so it didn't catch this.
+- Round 1 also found a P2: grouping without the env hash could delete the only cache for a runner image still in use.
+- Both are fixed.
+- Round 2 (Opus): no P1 or P2. Its P3, the build guide still stating the old rule, is fixed.
+- Head `ccef193`; CI is running.
+
+**Process gap worth a follow-up:** nothing in CI loads the workflow YAML strictly. A duplicate-key or invalid workflow shows up only as a 0-job run, which reads as "no checks" rather than "red". A 10-line duplicate-key check in `check-ci-workflow-consistency.mjs` would have caught my P1 locally. I have not built it (scope); it is proposed here.
+
+**Needs a decision:**
+- Adopt the rule? Merge #729 (Lane D and the owner).
+- The one-off deletion of today's 5 + 2 stale entries, or leave it to LRU and the 7-day eviction.
