@@ -1141,6 +1141,27 @@ fn conservation_refuses_a_ledger_left_out() {
 }
 
 #[test]
+fn conservation_refuses_a_zero_balance_ledger_left_out_although_the_net_still_ties() {
+    // Only the placement half can catch this: the omitted balance is zero.
+    let source = book(vec![
+        row("Customer", "Sundry Debtors", "-100"),
+        row("Settled", "Sundry Debtors", "0"),
+    ]);
+    let view = view_with(&source, &[]).unwrap();
+    let mut lines = view.lines.clone();
+    assert!(
+        lines[0].row_indices.contains(&1),
+        "the zero ledger was placed"
+    );
+    lines[0].row_indices.retain(|index| *index != 1);
+    assert_eq!(lines[0].total.as_str(), "-100");
+    assert!(matches!(
+        check_conservation(source.source(), &lines, &view.exclusions),
+        Err(ScheduleIIIError::NotConserved)
+    ));
+}
+
+#[test]
 fn conservation_refuses_a_line_total_that_is_not_its_ledgers_balance() {
     let (source, mut lines, exclusions) = conserved_fixture();
     lines[0].total = ExactDecimal::parse("-99").unwrap();
