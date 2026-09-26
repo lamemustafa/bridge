@@ -427,7 +427,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "d63d785a9e5273659b561e930ced68902187d8efb215affe008f2a6de345b3da"
+      "sha256": "b237b52a0c8c411cd099751acdbc53b5fd2471a2ad3e548c9c1d75c0a6c97461"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -911,7 +911,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "c4e9dee78ad43b3c28580cbbe18ca882532e068fde25e74a83ba1aad903768ea"
+      "sha256": "6bba3376a030f5b17ca07df72f67db5a203376402e7c056d1569a165b6413c73"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "541253b2f8f3c40648efcc666bfcb9ffdf460ab06a56c8561375078eae85fed7"
+  "manifest_sha256": "93ba87ab268f6c88e6be486891be5d7b47244f293e7f756952ba2292d8c5c287"
 }
