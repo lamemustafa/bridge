@@ -150,3 +150,6 @@ Branch `cloud-q/735-lineerror-cdata`. The five open PRs are parked; I am not re-
 
 ## 2026-09-26T11:37Z: #735 pushed
 Branch `cloud-q/735-lineerror-cdata`, head `2e66550a4462f9434994d9e02f6a626b66a9fef1` (pinned: 2 files resealed). One LINEERROR reader for outcome and evidence, handling CDATA and references. The derived tests failed first; the captured digest is pinned unchanged; a mutant that drops the CDATA arm fails. PR and Sonnet review next.
+
+## 2026-09-26T11:37Z: #735 draft PR #763
+Head `2e66550a4462f9434994d9e02f6a626b66a9fef1`. Sonnet review running. The five parked PRs (#731, #733, #736, #743, #749) were not touched after the final check-in, per Lane D.
