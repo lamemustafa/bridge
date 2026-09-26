@@ -84,3 +84,7 @@ Since #708 merged, #717 part 1 (the cause on the in-queue group re-read) is no l
 
 ## 2026-09-26T07:48Z: #717 (part 1) draft PR #743 (pinned)
 Head `2db5ba5ee9f1c3d30057bef8ebc91556ad5c378a`. Before this change, the queue's group re-read reported `post_queue_read_failed` with no cause. It now reports `group_export_invalid` with the snapshot parser's cause, through the same helper the pre-approval read uses. The tests failed first; the reverted-cause proof is in the PR. Posting path, so both Sonnet and Opus reviews are pending. Part 2 (the STATUS class) is still waiting on the owner's decision.
+
+## 2026-09-26T07:55Z: #743 (#717 part 1), ready (pinned, posting path)
+Head `d8f4a626ec3dfdac10f2c14be51cb447d5d601b1`. Opus: no P1/P2; its P3 (ADR 0004 row 12 count and list) is fixed and resealed. Sonnet: no findings (e2e module 82/82). Needs an Opus independent reviewer.
+CI: #731 (`5da9116`) and #736 (`3fd05f5`) are green after the master merges.
