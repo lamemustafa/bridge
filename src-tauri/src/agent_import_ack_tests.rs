@@ -956,18 +956,31 @@ const D3_GUID: &str = "17a10910-773c-42c6-bd66-7bba9a392536";
 /// (`H`), the voucher census (`C`) and the import verification read (`V`),
 /// each response as Tally sent it (fixtures `d3-batch-*`, one capture).
 fn d3_batch_readback() -> Vec<ScenarioPlan> {
-    let extent = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-company-extent.utf16le.xml"
-    ));
-    let high_water = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-company-high-water.utf16le.xml"
-    ));
-    let census = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-voucher-census.utf16le.xml"
-    ));
-    let readback = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import-verification.utf16le.xml"
-    ));
+    d3_readback_of([
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-company-extent.utf16le.xml"
+        ),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-company-high-water.utf16le.xml"
+        ),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-voucher-census.utf16le.xml"
+        ),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import-verification.utf16le.xml"
+        ),
+    ])
+}
+
+/// One `verify_import` of that batch in the captured order, answered from one
+/// capture's extent, high-water, census and verification responses.
+fn d3_readback_of([extent, high_water, census, readback]: [&[u8]; 4]) -> Vec<ScenarioPlan> {
+    let (extent, high_water, census, readback) = (
+        captured(extent),
+        captured(high_water),
+        captured(census),
+        captured(readback),
+    );
     "SEESESEHSHSEECSCSEEVSVSEEVSVSE"
         .chars()
         .map(|step| match step {
@@ -995,6 +1008,30 @@ fn d3_batch_requests() -> Vec<Option<&'static str>> {
         .collect()
 }
 
+/// A server holding the D3 post's journal and saved file as written, with the
+/// journal's origin moved to the simulator (a dispatched batch verifies only
+/// on the origin it recorded).
+fn d3_server(simulator: &SequenceSimulator, directory: &std::path::Path) -> Server {
+    let server = server_at(simulator.address(), directory);
+    let origin =
+        super::super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    fs::write(
+        directory.join("agent-import-ledger.jsonl"),
+        include_str!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-journal.jsonl")
+            .replace("http://127.0.0.1:9001", &origin),
+    )
+    .unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{D3_BATCH}.xml")),
+        include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import.xml"),
+    )
+    .unwrap();
+    server
+}
+
 /// A person reviews the doubted 50-voucher batch through the whole path: the
 /// read, the dialog, the second read and the write. The record binds every
 /// voucher as Tally holds it, in batch order, and a later readback reports it
@@ -1007,21 +1044,8 @@ async fn a_review_of_the_captured_50_voucher_batch_binds_every_voucher() {
     plans.extend(d3_batch_readback());
     let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
-    let server = server_at(simulator.address(), directory.path());
-    let origin =
-        super::super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
-    fs::write(
-        directory.path().join("agent-import-ledger.jsonl"),
-        include_str!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-journal.jsonl")
-            .replace("http://127.0.0.1:9001", &origin),
-    )
-    .unwrap();
+    let server = d3_server(&simulator, directory.path());
     let imports = server.imports_dir().unwrap();
-    fs::write(
-        imports.join(format!("{D3_BATCH}.xml")),
-        include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import.xml"),
-    )
-    .unwrap();
     let step = json!({"state":"unmatched","target_voucher_step":{
         "before":1419,"after":1470,"step":51,"reported_created":50,"matches_created":false}});
     fs::write(
@@ -1119,6 +1143,82 @@ async fn a_review_of_the_captured_50_voucher_batch_binds_every_voucher() {
         d3_batch_requests(),
     ]
     .concat();
+    assert_eq!(requests.len(), expected.len(), "{requests:?}");
+    for (index, (request, expected)) in requests.iter().zip(expected).enumerate() {
+        match expected {
+            None => assert_eq!(request.method, "GET", "request {index}"),
+            Some(sha256) => assert_eq!(request.request_body_sha256, sha256, "request {index}"),
+        }
+    }
+}
+
+/// The same batch read back after a person cancelled D3-003 in Tally's own
+/// screen (Alt+X), captured at the wire in one run (fixtures `d3-cancelled-*`).
+/// Tally keeps the cancelled voucher's number and marker but drops its ledger
+/// entries, so its content can never match the build; it must still read as
+/// cancelled, not as a content change (bridge#758).
+#[tokio::test]
+async fn a_voucher_cancelled_in_tally_reads_not_effective_not_divergent() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(d3_readback_of([
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-cancelled-company-extent.utf16le.xml"
+        ),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-cancelled-company-high-water.utf16le.xml"
+        ),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-cancelled-voucher-census.utf16le.xml"
+        ),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/d3-cancelled-import-verification.utf16le.xml"
+        ),
+    ])))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = d3_server(&simulator, directory.path());
+
+    let verified = server
+        .call_tool(
+            "verify_import",
+            json!({"company_guid":D3_GUID,"batch_id":D3_BATCH}),
+        )
+        .await;
+    let result = &verified["structuredContent"]["result"];
+    assert_eq!(result["counts"]["posted_not_effective"], 1, "{verified}");
+    assert_eq!(result["counts"]["posted_divergent"], 0, "{verified}");
+    assert_eq!(result["counts"]["posted_verified"], 49, "{verified}");
+    // The one voucher not verified is D3-003, reported as cancelled.
+    assert_eq!(
+        result["unverified_vouchers"],
+        json!([{"bridge_txn_id":"D3-003","status":"posted_not_effective","marker":"narration_tag",
+            "reason":"voucher_cancelled","diffs":[],"voucher_number":"3",
+            "guid":"17a10910-773c-42c6-bd66-7bba9a392536-00000550","master_id":"1360","alter_id":1685}]),
+        "{verified}"
+    );
+    assert_eq!(
+        result["dispatch"]["state"], "reconciliation_required",
+        "{verified}"
+    );
+    let markdown = fs::read_to_string(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{D3_BATCH}.proof.md")),
+    )
+    .unwrap();
+    assert!(
+        markdown
+            .contains("Readback counts: matching 49, divergent 0, not effective 1, not found 0"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("| D3-003 | posted_not_effective |"),
+        "{markdown}"
+    );
+
+    // Every request Bridge sent is the one the capture answered.
+    let requests = sent(simulator);
+    let expected = d3_batch_requests();
     assert_eq!(requests.len(), expected.len(), "{requests:?}");
     for (index, (request, expected)) in requests.iter().zip(expected).enumerate() {
         match expected {
