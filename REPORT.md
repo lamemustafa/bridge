@@ -245,3 +245,9 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - Diffs against master are unchanged. #729's 13 tests pass and the workflow YAML has no duplicate keys.
 - New heads: #728 `5cab138`, #729 `eab393d`. CI is re-running.
 - **Whichever of the two merges first will make the other conflict again on the same two lines.** That is item 5's bottleneck, observed live.
+
+## 2026-09-26 09:04 UTC: Check-in: re-merged and resealed again
+
+- Master took #712, a pinned change, at `bf01cc4`. #728 and #729 again conflicted on exactly the two aggregate lines. It is the second forced re-merge in about an hour, with neither PR changing anything.
+- Same procedure as before: no pin or claim change on either side, take master's generated files, reseal as its own commit, `--verify` current, diffs unchanged.
+- New heads: #728 `b33021b`, #729 `2816f76`. CI is re-running.
