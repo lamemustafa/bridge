@@ -105,3 +105,6 @@ With #712 and #721 merged, #711 was no longer blocked by overlap. **Draft PR #74
 
 ## 2026-09-26T10:32Z: #749 (#711) ready (pinned, posting path)
 Head `463d2aed62bd5a3f63196a9454247c0852f37e26`. Opus found no P1. Its P2 (ADR row 14 still named the catch-all) and one P3 (README codes) are fixed and resealed; the other two P3s are answered on the PR. Sonnet had no findings. Needs an Opus independent reviewer.
+
+## 2026-09-26T10:38Z: #734 merged
+#680 is fixed on master. Lane D merged master into the branch (`3b45db6`) and then merged it. The session is unsubscribed.
