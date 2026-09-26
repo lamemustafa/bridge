@@ -71,3 +71,13 @@ Head `cb57941d301920b6f110cff1f912a4866fb0f73a`. Sonnet: no P1/P2. Two independe
 - #727: merged.
 
 All four open PRs are ready and wait only on Lane D's independent reviewer. #731 is on the approval path and needs Opus.
+
+## 2026-09-26T07:37Z: check-in
+Master gained #727 (mine) and #708 (lane-f). #731 and #736 conflicted only in the compatibility surface/matrix JSON. I merged master into each: master's JSON was taken and `scripts/reseal.sh` was re-run. Each changed 1 pin, and `--verify` is clean.
+- #731 is now `5da9116007ba2447cb2e805d3560301fe8bea3a3`. The approved_import tests (14) and approval_seam_gate (10) pass. Its merge commit carries git's default message, without the session trailer. I noted this rather than force-push.
+- #736 is now `3fd05f5cfee3429ba223db8dce2be48dc1ee5d09`. The amend tests (27) pass.
+- #733 and #734 are behind master with no conflict and are left for Lane D's pre-merge update.
+
+No review threads are open on any of them. The only bot comments are Codex usage-limit notices.
+
+Since #708 merged, #717 part 1 (the cause on the in-queue group re-read) is no longer blocked by overlap. I'll take it next.
