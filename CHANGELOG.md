@@ -12,7 +12,8 @@ current source.
 ### In plain words: since the `mcp-preview-0.2.0` build (16 Sep 2026)
 
 These changes are in the source. They are not yet in a published package.
-Each line names the pull requests it comes from.
+Each line names the pull requests it comes from, except where it names an open
+issue.
 
 **What you can do now**
 
@@ -42,7 +43,10 @@ Each line names the pull requests it comes from.
   reports where the voucher landed (#607).
 - It refuses to post if a ledger changed since the voucher was prepared, if
   the company's masters changed between its final checks and the post, or if
-  the saved file no longer matches its record (#578, #615, #616, #623).
+  the saved file no longer matches its record (#578, #615, #616).
+- If the company's masters change while a post is landing, the post is
+  reported as not verified and needing reconciliation, so you check it in
+  Tally (#623).
 - It records each voucher's import identity before sending it, and never sends
   one twice (#582, #678).
 - It refuses to post into a book with more than one currency defined (#613).
@@ -94,7 +98,8 @@ Each line names the pull requests it comes from.
   - a high-value register.
   (#501, #504, #508, #560, #561, #571, #592, #593, #618, #636, #710, #713)
 - Every module is mutation-tested in CI (#646, #682).
-- Its accuracy is **not yet proven publicly**. The method for that is #738.
+- Its accuracy is **not yet proven publicly**. Issue #738 proposes how to
+  prove it.
 
 **Security and upkeep**
 
