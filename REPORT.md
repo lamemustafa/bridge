@@ -279,3 +279,8 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - Lane D merged master into `lane-e/e2b-hvr` (b47e154b; crate tree identical to 6e2b984f) and reported real-book parity **EQUAL on all three clients** against reference 140bc7d3. #713's body now names b47e154b as the candidate and carries the real-book line. CI's earlier "Required checks" failure on 6e2b984f was a superseded, cancelled run; the mutation-records check passes.
 - Follow-up Lane D named (not for #713): re-vendor the rules at 140bc7d3. Deferred here, since the crate stays frozen until the stack merges.
 - E3a: merged 6e2b984f into `lane-e/e3a-stock` locally (16fb0f06): `mutations.json` union (592 ids, none edited), one `stock: None` in E2b's new test book. 345 tests pass; clippy and fmt clean. Full run started, sharded to `cloud/lane-e-e3a-shards-2`; a Sonnet review of the merge runs before any push.
+
+## 2026-09-26 03:50 UTC — #713 held again (Lane D: reference fix for the "below" rows); E3a run resumed after a restart
+
+- Lane D holds #713 on the independent review's narrowed P1: a flagged row whose money line is `below` the threshold keeps its at-or-over title, its clause tags and its place in the at-or-over count. The reference is fixed first (row stays listed with a true title, drops the statutory tags, leaves the at-or-over count, a separate count reconciles), then goldens and port note regenerate. This lane ports it when it lands on `lane-e/e2b-hvr`, then E2b full run, records, fresh review.
+- A container restart killed E3a's full run on 16fb0f06 after shard 1 (148 killed, pushed). Worktrees rebuilt from origin; shards 2–4 rerunning. These records will be superseded once E2b changes again (E3a must re-stack), but the run is not interrupted.
