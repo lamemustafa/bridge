@@ -59,7 +59,7 @@ fn a_debit_reads_as_the_post_dialog_showed_it_and_an_odd_sign_shows_as_it_is() {
     voucher["amounts"][1]["amount"] = json!("2.00");
     voucher["amounts"][2]["is_deemed_positive"] = json!("No");
     voucher["amounts"][2]["amount"] = json!("1232.50");
-    voucher["amounts"][3]["amount"] = json!("-0.00");
+    voucher["amounts"][3]["amount"] = json!("0.00");
     voucher["amounts"][4]["is_deemed_positive"] = json!("No");
     voucher["amounts"][4]["amount"] = json!("-3.10");
     let voucher: ReadVoucher = serde_json::from_value(voucher).unwrap();
