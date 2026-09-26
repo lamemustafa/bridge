@@ -1,0 +1,666 @@
+{
+ "comment": "high_value_register paths: a (party, day) row at exactly the s.269ST limit across two vouchers (h01+h02); a walk-in sale grouped as one unidentified party (h03); a tax line folded into a single party (h04, a blank-GUID ledger); a cash loan receipt left out and its repayment kept (h05, h06); a co-operative-bank counterparty dropped in cash mode and kept in bank mode (h07, h08); a Government-company line dropped from the fallback total (h09); two parties each with their own amount (h10, h11); Contra and an optional voucher left out (h12, h13); an unidentified cash purchase (h14); cash and bank on one voucher (h15); limb (b) groups by reference (h16-h18, and every blank-reference voucher counted); journal transfers over and under the threshold and the three kinds skipped (h19-h23); a numberless voucher (h24); a withdrawal booked as a Receipt, whose bank line is never a party (h26); a loan received by bank kept, as that exclusion is cash-only (h27); s.194N terms matched upper-cased ('Straße' upper-casing to STRASSE), a credit and an unmatched debit left out, a narration over 60 characters; one AIS row; a co-operative recipient.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_paths-000"
+  },
+  {
+   "name": "Edge Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_paths-001"
+  },
+  {
+   "name": "Customer A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_paths-002"
+  },
+  {
+   "name": "Customer B",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": ""
+  },
+  {
+   "name": "Supplier C",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-hvr_paths-004"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-hvr_paths-005"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-hvr_paths-006"
+  },
+  {
+   "name": "Output CGST",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-hvr_paths-007"
+  },
+  {
+   "name": "Round Off",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-hvr_paths-008"
+  },
+  {
+   "name": "Term Loan",
+   "chain": [
+    "Loans (Liability)"
+   ],
+   "guid": "edge-hvr_paths-009"
+  },
+  {
+   "name": "Coop Bank Party",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-hvr_paths-010"
+  },
+  {
+   "name": "Gov Co",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_paths-011"
+  },
+  {
+   "name": "Other Party",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_paths-012"
+  },
+  {
+   "name": "Office Expense",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-hvr_paths-013"
+  }
+ ],
+ "tb": [],
+ "vouchers": [
+  {
+   "guid": "h01",
+   "date": "2025-05-10",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     12000000
+    ],
+    [
+     "Customer A",
+     -12000000
+    ]
+   ]
+  },
+  {
+   "guid": "h02",
+   "date": "2025-05-10",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     8000000
+    ],
+    [
+     "Customer A",
+     -8000000
+    ]
+   ]
+  },
+  {
+   "guid": "h03",
+   "date": "2025-05-11",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     23600000
+    ],
+    [
+     "Sales",
+     -19999950
+    ],
+    [
+     "Output CGST",
+     -3600000
+    ],
+    [
+     "Round Off",
+     -50
+    ]
+   ]
+  },
+  {
+   "guid": "h04",
+   "date": "2025-05-12",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     25000000
+    ],
+    [
+     "Customer B",
+     -20000000
+    ],
+    [
+     "Output CGST",
+     -5000000
+    ]
+   ]
+  },
+  {
+   "guid": "h05",
+   "date": "2025-05-13",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     30000000
+    ],
+    [
+     "Term Loan",
+     -30000000
+    ]
+   ]
+  },
+  {
+   "guid": "h06",
+   "date": "2025-05-14",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -30000000
+    ],
+    [
+     "Term Loan",
+     30000000
+    ]
+   ]
+  },
+  {
+   "guid": "h07",
+   "date": "2025-05-15",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     25000000
+    ],
+    [
+     "Coop Bank Party",
+     -25000000
+    ]
+   ]
+  },
+  {
+   "guid": "h08",
+   "date": "2025-05-15",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Edge Bank",
+     25000000
+    ],
+    [
+     "Coop Bank Party",
+     -25000000
+    ]
+   ]
+  },
+  {
+   "guid": "h09",
+   "date": "2025-05-16",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     22000000
+    ],
+    [
+     "Gov Co",
+     -12000000
+    ],
+    [
+     "Customer A",
+     -10000000
+    ]
+   ]
+  },
+  {
+   "guid": "h10",
+   "date": "2025-05-17",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     40000000
+    ],
+    [
+     "Customer A",
+     -25000000
+    ],
+    [
+     "Other Party",
+     -15000000
+    ]
+   ]
+  },
+  {
+   "guid": "h11",
+   "date": "2025-05-18",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     31000000
+    ],
+    [
+     "Customer A",
+     -10000000
+    ],
+    [
+     "Customer B",
+     -10000000
+    ],
+    [
+     "Output CGST",
+     -11000000
+    ]
+   ]
+  },
+  {
+   "guid": "h12",
+   "date": "2025-05-19",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     50000000
+    ],
+    [
+     "Edge Bank",
+     -50000000
+    ]
+   ]
+  },
+  {
+   "guid": "h13",
+   "date": "2025-05-20",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     50000000
+    ],
+    [
+     "Customer A",
+     -50000000
+    ]
+   ],
+   "status": "optional"
+  },
+  {
+   "guid": "h14",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -21000000
+    ],
+    [
+     "Purchases",
+     20000000
+    ],
+    [
+     "Output CGST",
+     1000000
+    ]
+   ]
+  },
+  {
+   "guid": "h15",
+   "date": "2025-06-02",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -5000000
+    ],
+    [
+     "Edge Bank",
+     -20000000
+    ],
+    [
+     "Supplier C",
+     25000000
+    ]
+   ]
+  },
+  {
+   "guid": "h16",
+   "date": "2025-07-01",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     12000000
+    ],
+    [
+     "Customer A",
+     -12000000
+    ]
+   ],
+   "reference": "INV/7"
+  },
+  {
+   "guid": "h17",
+   "date": "2025-07-09",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     9000000
+    ],
+    [
+     "Customer A",
+     -9000000
+    ]
+   ],
+   "reference": "INV/7"
+  },
+  {
+   "guid": "h18",
+   "date": "2025-07-02",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -20000000
+    ],
+    [
+     "Supplier C",
+     20000000
+    ]
+   ],
+   "reference": "PO-9"
+  },
+  {
+   "guid": "h19",
+   "date": "2025-08-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     20000000
+    ],
+    [
+     "Supplier C",
+     -20000000
+    ]
+   ]
+  },
+  {
+   "guid": "h20",
+   "date": "2025-08-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     1000000
+    ],
+    [
+     "Supplier C",
+     -1000000
+    ]
+   ]
+  },
+  {
+   "guid": "h21",
+   "date": "2025-08-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     30000000
+    ],
+    [
+     "Supplier C",
+     -20000000
+    ],
+    [
+     "Other Party",
+     -10000000
+    ]
+   ]
+  },
+  {
+   "guid": "h22",
+   "date": "2025-08-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     30000000
+    ],
+    [
+     "Office Expense",
+     -30000000
+    ]
+   ]
+  },
+  {
+   "guid": "h23",
+   "date": "2025-08-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Edge Bank",
+     30000000
+    ],
+    [
+     "Customer A",
+     -30000000
+    ]
+   ]
+  },
+  {
+   "guid": "hvr-numberless-000000000024",
+   "date": "2025-09-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -20000000
+    ],
+    [
+     "Other Party",
+     20000000
+    ]
+   ],
+   "number": ""
+  },
+  {
+   "guid": "h25",
+   "date": "2025-09-02",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Edge Bank",
+     -5000000
+    ],
+    [
+     "Supplier C",
+     5000000
+    ]
+   ]
+  },
+  {
+   "guid": "h26",
+   "date": "2025-09-03",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     21000000
+    ],
+    [
+     "Edge Bank",
+     -21000000
+    ]
+   ]
+  },
+  {
+   "guid": "h27",
+   "date": "2025-09-04",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Edge Bank",
+     25000000
+    ],
+    [
+     "Term Loan",
+     -25000000
+    ]
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Edge Bank"
+ ],
+ "entity_type": "firm",
+ "tests": [
+  "high_value_register"
+ ],
+ "bank_statement": {
+  "doc_id": "bank:2026-27:hvr",
+  "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "account_ref": "XXXXXX0009",
+  "bank": "Invented Bank",
+  "period": {
+   "start": "2025-06-01",
+   "end": "2025-06-30"
+  },
+  "opening_balance_paise": 100000000,
+  "closing_balance_paise": 94000000,
+  "rows": [
+   {
+    "doc": "bank:2026-27:hvr",
+    "row": 0,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-03",
+    "narration": "cash wdl self",
+    "debit_paise": 5000000,
+    "credit_paise": 0,
+    "balance_paise": null
+   },
+   {
+    "doc": "bank:2026-27:hvr",
+    "row": 1,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-04",
+    "narration": "CASH WDL REVERSAL",
+    "debit_paise": 0,
+    "credit_paise": 1000000,
+    "balance_paise": null
+   },
+   {
+    "doc": "bank:2026-27:hvr",
+    "row": 2,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-05",
+    "narration": "NEFT TO SUPPLIER",
+    "debit_paise": 700000,
+    "credit_paise": 0,
+    "balance_paise": null
+   },
+   {
+    "doc": "bank:2026-27:hvr",
+    "row": 3,
+    "account_ref": "XXXXXX0009",
+    "txn_date": "2025-06-06",
+    "narration": "Withdrawal at Strasse branch counter, self cheque 000123, presented by the proprietor",
+    "debit_paise": 300000,
+    "credit_paise": 0,
+    "balance_paise": null
+   }
+  ]
+ },
+ "ais": [
+  {
+   "doc": "ais:edge",
+   "row": 1,
+   "category": "gst_turnover",
+   "source_name": "Invented source",
+   "source_id": "SRC-9",
+   "txn_date": null,
+   "amount_paise": 150000000
+  }
+ ],
+ "s194n_terms": [
+  "cash wdl",
+  "Straße"
+ ],
+ "round_off_ledgers": [
+  "Round Off"
+ ],
+ "counterparty_types": {
+  "Coop Bank Party": "cooperative_bank",
+  "Gov Co": "government_company",
+  "Other Party": "individual"
+ },
+ "s194n_recipient_type": "co_operative_society"
+}
