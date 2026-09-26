@@ -143,13 +143,18 @@ const rust = (id, key, extra = {}) => ({
   id, key, ref: "refs/heads/master", created_at: new Date(Date.UTC(2026, 0, id)).toISOString(), size_in_bytes: 100, ...extra,
 });
 
-test("keeps only the newest master Rust cache per job and OS family", async () => {
+test("keeps only the newest master Rust cache per restore prefix", async () => {
+  const deps = `v0-rust-native-deps-v1-${"c".repeat(64)}-native-Windows_NT-x64`;
   const rows = [
     rust(1, "v0-rust-native-Darwin-arm64-f4739347-c3d09d17"),
     rust(2, "v0-rust-native-Darwin-arm64-f4739347-6b138785"),
     rust(3, "v0-rust-bundle-smoke-Windows_NT-x64-e17645bc-805fe0b3"),
     rust(4, "v0-rust-bundle-smoke-Windows_NT-x64-e17645bc-f6df997b"),
     rust(5, "v0-rust-tally-portable-Linux-x64-01b40e38-6b138785"),
+    rust(9, `${deps}-f12e7641-c3d09d17`),
+    rust(10, `${deps}-f12e7641-6b138785`),
+    // A different environment hash (another runner image) restores separately, so it is kept.
+    rust(11, `${deps}-0badcafe-c3d09d17`),
     // A PR ref, a malformed key and a foreign namespace are never selected.
     rust(6, "v0-rust-bundle-smoke-Windows_NT-x64-e17645bc-aaaaaaaa", { ref: "refs/pull/7/merge", created_at: new Date(Date.UTC(2025, 0, 1)).toISOString() }),
     rust(7, "v0-rust-native-Darwin-arm64-f4739347"),
@@ -161,7 +166,7 @@ test("keeps only the newest master Rust cache per job and OS family", async () =
     const listed = key === "v0-rust-" ? rows : [];
     return response(200, { total_count: listed.length, actions_caches: listed });
   };
-  assert.deepEqual((await pruneCaches({ env, fetcher })).obsoleteIds, [1, 3]);
+  assert.deepEqual((await pruneCaches({ env, fetcher })).obsoleteIds, [1, 3, 9]);
 });
 
 test("an incomplete Rust cache listing refuses before any family is deleted", async () => {

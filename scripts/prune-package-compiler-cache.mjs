@@ -2,9 +2,10 @@
 import { pathToFileURL } from "node:url";
 
 const managedKey = /^bridge-package-sccache-v1-(macOS|Windows)-(ARM64|X64)-[a-f0-9]{64}-[a-f0-9]{40}-\d+$/;
-// Swatinem/rust-cache keys end in an environment hash and a lockfile hash. A new master key in the
-// same job/OS family supersedes the older one: restores match the family prefix and take the newest.
-const rustKey = /^v0-rust-([\w.-]+)-[a-f0-9]{8}-[a-f0-9]{8}$/;
+// Swatinem/rust-cache keys end in an environment hash and a lockfile hash, and it restores by the
+// prefix up to the environment hash. A newer master key with the same prefix supersedes the older
+// one; a different environment hash (runner image, toolchain) is a separate family, left to expire.
+const rustKey = /^v0-rust-([\w.-]+-[a-f0-9]{8})-[a-f0-9]{8}$/;
 const families = [
   { prefix: "bridge-package-sccache-v1-", key: managedKey, keep: 2 },
   { prefix: "v0-rust-", key: rustKey, keep: 1 },
