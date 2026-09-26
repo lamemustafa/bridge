@@ -292,3 +292,8 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - Opus (400 random balanced books; counts always partition the old count; output otherwise byte-identical) and Sonnet: no P1. Opus's P2 test gaps fixed in d1f4c226 (unidentified receipt proven under in both modes). Sonnet's P2 (no golden exercises bank/receipt/unidentified proven-under or multi-voucher lines) passed to Lane D on #713. Sonnet pre-push check: none.
 - Mutations: E2B2-02/35 re-pointed, E2B2-40..44 added; all 44 E2B2 killed (sampled). Pushed `lane-e/e2b-hvr` @ d1f4c226. E2b full run started, sharded to `cloud/lane-e-e2b-shards-3`.
 - E3a's full run on 16fb0f06 finished (all 4 shards on `cloud/lane-e-e3a-shards-2`) but is superseded by this E2b change; its records are not pushed. E3a and E4 re-stack after E2b's records.
+
+## 2026-09-26 05:50 UTC — E2b records pushed (86bb1937); #713 ready for Lane D; E3a re-stacked locally
+
+- E2b full run on d1f4c226 (4 shards on `cloud/lane-e-e2b-shards-3`): **563 run, 558 killed**, 5 accepted survivors; all 44 E2B2 killed. `--verify`: 563/563 proven on crate tree 177a5433108e94bc. Sonnet pre-push check: none. **Pushed `lane-e/e2b-hvr` @ 86bb1937**; #713 body updated (net LOC crate +7310/−565, source and tests +1641/−24, 6 tests) and commented. Waiting on Lane D's real-book re-run (against e41d9010) and independent review.
+- E3a re-stacked locally on 86bb1937 (fa07ed0a): `mutations.json` union (597 ids; E2B2-02/35 taken from E2b, the only side that changed them); 345 tests pass; clippy and fmt clean. Sonnet review of the merge running; then push and E3a's full run.
