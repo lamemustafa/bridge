@@ -127,6 +127,7 @@ mod listing {
                 redaction: Redaction::None,
                 import_enabled: false,
                 writes_enabled: false,
+                batch_post_enabled: false,
             });
             Self {
                 simulator,

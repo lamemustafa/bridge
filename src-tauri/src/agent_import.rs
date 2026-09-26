@@ -9,8 +9,8 @@ use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
 };
 use bridge_tally_core::master_binding::{
-    self, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog, MasterClass,
-    SourceEntity,
+    self, twin_fold_keys, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog,
+    MasterClass, SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::native_outstandings::{
@@ -283,6 +283,83 @@ pub(super) struct ImportLedgerLine {
     ledger_identities: Option<Vec<BoundLedger>>,
 }
 
+/// A requested name and every live ledger whose stored name folds equal to it
+/// under either of the binding module's folds (`twin_fold_keys`: case, NFC,
+/// dashes, quotes, whitespace including CR and LF, and `/` as a space), when
+/// there are at least two (bridge#626). Tally's import lookup also matches
+/// names loosely (§9.4d), and which of two such ledgers it would post to is
+/// not established, so a build naming either is refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FoldedTwins {
+    requested: String,
+    live: Vec<(String, Option<String>)>,
+}
+
+/// The requested names that fold equal to two or more live ledgers, in the
+/// order requested. Each lists its live ledgers in catalogue order.
+fn folded_twins<'a>(
+    requested: &[String],
+    catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Vec<FoldedTwins> {
+    let catalogue = catalogue.collect::<Vec<_>>();
+    let mut by_key: [BTreeMap<String, Vec<usize>>; 3] = Default::default();
+    for (index, (name, _)) in catalogue.iter().enumerate() {
+        for (keys, key) in by_key.iter_mut().zip(twin_fold_keys(name)) {
+            keys.entry(key).or_default().push(index);
+        }
+    }
+    requested
+        .iter()
+        .filter_map(|name| {
+            let mut family = BTreeSet::new();
+            for (keys, key) in by_key.iter().zip(twin_fold_keys(name)) {
+                if let Some(found) = keys.get(&key) {
+                    family.extend(found.iter().copied());
+                }
+            }
+            (family.len() > 1).then(|| FoldedTwins {
+                requested: name.clone(),
+                live: family
+                    .into_iter()
+                    .map(|index| {
+                        let (name, parent) = catalogue[index];
+                        (name.to_string(), parent.map(str::to_string))
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+fn folded_live_ledgers_json(twins: &FoldedTwins) -> Value {
+    json!(twins
+        .live
+        .iter()
+        .map(|(name, parent)| json!({"name": party_name(name.clone()), "parent": parent}))
+        .collect::<Vec<_>>())
+}
+
+/// Marks each report entry whose requested name folds equal to two or more
+/// live ledgers with those ledgers and their groups. Such a name is not
+/// importable, whichever ledger it bound to.
+fn annotate_folded_twins<'a>(
+    report: &mut [Value],
+    requested: &[String],
+    catalogue: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) {
+    let twins = folded_twins(requested, catalogue);
+    for (entry, name) in report.iter_mut().zip(requested) {
+        if let Some(found) = twins.iter().find(|twins| &twins.requested == name) {
+            entry["folded_twins"] = folded_live_ledgers_json(found);
+            if entry.get("importable").is_some() {
+                entry["importable"] = json!(false);
+            }
+        }
+    }
+}
+
+const FOLDED_TWIN_NEXT_STEP: &str = "No file was written. Each ledger in ledger_twins has at least one other live ledger whose name differs from it only by case, spacing, dashes, slashes or quotes, or a trailing line break. Tally's import also matches names loosely, and which of them it would post to is not established, so Bridge names none of them. Have an operator rename ledgers in Tally until no two in each group fold equal, then run validate_masters and build again.";
+
 /// One ledger name and the GUID it was bound to at build time.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct BoundLedger {
@@ -409,7 +486,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only a single-voucher batch is eligible for post_import: an unnumbered Journal, or a Payment, Receipt or Contra, whose legs post_import classifies again before approval and after approval inside the endpoint queue, before the final duplicate check and the post."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. A single-voucher batch is eligible for post_import (and, when BRIDGE_AGENT_ENABLE_BATCH_POST is on, a batch of 2 to 50 such vouchers): an unnumbered Journal, or a Payment, Receipt or Contra, whose legs post_import classifies again before approval and after approval inside the endpoint queue, before the final duplicate check and the post."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -431,15 +508,14 @@ impl Server {
         // catalogue, so verifying the company and reading its ledgers first
         // would spend two live round trips — and retain evidence of them — to
         // reach a failure that was decidable from the request alone.
-        let entities =
-            source_entities(&ledgers.into_iter().map(str::to_string).collect::<Vec<_>>())
-                .map_err(ToolFailure::from)?;
+        let names = ledgers.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let requested = requested_masters(&names).map_err(ToolFailure::from)?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
-        let (catalogue, evidence) = self
-            .read_ledger_catalogue(&identity, &company.name)
+        let (catalogue, ledger_masters, _, evidence) = self
+            .read_import_ledger_catalogue(&identity, &company.name)
             .await
             .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
-        let report = master_report(&entities, &catalogue)
+        let mut report = requested_master_report(&requested, &catalogue)
             // The catalogue read already succeeded, so its request/response
             // commitments belong in the failure too; attaching identity evidence
             // alone would omit a Tally read that actually happened.
@@ -449,6 +525,7 @@ impl Server {
                     evidence.clone(),
                 ))
             })?;
+        annotate_folded_twins(&mut report, &names, ledger_masters.parents());
         let hash = sha256_json(&catalogue);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
@@ -540,13 +617,33 @@ impl Server {
                 .await
                 .map(|(names, catalogue, _, evidence)| (names, catalogue, evidence))?;
             accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
-            let report = masters_for_payload(&payload, &catalogue)?;
+            let requested_names = requested_ledger_names(&payload);
+            let mut report = masters_for_payload(&payload, &catalogue)?;
+            annotate_folded_twins(&mut report, &requested_names, ledger_masters.parents());
             if report.iter().any(|value| value["match_state"] != "exact") {
                 return Ok(ToolOutcome {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                         "state":"refused", "reason":"masters_not_exact", "masters":report,
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
                         "next_step":master_recovery_guidance(&report)
+                    }}),
+                    evidence: accumulated.clone(),
+                    company_guid: Some(payload.company_guid),
+                    truncated: false,
+                });
+            }
+            let twins = folded_twins(&requested_names, ledger_masters.parents());
+            if !twins.is_empty() {
+                return Ok(ToolOutcome {
+                    payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
+                        "state":"refused", "reason":"ledger_has_folded_twin",
+                        "ledger_twins": twins.iter().map(|twins| json!({
+                            "requested": party_name(twins.requested.clone()),
+                            "relation": "fold_equal",
+                            "live_ledgers": folded_live_ledgers_json(twins),
+                        })).collect::<Vec<_>>(),
+                        "catalogue_evidence_sha256":sha256_json(&catalogue),
+                        "next_step":FOLDED_TWIN_NEXT_STEP
                     }}),
                     evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
@@ -767,6 +864,7 @@ impl Server {
                     &line,
                     &self.settings.endpoint,
                     post::PostScope::Vouchers,
+                    self.post_voucher_limit(post::PostScope::Vouchers),
                 )
                 .is_ok();
             let (mut warnings, next_step) = build_import_guidance(
@@ -1101,7 +1199,11 @@ impl Server {
                                 )
                                 .await
                             };
-                            Some(self.record_masters_verdict(&line.batch_id, verdict))
+                            Some(self.record_masters_verdict_for(
+                                &line.batch_id,
+                                verdict,
+                                line.vouchers.len() > 1,
+                            ))
                         }
                         recorded => recorded,
                     }
@@ -1921,7 +2023,9 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         for entry in &voucher.entries {
             if entry.ledger.trim().is_empty()
                 || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
-                || entry.ledger.chars().any(char::is_control)
+                || without_trailing_crlf(&entry.ledger)
+                    .chars()
+                    .any(char::is_control)
                 || reads_back_as_other_text(&entry.ledger)
                 || !valid_2dp_amount(&entry.amount)
             {
@@ -2327,27 +2431,107 @@ fn masters_for_payload(
     payload: &ImportPayload,
     catalogue: &[String],
 ) -> Result<Vec<Value>, String> {
-    master_report(
-        &source_entities(&requested_ledger_names(payload))?,
+    requested_master_report(
+        &requested_masters(&requested_ledger_names(payload))?,
         catalogue,
     )
 }
 
-/// Parses requested names into source entities, which is where the core's own
-/// bounds are enforced — a control character, or more identifiers than one name
-/// may carry.
+/// A ledger name as a caller requested it, parsed at the boundary (bridge#626).
+enum RequestedMaster {
+    /// Bound by the core's rules, which refuse every control character.
+    Named(SourceEntity),
+    /// Ends in one CR LF, as some books store a ledger name; the core refuses
+    /// that as input. Such a name is only ever bound byte for byte, to a live
+    /// ledger holding exactly these bytes: no fold, candidate or identifier can
+    /// select it, because the fold that would find it also finds its twin.
+    ExactOnly(String),
+}
+
+/// A name without one trailing CR LF. Only that spelling has been observed to
+/// import onto a stored ledger (bridge#626); a lone CR or LF, a repeated CR LF
+/// or a line break anywhere else stays refused.
+fn without_trailing_crlf(name: &str) -> &str {
+    name.strip_suffix("\r\n").unwrap_or(name)
+}
+
+/// Whether a live catalogue name can be sent back as an import's ledger name:
+/// either the core admits it, or it is the core-admitted name plus one trailing
+/// CR LF, which `requested_masters` admits as exact-only.
+fn live_spelling_importable(position: usize, name: &str) -> bool {
+    SourceEntity::new(position, without_trailing_crlf(name)).is_ok()
+}
+
+/// Parses requested names at the boundary, which is where the core's own
+/// bounds are enforced: a control character, or more identifiers than one name
+/// may carry. A name that ends in one CR LF is admitted as
+/// [`RequestedMaster::ExactOnly`] when the rest of it passes those bounds.
 ///
-/// Kept separate from `master_report` so a caller can run it **before** it
-/// reads Tally. A request the core will refuse cannot succeed at any catalogue,
-/// so spending a live read and collecting evidence of it first buys nothing and
+/// Kept separate from the report so a caller can run it **before** it reads
+/// Tally. A request the core will refuse cannot succeed at any catalogue, so
+/// spending a live read and collecting evidence of it first buys nothing and
 /// costs an external round trip against the operator's books.
-fn source_entities(requested: &[String]) -> Result<Vec<SourceEntity>, String> {
+fn requested_masters(requested: &[String]) -> Result<Vec<RequestedMaster>, String> {
+    let mut named = 0_usize;
     requested
         .iter()
-        .enumerate()
-        .map(|(position, name)| SourceEntity::new(position, name))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.safe_reason_code().to_string())
+        .map(|name| {
+            let base = without_trailing_crlf(name);
+            let entity = SourceEntity::new(named, base)
+                .map_err(|error| error.safe_reason_code().to_string())?;
+            if base.len() == name.len() {
+                named += 1;
+                Ok(RequestedMaster::Named(entity))
+            } else {
+                Ok(RequestedMaster::ExactOnly(name.clone()))
+            }
+        })
+        .collect()
+}
+
+/// [`master_report`] for requested names that may include exact-only ones,
+/// in the order they were requested. An exact-only name is `exact` when a live
+/// ledger holds exactly its bytes and `missing` otherwise, with no candidates.
+fn requested_master_report(
+    requested: &[RequestedMaster],
+    catalogue: &[String],
+) -> Result<Vec<Value>, String> {
+    let named = requested
+        .iter()
+        .filter_map(|master| match master {
+            RequestedMaster::Named(entity) => Some(entity.clone()),
+            RequestedMaster::ExactOnly(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let mut named_report = master_report(&named, catalogue)?.into_iter();
+    requested
+        .iter()
+        .map(|master| match master {
+            RequestedMaster::Named(_) => named_report
+                .next()
+                .ok_or_else(|| "master_report_incomplete".to_string()),
+            RequestedMaster::ExactOnly(name) => Ok(if catalogue.contains(name) {
+                json!({
+                    "requested": party_name(name.clone()),
+                    "match_state": "exact",
+                    "exact_live_spelling": party_name(name.clone()),
+                    "importable": true,
+                })
+            } else {
+                json!({
+                    "requested": party_name(name.clone()),
+                    "match_state": "missing",
+                    "reason": "master_binding_no_candidate",
+                    "listing": "none",
+                    "candidate_count": 0,
+                    "candidate_count_is_lower_bound": false,
+                    "candidates_truncated": false,
+                    "candidates": [],
+                    "unresolved_identity": [],
+                })
+            }),
+        })
+        .collect()
 }
 
 fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
@@ -2400,12 +2584,13 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             // proposed name is input. But it means the live spelling is not
             // always something the caller can send back, and the guidance below
             // used to tell them to copy it regardless. Following that failed the
-            // whole batch on `master_name_unsafe`, because `source_entities`
+            // whole batch on `master_name_unsafe`, because `requested_masters`
             // collects into one Result and refuses on the first bad name.
             //
             // Ask the proposal constructor rather than restating its rule, so
-            // the two can never disagree about what is admissible.
-            let importable = SourceEntity::new(binding.position, catalog_name).is_ok();
+            // the two can never disagree about what is admissible. A trailing
+            // line break is the one exception it does not know (bridge#626).
+            let importable = live_spelling_importable(binding.position, catalog_name);
             json!({
                 "requested": requested,
                 "match_state": match_state,
@@ -2482,11 +2667,18 @@ fn master_recovery_guidance(report: &[Value]) -> String {
     // Said separately, because the remedy is the opposite one: this spelling
     // cannot be copied back at all, and no retry of this payload will post
     // against that ledger.
+    if report.iter().any(|master| {
+        master["importable"] == Value::Bool(false) && master.get("folded_twins").is_none()
+    }) {
+        guidance.push("One matched ledger is named with a character imports do not accept, so its exact_live_spelling cannot be sent back; have an operator rename it in Tally, then run validate_masters again.");
+    }
+    // Its own remedy: the spelling is admissible, but another live ledger folds
+    // equal to it, and Tally's loose import lookup could post to either (#626).
     if report
         .iter()
-        .any(|master| master["importable"] == Value::Bool(false))
+        .any(|master| master.get("folded_twins").is_some())
     {
-        guidance.push("One matched ledger is named with a character imports do not accept, so its exact_live_spelling cannot be sent back; have an operator rename it in Tally, then run validate_masters again.");
+        guidance.push("A requested ledger folds equal to another live ledger (folded_twins: the same name apart from case, spacing, dashes, slashes or quotes, or a trailing line break), and which of them Tally's import would post to is not established, so neither is importable; have an operator rename one of them in Tally, then run validate_masters again.");
     }
     if report
         .iter()
@@ -2649,6 +2841,10 @@ pub(super) fn render_import_verification_in_span(
     format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{span_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
+/// Escapes text for the import file. CR and LF are written as character
+/// references: raw, an XML reader folds CR LF to LF and the file would name a
+/// ledger the book does not hold. Only a ledger name ending in a line break can
+/// carry either here (bridge#626); every other field refuses control text.
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -2656,6 +2852,8 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+        .replace('\r', "&#13;")
+        .replace('\n', "&#10;")
 }
 
 pub(super) fn local_evidence(label: &str) -> Evidence {
@@ -2675,6 +2873,14 @@ fn now() -> String {
 /// The state of a masters check that has not finished (#239).
 pub(super) const MASTERS_CHECK_PENDING: &str = "check_pending";
 
+// The masters-check pair (`*.masters_check.json`, `*.masters_doubt.json`)
+// holds a post's durable doubts: the masters verdict (#239) and, for a batch
+// of more than one voucher, the batch step verdict (`batch_step`), whose own
+// doubt is kept in `*.batch_step_doubt.json`. Neither verdict overwrites or
+// masks the other. The names stay as they were, so older records still read;
+// a record with no `batch_step` has no step verdict, which is right for a
+// one-voucher post.
+
 fn masters_check_path(imports: &Path, batch_id: &str) -> PathBuf {
     imports.join(format!("{batch_id}.masters_check.json"))
 }
@@ -2683,13 +2889,29 @@ fn masters_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
     imports.join(format!("{batch_id}.masters_doubt.json"))
 }
 
-/// The masters check recorded for this batch (#239). An observed doubt is
-/// kept in a file of its own that nothing removes or replaces, and it
-/// overrides the check record. Absent only for a batch dispatched before
-/// these records existed.
+fn batch_step_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
+    imports.join(format!("{batch_id}.batch_step_doubt.json"))
+}
+
+/// The durable checks recorded for this batch: the masters verdict (#239),
+/// with the batch step verdict beside it as `batch_step` when the post was a
+/// batch. An observed doubt of either kind is kept in a file of its own that
+/// nothing removes or replaces, and it overrides that kind's verdict in the
+/// check record. Absent only for a batch dispatched before these records
+/// existed.
 fn read_masters_check(imports: &Path, batch_id: &str) -> Option<Value> {
-    read_masters_record(&masters_doubt_path(imports, batch_id))
-        .or_else(|| read_masters_record(&masters_check_path(imports, batch_id)))
+    let check = read_masters_record(&masters_check_path(imports, batch_id));
+    let mut masters =
+        read_masters_record(&masters_doubt_path(imports, batch_id)).or_else(|| check.clone())?;
+    let step = read_masters_record(&batch_step_doubt_path(imports, batch_id)).or_else(|| {
+        check
+            .as_ref()
+            .and_then(|check| check.get("batch_step").cloned())
+    });
+    if let (Some(step), Some(fields)) = (step, masters.as_object_mut()) {
+        fields.insert("batch_step".into(), step);
+    }
+    Some(masters)
 }
 
 /// A record that exists but cannot be opened, read or parsed reads as a
@@ -2726,14 +2948,51 @@ impl Server {
     /// crash before the check finishes, a concurrent reader, or a failed later
     /// write then reads a doubt, never an absent record; a post whose record
     /// cannot be written is not sent. It never touches an observed doubt.
+    #[cfg(test)]
     pub(super) fn record_masters_check_pending(&self, batch_id: &str) -> Result<(), String> {
+        self.record_post_checks_pending(batch_id, false)
+    }
+
+    /// As [`Self::record_masters_check_pending`], and for a batch the step
+    /// verdict pending too, so a crash before it is recorded reads as doubt.
+    pub(super) fn record_post_checks_pending(
+        &self,
+        batch_id: &str,
+        batch: bool,
+    ) -> Result<(), String> {
         let unavailable = |_| "post_masters_record_unavailable".to_string();
         let imports = self.imports_dir().map_err(unavailable)?;
-        write_masters_record(
-            &masters_check_path(&imports, batch_id),
-            &json!({"state": MASTERS_CHECK_PENDING}),
-        )
-        .map_err(unavailable)
+        let mut pending = json!({"state": MASTERS_CHECK_PENDING});
+        if batch {
+            pending["batch_step"] = json!({"state": MASTERS_CHECK_PENDING});
+        }
+        write_masters_record(&masters_check_path(&imports, batch_id), &pending).map_err(unavailable)
+    }
+
+    /// Record a batch's step verdict: `matched` only when the target's
+    /// voucher mark moved by exactly Tally's CREATED. Anything else is doubt,
+    /// which goes first to its own file. The check record keeps its masters
+    /// verdict as it is. A verdict that cannot be written leaves the step
+    /// pending, which is doubt.
+    pub(super) fn record_batch_step_verdict(&self, batch_id: &str, target_voucher_step: &Value) {
+        let Ok(imports) = self.imports_dir() else {
+            return;
+        };
+        let verdict = if target_voucher_step["matches_created"] == true {
+            json!({"state": "matched", "target_voucher_step": target_voucher_step})
+        } else {
+            json!({"state": "unmatched", "target_voucher_step": target_voucher_step})
+        };
+        if verdict["state"] != "matched" {
+            let _ = write_masters_record(&batch_step_doubt_path(&imports, batch_id), &verdict);
+        }
+        let path = masters_check_path(&imports, batch_id);
+        if let Some(mut check) = read_masters_record(&path) {
+            if check.is_object() {
+                check["batch_step"] = verdict;
+                let _ = write_masters_record(&path, &check);
+            }
+        }
     }
 
     /// Record a finished check's verdict and return what the batch's records
@@ -2741,7 +3000,19 @@ impl Server {
     /// outranks any later verdict. A check that could not run
     /// (`check_unavailable`) is not recorded, so a later readback checks
     /// again; a verdict that cannot be written leaves the check pending.
+    #[cfg(test)]
     pub(super) fn record_masters_verdict(&self, batch_id: &str, verdict: Value) -> Value {
+        self.record_masters_verdict_for(batch_id, verdict, false)
+    }
+
+    /// As [`Self::record_masters_verdict`], for a batch (`batch`) keeping its
+    /// step verdict beside: pending when none can be read, never dropped.
+    pub(super) fn record_masters_verdict_for(
+        &self,
+        batch_id: &str,
+        verdict: Value,
+        batch: bool,
+    ) -> Value {
         if verdict["state"] == "check_unavailable" {
             return verdict;
         }
@@ -2752,7 +3023,17 @@ impl Server {
         if verdict["state"] == "posted_under_changed_masters" {
             let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
         }
-        let _ = write_masters_record(&masters_check_path(&imports, batch_id), &verdict);
+        // The batch step verdict beside it is kept, never overwritten; for a
+        // batch whose step verdict cannot be read, it stays pending (doubt).
+        let path = masters_check_path(&imports, batch_id);
+        let mut verdict = verdict;
+        let step = read_masters_record(&path)
+            .and_then(|check| check.get("batch_step").cloned())
+            .or_else(|| batch.then(|| json!({"state": MASTERS_CHECK_PENDING})));
+        if let (Some(step), Some(fields)) = (step, verdict.as_object_mut()) {
+            fields.insert("batch_step".into(), step);
+        }
+        let _ = write_masters_record(&path, &verdict);
         read_masters_check(&imports, batch_id).unwrap_or(pending)
     }
 }
@@ -2764,10 +3045,25 @@ fn verified_baseline_path(imports: &Path, batch_id: &str) -> PathBuf {
 /// A build's verified baseline, or `None` when it has none or it cannot be
 /// read. Either way an amendment of that build refuses.
 fn read_verified_baseline(imports: &Path, batch_id: &str) -> Option<amend::VerifiedBaseline> {
+    read_verified_baseline_for(imports, batch_id, 1)
+}
+
+/// As [`read_verified_baseline`], for a build of `voucher_count` vouchers: a
+/// batch whose step verdict is doubted, or was never recorded, is no
+/// baseline either.
+fn read_verified_baseline_for(
+    imports: &Path,
+    batch_id: &str,
+    voucher_count: usize,
+) -> Option<amend::VerifiedBaseline> {
     // A batch in doubt about its ledgers, or whose check is still pending
-    // (#239), is no baseline, whenever its baseline was written.
-    if post::masters_doubt(read_masters_check(imports, batch_id).as_ref()).is_some() {
-        return None;
+    // (#239), is no baseline, whenever its baseline was written. Only a
+    // native post has these records, so a build imported by file has none
+    // and no doubt; a native batch's step must have matched as well.
+    if let Some(check) = read_masters_check(imports, batch_id) {
+        if post::post_doubt(Some(&check), voucher_count).is_some() {
+            return None;
+        }
     }
     let mut file =
         super::local_file::open_local_file(&verified_baseline_path(imports, batch_id), false)
@@ -2807,8 +3103,12 @@ fn verified_baselines(imports: &Path, lineage: &amend::Lineage) -> amend::Verifi
             .builds
             .iter()
             .filter_map(|build| {
-                read_verified_baseline(imports, &build.batch.batch_id)
-                    .map(|baseline| (build.batch.batch_id.clone(), baseline))
+                read_verified_baseline_for(
+                    imports,
+                    &build.batch.batch_id,
+                    build.batch.vouchers.len(),
+                )
+                .map(|baseline| (build.batch.batch_id.clone(), baseline))
             })
             .collect(),
     )

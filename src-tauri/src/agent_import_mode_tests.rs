@@ -122,6 +122,7 @@ async fn import_build_requires_an_observed_mode_bracket_and_retains_probe_eviden
             redaction: super::super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let result = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).unwrap())
@@ -211,6 +212,7 @@ async fn education_build_refuses_an_unsupported_voucher_date_before_any_catalogu
         redaction: super::super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let mut payload = captured_catalogue_payload();
     payload.vouchers[0].date = "20260915".into();
@@ -299,6 +301,7 @@ async fn import_build_rechecks_captured_catalogue_before_persistence() {
             redaction: crate::agent::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let result = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).unwrap())

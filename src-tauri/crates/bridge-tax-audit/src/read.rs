@@ -31,6 +31,10 @@ use sha2::{Digest, Sha256};
 use crate::error::{AuditError, Result};
 use crate::xml::MAX_CONTENT_BYTES;
 
+/// The largest `manifest.json` the reader will hold in memory. A part entry in the synthetic
+/// read is about 750 bytes, so this admits roughly 89,000 parts: far past a daily-windowed
+/// multi-year read, and still a bound on a store that streams without end.
+const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_KINDS: [&str; 6] = [
     "company",
     "groups",
@@ -823,14 +827,22 @@ impl Read {
         handle: Option<(&str, &str)>,
     ) -> Result<Self> {
         let manifest_bytes = {
-            let mut manifest_reader = store.manifest_bytes()?;
             let mut manifest_bytes = Vec::new();
-            manifest_reader
+            // One byte past the cap, so an over-limit manifest is refused, not truncated.
+            store
+                .manifest_bytes()?
+                .take(MAX_MANIFEST_BYTES as u64 + 1)
                 .read_to_end(&mut manifest_bytes)
                 .map_err(|source| AuditError::Io {
                     path: "manifest.json".to_string(),
                     source,
                 })?;
+            if manifest_bytes.len() > MAX_MANIFEST_BYTES {
+                return Err(AuditError::refused(
+                    "C1-size",
+                    format!("manifest.json exceeds {MAX_MANIFEST_BYTES} bytes"),
+                ));
+            }
             manifest_bytes
         };
         if let Some((expected_read_id, expected_manifest_sha256)) = handle {
@@ -1450,6 +1462,38 @@ mod tests {
             AuditError::Io { source, .. } => assert_eq!(source.kind(), expected),
             other => panic!("expected a typed I/O error, got {other:?}"),
         }
+    }
+
+    /// A manifest of `len` spaces: not JSON, so a read that gets past the size cap is refused
+    /// as C1-format.
+    struct BlankManifestStore {
+        len: usize,
+    }
+
+    impl ReadStore for BlankManifestStore {
+        fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>> {
+            Ok(Box::new(io::repeat(b' ').take(self.len as u64)))
+        }
+
+        fn stored_blob(&self, _path: &str) -> Result<Option<Box<dyn io::Read + '_>>> {
+            panic!("no blob is opened before the manifest is accepted")
+        }
+    }
+
+    fn open_blank_manifest(len: usize) -> AuditError {
+        Read::open_inner(&BlankManifestStore { len }, PathBuf::new(), None).unwrap_err()
+    }
+
+    #[test]
+    fn a_manifest_over_the_cap_is_refused_as_c1_size() {
+        let error = open_blank_manifest(MAX_MANIFEST_BYTES + 1);
+        assert_eq!(error.code(), Some("C1-size"));
+    }
+
+    #[test]
+    fn a_manifest_at_the_cap_is_read_and_then_judged_as_json() {
+        let error = open_blank_manifest(MAX_MANIFEST_BYTES);
+        assert_eq!(error.code(), Some("C1-format"));
     }
 
     #[test]

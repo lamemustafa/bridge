@@ -222,6 +222,27 @@ function repositoryState(root, env = gitEnv) {
   };
 }
 
+function shellQuote(value) {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+// Git 2.43 does not pass environment-supplied config (GIT_CONFIG_COUNT or -c)
+// to the upload-pack child of a local-path fetch, so a differently owned
+// source is refused there even when env trusts it. Repeat exactly the env's
+// safe.directory entries on the upload-pack command line; never add others.
+function uploadPackCommand(env) {
+  const trusted = [];
+  const count = Number(env.GIT_CONFIG_COUNT ?? "0");
+  for (let index = 0; index < count; index += 1) {
+    if (env[`GIT_CONFIG_KEY_${index}`]?.toLowerCase() === "safe.directory") {
+      trusted.push(env[`GIT_CONFIG_VALUE_${index}`]);
+    }
+  }
+  return ["git", ...trusted.flatMap((directory) => ["-c", `safe.directory=${directory}`]), "upload-pack"]
+    .map(shellQuote)
+    .join(" ");
+}
+
 function checkoutCapturedSource(
   sourceRoot,
   fixtureRoot,
@@ -239,6 +260,7 @@ function checkoutCapturedSource(
       "--quiet",
       "--no-tags",
       "--depth=1",
+      `--upload-pack=${uploadPackCommand(env)}`,
       sourceRoot,
       captured.head,
     ],
@@ -450,8 +472,8 @@ exit 97
 }
 
 // Small real Git repositories exercise source reads even without Rust installed.
-function sourceReadFixture(t, channel = "bridge-unavailable-regression-toolchain") {
-  const sandbox = makeSandbox("bridge-reseal-source-");
+function sourceReadFixture(t, channel = "bridge-unavailable-regression-toolchain", prefix = "bridge-reseal-source-") {
+  const sandbox = makeSandbox(prefix);
   const root = join(sandbox, "repo");
   const emptyTemplate = join(sandbox, "empty-template");
   t.after(() => rmSync(sandbox, { recursive: true, force: true }));
@@ -630,6 +652,38 @@ test("captured checkout trusts only its differently-owned source path", (t) => {
   const refused = git(source, ["rev-parse", "HEAD"], { env: wrongTrust });
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /dubious ownership/);
+
+  // Git 2.43's upload-pack refuses a differently owned source; Git 2.55's
+  // (CI) serves it without an ownership check. Where this Git refuses an
+  // untrusted fetch, the upload-pack child must get only the caller's trust,
+  // so a fetch that trusts another path is still refused.
+  // The probe is a plain fetch with no trust, independent of uploadPackCommand.
+  const probe = join(sandbox, "untrusted-probe");
+  gitOk(sandbox, ["init", "--quiet", `--template=${emptyTemplate}`, probe], "initialize probe", ownerSimulation);
+  const probed = git(probe, ["-c", `safe.directory=${realpathSync(probe)}`, "fetch", "--quiet", "--depth=1", source, before.head], {
+    env: ownerSimulation,
+  });
+  assert.ok(probed.status === 0 || /dubious ownership/.test(probed.stderr), `ownership probe failed:\n${probed.stderr}`);
+  if (probed.status !== 0) {
+    assert.throws(
+      () => checkoutCapturedSource(source, join(sandbox, "untrusted-fixture"), before, emptyTemplate, wrongTrust),
+      /fetch captured source failed:[\s\S]*dubious ownership/,
+    );
+  } else {
+    t.diagnostic("this Git's upload-pack serves a differently owned source without trust; over-trust is not observable");
+  }
+});
+
+test("captured checkout trusts a differently-owned source whose path needs shell quoting", (t) => {
+  const source = sourceReadFixture(t, undefined, "bridge-reseal-source 'quoted' -");
+  const trusted = sourceGitEnvironment(source, { ...gitEnv, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" });
+  const before = repositoryState(source, trusted);
+  const sandbox = makeSandbox("bridge-owner-quoting-");
+  const emptyTemplate = join(sandbox, "empty-template");
+  mkdirSync(emptyTemplate);
+  t.after(() => rmSync(sandbox, { recursive: true, force: true }));
+  checkoutCapturedSource(source, join(sandbox, "fixture"), before, emptyTemplate, trusted);
+  assert.deepEqual(repositoryState(source, trusted), before);
 });
 
 test("Git environment sanitization removes inherited overrides case-insensitively", () => {

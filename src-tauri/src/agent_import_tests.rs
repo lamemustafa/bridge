@@ -54,6 +54,7 @@ async fn batch_total_overflow_is_refused_before_dispatch_or_persistence() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let mut input = payload();
     for entry in input
@@ -143,6 +144,7 @@ fn external_import_ledger_read_refuses_busy_admission_without_waiting() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     };
     let server = Server::new(settings.clone());
     let append_admission = server
@@ -181,6 +183,7 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     };
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
@@ -350,6 +353,7 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let line = ImportLedgerLine {
         ledger_identities: None,
@@ -711,6 +715,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let input = payload();
     let line = ImportLedgerLine {
@@ -1468,6 +1473,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
@@ -1674,8 +1680,8 @@ fn one_master_match(wanted: &str, catalogue: &[&str]) -> Value {
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
-    master_report(
-        &source_entities(&[wanted.to_string()]).expect("fabricated name parses"),
+    requested_master_report(
+        &requested_masters(&[wanted.to_string()]).expect("fabricated name parses"),
         &catalogue,
     )
     .expect("fabricated catalogue binds")
@@ -1735,7 +1741,10 @@ fn a_catalogue_that_was_never_read_refuses_instead_of_reporting_everything_missi
     // of the one failed engagement, so an empty catalogue must not look like
     // an answer. P5: nothing-found and request-failed stay distinguishable.
     assert_eq!(
-        master_report(&source_entities(&["Bank".to_string()]).expect("valid"), &[]),
+        requested_master_report(
+            &requested_masters(&["Bank".to_string()]).expect("valid"),
+            &[]
+        ),
         Err("master_catalog_empty".to_string())
     );
 }
@@ -1804,7 +1813,7 @@ fn import_recovery_guidance_names_the_state_and_next_safe_read() {
 /// input. The gap between those two correct rules is a spelling the tool can
 /// report but the caller cannot send back.
 ///
-/// Telling them to copy it anyway failed the *entire* batch: `source_entities`
+/// Telling them to copy it anyway failed the *entire* batch: `requested_masters`
 /// collects into one Result and refuses on the first bad name, so one such
 /// ledger takes every voucher in the request down with it.
 #[test]
@@ -1886,6 +1895,7 @@ async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_vouch
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let response = server
         .call_tool_response("build_import_xml", serde_json::to_value(unique).unwrap())
@@ -1939,6 +1949,7 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
             redaction: crate::agent::Redaction::None,
             import_enabled: true,
             writes_enabled,
+            batch_post_enabled: false,
         });
         let mut input = captured_catalogue_payload();
         input.vouchers.truncate(voucher_count);
@@ -2184,6 +2195,7 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let line = ImportLedgerLine {
         ledger_identities: None,
@@ -2312,6 +2324,7 @@ fn line_error_text_does_not_count_against_a_pages_never_cut_part() {
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         })
     };
     let page = json!({"items": [], "dispatch": {"response": {"outcome": {
@@ -2356,6 +2369,7 @@ async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         })
     };
     let server = server_with(200_000);
@@ -2481,6 +2495,7 @@ async fn verify_saved_batch_after_dispatch(
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: false,
+        batch_post_enabled: false,
     });
     let built = server
         .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
@@ -2565,6 +2580,7 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
         redaction: super::super::Redaction::None,
         import_enabled: true,
         writes_enabled: true,
+        batch_post_enabled: false,
     });
     let built = server
         .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
@@ -2724,6 +2740,7 @@ async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre
             redaction: super::super::Redaction::None,
             import_enabled: true,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
@@ -2746,5 +2763,227 @@ async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre
             );
         }
         assert_eq!(simulator.finish().expect("requests").len(), 82);
+    }
+}
+
+// bridge#626: a ledger whose stored name ends in CR LF. The catalogue carries
+// it verbatim; these pin that the build can now name it, by its exact bytes
+// only, and write it so an XML reader recovers those bytes.
+
+#[test]
+fn a_ledger_name_may_end_in_one_crlf_and_nothing_else() {
+    let input = captured_catalogue_payload();
+    // Only a single trailing CR LF has been observed to import onto a stored
+    // ledger; every other spelling of a line break stays refused.
+    for (ledger, admitted) in [
+        ("Bridge Nested Debtor WR4\r\n", true),
+        ("Bridge Nested Debtor WR4\n", false),
+        ("Bridge Nested Debtor WR4\r", false),
+        ("Bridge Nested Debtor WR4\r\n\r\n", false),
+        ("Bridge\r\nNested Debtor WR4", false),
+        ("Bridge Nested Debtor WR4\t", false),
+        ("Bridge Nested Debtor WR4\u{1}\r\n", false),
+        ("\r\n", false),
+    ] {
+        let mut changed = input.clone();
+        changed.vouchers[0].entries[0].ledger = ledger.to_string();
+        assert_eq!(validate_payload(&changed).is_ok(), admitted, "{ledger:?}");
+    }
+}
+
+fn requested_match(wanted: &str, catalogue: &[&str]) -> Value {
+    let catalogue = catalogue
+        .iter()
+        .map(|name| name.to_string())
+        .collect::<Vec<_>>();
+    let mut report = requested_master_report(
+        &requested_masters(&[wanted.to_string()]).expect("admitted name"),
+        &catalogue,
+    )
+    .expect("report");
+    assert_eq!(report.len(), 1);
+    report.remove(0)
+}
+
+#[test]
+fn a_name_ending_in_a_line_break_binds_only_to_those_exact_bytes() {
+    let exact = requested_match("ACME\r\n", &["ACME\r\n", "ACME"]);
+    assert_eq!(exact["match_state"], "exact");
+    assert_eq!(exact["importable"], true);
+    assert_eq!(
+        exact["exact_live_spelling"][super::super::PARTY_NAME_MARKER].as_str(),
+        Some("ACME\r\n")
+    );
+    // A different trailing run is a different name: no fold may select it,
+    // and no candidate is offered, since the fold that finds one finds its twin.
+    for catalogue in [&["ACME\n"][..], &["ACME"][..]] {
+        let missing = requested_match("ACME\r\n", catalogue);
+        assert_eq!(missing["match_state"], "missing", "{catalogue:?}");
+        assert_eq!(missing["candidates"], json!([]));
+        assert_eq!(missing["reason"], "master_binding_no_candidate");
+    }
+    // The plain name is unchanged: it still reaches a CR LF ledger only as a
+    // near miss, for an operator to select.
+    assert_eq!(
+        one_master_match("ACME", &["ACME\r\n"])["match_state"],
+        "near_miss"
+    );
+}
+
+#[test]
+fn a_requested_report_keeps_the_order_names_were_requested_in() {
+    let catalogue = ["Alpha", "Beta\r\n", "Gamma"].map(str::to_string);
+    let requested = ["Alpha", "Beta\r\n", "Gamma"].map(str::to_string);
+    let report =
+        requested_master_report(&requested_masters(&requested).unwrap(), &catalogue).unwrap();
+    let names = report
+        .iter()
+        .map(|master| {
+            master["requested"][super::super::PARTY_NAME_MARKER]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, requested);
+    assert!(report.iter().all(|master| master["match_state"] == "exact"));
+}
+
+#[test]
+fn only_one_trailing_crlf_makes_a_live_spelling_importable() {
+    assert!(live_spelling_importable(0, "ACME\r\n"));
+    assert!(live_spelling_importable(0, "ACME"));
+    assert!(!live_spelling_importable(0, "ACME\n"));
+    assert!(!live_spelling_importable(0, "ACME\r\n\r\n"));
+    assert!(!live_spelling_importable(0, "ACME\r\nSecond Line"));
+    assert!(!live_spelling_importable(0, "ACME\t"));
+    assert!(!live_spelling_importable(0, "\r\n"));
+}
+
+#[test]
+fn a_ledger_line_break_is_written_as_character_references() {
+    let mut input = captured_catalogue_payload();
+    input.vouchers[0].entries[0].ledger = "Bridge Nested Debtor WR4\r\n".to_string();
+    let xml = render_import_xml("Company", &input.vouchers, "bridge-batch");
+    assert!(
+        !xml.contains("WR4\r") && !xml.contains("WR4\n"),
+        "never raw"
+    );
+    let written = xml
+        .split("<LEDGERNAME>")
+        .nth(1)
+        .and_then(|rest| rest.split("</LEDGERNAME>").next())
+        .unwrap();
+    assert_eq!(written, "Bridge Nested Debtor WR4&#13;&#10;");
+    assert_eq!(
+        quick_xml::escape::unescape(written).unwrap(),
+        "Bridge Nested Debtor WR4\r\n",
+        "an XML reader recovers the stored bytes"
+    );
+}
+
+#[test]
+fn a_name_folding_equal_to_two_live_ledgers_is_reported_whichever_it_names() {
+    let catalogue = [
+        ("ACME\r\n", Some("Sundry Creditors")),
+        ("ACME", Some("Sundry Debtors")),
+        ("Other", Some("Sundry Debtors")),
+        ("ACME Traders", Some("Sundry Debtors")),
+        ("Acme-Co", Some("Sundry Creditors")),
+        ("ACME CO", Some("Sundry Debtors")),
+        ("Rent/Office", Some("Indirect Expenses")),
+        ("Rent Office", Some("Indirect Expenses")),
+    ];
+    let family = |names: &[(&str, &str)]| {
+        names
+            .iter()
+            .map(|(name, parent)| (name.to_string(), Some(parent.to_string())))
+            .collect::<Vec<_>>()
+    };
+    // Both directions of the trailing line break, a case-and-dash pair, and the
+    // gateway fold Tally was measured to apply, a slash as a space (§9.4d).
+    for (requested, live) in [
+        (
+            "ACME",
+            family(&[("ACME\r\n", "Sundry Creditors"), ("ACME", "Sundry Debtors")]),
+        ),
+        (
+            "ACME\r\n",
+            family(&[("ACME\r\n", "Sundry Creditors"), ("ACME", "Sundry Debtors")]),
+        ),
+        (
+            "ACME CO",
+            family(&[
+                ("Acme-Co", "Sundry Creditors"),
+                ("ACME CO", "Sundry Debtors"),
+            ]),
+        ),
+        (
+            "Rent/Office",
+            family(&[
+                ("Rent/Office", "Indirect Expenses"),
+                ("Rent Office", "Indirect Expenses"),
+            ]),
+        ),
+    ] {
+        assert_eq!(
+            folded_twins(&[requested.to_string()], catalogue.iter().copied()),
+            [FoldedTwins {
+                requested: requested.to_string(),
+                live,
+            }],
+            "{requested:?}"
+        );
+    }
+    for alone in ["Other", "ACME Traders"] {
+        assert!(
+            folded_twins(&[alone.to_string()], catalogue.iter().copied()).is_empty(),
+            "{alone}"
+        );
+    }
+}
+
+#[test]
+fn a_folded_twin_marks_the_report_unimportable_with_its_own_remedy() {
+    let names = ["ACME\r\n".to_string(), "Other".to_string()];
+    let catalogue = ["ACME\r\n", "ACME", "Other"].map(str::to_string);
+    let mut report =
+        requested_master_report(&requested_masters(&names).unwrap(), &catalogue).unwrap();
+    assert_eq!(report[0]["importable"], true, "exact before the twin check");
+    annotate_folded_twins(
+        &mut report,
+        &names,
+        [
+            ("ACME\r\n", Some("Sundry Creditors")),
+            ("ACME", None),
+            ("Other", None),
+        ]
+        .into_iter(),
+    );
+    assert_eq!(report[0]["importable"], false);
+    assert_eq!(report[0]["folded_twins"][0]["parent"], "Sundry Creditors");
+    assert_eq!(
+        report[0]["folded_twins"][1]["name"][super::super::PARTY_NAME_MARKER].as_str(),
+        Some("ACME")
+    );
+    assert!(report[1].get("folded_twins").is_none());
+    assert_eq!(report[1]["importable"], true);
+    let guidance = master_recovery_guidance(&report);
+    assert!(guidance.contains("folded_twins"), "{guidance}");
+    assert!(
+        !guidance.contains("character imports do not accept"),
+        "a twin is not a spelling problem: {guidance}"
+    );
+}
+
+#[test]
+fn a_twin_needing_both_folds_is_still_found() {
+    // Neither fold alone joins these: one needs the slash step and the other
+    // the line break or a non-ASCII case. The composite key does.
+    for (requested, other) in [("Rent/Office\r\n", "RENT OFFICE"), ("Café/Bar", "CAFÉ BAR")] {
+        let catalogue = [(requested, None), (other, None)];
+        let twins = folded_twins(&[requested.to_string()], catalogue.iter().copied());
+        assert_eq!(twins.len(), 1, "{requested:?}");
+        assert_eq!(twins[0].live.len(), 2, "{requested:?}");
     }
 }
