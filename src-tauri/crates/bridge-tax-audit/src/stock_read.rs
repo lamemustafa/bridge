@@ -326,7 +326,8 @@ mod tests {
             "<STOCKITEM NAME=\"Hinge\"><BASEUNITS>Nos</BASEUNITS><OPENINGBALANCE> 9 Nos</OPENINGBALANCE>\
              <OPENINGVALUE>-900.00</OPENINGVALUE></STOCKITEM>\
              <STOCKITEM NAME=\"Hinge\"><BASEUNITS>Nos</BASEUNITS><OPENINGBALANCE> 12 Nos</OPENINGBALANCE>\
-             <OPENINGVALUE>-1200.00</OPENINGVALUE></STOCKITEM>\
+             <OPENINGVALUE>-1200.00</OPENINGVALUE><CLOSINGBALANCE> 7 Nos</CLOSINGBALANCE>\
+             <CLOSINGVALUE>-700.00</CLOSINGVALUE></STOCKITEM>\
              <STOCKITEM NAME=\"\"><OPENINGBALANCE> 1 Nos</OPENINGBALANCE></STOCKITEM>\
              <STOCKITEM NAME=\"Placeholder\"><BASEUNITS>&#4; Not Applicable</BASEUNITS></STOCKITEM>",
         );
@@ -365,6 +366,45 @@ mod tests {
         assert_eq!(got.closing.rows.len(), 1);
         assert_eq!(got.closing.total_value_paise().unwrap(), -20_000);
         assert_eq!(got.is_integrated, Some(false));
+        let unknown = StockReadParts {
+            is_integrated: None,
+            ..parts.clone()
+        };
+        let got_unknown = stock_inputs(Some(&ok), Some(&unknown)).unwrap();
+        assert_eq!(got_unknown.is_integrated, None, "unknown stays unknown");
+        // A closing summary from the masters takes each master's own closing fields.
+        let masters = cfg(
+            "opening_summary = \"from_masters\"\nopening_date = \"2025-04-01\"\n\
+             closing_summary = \"from_masters\"\nclosing_date = \"2026-03-31\"",
+        );
+        let row = &stock_inputs(Some(&masters), Some(&parts))
+            .unwrap()
+            .closing
+            .rows["Hinge"];
+        assert_eq!((row.qty, row.value_paise), (Some(7.0), Some(70_000)));
+        // ISINTEGRATED from the first COMPANY carrying a GUID; absent or empty is unknown.
+        let flag = |body: &str| {
+            let xml = format!("<ENVELOPE><BODY><DATA>{body}</DATA></BODY></ENVELOPE>");
+            crate::book::company_is_integrated(
+                &crate::xml::read(xml.as_bytes(), "company").unwrap(),
+            )
+        };
+        let with_guid = |tag: &str| format!("<COMPANY><GUID>g</GUID>{tag}</COMPANY>");
+        assert_eq!(
+            flag(&with_guid("<ISINTEGRATED>Yes</ISINTEGRATED>")),
+            Some(true)
+        );
+        assert_eq!(
+            flag(&with_guid("<ISINTEGRATED>No</ISINTEGRATED>")),
+            Some(false)
+        );
+        assert_eq!(flag(&with_guid("<ISINTEGRATED></ISINTEGRATED>")), None);
+        assert_eq!(flag(&with_guid("")), None);
+        let no_guid_first = format!(
+            "<COMPANY><ISINTEGRATED>Yes</ISINTEGRATED></COMPANY>{}",
+            with_guid("<ISINTEGRATED>No</ISINTEGRATED>")
+        );
+        assert_eq!(flag(&no_guid_first), Some(false));
 
         let code = |c: &toml::Value, p: &StockReadParts| {
             stock_inputs(Some(c), Some(p)).unwrap_err().code()
