@@ -1,0 +1,53 @@
+# THROWAWAY evidence for bridge#669. Read-only cache inventory; lives only on its own branch; never merged.
+name: Actions cache inventory (bridge#669, throwaway, read-only)
+
+on:
+  push:
+    branches: [cloud-p/cache-inventory-669]
+
+permissions:
+  actions: read
+  pull-requests: read
+
+jobs:
+  inventory:
+    name: List caches (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: List every cache and each PR ref's state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          node --input-type=module <<'JS'
+          const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json' };
+          const api = async (path) => {
+            const r = await fetch(`https://api.github.com/repos/${process.env.REPO}${path}`, { headers });
+            if (!r.ok) throw new Error(`GET ${path} -> ${r.status}`);
+            return r.json();
+          };
+          const usage = await api('/actions/cache/usage');
+          const caches = [];
+          let total = -1;
+          for (let page = 1; page <= 20; page++) {
+            const res = await api(`/actions/caches?per_page=100&page=${page}&sort=created_at&direction=desc`);
+            total = res.total_count;
+            caches.push(...res.actions_caches);
+            if (res.actions_caches.length === 0 || caches.length >= total) break;
+          }
+          if (caches.length !== total || new Set(caches.map((c) => c.id)).size !== caches.length) {
+            throw new Error(`incomplete listing: got ${caches.length} of ${total}`);
+          }
+          const prs = {};
+          for (const n of new Set(caches.map((c) => c.ref.match(/^refs\/pull\/(\d+)\//)?.[1]).filter(Boolean))) {
+            const pr = await api(`/pulls/${n}`);
+            prs[n] = { state: pr.state, merged: Boolean(pr.merged_at), closed_at: pr.closed_at };
+          }
+          const rows = caches.map(({ id, key, ref, size_in_bytes, created_at, last_accessed_at }) =>
+            ({ id, key, ref, size_in_bytes, created_at, last_accessed_at }));
+          console.log('INVENTORY-BEGIN');
+          console.log(JSON.stringify({ measured_at: new Date().toISOString(), usage, total, prs }));
+          for (const row of rows) console.log(JSON.stringify(row));
+          console.log('INVENTORY-END');
+          JS
