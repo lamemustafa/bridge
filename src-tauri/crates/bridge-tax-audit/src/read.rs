@@ -32,7 +32,7 @@ use crate::error::{AuditError, Result};
 use crate::xml::MAX_CONTENT_BYTES;
 
 /// The largest `manifest.json` the reader will hold in memory. A part entry in the synthetic
-/// read is about 750 bytes, so this admits roughly 85,000 parts: far past a daily-windowed
+/// read is about 750 bytes, so this admits roughly 89,000 parts: far past a daily-windowed
 /// multi-year read, and still a bound on a store that streams without end.
 const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_KINDS: [&str; 6] = [
