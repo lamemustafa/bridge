@@ -490,6 +490,12 @@ jobs:
       SCCACHE_DIR: ${{ github.workspace }}/.cache/bridge-package-sccache
       SCCACHE_CACHE_SIZE: 64M
       SCCACHE_LOCAL_RW_MODE: ${{ github.ref == 'refs/heads/master' && 'READ_WRITE' || 'READ_ONLY' }}
+      # bridge#723: the default 600s idle shutdown can fire between the last
+      # compile and the statistics step. `--show-stats` then reports zeroed
+      # statistics with exit 0, and only `--stop-server` notices the server is
+      # gone. Keep the server alive for the job, so a server missing at that
+      # step means it crashed.
+      SCCACHE_IDLE_TIMEOUT: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -653,6 +659,8 @@ jobs:
         id: package-sccache-stats
         if: ${{ always() && steps.package-sccache-start.outcome == 'success' }}
         shell: bash
+        # --stop-server stays strict: it is the only proof that --show-stats
+        # read the live server rather than inventing zeroed statistics.
         run: |
           sccache --show-stats --stats-format json > package-compiler-cache.json
           sccache --stop-server
