@@ -222,7 +222,7 @@ without `hasNextPage` appearing anywhere in the same file. Passes clean today:
 `release-mcpb-preview.yml`; one a test assertion string matching it), both
 `--method POST` mutations, neither a list call — this repository does not yet
 have a `gh api` listing call to positively exercise the rule against, which is
-exactly the situation the brain note this gate is named after describes: the
+exactly the situation that prompted this gate: the
 hazard is invisible until someone adds one.
 
 ```yaml
