@@ -595,10 +595,10 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
         ),
         // A cause, reached through `ledger_export_invalid` (#714).
         "company_several_currency_masters" => Some(
-            "This company keeps more than one Currency master, and a basic ledger read \
-             returns bare opening balances that name no currency, so Bridge refused before \
-             reading any ledger. No ledger_masters read supports a book with several \
-             Currency masters yet (#551). Retrying refuses again.",
+            "This company keeps more than one Currency master, and this read returns bare \
+             opening balances and movements that name no currency, so Bridge refused before \
+             reading any ledger. Neither ledger_masters nor ledger_movement supports a book \
+             with several Currency masters yet (#551, #716). Retrying refuses again.",
         ),
         "ledger_masters_as_of_requires_compliance" => Some(
             "`as_of` selects the date `party_gstin` is read as of, which only \

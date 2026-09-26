@@ -988,8 +988,8 @@ impl PartyLedgerMasterCurrencyAssertion {
 
 /// Whether a ledger export must first prove the book keeps one Currency
 /// master. Its opening balances carry no currency of their own, so the
-/// `ledger_masters` basic read asks for it; readers that report one named
-/// ledger (movement) or feed the desktop are unchanged (bridge#714).
+/// `ledger_masters` basic read (bridge#714) and `ledger_movement`
+/// (bridge#716) ask for it; readers that feed the desktop are unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LedgerCurrencyGate {
     None,
@@ -2727,12 +2727,16 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         from: TallyDate,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
+        // A named ledger's opening and movement carry no currency either, so a
+        // several-currency book is refused before any ledger or voucher read
+        // (bridge#716). Telling a rupee ledger from a foreign one there needs
+        // each ledger's CURRENCYNAME, which this export does not fetch.
         self.fetch_ledger_opening_with_evidence(
             config,
             identity,
             Some(from),
             false,
-            LedgerCurrencyGate::None,
+            LedgerCurrencyGate::SingleMasterOnly,
         )
         .await
         .map(|read| (read.listing.ledgers, read.listing.evidence))
