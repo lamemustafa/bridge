@@ -28,6 +28,7 @@
 //! already cover it; no crate-specific CI step is needed.
 
 pub mod applicability_44ab;
+pub mod bank_reconciliation;
 pub mod binding;
 pub mod book;
 pub mod book_keeping_quality;
@@ -98,6 +99,14 @@ pub struct Engagement {
     /// not every test on the engagement -- the reference, too, reads the key only when it runs
     /// `cash_book_integrity`. `None` when the key is absent.
     pub own_account_narration_terms: Option<toml::Value>,
+    /// `bank_reconciliation`-only: `[roles].bank_reconciliation_ledger`, the bank ledger a supplied
+    /// statement is reconciled against. Set when the engagement is bound (by identity, like every
+    /// other configured name); `None` before binding or when the key is absent, and the test then
+    /// refuses, as the reference's `require` raises.
+    pub bank_reconciliation_ledger: Option<String>,
+    /// `bank_reconciliation`-only: the optional `[roles].bank_charge_narration_terms`, kept as
+    /// written and validated when that test runs ([`bank_reconciliation::charge_terms`]).
+    pub bank_charge_narration_terms: Option<toml::Value>,
     /// `depreciation`-only: `None` when the client config carries no `[depreciation]` table at
     /// all (an engagement that never runs that test); `Some` once the table is present, at which
     /// point `block_by_ledger`, `opening_wdv_paise` and `dep_expense_ledgers` are REQUIRED within
@@ -794,6 +803,8 @@ not YYYY-MM-DD"
                 None => Vec::new(),
             },
             own_account_narration_terms: roles.get("own_account_narration_terms").cloned(),
+            bank_reconciliation_ledger: None,
+            bank_charge_narration_terms: roles.get("bank_charge_narration_terms").cloned(),
             loan_ledgers_configured: cfg
                 .get("loans")
                 .and_then(toml::Value::as_table)
@@ -1177,6 +1188,44 @@ pub fn cash_book_integrity_on(
         cash_book_integrity::own_account_terms(engagement.own_account_narration_terms.as_ref())?;
     let result = cash_book_integrity::run(book, rules, &cash, &bank, &terms)?;
     let module_check = cash_book_integrity::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `bank_reconciliation` on a book against a supplied bank statement and return its canonical
+/// parity dump. Refuses with `AuditError::Config` without a statement (the reference runs this
+/// test only when the engagement has one) or without `[roles].bank_reconciliation_ledger` (the
+/// reference's `require` raises). The statement's own rows feed BANK-1, as the reference sets
+/// `eng.bank` to them.
+pub fn bank_reconciliation_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+    statement: Option<&documents::BankStatementDoc>,
+) -> Result<serde_json::Value> {
+    let statement = statement.ok_or_else(|| {
+        AuditError::Config(format!(
+            "{}: no bank statement was supplied (the reference runs this test only when the \
+             engagement has one)",
+            bank_reconciliation::TEST_ID
+        ))
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    let ledger = bound.bank_reconciliation_ledger.as_deref().ok_or_else(|| {
+        AuditError::Config(
+            "client config missing required key 'roles.bank_reconciliation_ledger'".to_string(),
+        )
+    })?;
+    let terms = bank_reconciliation::charge_terms(bound.bank_charge_narration_terms.as_ref())?;
+    let result = bank_reconciliation::run(
+        book,
+        rules,
+        &bound.period,
+        statement,
+        ledger,
+        &terms,
+        bank_reconciliation::MATCH_MAX_DAYS,
+    )?;
+    let module_check = bank_reconciliation::check_invariants(&statement.rows, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 

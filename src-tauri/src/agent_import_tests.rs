@@ -2297,6 +2297,51 @@ fn a_page_splits_verified_from_unverified_rows_and_pages_only_the_verified() {
     );
 }
 
+/// Tally's LINEERROR text is not part of a page's never-cut size: the cap
+/// drops it first, so a page that fits without it is admitted, and one that
+/// does not fit even without it is refused as before.
+#[test]
+fn line_error_text_does_not_count_against_a_pages_never_cut_part() {
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server_with = |max_bytes| {
+        Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+            writes_enabled: false,
+        })
+    };
+    let page = json!({"items": [], "dispatch": {"response": {"outcome": {
+        "counters": {"line_error_count": 4},
+        "tally_line_errors": (0..4)
+            .map(|_| json!({"text": "x".repeat(500), "truncated": false}))
+            .collect::<Vec<_>>()
+    }}}});
+    let mut bare = page.clone();
+    assert!(super::super::drop_tally_line_error_text(&mut bare));
+    let fits_without_text = bare.to_string().len();
+    assert!(page.to_string().len() > fits_without_text);
+    assert!(server_with(fits_without_text)
+        .admit_verification_page(&page)
+        .is_ok());
+    assert!(server_with(fits_without_text - 1)
+        .admit_verification_page(&page)
+        .is_err());
+    // The final cap agrees: at the admitted size the page comes back whole,
+    // without its text, rather than refused.
+    let (capped, rows_cut, _) =
+        super::super::enforce_response_byte_cap(page.clone(), fits_without_text)
+            .expect("the page fits once its text is dropped");
+    assert!(!rows_cut);
+    assert_eq!(capped, bare);
+}
+
 #[tokio::test]
 async fn a_verification_is_paged_from_its_persisted_proof_without_reading_tally_again() {
     // bridge#627: a whole-batch response outgrew the agent byte cap.
