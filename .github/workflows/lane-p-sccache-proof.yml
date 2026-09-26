@@ -1,0 +1,128 @@
+# THROWAWAY evidence for bridge#723. Lives only on its own branch; never merged.
+name: sccache idle-shutdown proof (bridge#723, throwaway)
+
+on:
+  push:
+    branches: [cloud-p/sccache-proof-723]
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    name: ${{ matrix.case }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        # old-idle:    master's step, server left to its default idle timeout
+        # new-idle:    fixed step, same wait
+        # new-stopped: fixed step, server stopped before the step (must fail closed)
+        case: [old-idle, new-idle, new-stopped]
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/proof-sccache
+      SCCACHE_CACHE_SIZE: 64M
+      SCCACHE_LOCAL_RW_MODE: READ_WRITE
+      OLD_REF: 8ad65447ef4d262f65baf133b68e7c3e94382857
+      NEW_REF: a52748f8284735c4c4566f71628bc5ad87ec79d1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+      - name: Extract the bundle job's sccache env and statistics step from the ref under test
+        shell: bash
+        env:
+          REF: ${{ matrix.case == 'old-idle' && env.OLD_REF || env.NEW_REF }}
+        run: |
+          git show "$REF:.github/workflows/ci.yml" > ci-under-test.yml
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+          const lines = readFileSync('ci-under-test.yml', 'utf8').split(/\r?\n/);
+          const job = lines.indexOf('  bundle-smoke:');
+          if (job < 0) throw new Error('bundle-smoke job not found');
+          const envAt = lines.indexOf('    env:', job);
+          const stepsAt = lines.indexOf('    steps:', job);
+          const idle = lines.slice(envAt, stepsAt).find((l) => /^      SCCACHE_IDLE_TIMEOUT:/.test(l));
+          if (idle) {
+            const value = idle.split(':')[1].trim().replace(/^'|'$/g, '');
+            appendFileSync(process.env.GITHUB_ENV, `SCCACHE_IDLE_TIMEOUT=${value}\n`);
+          }
+          const step = lines.indexOf('      - name: Retain package compiler cache statistics', stepsAt);
+          const run = lines.indexOf('        run: |', step);
+          if (step < 0 || run < 0) throw new Error('statistics step not found');
+          const body = [];
+          for (let i = run + 1; i < lines.length && (lines[i].startsWith('          ') || lines[i] === ''); i++) {
+            body.push(lines[i].slice(10));
+          }
+          writeFileSync('stats-step.sh', body.join('\n') + '\n');
+          console.log(`SCCACHE_IDLE_TIMEOUT from ref: ${idle ? idle.trim() : '(unset, sccache default 600s)'}`);
+          JS
+          echo '--- step script under test ---'
+          cat stats-step.sh
+      - name: Start the server exactly as CI does
+        shell: bash
+        run: sccache --zero-stats
+      - name: Compile one crate through sccache so cache_writes is at least 1
+        shell: bash
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUSTC_WORKSPACE_WRAPPER: sccache
+        run: |
+          cargo new --lib --vcs none "$RUNNER_TEMP/probe"
+          cargo build --manifest-path "$RUNNER_TEMP/probe/Cargo.toml"
+          sccache --show-stats
+      - name: Stop the server before the step
+        if: matrix.case == 'new-stopped'
+        shell: bash
+        run: sccache --stop-server
+      - name: Wait past sccache's default 600s idle timeout
+        if: matrix.case != 'new-stopped'
+        shell: bash
+        run: sleep 630
+      - name: Run the statistics step under test
+        id: under-test
+        shell: bash
+        run: |
+          set +e
+          bash --noprofile --norc -e -o pipefail stats-step.sh > step-output.txt 2>&1
+          status=$?
+          set -e
+          cat step-output.txt
+          echo "exit=$status" >> "$GITHUB_OUTPUT"
+          echo '--- package-compiler-cache.json ---'
+          cat package-compiler-cache.json || true
+      - name: Check the outcome predicted for this case
+        shell: bash
+        env:
+          CASE: ${{ matrix.case }}
+          STEP_EXIT: ${{ steps.under-test.outputs.exit }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const { CASE, STEP_EXIT } = process.env;
+          const output = readFileSync('step-output.txt', 'utf8');
+          const writes = JSON.parse(readFileSync('package-compiler-cache.json', 'utf8')).stats.cache_writes;
+          const refused = output.includes("sccache: error: couldn't connect to server");
+          const observed = { case: CASE, stepExit: Number(STEP_EXIT), couldntConnect: refused, cacheWrites: writes };
+          console.log(JSON.stringify(observed));
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\`${JSON.stringify(observed)}\`\n`);
+          const expect = {
+            // Old step: the server idled out, --show-stats invented zeros, --stop-server failed.
+            'old-idle': observed.stepExit === 2 && refused && writes === 0,
+            // Fixed step: the server survived the wait and reported the real write.
+            'new-idle': observed.stepExit === 0 && !refused && writes >= 1,
+            // Fixed step still fails closed when the server is really gone.
+            'new-stopped': observed.stepExit === 2 && refused && writes === 0,
+          }[CASE];
+          if (!expect) throw new Error(`prediction for ${CASE} did not hold`);
+          JS
