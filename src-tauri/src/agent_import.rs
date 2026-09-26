@@ -2893,6 +2893,15 @@ fn batch_step_doubt_path(imports: &Path, batch_id: &str) -> PathBuf {
     imports.join(format!("{batch_id}.batch_step_doubt.json"))
 }
 
+/// Write an observed doubt to its own file. When that fails, the verdict that
+/// goes into the check record says so (`doubt_record: unavailable`, #722):
+/// it still holds the doubt, and it says in-band why no review can find it.
+fn record_doubt(path: &Path, verdict: &mut Value) {
+    if write_masters_record(path, verdict).is_err() {
+        verdict["doubt_record"] = json!("unavailable");
+    }
+}
+
 /// The durable checks recorded for this batch: the masters verdict (#239),
 /// with the batch step verdict beside it as `batch_step` when the post was a
 /// batch. An observed doubt of either kind is kept in a file of its own that
@@ -2978,13 +2987,13 @@ impl Server {
         let Ok(imports) = self.imports_dir() else {
             return;
         };
-        let verdict = if target_voucher_step["matches_created"] == true {
+        let mut verdict = if target_voucher_step["matches_created"] == true {
             json!({"state": "matched", "target_voucher_step": target_voucher_step})
         } else {
             json!({"state": "unmatched", "target_voucher_step": target_voucher_step})
         };
         if verdict["state"] != "matched" {
-            let _ = write_masters_record(&batch_step_doubt_path(&imports, batch_id), &verdict);
+            record_doubt(&batch_step_doubt_path(&imports, batch_id), &mut verdict);
         }
         let path = masters_check_path(&imports, batch_id);
         if let Some(mut check) = read_masters_record(&path) {
@@ -3020,13 +3029,13 @@ impl Server {
         let Ok(imports) = self.imports_dir() else {
             return pending;
         };
+        let mut verdict = verdict;
         if verdict["state"] == "posted_under_changed_masters" {
-            let _ = write_masters_record(&masters_doubt_path(&imports, batch_id), &verdict);
+            record_doubt(&masters_doubt_path(&imports, batch_id), &mut verdict);
         }
         // The batch step verdict beside it is kept, never overwritten; for a
         // batch whose step verdict cannot be read, it stays pending (doubt).
         let path = masters_check_path(&imports, batch_id);
-        let mut verdict = verdict;
         let step = read_masters_record(&path)
             .and_then(|check| check.get("batch_step").cloned())
             .or_else(|| batch.then(|| json!({"state": MASTERS_CHECK_PENDING})));

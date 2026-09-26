@@ -101,6 +101,9 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
             Ok(Some((_, check))) if check["batch_step"]["state"] == MASTERS_CHECK_PENDING => {
                 MastersRecord::Pending
             }
+            Ok(Some((_, check))) if check["batch_step"]["state"] == "unmatched" => {
+                MastersRecord::DoubtRecordUnavailable
+            }
             Ok(_) => MastersRecord::NoDoubt,
         },
     }
@@ -147,6 +150,10 @@ enum MastersRecord {
     Doubt {
         raw: Vec<u8>,
     },
+    /// The check record holds a doubt whose own file is absent: its write
+    /// failed (#722, which marks the verdict `doubt_record: unavailable`), so
+    /// there are no doubt bytes to bind a review to.
+    DoubtRecordUnavailable,
     Unreadable,
 }
 
@@ -189,6 +196,9 @@ fn read_masters_records(imports: &Path, batch_id: &str) -> MastersRecord {
             Err(()) => MastersRecord::Unreadable,
             Ok(Some((_, check))) if check["state"] == MASTERS_CHECK_PENDING => {
                 MastersRecord::Pending
+            }
+            Ok(Some((_, check))) if check["state"] == "posted_under_changed_masters" => {
+                MastersRecord::DoubtRecordUnavailable
             }
             Ok(_) => MastersRecord::NoDoubt,
         },
@@ -322,6 +332,7 @@ fn admit_review(
             .into())
         }
         MastersRecord::NoDoubt => return Err("ack_no_observed_doubt".into()),
+        MastersRecord::DoubtRecordUnavailable => return Err("ack_doubt_record_unavailable".into()),
     };
     let result = &payload["result"];
     if result["dispatch"]["response_state"] != "response_clean" {
@@ -672,6 +683,10 @@ pub(super) fn operator_review(
     let record = read_masters_record_raw(&masters_ack_path(imports, &line.batch_id));
     let raw = match (masters, &record) {
         (MastersRecord::Doubt { raw }, _) => raw,
+        // A doubt whose own file was not written can take no review (#722).
+        (MastersRecord::DoubtRecordUnavailable, _) => {
+            return Some(json!({"state":"doubt_record_unavailable"}))
+        }
         (_, Ok(None)) => return None,
         // A record whose doubt can no longer be read answers nothing it can
         // be checked against, and says so rather than disappearing.
@@ -710,9 +725,10 @@ pub(super) fn operator_review(
 }
 
 /// `operator_review` for a batch: each kind of doubt reported on its own,
-/// `pending` while that kind's verdict is not recorded, and `null` where no
-/// doubt of that kind is observed: none, or one recorded only in the check
-/// record because its own file was not written. A review covers only the doubt
+/// `pending` while that kind's verdict is not recorded,
+/// `doubt_record_unavailable` where the check record holds a doubt whose own
+/// file was not written (#722), and `null` where no doubt of that kind is
+/// observed. A review covers only the doubt
 /// it names, and only while every voucher it bound is unchanged; a stale
 /// review names the vouchers that changed. `None` when no doubt is observed.
 fn batch_operator_review(
@@ -731,6 +747,10 @@ fn batch_operator_review(
             MastersRecord::Unreadable => {
                 any = true;
                 json!({"state":"unreadable"})
+            }
+            MastersRecord::DoubtRecordUnavailable => {
+                any = true;
+                json!({"state":"doubt_record_unavailable"})
             }
             // A review whose doubt can no longer be read answers nothing, and
             // says so rather than disappearing.
@@ -863,6 +883,9 @@ impl Server {
             match (kind, state) {
                 (_, Some(MastersRecord::NoDoubt)) => {
                     return Err("ack_no_observed_doubt".to_string().into())
+                }
+                (_, Some(MastersRecord::DoubtRecordUnavailable)) => {
+                    return Err("ack_doubt_record_unavailable".to_string().into())
                 }
                 (DoubtKind::BatchStep, Some(MastersRecord::Pending)) => {
                     return Err("ack_check_pending".to_string().into())
