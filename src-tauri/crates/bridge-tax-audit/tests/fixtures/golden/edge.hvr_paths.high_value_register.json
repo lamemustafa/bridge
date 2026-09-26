@@ -53,16 +53,38 @@
       "id": "high_value_register.bank_payment_day_at_or_over_threshold_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "024181f471134bd7",
-      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "1bd13eb4ccf7488b",
+      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "7f1467b3780ff4a3",
+      "definition_text": "(party, day) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
       "id": "high_value_register.bank_payment_day_row_amount_bank_payment_day_2025-06-02_f49fcc1d",
       "value": 25000000,
       "unit": "paise",
-      "definition_sha256_16": "52cf8dc6cefc3af6",
-      "definition_text": "Bank payment from/to one party ledger (tag f49fcc1d) on 2025-06-02, summed across every population voucher that day.",
+      "definition_sha256_16": "13976b6d7a9f2c81",
+      "definition_text": "Bank payment from/to one party ledger (tag f49fcc1d) on 2025-06-02, summed across every population voucher that day. This is the party's side of each voucher; on one or more of the row's vouchers it differs from the bank line, which is shown with it.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "h15",
+          "label": "Payment h15 on 2025-06-02"
+        }
+      ]
+    },
+    {
+      "id": "high_value_register.bank_payment_day_row_bank_line_bank_payment_day_2025-06-02_f49fcc1d",
+      "value": 20000000,
+      "unit": "paise",
+      "definition_sha256_16": "f4a31c125ac118b1",
+      "definition_text": "The bank credited on the vouchers in this row, summed, whichever parties it was for.",
       "evidence": [
         {
           "kind": "voucher",
@@ -110,8 +132,16 @@
       "id": "high_value_register.bank_payment_voucher_at_or_over_threshold_count",
       "value": 1,
       "unit": "count",
-      "definition_sha256_16": "6d7e29fbb39be138",
-      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "6c8371ecb3e183f8",
+      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_payment_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "4ba36b97a3449dfa",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -150,8 +180,16 @@
       "id": "high_value_register.bank_receipt_day_at_or_over_threshold_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "024181f471134bd7",
-      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "87a06b9760e08d0d",
+      "definition_text": "(party, day) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1c372868c525ba0b",
+      "definition_text": "(party, day) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -256,8 +294,16 @@
       "id": "high_value_register.bank_receipt_voucher_at_or_over_threshold_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "6d7e29fbb39be138",
-      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise).",
+      "definition_sha256_16": "5fbeb43c83a4554f",
+      "definition_text": "(party, voucher) pairs at or over the CA-set vouching threshold (20000000 paise), counting a pair only when its vouchers' own bank debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.bank_receipt_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "edf597b7c2eb84b8",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the CA-set vouching threshold (20000000 paise) but whose vouchers' own bank debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -312,10 +358,18 @@
     },
     {
       "id": "high_value_register.cash_payment_day_at_or_over_threshold_count",
-      "value": 5,
+      "value": 4,
       "unit": "count",
-      "definition_sha256_16": "97b6b8da1e60b0dd",
-      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "39ea8e4efbc9b568",
+      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_day_party_side_over_line_below_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "c1a0e6cd1a9f6058",
+      "definition_text": "(party, day) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -350,8 +404,8 @@
       "id": "high_value_register.cash_payment_day_row_amount_cash_payment_day_2025-06-02_f49fcc1d",
       "value": 25000000,
       "unit": "paise",
-      "definition_sha256_16": "854008515fa3281d",
-      "definition_text": "Cash payment from/to one party ledger (tag f49fcc1d) on 2025-06-02, summed across every population voucher that day.",
+      "definition_sha256_16": "b7d9431d6a4fb9b4",
+      "definition_text": "Cash payment from/to one party ledger (tag f49fcc1d) on 2025-06-02, summed across every population voucher that day. This is the party's side of each voucher; on one or more of the row's vouchers it differs from the cash line, which is shown with it.",
       "evidence": [
         {
           "kind": "voucher",
@@ -385,6 +439,20 @@
           "kind": "voucher",
           "id": "hvr-numberless-000000000024",
           "label": "Payment 000000000024 on 2025-09-01"
+        }
+      ]
+    },
+    {
+      "id": "high_value_register.cash_payment_day_row_cash_line_cash_payment_day_2025-06-02_f49fcc1d",
+      "value": 5000000,
+      "unit": "paise",
+      "definition_sha256_16": "89c788e675d91fac",
+      "definition_text": "The cash credited on the vouchers in this row, summed, whichever parties it was for.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "h15",
+          "label": "Payment h15 on 2025-06-02"
         }
       ]
     },
@@ -502,10 +570,18 @@
     },
     {
       "id": "high_value_register.cash_payment_voucher_at_or_over_threshold_count",
-      "value": 5,
+      "value": 4,
       "unit": "count",
-      "definition_sha256_16": "a3a7abde273a3db2",
-      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "5845873aaed59edf",
+      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash credited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_payment_voucher_party_side_over_line_below_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "c7e58c6759fca5c3",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash credited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -574,8 +650,16 @@
       "id": "high_value_register.cash_receipt_day_at_or_over_threshold_count",
       "value": 4,
       "unit": "count",
-      "definition_sha256_16": "97b6b8da1e60b0dd",
-      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "f97b28142fa5b340",
+      "definition_text": "(party, day) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "604120d3339d2e30",
+      "definition_text": "(party, day) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -629,8 +713,22 @@
       "id": "high_value_register.cash_receipt_day_row_amount_cash_receipt_day_2025-05-17_de0928f1",
       "value": 25000000,
       "unit": "paise",
-      "definition_sha256_16": "5a0e47060b0901a1",
-      "definition_text": "Cash receipt from/to one party ledger (tag de0928f1) on 2025-05-17, summed across every population voucher that day.",
+      "definition_sha256_16": "99af92074d025424",
+      "definition_text": "Cash receipt from/to one party ledger (tag de0928f1) on 2025-05-17, summed across every population voucher that day. This is the party's side of each voucher; on one or more of the row's vouchers it differs from the cash line, which is shown with it.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "h10",
+          "label": "Receipt h10 on 2025-05-17"
+        }
+      ]
+    },
+    {
+      "id": "high_value_register.cash_receipt_day_row_cash_line_cash_receipt_day_2025-05-17_de0928f1",
+      "value": 40000000,
+      "unit": "paise",
+      "definition_sha256_16": "8016f5c534175fd3",
+      "definition_text": "The cash debited on the vouchers in this row, summed, whichever parties it was for.",
       "evidence": [
         {
           "kind": "voucher",
@@ -772,8 +870,16 @@
       "id": "high_value_register.cash_receipt_voucher_at_or_over_threshold_count",
       "value": 3,
       "unit": "count",
-      "definition_sha256_16": "a3a7abde273a3db2",
-      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise).",
+      "definition_sha256_16": "52677af10362cd15",
+      "definition_text": "(party, voucher) pairs at or over the s.269ST(a) limit (20000000 paise), counting a pair only when its vouchers' own cash debited is at or over it too.",
+      "evidence": []
+    },
+    {
+      "id": "high_value_register.cash_receipt_voucher_party_side_over_line_below_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "76a5c240c942f2cc",
+      "definition_text": "(party, voucher) pairs whose party side is at or over the s.269ST(a) limit (20000000 paise) but whose vouchers' own cash debited is under it; not counted as at or over.",
       "evidence": []
     },
     {
@@ -915,6 +1021,10 @@
           "figure_id": "high_value_register.bank_payment_day_row_amount_bank_payment_day_2025-06-02_f49fcc1d"
         },
         {
+          "name": "bank_line",
+          "figure_id": "high_value_register.bank_payment_day_row_bank_line_bank_payment_day_2025-06-02_f49fcc1d"
+        },
+        {
           "name": "date",
           "figure_id": "high_value_register.bank_payment_day_row_date_bank_payment_day_2025-06-02_f49fcc1d"
         }
@@ -933,10 +1043,11 @@
       ],
       "title_sha256_16": "a38faa4d6faefc17",
       "title_text": "Bank payment at or over the CA-set vouching threshold on 2025-06-02",
-      "limits_sha256_16": "6796c9644e50c60e",
+      "limits_sha256_16": "b04e6193a8773abf",
       "limits_text": [
         "Bank mode is not a s.269ST test (that section is cash-only); this row is the CA-set vouching-list threshold only, not a statutory limb.",
-        "Account-payee status of the instrument behind this bank movement is not visible in Tally."
+        "Account-payee status of the instrument behind this bank movement is not visible in Tally.",
+        "The amount is this party's own side of each voucher, not the voucher's own bank line. On one or more of the row's vouchers the two differ, so such a voucher carries other lines as well (such as money moving by cash, a discount or deduction, a round-off, a loan, a counterparty this register leaves out, several parties sharing the line, or money moving the other way). The bank credited on these vouchers is shown with this row."
       ],
       "ask_client_sha256_16": "fb4f30813b1a1d24",
       "ask_client_text": [
@@ -1156,6 +1267,10 @@
           "figure_id": "high_value_register.cash_payment_day_row_amount_cash_payment_day_2025-06-02_f49fcc1d"
         },
         {
+          "name": "cash_line",
+          "figure_id": "high_value_register.cash_payment_day_row_cash_line_cash_payment_day_2025-06-02_f49fcc1d"
+        },
+        {
           "name": "date",
           "figure_id": "high_value_register.cash_payment_day_row_date_cash_payment_day_2025-06-02_f49fcc1d"
         }
@@ -1172,12 +1287,13 @@
           "label": "Payment h15 on 2025-06-02"
         }
       ],
-      "title_sha256_16": "7d2da8a724484841",
-      "title_text": "Cash paid to one party at or over the s.269ST(a) limb (a) person-per-day threshold on 2025-06-02 -- reportable in clause 31(bc)",
-      "limits_sha256_16": "9336a42770423aae",
+      "title_sha256_16": "a64b653aeb34bf22",
+      "title_text": "Cash paid to one party on 2025-06-02: the party's side is at or over the s.269ST(a) limit, but the cash credited on these vouchers is below it",
+      "limits_sha256_16": "2e8d1c73168d59fe",
       "limits_text": [
         "s.269ST(a) is a duty on the receiver of the cash, not the payer ('No person shall receive...'); a payment by the assessee is not a books-testable exposure for the assessee under s.269ST -- it is a Form 3CD clause 31(bc) reporting item only (limb (a): aggregate per person per day).",
-        "Books test covers limb (a) only. Limbs (b)/(c) need bill-wise/event linkage the books do not carry."
+        "Books test covers limb (a) only. Limbs (b)/(c) need bill-wise/event linkage the books do not carry.",
+        "The amount is this party's own side of each voucher, not the voucher's own cash line. On one or more of the row's vouchers the two differ, so such a voucher carries other lines as well (such as money moving by bank, a discount or deduction, a round-off, a loan, a counterparty this register leaves out, several parties sharing the line, or money moving the other way). The cash credited on these vouchers is below the threshold, so the cash paid to this party on them is below it too. The cash credited on these vouchers is shown with this row."
       ],
       "ask_client_sha256_16": "25218c6eb5a06205",
       "ask_client_text": [
@@ -1412,6 +1528,10 @@
           "figure_id": "high_value_register.cash_receipt_day_row_amount_cash_receipt_day_2025-05-17_de0928f1"
         },
         {
+          "name": "cash_line",
+          "figure_id": "high_value_register.cash_receipt_day_row_cash_line_cash_receipt_day_2025-05-17_de0928f1"
+        },
+        {
           "name": "date",
           "figure_id": "high_value_register.cash_receipt_day_row_date_cash_receipt_day_2025-05-17_de0928f1"
         }
@@ -1430,9 +1550,10 @@
       ],
       "title_sha256_16": "25993c93070c217e",
       "title_text": "Cash received from one party at or over the s.269ST(a) limb (a) person-per-day threshold on 2025-05-17",
-      "limits_sha256_16": "0d2843ac7ecdd07a",
+      "limits_sha256_16": "3e4077450b99fa3f",
       "limits_text": [
-        "Books test covers limb (a) (aggregate per person per day) only. Limbs (b) (a single transaction) and (c) (receipts relating to one event or occasion) need bill-wise/event linkage the books do not carry (see the single-transaction and event views below)."
+        "Books test covers limb (a) (aggregate per person per day) only. Limbs (b) (a single transaction) and (c) (receipts relating to one event or occasion) need bill-wise/event linkage the books do not carry (see the single-transaction and event views below).",
+        "The amount is this party's own side of each voucher, not the voucher's own cash line. On one or more of the row's vouchers the two differ, so such a voucher carries other lines as well (such as money moving by bank, a discount or deduction, a round-off, a loan, a counterparty this register leaves out, several parties sharing the line, or money moving the other way). The cash debited on these vouchers is shown with this row."
       ],
       "ask_client_sha256_16": "37ae58ad791a29f7",
       "ask_client_text": [

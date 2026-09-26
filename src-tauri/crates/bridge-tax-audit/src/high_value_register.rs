@@ -21,7 +21,10 @@
 //!   partly by bank (or against a discount) is a cash row, and a bank row, for the whole party
 //!   amount (`hvr_paths`' h15). A voucher naming two or more parties gives each only its own line,
 //!   and its tax, round-off and Sales/Purchase lines go to no party (`hvr_paths`' h11). So an
-//!   s.269ST row can over-state, or under-state, the cash one party moved.
+//!   s.269ST row can over-state, or under-state, the cash one party moved. Where a flagged row's
+//!   vouchers carry a different money line, the row shows that line; where the line is under the
+//!   threshold, the row is proven under it, keeps its tags, takes a title saying so and is
+//!   counted apart from the at-or-over pairs (`parity/PORT-NOTE-HVR.md`).
 //!
 //! The reference reads `[high_value_register].ca_threshold_paise` and `[s194n]` when the rules
 //! carry them and its own defaults otherwise. The vendored rules excerpt carries neither table, so
@@ -178,10 +181,51 @@ pub fn s194n_recipient_type(entity_type: Option<&str>) -> Option<Recipient> {
 }
 
 /// One row: its total and the vouchers behind it, by GUID (a repeated GUID keeps the last voucher,
-/// as the reference's dict does).
+/// as the reference's dict does), and per GUID the party's share of those vouchers against their
+/// own money line in the row's mode and direction (see `parity/PORT-NOTE-HVR.md`).
+#[derive(Default)]
 pub struct Row<'a> {
     pub paise: i64,
     pub vouchers: BTreeMap<String, &'a Voucher>,
+    /// GUID -> (share, line), each added per voucher as it is read, so two vouchers sharing a GUID
+    /// add together and one voucher's line is never set against two vouchers' shares.
+    pub lines: BTreeMap<String, (i64, i64)>,
+}
+
+impl<'a> Row<'a> {
+    fn add(&mut self, v: &'a Voucher, share: i64, line: i64) -> Result<()> {
+        self.paise = add(self.paise, share)?;
+        self.vouchers.insert(v.guid.clone(), v);
+        let slot = self.lines.entry(v.guid.clone()).or_insert((0, 0));
+        *slot = (add(slot.0, share)?, add(slot.1, line)?);
+        Ok(())
+    }
+
+    /// The row's vouchers' own money line, summed.
+    fn line_total(&self) -> Result<i64> {
+        self.lines
+            .values()
+            .try_fold(0, |t, (_, line)| add(t, *line))
+    }
+
+    /// At or over `threshold` on the party's side, and on the vouchers' own line too; a row over on
+    /// the party's side but under on the line is proven under it (`parity/PORT-NOTE-HVR.md`).
+    fn over(&self, threshold: i64) -> Result<Over> {
+        Ok(if self.paise < threshold {
+            Over::No
+        } else if self.line_total()? < threshold {
+            Over::PartySideOnly
+        } else {
+            Over::Yes
+        })
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Over {
+    No,
+    PartySideOnly,
+    Yes,
 }
 
 type Rows<'a, K> = BTreeMap<(K, String), Row<'a>>;
@@ -238,6 +282,22 @@ pub fn mode_rows<'a, K: Ord>(
         if !money_leg {
             continue;
         }
+        // The voucher's own money line in this mode and direction: debits on a receipt, the
+        // magnitude of credits on a payment.
+        let mut line = 0_i64;
+        for l in v.lines.iter().filter(|l| mode_set.contains(&l.ledger)) {
+            match direction {
+                Direction::Receipt if l.amount_paise > 0 => line = add(line, l.amount_paise)?,
+                Direction::Payment if l.amount_paise < 0 => {
+                    let m = l
+                        .amount_paise
+                        .checked_neg()
+                        .ok_or_else(|| overflow(TEST_ID))?;
+                    line = add(line, m)?;
+                }
+                _ => {}
+            }
+        }
         let mut party_amounts: BTreeMap<String, i64> = BTreeMap::new();
         let mut fallback_total = 0_i64;
         for l in &v.lines {
@@ -282,22 +342,14 @@ pub fn mode_rows<'a, K: Ord>(
         }
         if !party_amounts.is_empty() {
             for (ledger, amt) in party_amounts {
-                let row = rows.entry((key_fn(v), ledger)).or_insert_with(|| Row {
-                    paise: 0,
-                    vouchers: BTreeMap::new(),
-                });
-                row.paise = add(row.paise, amt)?;
-                row.vouchers.insert(v.guid.clone(), v);
+                let row = rows.entry((key_fn(v), ledger)).or_default();
+                row.add(v, amt, line)?;
             }
         } else if fallback_total > 0 {
             let row = rows
                 .entry((key_fn(v), UNIDENTIFIED_PARTY.to_string()))
-                .or_insert_with(|| Row {
-                    paise: 0,
-                    vouchers: BTreeMap::new(),
-                });
-            row.paise = add(row.paise, fallback_total)?;
-            row.vouchers.insert(v.guid.clone(), v);
+                .or_default();
+            row.add(v, fallback_total, line)?;
         }
     }
     Ok(rows)
@@ -495,12 +547,12 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                 } else {
                     None
                 };
-                let (any_count, any_total, over_count, evidence) = match (&day_rows, &voucher_rows)
-                {
-                    (Some(rows), _) => summarise(rows, row_threshold)?,
-                    (_, Some(rows)) => summarise(rows, row_threshold)?,
-                    _ => unreachable!("one grain is always computed"),
-                };
+                let (any_count, any_total, over_count, line_below_count, evidence) =
+                    match (&day_rows, &voucher_rows) {
+                        (Some(rows), _) => summarise(rows, row_threshold)?,
+                        (_, Some(rows)) => summarise(rows, row_threshold)?,
+                        _ => unreachable!("one grain is always computed"),
+                    };
                 fig(&mut r, &format!("{prefix}_any_amount_count"), count(TEST_ID, any_count)?, Unit::Count,
                     &format!("Distinct (party, {grain}) pairs with a {mode_name} {dir} on a population, \
                               non-Contra voucher."), vec![])?;
@@ -512,9 +564,20 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                 } else {
                     "CA-set vouching threshold"
                 };
+                let (verb, moved) = match direction {
+                    Direction::Receipt => ("debited", "received from"),
+                    Direction::Payment => ("credited", "paid to"),
+                };
                 fig(&mut r, &format!("{prefix}_at_or_over_threshold_count"), count(TEST_ID, over_count)?,
                     Unit::Count,
-                    &format!("(party, {grain}) pairs at or over the {over_what} ({row_threshold} paise)."), vec![])?;
+                    &format!("(party, {grain}) pairs at or over the {over_what} ({row_threshold} paise), \
+                              counting a pair only when its vouchers' own {mode_name} {verb} is at or over \
+                              it too."), vec![])?;
+                fig(&mut r, &format!("{prefix}_party_side_over_line_below_count"),
+                    count(TEST_ID, line_below_count)?, Unit::Count,
+                    &format!("(party, {grain}) pairs whose party side is at or over the {over_what} \
+                              ({row_threshold} paise) but whose vouchers' own {mode_name} {verb} is under \
+                              it; not counted as at or over."), vec![])?;
 
                 let Some(rows) = day_rows else {
                     continue; // row-level findings only at the (party, day) grain
@@ -531,10 +594,39 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                 for ((date, h), (_, ledger), data) in keyed {
                     let day = iso(&date);
                     let rid = format!("{prefix}_{day}_{h}");
-                    let f_amt = fig(&mut r, &format!("{prefix}_row_amount_{rid}"), Value::Int(data.paise), Unit::Paise,
-                        &format!("{} {dir} from/to one party ledger (tag {h}) on {day}, summed across every \
-                                  population voucher that day.", capitalize(mode_name)),
-                        voucher_evidence(&data.vouchers))?;
+                    // Where a voucher's own money line differs from the party's share of it, the row
+                    // says so and shows that line (parity/PORT-NOTE-HVR.md).
+                    let differs = data.lines.values().any(|(share, line)| share != line);
+                    let line_total = data.line_total()?;
+                    let other_mode = if is_cash { "bank" } else { "cash" };
+                    let mut amount_definition = format!(
+                        "{} {dir} from/to one party ledger (tag {h}) on {day}, summed across every \
+                         population voucher that day.",
+                        capitalize(mode_name)
+                    );
+                    if differs {
+                        amount_definition.push_str(&format!(
+                            " This is the party's side of each voucher; on one or more of the row's \
+                             vouchers it differs from the {mode_name} line, which is shown with it."
+                        ));
+                    }
+                    let f_amt = fig(
+                        &mut r,
+                        &format!("{prefix}_row_amount_{rid}"),
+                        Value::Int(data.paise),
+                        Unit::Paise,
+                        &amount_definition,
+                        voucher_evidence(&data.vouchers),
+                    )?;
+                    let f_line = if differs {
+                        Some(fig(&mut r, &format!("{prefix}_row_{mode_name}_line_{rid}"),
+                            Value::Int(line_total), Unit::Paise,
+                            &format!("The {mode_name} {verb} on the vouchers in this row, summed, whichever \
+                                      parties it was for."),
+                            voucher_evidence(&data.vouchers))?)
+                    } else {
+                        None
+                    };
                     let (mut title, clauses, mut limits, mut ask) = if is_cash
                         && direction == Direction::Receipt
                     {
@@ -568,6 +660,34 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                                visible in Tally.".to_string()],
                          vec!["Vouch this entry to the bank statement and the underlying document.".to_string()])
                     };
+                    if differs {
+                        let mut limit = format!(
+                            "The amount is this party's own side of each voucher, not the voucher's own \
+                             {mode_name} line. On one or more of the row's vouchers the two differ, so such a \
+                             voucher carries other lines as well (such as money moving by {other_mode}, a \
+                             discount or deduction, a round-off, a loan, a counterparty this register leaves \
+                             out, several parties sharing the line, or money moving the other way)."
+                        );
+                        if line_total < row_threshold {
+                            limit.push_str(&format!(
+                                " The {mode_name} {verb} on these vouchers is below the threshold, so the \
+                                 {mode_name} {moved} this party on them is below it too."
+                            ));
+                        }
+                        limit.push_str(&format!(
+                            " The {mode_name} {verb} on these vouchers is shown with this row."
+                        ));
+                        limits.push(limit);
+                    }
+                    // Proven under the threshold on the line: a ledger-true title; the tags, limits,
+                    // asks and facts stay (parity/PORT-NOTE-HVR.md).
+                    if data.over(row_threshold)? == Over::PartySideOnly {
+                        title = format!(
+                            "{} {moved} one party on {day}: the party's side is at or over the {over_what}, \
+                             but the {mode_name} {verb} on these vouchers is below it",
+                            capitalize(mode_name)
+                        );
+                    }
                     if ledger.as_str() == UNIDENTIFIED_PARTY {
                         title = title.replace("one party", "one unidentified party");
                         limits.push("No party ledger is on this voucher -- the books cannot name the \
@@ -588,11 +708,16 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                     )?;
                     let mut evidence = voucher_evidence(&data.vouchers);
                     evidence.push(party_ref(ledger));
+                    let mut facts =
+                        vec![("amount".to_string(), f_amt), ("date".to_string(), f_date)];
+                    if let Some(f_line) = f_line {
+                        facts.push((format!("{mode_name}_line"), f_line));
+                    }
                     r.findings.push(Finding {
                         id: format!("{TEST_ID}/{rid}"),
                         clauses,
                         title,
-                        facts: vec![("amount".to_string(), f_amt), ("date".to_string(), f_date)],
+                        facts,
                         evidence,
                         confidence: Confidence::NeedsDocument,
                         limits,
@@ -913,26 +1038,32 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
     Ok(r)
 }
 
-/// (pairs, total, pairs at or over `threshold`, evidence across every voucher of every pair --
-/// one ref per distinct (GUID, label), as the reference's set of refs).
+/// (pairs, total, pairs at or over `threshold` on the line too, pairs over on the party's side
+/// only, evidence across every voucher of every pair -- one ref per distinct (GUID, label), as the
+/// reference's set of refs).
 fn summarise<K>(
     rows: &Rows<'_, K>,
     threshold: i64,
-) -> Result<(usize, i64, usize, Vec<EvidenceRef>)> {
+) -> Result<(usize, i64, usize, usize, Vec<EvidenceRef>)> {
     let mut total = 0_i64;
+    let (mut over, mut line_below) = (0, 0);
     let mut refs: BTreeSet<(String, String)> = BTreeSet::new();
     for d in rows.values() {
         total = add(total, d.paise)?;
+        match d.over(threshold)? {
+            Over::Yes => over += 1,
+            Over::PartySideOnly => line_below += 1,
+            Over::No => {}
+        }
         for (g, v) in &d.vouchers {
             refs.insert((g.clone(), voucher_label(v)));
         }
     }
-    let over = rows.values().filter(|d| d.paise >= threshold).count();
     let evidence = refs
         .into_iter()
         .map(|(g, l)| EvidenceRef::with_label("voucher", &g, &l))
         .collect();
-    Ok((rows.len(), total, over, evidence))
+    Ok((rows.len(), total, over, line_below, evidence))
 }
 
 /// Python's `str.capitalize()` for the two ASCII mode names ("cash", "bank").
@@ -1075,5 +1206,238 @@ mod tests {
         };
         assert!(parties(&voucher("c1", "Contra")).is_empty());
         assert_eq!(parties(&voucher("r1", "Receipt")), ["Customer A"]);
+    }
+    #[test]
+    fn a_row_shows_the_money_line_summed_per_voucher_when_any_voucher_differs() {
+        use crate::book::{LedgerLine, VoucherStatus};
+        // Cash received from Customer A on one day: g1 (Rs 1.5 lakh, share = line), a second
+        // voucher also filed as g1 whose cash is debited Rs 1 lakh and credited Rs 20,000 back (so
+        // its share, Rs 80,000, differs from its line, the debit only), and g3 (Rs 50,000, share =
+        // line). The row (Rs 2.8 lakh) is over the limit; its cash line is Rs 3 lakh, summed per
+        // voucher, both g1 vouchers added together.
+        let voucher = |guid: &str, on: &str, base_type: &str, lines: &[(&str, i64)]| Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse(on).unwrap(),
+            base_type: base_type.to_string(),
+            status: VoucherStatus::Regular,
+            lines: lines
+                .iter()
+                .map(|(ledger, amount_paise)| LedgerLine {
+                    ledger: (*ledger).to_string(),
+                    amount_paise: *amount_paise,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let book = Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            stock: None,
+            vouchers: vec![
+                voucher(
+                    "g1",
+                    "20250601",
+                    "Receipt",
+                    &[("Cash", 15_000_000), ("Customer A", -15_000_000)],
+                ),
+                voucher(
+                    "g1",
+                    "20250601",
+                    "Receipt",
+                    &[
+                        ("Cash", 10_000_000),
+                        ("Cash", -2_000_000),
+                        ("Customer A", -8_000_000),
+                    ],
+                ),
+                voucher(
+                    "g3",
+                    "20250601",
+                    "Receipt",
+                    &[("Cash", 5_000_000), ("Customer A", -5_000_000)],
+                ),
+                // Customer B: g4's line is Rs 20,000 over its share and g5's Rs 20,000 under, so
+                // the row's totals agree, both exactly at the Rs 2 lakh limit, while each voucher
+                // differs.
+                voucher(
+                    "g4",
+                    "20250602",
+                    "Receipt",
+                    &[
+                        ("Cash", 12_000_000),
+                        ("Cash", -2_000_000),
+                        ("Customer B", -10_000_000),
+                    ],
+                ),
+                voucher(
+                    "g5",
+                    "20250602",
+                    "Receipt",
+                    &[
+                        ("Cash", 8_000_000),
+                        ("Bank", 2_000_000),
+                        ("Customer B", -10_000_000),
+                    ],
+                ),
+                // No party: Rs 1.5 lakh paid in cash (and Rs 10,000 of cash taken back) with Rs 1
+                // lakh by bank, all against round-off, so the unidentified row's share (Rs 2.4
+                // lakh) is over the limit while its cash line (Rs 1.5 lakh) is under it.
+                voucher(
+                    "g6",
+                    "20250603",
+                    "Payment",
+                    &[
+                        ("Cash", -15_000_000),
+                        ("Cash", 1_000_000),
+                        ("Bank", -10_000_000),
+                        ("Round Off", 24_000_000),
+                    ],
+                ),
+                // No party: Rs 2 lakh received, Rs 1.5 lakh by bank and Rs 50,000 in cash, against
+                // round-off. Its bank row and its cash row each take the whole Rs 2 lakh, at the
+                // threshold, while each line is under it.
+                voucher(
+                    "g7",
+                    "20250604",
+                    "Receipt",
+                    &[
+                        ("Bank", 15_000_000),
+                        ("Cash", 5_000_000),
+                        ("Round Off", -20_000_000),
+                    ],
+                ),
+            ],
+            tb: BTreeMap::new(),
+        };
+        let (cash, bank) = (
+            BTreeSet::from(["Cash".to_string()]),
+            BTreeSet::from(["Bank".to_string()]),
+        );
+        let (none, no_types) = (BTreeSet::new(), BTreeMap::new());
+        let round_off = BTreeSet::from(["Round Off".to_string()]);
+        let inputs = Inputs {
+            cash: &cash,
+            bank: &bank,
+            threshold_paise: None,
+            bank_statement: None,
+            s194n_narration_terms: &none,
+            ais_rows: &[],
+            s194n_recipient_type: None,
+            round_off_ledgers: &round_off,
+            counterparty_type_by_ledger: &no_types,
+        };
+        let r = run(&book, &Rules::vendored().unwrap(), &inputs).unwrap();
+        let figure = |prefix: &str| {
+            let prefix = format!("{TEST_ID}.{prefix}");
+            let f = r.figures.iter().find(|f| f.id.starts_with(&prefix));
+            f.map(|f| f.value.clone())
+        };
+        assert_eq!(
+            figure("cash_receipt_day_row_amount_"),
+            Some(Value::Int(28_000_000))
+        );
+        assert_eq!(
+            figure("cash_receipt_day_row_cash_line_"),
+            Some(Value::Int(30_000_000))
+        );
+        let finding = r
+            .findings
+            .iter()
+            .find(|f| f.id.contains("cash_receipt_day_2025-06-01"));
+        let finding = finding.expect("the row is over the limit");
+        assert!(finding.facts.iter().any(|(k, _)| k == "cash_line"));
+        assert!(!finding
+            .limits
+            .iter()
+            .any(|l| l.contains("is below the threshold")));
+
+        let finding_on = |day: &str, what: &str| {
+            let f = r
+                .findings
+                .iter()
+                .find(|f| f.id.contains(&format!("{what}_day_{day}")));
+            f.unwrap_or_else(|| panic!("no {what} finding on {day}"))
+        };
+        let b = finding_on("2025-06-02", "cash_receipt");
+        assert!(
+            b.facts.iter().any(|(k, _)| k == "cash_line"),
+            "each voucher differs"
+        );
+        // At the limit on both sides is at or over it, not proven under it.
+        assert_eq!(
+            b.title,
+            "Cash received from one party at or over the s.269ST(a) limb (a) person-per-day \
+             threshold on 2025-06-02"
+        );
+        assert_eq!(
+            figure("cash_receipt_day_at_or_over_threshold_count"),
+            Some(Value::Int(2))
+        );
+        assert_eq!(
+            figure("cash_receipt_day_party_side_over_line_below_count"),
+            Some(Value::Int(1))
+        );
+
+        let u = finding_on("2025-06-03", "cash_payment");
+        assert_eq!(
+            figure("cash_payment_day_row_cash_line_"),
+            Some(Value::Int(15_000_000))
+        );
+        assert!(u.facts.iter().any(|(k, _)| k == "cash_line"));
+        let n = u.limits.len();
+        assert_eq!(
+            u.limits[n - 2],
+            "The amount is this party's own side of each voucher, not the voucher's own cash \
+             line. On one or more of the row's vouchers the two differ, so such a voucher carries \
+             other lines as well (such as money moving by bank, a discount or deduction, a \
+             round-off, a loan, a counterparty this register leaves out, several parties sharing \
+             the line, or money moving the other way). The cash credited on these vouchers is \
+             below the threshold, so the cash paid to this party on them is below it too. The \
+             cash credited on these vouchers is shown with this row."
+        );
+        assert!(u.limits[n - 1].starts_with("No party ledger is on this voucher"));
+        // Proven under the limit on the line: a true title, the tags kept, and counted apart at
+        // both grains.
+        assert_eq!(
+            u.title,
+            "Cash paid to one unidentified party on 2025-06-03: the party's side is at or over \
+             the s.269ST(a) limit, but the cash credited on these vouchers is below it"
+        );
+        assert_eq!(u.clauses, ["s.269ST(a)", "3CD-31(bc)"]);
+        for grain in ["day", "voucher"] {
+            assert_eq!(
+                figure(&format!("cash_payment_{grain}_at_or_over_threshold_count")),
+                Some(Value::Int(0))
+            );
+            assert_eq!(
+                figure(&format!(
+                    "cash_payment_{grain}_party_side_over_line_below_count"
+                )),
+                Some(Value::Int(1))
+            );
+        }
+        // The same for a receipt, in both modes, each against its own threshold.
+        assert_eq!(
+            finding_on("2025-06-04", "cash_receipt").title,
+            "Cash received from one unidentified party on 2025-06-04: the party's side is at or \
+             over the s.269ST(a) limit, but the cash debited on these vouchers is below it"
+        );
+        assert_eq!(
+            finding_on("2025-06-04", "bank_receipt").title,
+            "Bank received from one unidentified party on 2025-06-04: the party's side is at or \
+             over the CA-set vouching threshold, but the bank debited on these vouchers is below it"
+        );
+        assert_eq!(
+            figure("bank_receipt_day_at_or_over_threshold_count"),
+            Some(Value::Int(0))
+        );
+        assert_eq!(
+            figure("bank_receipt_day_party_side_over_line_below_count"),
+            Some(Value::Int(1))
+        );
     }
 }

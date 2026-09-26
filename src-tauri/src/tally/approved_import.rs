@@ -26,7 +26,9 @@ const POST_TOKEN_PREFIX: &str = "bridge-post-approved:";
 #[derive(Clone)]
 pub(crate) struct ApprovedImport {
     xml: String,
-    voucher_date: TallyDate,
+    /// Every voucher's date, in batch order: the queue's Education recheck
+    /// covers each of them.
+    voucher_dates: Vec<TallyDate>,
     verification_request: AgentReadRequest,
     ledger_catalogue_request: AgentReadRequest,
     ledger_binding: StandardLedgerCatalogBinding,
@@ -55,12 +57,21 @@ pub(crate) struct QueuedAdmission<'a> {
     pub(crate) ledger_binding: &'a StandardLedgerCatalogBinding,
 }
 
+/// Whether the profile accepts every voucher's date, and there is at least
+/// one: an empty list approves nothing.
+fn every_date_accepted(profile: DateBoundaryProfile, voucher_dates: &[TallyDate]) -> bool {
+    !voucher_dates.is_empty()
+        && voucher_dates
+            .iter()
+            .all(|voucher_date| profile.accepts_boundary(voucher_date))
+}
+
 impl ApprovedImport {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn confirm(
         xml: String,
         preview: &str,
-        voucher_date: TallyDate,
+        voucher_dates: Vec<TallyDate>,
         verification_request: AgentReadRequest,
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
@@ -68,10 +79,13 @@ impl ApprovedImport {
         currency_request: AgentReadRequest,
         company_marks_request: AgentReadRequest,
     ) -> Result<Self, String> {
+        if voucher_dates.is_empty() {
+            return Err("voucher_date_invalid".into());
+        }
         approve(preview).await?;
         Ok(Self {
             xml,
-            voucher_date,
+            voucher_dates,
             verification_request,
             ledger_catalogue_request,
             ledger_binding,
@@ -115,7 +129,7 @@ impl ApprovedImport {
         &self,
         profile: DateBoundaryProfile,
     ) -> Result<(), ApprovedImportAdmissionError> {
-        if profile.accepts_boundary(&self.voucher_date) {
+        if every_date_accepted(profile, &self.voucher_dates) {
             Ok(())
         } else {
             Err(ApprovedImportAdmissionError::EducationVoucherDateUnsupported)
@@ -136,7 +150,7 @@ impl ApprovedImport {
         std::hint::black_box(test_seam::SEAM_MARKER);
         Self {
             xml,
-            voucher_date,
+            voucher_dates: vec![voucher_date],
             verification_request: AgentReadRequest::parse(
                 bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile::CompanyListV2.render(),
             )
@@ -214,6 +228,19 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// data-free cause the refusal carries.
     #[error("post_catalogue_unreadable")]
     CatalogueUnreadable(#[source] bridge_tally_protocol::StandardLedgerCatalogError),
+}
+
+/// A failure inside the endpoint queue before the dispatch intent is recorded
+/// (#656): every queue read, and the admission recheck, run in one block whose
+/// error this wraps; the intent, the POST and the readback run after it. So it
+/// marks a refusal whose outcome is known — nothing was sent — by where it
+/// happened, and a read added to that block later is covered without a list.
+/// A named admission refusal inside it keeps its own code.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub(crate) struct PreIntentQueueRefusal {
+    #[source]
+    pub(crate) source: anyhow::Error,
 }
 
 /// The native approval every real post goes through. Outside this crate's own
@@ -362,20 +389,60 @@ pub(crate) mod test_seam {
         );
     }
 
-    /// A script standing in for a dialog subprocess.
+    /// A script standing in for a dialog subprocess. Its first act is to
+    /// create `<script>.ran`, which [`stub_ran`] checks, so a row can tell a
+    /// refusal the script produced from a spawn that failed.
     ///
-    /// Each call writes a file of its own. Rewriting one path that another
-    /// thread may be executing can fail on Linux with "text file busy"
-    /// (ETXTBSY), which would surface as `import_approval_unavailable`.
+    /// Each call writes a file of its own, from a child process. The test
+    /// process never holds a writable descriptor to an executable. If it did,
+    /// another test thread's fork would inherit that descriptor until its
+    /// exec, and exec'ing the script in that window fails on Linux with "text
+    /// file busy" (ETXTBSY). That failure surfaces as `…_unavailable`, the
+    /// very code some rows expect (#704 review).
     #[cfg(unix)]
     fn stub(directory: &std::path::Path, body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::Write as _;
         use std::sync::atomic::{AtomicUsize, Ordering};
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = directory.join(format!("stub-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut writer = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("cat > \"$1\" && chmod 755 \"$1\"")
+            .arg("sh")
+            .arg(&path)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("#!/bin/sh\n: > \"$0.ran\"\n{body}\n").as_bytes())
+            .unwrap();
+        assert!(writer.wait().unwrap().success(), "the stub was written");
         path
+    }
+
+    /// Whether the script at `stub` started: see [`stub`].
+    #[cfg(unix)]
+    fn stub_ran(stub: &std::path::Path) -> bool {
+        std::path::PathBuf::from(format!("{}.ran", stub.display())).exists()
+    }
+
+    /// The control for [`stub_ran`]. A stand-in that cannot start is refused
+    /// as unavailable too, and leaves no marker. So each row's marker check is
+    /// what tells a refusal the script produced from a spawn that failed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_stand_in_that_cannot_start_is_unavailable_and_leaves_no_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("not-executable");
+        std::fs::write(&script, "#!/bin/sh\n: > \"$0.ran\"\nexit 0\n").unwrap();
+        assert_eq!(
+            super::confirm_with(&script, "Post").await,
+            Err("import_approval_unavailable".to_string())
+        );
+        assert!(!stub_ran(&script));
     }
 
     /// Only the token echoing this call's nonce is an answer. An older build
@@ -403,13 +470,15 @@ pub(crate) mod test_seam {
             ),
         ];
         for (name, body) in answers {
-            let result = super::confirm_review_with(&stub(directory.path(), body), "Review").await;
+            let script = stub(directory.path(), body);
+            let result = super::confirm_review_with(&script, "Review").await;
             let expected = if name == "the token, but a failing exit" {
                 Ok(())
             } else {
                 Err("ack_review_declined".to_string())
             };
             assert_eq!(result, expected, "{name}");
+            assert!(stub_ran(&script), "{name}: the stand-in ran");
         }
         // The control: the token for this call's nonce is accepted.
         let echoes_token = stub(
@@ -420,17 +489,38 @@ pub(crate) mod test_seam {
             super::confirm_review_with(&echoes_token, "Review").await,
             Ok(())
         );
+        assert!(stub_ran(&echoes_token));
     }
 
     /// The post dialog is answered only by the token echoing this call's
-    /// nonce, and a clean exit (#635). An executable that ignores
-    /// `--confirm-journal` and exits 0, one that echoes its input, a token for
-    /// another nonce, the review dialog's token, and the right token with a
-    /// failing exit are all refused, never approved.
+    /// nonce, and a clean exit (#635). Anything else is refused, never
+    /// approved. A clean exit without the token cannot be a person's decline,
+    /// which exits 1, so it is refused as the dialog being unavailable: an
+    /// executable that ignores `--confirm-journal`, one that echoes its input,
+    /// a token for another nonce, the review dialog's token, or stray output.
+    /// A failing exit is a decline, even after the right token.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_post_is_approved_only_by_the_token_for_its_nonce() {
         let directory = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            (
+                "a person's decline: no token, exit 1",
+                "cat > /dev/null; exit 1",
+            ),
+            (
+                "the token, but a failing exit",
+                "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
+            ),
+        ] {
+            let script = stub(directory.path(), body);
+            assert_eq!(
+                super::confirm_with(&script, "Post").await,
+                Err("import_approval_declined".to_string()),
+                "{name}"
+            );
+            assert!(stub_ran(&script), "{name}: the stand-in ran");
+        }
         for (name, body) in [
             ("an executable ignoring the flag exits 0", "cat > /dev/null; exit 0"),
             ("an echo of the input", "cat"),
@@ -442,13 +532,9 @@ pub(crate) mod test_seam {
                 "the review dialog's token for this nonce",
                 "read nonce; printf 'bridge-review-acknowledged:%s\\n' \"$nonce\"; cat > /dev/null",
             ),
-            (
-                "the token, but a failing exit",
-                "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
-            ),
             // The answer is matched byte for byte, so any stray output, such
-            // as a log line, declines. That is fail-closed on purpose: do not
-            // trim or search the output to "fix" it.
+            // as a log line, is refused. That is fail-closed on purpose: do
+            // not trim or search the output to "fix" it.
             (
                 "a log line, then the token",
                 "read nonce; echo starting; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
@@ -462,11 +548,16 @@ pub(crate) mod test_seam {
                 "read nonce; printf 'bridge-post-approved:%s' \"$nonce\"; cat > /dev/null",
             ),
         ] {
+            // The stand-in must have run: a spawn failure is also
+            // `import_approval_unavailable`, and would pass this row without
+            // reaching the clean-exit-without-token arm it is here to pin.
+            let script = stub(directory.path(), body);
             assert_eq!(
-                super::confirm_with(&stub(directory.path(), body), "Post").await,
-                Err("import_approval_declined".to_string()),
+                super::confirm_with(&script, "Post").await,
+                Err("import_approval_unavailable".to_string()),
                 "{name}"
             );
+            assert!(stub_ran(&script), "{name}: the stand-in ran");
         }
         // The control: the token for this call's nonce, then a clean exit.
         let approves = stub(
@@ -474,6 +565,7 @@ pub(crate) mod test_seam {
             "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
         );
         assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
+        assert!(stub_ran(&approves));
     }
 
     /// Each call sends a nonce of its own: a stub that answers every call
@@ -493,6 +585,7 @@ pub(crate) mod test_seam {
         for _ in 0..2 {
             assert_eq!(super::confirm_with(&approves, "Post").await, Ok(()));
         }
+        assert!(stub_ran(&approves));
         let nonces = std::fs::read_to_string(&seen).unwrap();
         let nonces = nonces.lines().collect::<Vec<_>>();
         assert_eq!(nonces.len(), 2);
@@ -541,6 +634,11 @@ async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(),
     }
     match nonce_bound_dialog(executable, "--confirm-journal", POST_TOKEN_PREFIX, preview).await {
         Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
+        // A person's decline is no token and exit 1: `run_confirmation`
+        // returns false. A clean exit without the token is never that; it is
+        // an executable that does not answer with this token, such as one
+        // ignoring the flag, or a build from before #635 whose dialog ran.
+        Ok(answer) if answer.exited_cleanly => Err("import_approval_unavailable".into()),
         Ok(_) => Err("import_approval_declined".into()),
         Err(DialogFailure::Unavailable) => Err("import_approval_unavailable".into()),
         Err(DialogFailure::TimedOut) => Err("import_approval_timed_out".into()),
@@ -636,37 +734,54 @@ fn dialog_token(prefix: &str, nonce: &str) -> String {
 /// It prints the token for the nonce it was given only when the person chose
 /// to post (#635); the parent trusts nothing else.
 pub fn run_confirmation() -> bool {
-    answer_with_token(POST_TOKEN_PREFIX, show_review)
+    answer_with_token(
+        POST_TOKEN_PREFIX,
+        show_review,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
 }
 
 /// Entry point for the review dialog's subprocess (#239), under the same rules.
 pub fn run_review_confirmation() -> bool {
-    answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)
+    answer_with_token(
+        REVIEW_TOKEN_PREFIX,
+        show_review_acknowledgement,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
 }
 
-/// Read the parent's nonce line and preview, show `dialog`, and print the
-/// token for that nonce only when it returns true.
-fn answer_with_token(prefix: &str, dialog: fn(&str) -> bool) -> bool {
-    let mut input = String::new();
-    if std::io::stdin()
+/// Read the parent's nonce line and preview from `input`, show `dialog`, and
+/// write the token for that nonce to `output` only when it returns true. The
+/// entry points pass stdin, stdout and their own dialog. The parent's tests
+/// stand a script in for the child, so taking these as parameters is the only
+/// way a test reaches the one line that turns a click into an approval: a
+/// declined dialog writes nothing (#687).
+fn answer_with_token(
+    prefix: &str,
+    dialog: fn(&str) -> bool,
+    input: impl Read,
+    mut output: impl std::io::Write,
+) -> bool {
+    let mut text = String::new();
+    if input
         .take(MAX_PREVIEW_BYTES as u64 + 64)
-        .read_to_string(&mut input)
+        .read_to_string(&mut text)
         .is_err()
     {
         return false;
     }
-    let Some((nonce, preview)) = dialog_input(&input) else {
+    let Some((nonce, preview)) = dialog_input(&text) else {
         return false;
     };
     if !dialog(preview) {
         return false;
     }
-    use std::io::Write as _;
-    let mut stdout = std::io::stdout();
-    stdout
+    output
         .write_all(dialog_token(prefix, nonce).as_bytes())
         .is_ok()
-        && stdout.flush().is_ok()
+        && output.flush().is_ok()
 }
 
 /// The nonce line and the preview, when the input has the shape the parent

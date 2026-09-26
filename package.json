@@ -31,6 +31,7 @@
     "cargo:test": "cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace",
     "test:tally-company-selection": "node --experimental-strip-types --test scripts/tally-company-selection.test.mjs",
     "tally:live-read-boundary": "node scripts/check-tally-live-read-boundary.mjs",
+    "tally:egress-boundary": "node scripts/check-tally-egress-boundary.mjs",
     "check:ci-workflow": "node scripts/check-ci-workflow-consistency.mjs",
     "check:fixture-byte-integrity": "node scripts/check-fixture-byte-integrity.mjs",
     "check:fixture-provenance": "node scripts/check-fixture-provenance.mjs",
