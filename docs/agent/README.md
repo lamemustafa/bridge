@@ -423,7 +423,10 @@ been observed live on a synthetic Silver 7.1 company, each reading back
    are not yet measured. A queue catalogue re-read that does not parse as this
    company's catalogue refuses with `post_catalogue_unreadable`, whose `cause`
    names why, and nothing is sent; a repeated or unusable ledger name refuses
-   again until it is corrected in Tally. Separately, the build records each ledger's GUID, and a
+   again until it is corrected in Tally. A queue re-read of the group collection
+   (for a Payment, Receipt or Contra) that does not parse refuses with
+   `group_export_invalid`, with the same `cause` the read before approval names,
+   and nothing is sent. Separately, the build records each ledger's GUID, and a
    post refuses any ledger now on another GUID (renamed and replaced, or deleted
    and recreated, since the build) with `import_masters_changed_since_build`,
    naming it. The name now means a different ledger: confirm the intended one

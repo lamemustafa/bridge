@@ -599,6 +599,13 @@ impl Server {
                     )
                 }) {
                     "post_catalogue_unreadable"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::GroupExportInvalid { .. })
+                    )
+                }) {
+                    "group_export_invalid"
                 } else if let Some(refusal) = error
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<UnderLockRefusal>())
@@ -627,9 +634,17 @@ impl Server {
                         })
                     })
                     .flatten();
+                // The queue's group re-read names why, as the read before
+                // approval does (bridge#717).
+                let group = error.chain().find_map(|cause| {
+                    match cause.downcast_ref::<ApprovedImportAdmissionError>() {
+                        Some(ApprovedImportAdmissionError::GroupExportInvalid { cause }) => *cause,
+                        _ => None,
+                    }
+                });
                 let mut failure = ToolFailure::from_runtime(code, error);
                 if failure.cause.is_none() {
-                    failure.cause = transport;
+                    failure.cause = group.or(transport);
                 }
                 failure
             })?;
@@ -1134,8 +1149,11 @@ fn recheck_import_admission(
     match (bank, groups) {
         (false, None) => {}
         (true, Some(groups)) => {
-            let groups = parse_native_group_snapshot(groups, company_guid)
-                .map_err(|_| anyhow::Error::msg("group_export_invalid"))?;
+            let groups = parse_native_group_snapshot(groups, company_guid).map_err(|error| {
+                ApprovedImportAdmissionError::GroupExportInvalid {
+                    cause: crate::tally::approved_import::group_snapshot_cause(&error),
+                }
+            })?;
             let payload = ImportPayload {
                 company_guid: line.company_guid.clone(),
                 vouchers: line.vouchers.clone(),
