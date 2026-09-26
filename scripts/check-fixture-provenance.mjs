@@ -121,6 +121,10 @@ function walkFiles(directory, visited = new Set()) {
 // forms appear in the existing files.
 const TABLE_ROW = /\|\s*`([^`]+)`\s*\|\s*([\d,]+)\s*\|\s*`([0-9a-fA-F]{64})`\s*\|/g;
 
+// A path in prose: two or more path segments joined by `/`, as in
+// `./generators/build_reopen.py` or `scripts/fixtures/sbi-bbox-capture.xml`.
+const PATH_MENTION = /(?<![A-Za-z0-9_.\/-])(?:\.{1,2}\/)*[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+/g;
+
 function short(value, max = 200) {
   const text = String(value);
   return text.length <= max ? text : `${text.slice(0, max)}…`;
@@ -162,7 +166,8 @@ for (const fixtureDirectory of fixtureDirectories) {
   const fixtureFiles = allPaths.filter(
     (path) => extname(path).toLowerCase() !== ".md" && !provenanceRecords.has(path),
   );
-  if (!fixtureFiles.length) continue;
+  // No early exit for a directory without fixtures: its Markdown can still
+  // carry a path row that checks nothing, which is reported below (#759).
 
   // Every filename this directory's own documentation names, plus every
   // captured-fixture table row found in it. Concatenating every Markdown
@@ -179,9 +184,17 @@ for (const fixtureDirectory of fixtureDirectories) {
   // against exactly that file, and a row naming a file that does not exist
   // fails rather than checking nothing.
   const declaredByPath = new Map(); // repository-relative path -> declarations
+  // Every path the prose names (`./generators/x.py`, `scripts/fixtures/y.xml`),
+  // resolved against the Markdown file's directory and against the repository
+  // root. A path documents the file it names and no other.
+  const pathMentions = new Set();
   for (const markdownPath of markdownFiles) {
     const text = readFileSync(markdownPath, "utf8");
     documentationText += `\n${text}`;
+    for (const [mention] of text.matchAll(PATH_MENTION)) {
+      pathMentions.add(relative(repositoryRoot, resolve(dirname(markdownPath), mention)));
+      pathMentions.add(relative(repositoryRoot, resolve(repositoryRoot, mention)));
+    }
     for (const match of text.matchAll(TABLE_ROW)) {
       const [, name, bytesText, sha256] = match;
       const bytes = Number(bytesText.replaceAll(",", ""));
@@ -274,10 +287,16 @@ for (const fixtureDirectory of fixtureDirectories) {
     // word-boundary-safe, so this checks the character immediately outside
     // the match is not itself part of a longer filename instead of using
     // `\b`, which a dot or hyphen would defeat silently.
+    //
+    // A name preceded by `/` is a path: it documents the file at that path
+    // (a path row, or a path the prose names), never another file that merely
+    // shares its basename. Counting it as a bare mention let an undocumented
+    // `other/x.bin` pass as documented beside a row for `agent/x.bin` (#759).
     const escaped = basename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const mentioned = new RegExp(`(?<![A-Za-z0-9_.-])${escaped}(?![A-Za-z0-9_.-])`).test(
-      documentationText,
-    );
+    const mentioned =
+      declaredByPath.has(relativePath) ||
+      pathMentions.has(relativePath) ||
+      new RegExp(`(?<![A-Za-z0-9_./-])${escaped}(?![A-Za-z0-9_.-])`).test(documentationText);
     if (!mentioned) {
       undocumented += 1;
       if (failures.length < MAX_REPORTED) {
@@ -322,15 +341,23 @@ for (const fixtureDirectory of fixtureDirectories) {
     }
   }
 
+  // A path row that checked no fixture is itself a failure, named for why:
+  // it left this fixture root, it names a provenance record rather than a
+  // fixture, or nothing is at that path. Each would otherwise check nothing.
   const fixtureSet = new Set(fixtureFiles.map((path) => relative(repositoryRoot, path)));
+  const recordSet = new Set(
+    allPaths.map((path) => relative(repositoryRoot, path)).filter((path) => !fixtureSet.has(path)),
+  );
   for (const [target, declarations] of declaredByPath) {
     if (fixtureSet.has(target)) continue;
+    const problem = !target.startsWith(`${fixtureDirectory}/`)
+      ? `resolves outside ${fixtureDirectory}; a row may name only a fixture of its own fixture root`
+      : recordSet.has(target)
+        ? "names a provenance record (Markdown or a JSON sidecar), not a fixture"
+        : `names no file in ${fixtureDirectory}; the row checks nothing — correct its path`;
     for (const declaration of declarations) {
       if (failures.length < MAX_REPORTED) {
-        failures.push(
-          `${target}: declared in ${declaration.sourceFile} with a hash, but no ` +
-            "fixture is at that path — the row checks nothing; correct its path",
-        );
+        failures.push(`${target}: a hash row in ${declaration.sourceFile} ${problem}`);
       }
     }
   }
