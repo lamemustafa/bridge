@@ -393,22 +393,105 @@ fn each_dialog_mode_runs_its_own_dialog() {
     assert!(!dialog_mode_problems(&swapped).is_empty());
 }
 
-/// Each dialog subprocess answers with its own token, after its own dialog
-/// (#635). The parent approves a post only on the post token, so pairing that
-/// token with the review dialog would let "I reviewed it" approve a post, and
-/// no stub test could see it: a stub is a script, not this code.
+/// The block of the queued post whose errors are marked as refused before the
+/// intent (#656) must hold no intent and no POST: a refusal from inside it is
+/// reported as "nothing was sent". So in `post_approved_import` the block
+/// opens once, closes into `PreIntentQueueRefusal` once, holds neither
+/// `before_dispatch()` nor `post_probe_xml(`, and both follow it in that order.
+fn pre_intent_block_problems(runtime: &str) -> Vec<String> {
+    let open = "let (admission_evidence, before_marks) = async {";
+    let close = "PreIntentQueueRefusal { source }";
+    let Some(function) = runtime.find("async fn post_approved_import<") else {
+        return vec!["post_approved_import not found".into()];
+    };
+    let body = &runtime[function..];
+    let body = &body[..body.find("\n    }\n").unwrap_or(body.len())];
+    if body.matches(open).count() != 1 || body.matches(close).count() != 1 {
+        return vec!["expected exactly one marked block in post_approved_import".into()];
+    }
+    let start = body.find(open).unwrap();
+    let end = body.find(close).unwrap();
+    if end < start {
+        return vec!["the marked block closes before it opens".into()];
+    }
+    let mut problems = Vec::new();
+    let block = &body[start..end];
+    for forbidden in ["before_dispatch()", "post_probe_xml("] {
+        if block.contains(forbidden) {
+            problems.push(format!("`{forbidden}` inside the pre-intent block"));
+        }
+    }
+    let after = &body[end..];
+    match (
+        after.find("before_dispatch()"),
+        after.find("post_probe_xml("),
+    ) {
+        (Some(intent), Some(post)) if intent < post => {}
+        _ => problems.push("the intent, then the POST, must follow the block".into()),
+    }
+    problems
+}
+
+#[test]
+fn nothing_is_sent_inside_the_pre_intent_block() {
+    let runtime = read("src-tauri/src/tally/runtime.rs");
+    assert_eq!(pre_intent_block_problems(&runtime), Vec::<String>::new());
+    // The check itself: the intent moved into the block, or the block's error
+    // left unmarked, is caught.
+    let intent_inside = runtime.replacen(
+        "let (admission_evidence, before_marks) = async {",
+        "let (admission_evidence, before_marks) = async {\n                        before_dispatch().ok();",
+        1,
+    );
+    let unmarked = runtime.replacen("PreIntentQueueRefusal { source }", "source", 1);
+    for broken in [intent_inside, unmarked] {
+        assert_ne!(broken, runtime);
+        assert!(!pre_intent_block_problems(&broken).is_empty());
+    }
+}
+
+/// The post child's whole entry point: its token, its dialog, and the real
+/// stdin and stdout. A test calls `answer_with_token` with its own input,
+/// output and dialog, so only this pin covers what the entry point passes.
+const POST_ENTRY: &str = "pub fn run_confirmation() -> bool {
+    answer_with_token(
+        POST_TOKEN_PREFIX,
+        show_review,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
+}";
+
+/// The review child's whole entry point, as [`POST_ENTRY`].
+const REVIEW_ENTRY: &str = "pub fn run_review_confirmation() -> bool {
+    answer_with_token(
+        REVIEW_TOKEN_PREFIX,
+        show_review_acknowledgement,
+        std::io::stdin(),
+        std::io::stdout(),
+    )
+}";
+
+/// Each dialog subprocess entry point answers with its own token, after its
+/// own dialog, from the real stdin to the real stdout (#635, #687). The
+/// parent approves a post only on the post token, so pairing that token with
+/// the review dialog would let "I reviewed it" approve a post, and passing a
+/// dialog other than the real one would approve with nobody asked. No stub
+/// test could see either: a stub is a script, not this code. Each entry
+/// point's whole body is pinned, so a swapped body is caught too, and no
+/// other `answer_with_token(` call may appear in the file. A text gate cannot
+/// see a call that does not spell that out, such as one through a function
+/// pointer, a parenthesised path `(answer_with_token)(…)`, or a `use … as`
+/// rename; the lib.rs mode arms, pinned above, are still the only way in.
 fn dialog_token_problems(source: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    for pairing in [
-        "answer_with_token(POST_TOKEN_PREFIX, show_review)",
-        "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
-    ] {
-        if source.matches(pairing).count() != 1 {
-            problems.push(format!("expected exactly one `{pairing}`"));
+    for entry in [POST_ENTRY, REVIEW_ENTRY] {
+        if source.matches(entry).count() != 1 {
+            problems.push(format!("expected exactly one `{entry}`"));
         }
     }
     if source.matches("answer_with_token(").count() != 3 {
-        problems.push("expected the two pairings and the definition only".into());
+        problems.push("expected the two entry points and the definition only".into());
     }
     problems
 }
@@ -417,21 +500,307 @@ fn dialog_token_problems(source: &str) -> Vec<String> {
 fn each_dialog_answers_with_its_own_token() {
     let source = read("src-tauri/src/tally/approved_import.rs");
     assert_eq!(dialog_token_problems(&source), Vec::<String>::new());
+    let post_as_review = POST_ENTRY.replace("POST_TOKEN_PREFIX", "REVIEW_TOKEN_PREFIX");
+    let review_as_post = REVIEW_ENTRY.replace("REVIEW_TOKEN_PREFIX", "POST_TOKEN_PREFIX");
+    let post_body = &POST_ENTRY[POST_ENTRY.find('{').unwrap()..];
+    let review_body = &REVIEW_ENTRY[REVIEW_ENTRY.find('{').unwrap()..];
+    let swapped = source
+        .replace(POST_ENTRY, "SWAP_POST")
+        .replace(REVIEW_ENTRY, "SWAP_REVIEW")
+        .replace(
+            "SWAP_POST",
+            &format!("pub fn run_confirmation() -> bool {review_body}"),
+        )
+        .replace(
+            "SWAP_REVIEW",
+            &format!("pub fn run_review_confirmation() -> bool {post_body}"),
+        );
     for broken in [
-        source.replace(
-            "answer_with_token(POST_TOKEN_PREFIX, show_review)",
-            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
-        ),
-        source.replace(
-            "answer_with_token(REVIEW_TOKEN_PREFIX, show_review_acknowledgement)",
-            "answer_with_token(POST_TOKEN_PREFIX, show_review_acknowledgement)",
-        ),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "show_review_acknowledgement,")),
+        source.replace(POST_ENTRY, &post_as_review),
+        source.replace(REVIEW_ENTRY, &review_as_post),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "|_| true,")),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("std::io::stdin()", "&b\"\"[..]")),
+        swapped,
         format!(
-            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true) }}\n"
+            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true, std::io::stdin(), std::io::stdout()) }}\n"
         ),
     ] {
         assert_ne!(broken, source);
         assert!(!dialog_token_problems(&broken).is_empty());
+    }
+}
+
+/// Where a click becomes the answer (#687). No test can open a real window,
+/// and the parent's stub tests run only on unix. So the four native dialog
+/// functions, `confirm` and `confirm_review`, and the two functions that
+/// decide from the child's answer (`confirm_with`, `confirm_review_with`)
+/// are pinned here verbatim, with the button labels. The file's `cfg`
+/// attributes are counted as well: a platform or test split anywhere in it,
+/// such as a `#[cfg(windows)]` twin of a pinned function, must change this
+/// gate. This pins text, not the platform's behaviour.
+const REVIEW_ACK_DIALOG: &str = r#"#[cfg(not(windows))]
+fn show_review_acknowledgement(preview: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("Bridge — record that you reviewed one voucher")
+        .set_description(preview)
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Cancel".into(),
+            REVIEW_BUTTON.into(),
+        ))
+        .show()
+        == rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())
+}"#;
+
+const REVIEW_ACK_DIALOG_WINDOWS: &str = r#"#[cfg(windows)]
+fn show_review_acknowledgement(preview: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
+    };
+    let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Bridge — record that you reviewed this voucher?"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: as for `show_review`: both buffers are NUL-terminated and live
+    // for the synchronous dialog, and no parent HWND is borrowed.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
+        ) == IDYES
+    }
+}"#;
+
+const POST_DIALOG: &str = r#"#[cfg(not(windows))]
+fn show_review(preview: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("Bridge — approve one voucher")
+        .set_description(preview)
+        .set_level(rfd::MessageLevel::Warning)
+        // The Cancel label supplies the native Escape action. Posting requires
+        // the explicitly matched positive button; Return may leave this dialog open.
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Cancel".into(),
+            POST_LABEL.into(),
+        ))
+        .show()
+        == rfd::MessageDialogResult::Custom(POST_LABEL.into())
+}"#;
+
+const POST_DIALOG_WINDOWS: &str = r#"#[cfg(windows)]
+fn show_review(preview: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
+    };
+    // rfd without common-controls-v6 discards custom labels. Use the existing
+    // Win32 dependency so No is the default and Escape/close remain Cancel.
+    let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Bridge — post this voucher?"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: Both buffers are NUL-terminated and live for the synchronous dialog;
+    // no parent HWND is borrowed. No application state is exposed to callbacks.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNOCANCEL | MB_DEFBUTTON2 | MB_ICONWARNING | MB_SETFOREGROUND,
+        ) == IDYES
+    }
+}"#;
+
+const CONFIRM_WITH: &str = r#"async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
+    if preview.len() > MAX_PREVIEW_BYTES {
+        return Err("import_review_too_large".into());
+    }
+    match nonce_bound_dialog(executable, "--confirm-journal", POST_TOKEN_PREFIX, preview).await {
+        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
+        // A person's decline is no token and exit 1: `run_confirmation`
+        // returns false. A clean exit without the token is never that; it is
+        // an executable that does not answer with this token, such as one
+        // ignoring the flag, or a build from before #635 whose dialog ran.
+        Ok(answer) if answer.exited_cleanly => Err("import_approval_unavailable".into()),
+        Ok(_) => Err("import_approval_declined".into()),
+        Err(DialogFailure::Unavailable) => Err("import_approval_unavailable".into()),
+        Err(DialogFailure::TimedOut) => Err("import_approval_timed_out".into()),
+    }
+}"#;
+
+const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
+    if preview.len() > MAX_PREVIEW_BYTES {
+        return Err("ack_review_too_large".into());
+    }
+    match nonce_bound_dialog(executable, "--confirm-review", REVIEW_TOKEN_PREFIX, preview).await {
+        Ok(answer) if answer.token_matched => Ok(()),
+        Ok(_) => Err("ack_review_declined".into()),
+        Err(DialogFailure::Unavailable) => Err("ack_review_unavailable".into()),
+        Err(DialogFailure::TimedOut) => Err("ack_review_timed_out".into()),
+    }
+}"#;
+
+const DIALOG_ANSWER_PINS: [(&str, usize); 11] = [
+    ("const POST_LABEL: &str = \"Post voucher\";", 1),
+    (
+        "pub(crate) const REVIEW_BUTTON: &str = \"I reviewed it\";",
+        1,
+    ),
+    (POST_DIALOG, 1),
+    (POST_DIALOG_WINDOWS, 1),
+    (REVIEW_ACK_DIALOG, 1),
+    (REVIEW_ACK_DIALOG_WINDOWS, 1),
+    (
+        "async fn confirm(preview: &str) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|_| \"import_approval_unavailable\")?;
+    confirm_with(&executable, preview).await
+}",
+        1,
+    ),
+    (
+        "async fn confirm_review(preview: &str) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|_| \"ack_review_unavailable\")?;
+    confirm_review_with(&executable, preview).await
+}",
+        1,
+    ),
+    (CONFIRM_WITH, 1),
+    (CONFIRM_REVIEW_WITH, 1),
+    ("pub(crate) const REVIEW_BUTTON: &str = \"Yes\";", 1),
+];
+
+/// Every `cfg` in approved_import.rs, by form. The last entry counts the
+/// bare text `cfg`, so a `cfg_attr`, a `cfg!`, or a combined predicate such as
+/// `cfg(any(…))` is caught too.
+const CFG_CENSUS: [(&str, usize); 6] = [
+    ("#[cfg(test)]", 5),
+    ("#[cfg(not(test))]", 2),
+    ("#[cfg(unix)]", 6),
+    ("#[cfg(windows)]", 3),
+    ("#[cfg(not(windows))]", 4),
+    ("cfg", 21),
+];
+
+fn dialog_answer_problems(source: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (pin, expected) in DIALOG_ANSWER_PINS.iter().chain(CFG_CENSUS.iter()) {
+        if source.matches(pin).count() != *expected {
+            problems.push(format!("expected {expected} of `{pin}`"));
+        }
+    }
+    problems
+}
+
+/// A dialog function rewritten to compute its comparison and then return
+/// `true` whatever the person chose.
+fn discard_answer(dialog: &str) -> String {
+    let discarded = if dialog.contains("rfd::MessageDialog::new()") {
+        dialog.replacen(
+            "    rfd::MessageDialog::new()",
+            "    let _ = rfd::MessageDialog::new()",
+            1,
+        )
+    } else {
+        dialog.replacen("        MessageBoxW(", "        let _ = MessageBoxW(", 1)
+    };
+    let discarded = if discarded.ends_with(")\n}") || discarded.ends_with("))\n}") {
+        format!("{};\n    true\n}}", discarded.trim_end_matches("\n}"))
+    } else {
+        discarded.replacen(
+            ") == IDYES\n    }\n}",
+            ") == IDYES;\n        true\n    }\n}",
+            1,
+        )
+    };
+    assert_ne!(discarded, dialog);
+    discarded
+}
+
+#[test]
+fn each_dialog_answers_only_on_its_positive_button() {
+    let source = read("src-tauri/src/tally/approved_import.rs");
+    assert_eq!(dialog_answer_problems(&source), Vec::<String>::new());
+    for broken in [
+        source.replacen(
+            "== rfd::MessageDialogResult::Custom(POST_LABEL.into())",
+            "!= rfd::MessageDialogResult::Custom(POST_LABEL.into())",
+            1,
+        ),
+        source.replacen(
+            "== rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())",
+            "!= rfd::MessageDialogResult::Custom(REVIEW_BUTTON.into())",
+            1,
+        ),
+        source.replacen(") == IDYES", ") != IDNO", 1),
+        source.replacen(
+            "MB_YESNOCANCEL | MB_DEFBUTTON2",
+            "MB_YESNOCANCEL | MB_DEFBUTTON1",
+            1,
+        ),
+        source.replacen("\"Post voucher\"", "\"Cancel\"", 1),
+        source.replacen("\"I reviewed it\"", "\"Cancel\"", 1),
+        source.replacen(
+            "confirm_with(&executable, preview).await\n}",
+            "let _ = (executable, preview);\n    Ok(())\n}",
+            1,
+        ),
+        source.replacen(
+            "confirm_review_with(&executable, preview).await\n}",
+            "let _ = (executable, preview);\n    Ok(())\n}",
+            1,
+        ),
+        source.replacen(
+            "Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+            "Ok(answer) if answer.exited_cleanly => Ok(()),",
+            1,
+        ),
+        source.replacen(
+            "Ok(answer) if answer.token_matched => Ok(()),",
+            "Ok(_) => Ok(()),",
+            1,
+        ),
+        // rfd post dialog discards its answer: it still computes the comparison, then returns true.
+        // A Windows-only twin that approves, beside the real one made
+        // non-Windows: every pinned body is still present.
+        source.replacen(
+            CONFIRM_WITH,
+            &format!(
+                "#[cfg(not(windows))]\n{CONFIRM_WITH}\n#[cfg(windows)]\nasync fn confirm_with(_: &std::path::Path, _: &str) -> Result<(), String> {{\n    Ok(())\n}}"
+            ),
+            1,
+        ),
+        format!(
+            "{source}\n#[cfg(windows)]\nfn dialog_token(prefix: &str, _: &str) -> String {{\n    prefix.to_string()\n}}\n"
+        ),
+        format!("{source}\n#[cfg_attr(windows, allow(unused))]\nfn extra() {{}}\n"),
+        source.replacen(
+            CONFIRM_WITH,
+            &CONFIRM_WITH.replacen(
+                "        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+                "        Ok(answer) if answer.exited_cleanly => Ok(()),\n        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
+                1,
+            ),
+            1,
+        ),
+        source.replacen("\"Yes\";", "\"No\";", 1),
+        source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
+        // Windows post dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(POST_DIALOG_WINDOWS, &discard_answer(POST_DIALOG_WINDOWS), 1),
+        // rfd review dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(REVIEW_ACK_DIALOG, &discard_answer(REVIEW_ACK_DIALOG), 1),
+        // Windows review dialog discards its answer: it still computes the comparison, then returns true.
+        source.replacen(
+            REVIEW_ACK_DIALOG_WINDOWS,
+            &discard_answer(REVIEW_ACK_DIALOG_WINDOWS),
+            1,
+        ),
+    ] {
+        assert_ne!(broken, source);
+        assert!(!dialog_answer_problems(&broken).is_empty());
     }
 }
 

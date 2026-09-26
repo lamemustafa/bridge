@@ -662,3 +662,20 @@ mod tests {
         assert_eq!(guid_tail12(""), "");
     }
 }
+
+/// The reference's `_hash`: the first 8 hex characters of the text's SHA-1, as figure and finding
+/// ids use it. The one shared copy; the modules that still keep their own move here in a cleanup.
+pub(crate) fn hash8(text: &str) -> String {
+    use sha1::{Digest, Sha1};
+    crate::canonical::hex(&Sha1::digest(text.as_bytes()))[..8].to_string()
+}
+
+#[cfg(test)]
+mod hash8_tests {
+    #[test]
+    fn hash8_is_the_first_eight_hex_digits_of_sha1() {
+        // hashlib.sha1(b"").hexdigest()[:8] and hashlib.sha1("é".encode()).hexdigest()[:8]
+        assert_eq!(super::hash8(""), "da39a3ee");
+        assert_eq!(super::hash8("é"), "bf15be71");
+    }
+}

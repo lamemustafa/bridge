@@ -42,6 +42,7 @@ use company::*;
 mod changes;
 #[path = "agent_ledgers.rs"]
 mod ledgers;
+use ledgers::{ListingKind, ListingSnapshot, ListingSnapshots};
 #[path = "agent_outstandings.rs"]
 mod outstandings;
 #[path = "agent_presence.rs"]
@@ -381,6 +382,9 @@ struct Server {
     settings: Settings,
     runtime: TallyRuntime,
     evidence: Arc<Mutex<EvidenceStore>>,
+    /// Ledger listings read once and served page by page (#630). In memory
+    /// only; see `agent_ledgers.rs`.
+    listings: Arc<Mutex<ListingSnapshots>>,
 }
 
 struct ToolOutcome {
@@ -553,6 +557,10 @@ fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
         {
             return Some(catalogue.safe_code());
         }
+        if let Some(amount) = cause.downcast_ref::<bridge_tally_protocol::NativeLedgerAmountError>()
+        {
+            return Some(amount.safe_code());
+        }
         cause
             .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
             .map(crate::tally::connection::PairedReadValidationError::safe_code)
@@ -584,6 +592,25 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              mark and Bridge has no \"before\" to attribute an import against. Record one \
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
+        ),
+        // A cause, reached through `ledger_export_invalid` (#714).
+        "company_several_currency_masters" => Some(
+            "This company keeps more than one Currency master, and a basic ledger read \
+             returns bare opening balances that name no currency, so Bridge refused before \
+             reading any ledger. No ledger_masters read supports a book with several \
+             Currency masters yet (#551). Retrying refuses again.",
+        ),
+        "ledger_masters_as_of_requires_compliance" => Some(
+            "`as_of` selects the date `party_gstin` is read as of, which only \
+             fields=compliance returns. Pass fields=compliance, or drop `as_of`: a basic \
+             read's opening balance is dated by `opening_balance_as_of`, not by `as_of`.",
+        ),
+        // A cause, reached through `ledger_export_invalid` (#675).
+        "foreign_currency_ledger_balance" => Some(
+            "A ledger in this company holds its opening balance in a foreign currency, which \
+             Tally writes as `<amount> @ <rate> = <base amount>` rather than a number. Bridge \
+             does not read those amounts yet (#551, #683), so this read is refused on purpose, \
+             not because the response was damaged. Retrying refuses again.",
         ),
         // A cause, reached through the shared `party_ledger_master_read_failed`.
         "ledger_masters_too_large" => Some(
@@ -793,6 +820,7 @@ impl Server {
             settings,
             runtime: TallyRuntime::default(),
             evidence: Arc::new(Mutex::new(EvidenceStore::default())),
+            listings: Arc::new(Mutex::new(ListingSnapshots::default())),
         }
     }
 
