@@ -1945,6 +1945,7 @@ fn a_batch_approval_summarizes_every_ledger_and_the_money_the_types_move() {
         "Money out by Payment vouchers: 15",
         "Contra: moves between cash/bank ledgers, net zero",
         "Journals may also move cash/bank ledgers; see the per-ledger totals",
+        "Not shown here: each voucher's own date, narration and reference.",
         "After a timeout, reconcile this batch; do not rebuild or resend it.",
     ] {
         assert!(
