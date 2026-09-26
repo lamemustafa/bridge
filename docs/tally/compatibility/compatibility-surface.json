@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "2098e573d69959cd85ce8ae4317642a5e1fe3c4250a1a6b1900e42e539407e1e"
+      "sha256": "ef85451b3f2c80624828601ab33671d11432ae32640d3a27f1efecdf2a311e69"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "ceeb1c20165f858177e207af28d41dcc74be0531c23ed20fcdd4a930c47406a9"
+      "sha256": "731cb5890b9786ebf77164d4ab328f2189a52d22b8bd62a071a56dfe2eb3adfb"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "92fc2b18d429404b0d419413e759537010ec571047f3e27d4f737e86c489d684"
+      "sha256": "413809cac716faaa0498e37f9f8de201e51d16249c82a71ba179c8c7834f174e"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -467,7 +467,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_ack.rs",
-      "sha256": "2f9efd196b3549feed1a8de12ac9747ad509e438412777567af04694cf5ab3aa"
+      "sha256": "c54429cce5b620bcb02bed89781288876f8cd35341f8c87583f94fe918237fc0"
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
@@ -883,7 +883,7 @@
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
-      "sha256": "46e00e045f515cadadc69ed333e7e374a1e1e4b3425738a73f71c745bcfab022"
+      "sha256": "4f6008f7da8beb0b3bc4fb2f246780f5dc7f013cd7b9cdd2a84c7d3a26c7f5ab"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -911,7 +911,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "4ea5360512e68aab9b664e684d1f60a389227725cc82ed70b4a76865d043f360"
+      "sha256": "2f539fb89fdecbc22a6a62ad01de1b2ec6799382d74cad1489690ea69f5a969d"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "da881183e342798da3e9f8ecd1f51cd172a62b079db37b9dad259ef663a7ea2a"
+  "manifest_sha256": "19fd896f7e4c45706c66d2cb02fee1bc6f94426d866aeaba6126179eb8b078b7"
 }
