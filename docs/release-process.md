@@ -511,7 +511,8 @@ every note for them first, and for maintainers second.
 
 SemVer 2.0.0 defines major, minor and patch only from 1.0.0. Before that,
 "anything MAY change at any time" (rule 4), and its FAQ suggests a minor bump
-for each release. This project applies that as follows:
+for each release. Within that freedom, this project's own convention keeps a
+patch for a fix-only release:
 
 | What merged since the last release | Before 1.0.0 | From 1.0.0 |
 | --- | --- | --- |

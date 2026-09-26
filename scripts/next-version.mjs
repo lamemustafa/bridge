@@ -42,9 +42,10 @@ export function classify(labels) {
 
 // SemVer 2.0.0 defines MAJOR/MINOR/PATCH only for 1.0.0 and later; under
 // 0.y.z "anything MAY change at any time" (rule 4), and its FAQ suggests
-// incrementing the minor version for each release. So before 1.0.0 a
-// breaking change or a feature bumps the minor version and anything else the
-// patch; from 1.0.0 a breaking change bumps the major version.
+// incrementing the minor version for each release. This project's own
+// convention, within that freedom: before 1.0.0 a breaking change or a
+// feature bumps the minor version and a fix-only release the patch; from
+// 1.0.0 a breaking change bumps the major version, as rule 8 requires.
 export function levelFor(kinds, current) {
   const has = (kind) => kinds.includes(kind);
   const [major] = parse(current);
@@ -113,7 +114,9 @@ export function writeVersions(next, base = root) {
   const readme = resolve(base, "README.md");
   const readmeText = readFileSync(readme, "utf8");
   const sentence = /(current development source is version `)([^`]+)(`)/;
-  if (sentence.test(readmeText)) updates.push([readme, readmeText.replace(sentence, (_, a, _old, b) => `${a}${next}${b}`)]);
+  const sentences = (readmeText.match(new RegExp(sentence.source, "g")) ?? []).length;
+  if (sentences !== 1) throw new Error(`README.md: expected exactly one current-version sentence, found ${sentences}`);
+  updates.push([readme, readmeText.replace(sentence, (_, a, _old, b) => `${a}${next}${b}`)]);
   for (const [path, text] of updates) writeFileSync(path, text);
 }
 
@@ -203,9 +206,21 @@ async function main() {
   const current = distinct[0];
   const level = argument("--level");
   if (level && !["major", "minor", "patch"].includes(level)) throw new Error("--level must be major, minor or patch");
-  const since = argument("--since") ?? latestReleaseTag(run("git", ["tag", "--list"]).split("\n"));
-  if (!since) throw new Error("no release tag found; pass --since TAG");
   const to = argument("--to") ?? "HEAD";
+  const since = argument("--since") ?? latestReleaseTag(run("git", ["tag", "--list"]).split("\n"));
+  if (!since) throw new Error("no release tag found; run git fetch --tags origin, or pass --since TAG");
+  if (!argument("--since")) {
+    // A stale clone would silently compare against an older release.
+    const remote = latestReleaseTag(run("git", ["ls-remote", "--tags", "--refs", "origin"]).split("\n").map((line) => line.split("refs/tags/")[1] ?? ""));
+    if (remote && remote !== since) throw new Error(`the newest release tag on origin is ${remote}, but the local one is ${since}; run git fetch --tags origin`);
+  }
+  // git log A..B does not fail when A is not an ancestor of B; it silently
+  // returns a different set of commits.
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", since, to], { cwd: root, stdio: "ignore" });
+  } catch {
+    throw new Error(`${since} is not an ancestor of ${to}; the pull requests since it cannot be listed`);
+  }
   const result = propose({ current, pulls: pullsSince(since, to), level });
 
   console.log(`current version ${current}; last release tag ${since}; compared up to ${to}`);
