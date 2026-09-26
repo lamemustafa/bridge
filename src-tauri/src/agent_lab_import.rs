@@ -2107,7 +2107,7 @@ fn narration_marker(narration: Option<&str>) -> Option<String> {
 /// those vouchers the marker can never be recomputed and compared on a
 /// later resume, and `marker_matches` below is permanently false. The
 /// plain narration text is not in that position: it is not among the
-/// fields `tally-rewrites-what-you-import.md` documents Tally rewriting,
+/// fields protocol reference §12a.4 records Tally rewriting,
 /// so it survives a write byte-for-byte, and this book's narration values
 /// each carry a UPI/RTGS transaction reference or equivalent, so a
 /// same-day same-type same-content collision on text alone is a materially
@@ -2314,7 +2314,7 @@ fn voucher_mismatch_detail(expected: &BookVoucher, observed: &[ObservedVoucher])
 /// sorted before "98" -- a batch is posted to Tally in THIS order, and
 /// TallyPrime auto-numbers Payment/Receipt/Contra by receipt order rather
 /// than by the supplied `VOUCHERNUMBER`
-/// (`tally-rewrites-what-you-import.md` #6), so a scrambled posting order
+/// (protocol reference §12a.4 row 6, §9.8), so a scrambled posting order
 /// produces Tally-assigned numbers that no longer line up with the book's
 /// own numbers. This is what actually produced the 2026-09-14 rehearsal's
 /// 11 batch-1 mismatches: two same-date groups (Payment 20250518 #98-106,

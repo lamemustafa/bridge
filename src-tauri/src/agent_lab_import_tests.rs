@@ -740,8 +740,8 @@ fn narration_text_strips_the_marker_suffix_and_trims() {
 #[test]
 fn voucher_already_verified_matches_via_narration_text_when_tally_reassigned_the_number() {
     // Reproduces the exact 2026-09-14 rehearsal batch-1 failure: Tally
-    // silently reassigned VOUCHERNUMBER (tally-rewrites-what-you-import.md
-    // #6) and the observed marker is a stale random one from a write
+    // silently reassigned VOUCHERNUMBER (protocol reference §12a.4 row 6,
+    // §9.8) and the observed marker is a stale random one from a write
     // attempt that predates the `lab_marker_id` fix -- so neither the
     // number nor the marker matches. The narration TEXT (minus any marker
     // suffix) is the only surviving identity signal, and it must still be
