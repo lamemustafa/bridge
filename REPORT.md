@@ -49,3 +49,9 @@ The owner's trade-off ("Not implemented; the owner's call"). The mutation runner
 
 ## 2026-09-26T06:27Z: new issue #735
 parse_import_outcome keeps CDATA markup in LINEERROR and refuses the whole outcome on a CDATA with a bare `&`. Verified by a direct probe. Latent: not observed live.
+
+## 2026-09-26T06:32Z: #632 PR #736, ready (pinned), scope corrected
+Head `f8d904d5830e0a61a8aa9d5a9ec2cbf2242f5146`. The review found that #639 already put the (b)-text in the `build_import_xml` description, so #736 only repeats that sentence verbatim in the build result (warning and next step). It is optional; close it if the description is enough. Sonnet had no P1/P2; its two P3s (wording, placement) are fixed. Resealed in its own commit.
+
+## 2026-09-26T06:32Z: CI note
+The red "Required checks" events on #727 (d34e77c, 7c7a739), #731 (f222f2e) and #733 (db04bd2) were all `native`/`bundle-smoke` jobs **cancelled** by a newer push, not failures. #731's current head passes Required checks. #727's current head is Lane D's merge of master, 109d6bf.
