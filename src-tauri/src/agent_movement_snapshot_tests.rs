@@ -365,3 +365,121 @@ async fn a_divided_movement_refuses_a_posting_above_the_first_reads_ceiling() {
         simulator.finish().unwrap();
     }
 }
+
+// -- bridge#716: a named ledger's movement names no currency ----------------
+
+async fn movement_call(plans: Vec<ScenarioPlan>, guid: &str, ledger: &str) -> (Value, usize) {
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+        batch_post_enabled: false,
+    });
+    let response = server
+        .call_tool(
+            "ledger_movement",
+            json!({"company_guid": guid, "from":"20260915", "to":"20260915", "ledger": ledger}),
+        )
+        .await;
+    (response, simulator.finish().unwrap().len())
+}
+
+/// Identity, then the movement's first read up to and including its paired
+/// currency read, which the refusal ends on.
+fn opening_through_currency(extent: ScenarioPlan, currency: ScenarioPlan) -> Vec<ScenarioPlan> {
+    let company = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+    ));
+    let status = ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime));
+    vec![
+        company.clone(),
+        status.clone(),
+        company.clone(),
+        status.clone(),
+        status.clone(),
+        company.clone(),
+        company,
+        extent.clone(),
+        status.clone(),
+        extent,
+        status.clone(),
+        currency.clone(),
+        status.clone(),
+        currency,
+        status,
+    ]
+}
+
+/// A movement on the captured several-currency book is refused after its
+/// currency read, before any ledger or voucher request: an opening and a
+/// movement name no currency, so a dollar ledger's figures would carry
+/// nothing to say they are not rupees (#716). Named here is a dollar ledger
+/// of that book; a rupee ledger is refused the same way.
+#[tokio::test]
+async fn a_movement_on_a_several_currency_book_is_refused_before_any_ledger() {
+    let plans = opening_through_currency(
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_extents_forex_live.utf16le.xml"
+        )),
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+        )),
+    );
+    let total = plans.len();
+    let (response, requests) = movement_call(
+        plans,
+        "b14e9b2d-8a63-4779-804d-25d59eb787eb",
+        "FX USD Debtor 01",
+    )
+    .await;
+    assert_eq!(requests, total, "no ledger or voucher request was sent");
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(response["isError"], true, "{response}");
+    assert_eq!(error["code"], "ledger_movement_read_failed");
+    assert_eq!(error["cause"], "company_several_currency_masters");
+    let remediation = error["remediation"].as_str().unwrap();
+    assert!(remediation.contains("ledger_movement"), "{error}");
+}
+
+/// A movement whose currency collection holds no master is refused after
+/// it, before any ledger or voucher request. DERIVED from the captured
+/// single-master response with its one `CURRENCY` element removed (#716).
+#[tokio::test]
+async fn a_movement_with_no_currency_master_is_refused_before_any_ledger() {
+    let single = String::from_utf16(
+        &include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let start = single.find("<CURRENCY ").unwrap();
+    let end = start + single[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let mut none = single.clone();
+    none.replace_range(start..end, "");
+    assert!(!none.contains("<CURRENCY "), "no master left");
+    let plans = opening_through_currency(
+        captured_utf8(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )),
+        captured_utf8(&none),
+    );
+    let total = plans.len();
+    let (response, requests) =
+        movement_call(plans, "61c6de69-1748-461c-ad3f-162cb949df9f", "WR2 Sales").await;
+    assert_eq!(requests, total, "no ledger or voucher request was sent");
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(response["isError"], true, "{response}");
+    assert_eq!(error["cause"], "company_currency_probe_failed");
+}
