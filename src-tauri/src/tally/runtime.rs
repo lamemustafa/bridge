@@ -2730,8 +2730,9 @@ impl TallyRuntime {
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         // A named ledger's opening and movement carry no currency either, so a
         // book with several Currency masters, or whose one master is not INR,
-        // is refused before any ledger or voucher read (bridge#716). Telling a rupee ledger from a foreign one there needs
-        // each ledger's CURRENCYNAME, which this export does not fetch.
+        // is refused before any ledger or voucher read (bridge#716). Telling a
+        // rupee ledger from a foreign one there needs each ledger's
+        // CURRENCYNAME, which this export does not fetch.
         self.fetch_ledger_opening_with_evidence(
             config,
             identity,
