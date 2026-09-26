@@ -1088,6 +1088,57 @@ async fn a_counterparty_group_moved_under_bank_after_approval_is_refused_before_
     refused_in_the_queue(catalogue(), groups_with_debtor_group_under_bank()).await;
 }
 
+/// bridge#676: a group collection the classification cannot parse is refused
+/// before approval as `group_export_invalid`, and its `cause` is the group
+/// parser's own data-free code, not dropped. Nothing is read after it.
+async fn refused_on_the_group_read(groups: String, cause: &str) {
+    let mut plans = probe();
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(catalogue()));
+    plans.extend(paired(groups));
+    let expected = plans.len();
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_bank_batch(&server, payment());
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], "group_export_invalid", "{response}");
+    assert_eq!(error["cause"], cause, "{response}");
+    assert!(scripted.previews().is_empty(), "no approval asked");
+    assert_eq!(observed.len(), expected, "{response}");
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
+}
+
+#[tokio::test]
+async fn a_group_collection_of_another_company_is_refused_with_its_cause() {
+    let groups = groups();
+    let other = groups.replacen(
+        ">61c6de69-1748-461c-ad3f-162cb949df9f</BRIDGECOMPANYGUID>",
+        ">00000000-0000-4000-8000-000000000676</BRIDGECOMPANYGUID>",
+        1,
+    );
+    assert_ne!(other, groups, "one row's company GUID changed");
+    refused_on_the_group_read(other, "group_response_company_guid_mismatch").await;
+}
+
+#[tokio::test]
+async fn a_group_collection_that_reports_failure_is_refused_with_its_cause() {
+    let failed = replaced_once(&groups(), "<STATUS>1</STATUS>", "<STATUS>0</STATUS>");
+    refused_on_the_group_read(failed, "group_status_not_success").await;
+}
+
 /// Already changed since the build: refused before approval is asked, and no
 /// request follows the classification reads.
 #[tokio::test]
