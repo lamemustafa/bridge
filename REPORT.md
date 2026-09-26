@@ -79,3 +79,93 @@ Removing the two waste classes leaves **4.61 GiB**.
 **Needs a decision:**
 - Adopt the rule? Merge #729 (Lane D and the owner).
 - The one-off deletion of today's 5 + 2 stale entries, or leave it to LRU and the 7-day eviction.
+
+## 2026-09-26 06:51 UTC: Item 3, CI measurement (Bridge CI, last 50 runs)
+
+**Sample:** the 50 most recent completed `ci.yml` runs on master pushes and PRs, 25 Sep 17:41 to 26 Sep 05:44 UTC: 39 PR runs and 11 master pushes. That is 618 job records, every attempt included, collected with the GitHub MCP Actions API.
+- Per-step timings come from the 21 most recent runs (264 jobs). The re-fetch for the other 29 was lost to a container restart, and I did not repeat it, because the sample is already stable (n≥17 per step).
+- Cache hits come from `Bundle smoke (windows-latest)`, the one job that touches all four caches, over the 25 most recent runs.
+- Raw data is not committed. It is reproducible from the run ids.
+
+**Runs**
+
+| Conclusion | Count |
+| --- | ---: |
+| success | 33 |
+| cancelled (superseded by a newer push to the same ref) | 11 |
+| failure | 6 |
+
+- 3 runs needed a rerun: 36205041132 took 3 attempts; 36196180348 and 36186882972 took 2 each.
+- **Wall time**, run created to last job done, attempt 1, success or failure:
+
+| Scope | n | p50 (min) | p90 (min) | Max (min) |
+| --- | ---: | ---: | ---: | ---: |
+| All | 39 | **16.0** | **19.9** | |
+| PR | 29 | 15.9 | 20.2 | 22.4 |
+| Master push | 10 | 16.1 | 17.4 | 19.8 |
+
+**Per job** (successful and failed jobs; minutes; queue is the job's created→started time)
+
+| Job | n | p50 | p90 | Queue p50 | Queue p90 | Failed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Bundle smoke (windows-latest) | 41 | **14.7** | **17.5** | 0.03 | 0.07 | 3 |
+| Native checks (macos-latest) | 42 | 13.6 | 15.5 | 0.13 | **2.28** | 5 |
+| Native checks (windows-latest) | 42 | 10.4 | 12.0 | 0.03 | 0.05 | 4 |
+| Bundle smoke (macos-latest) | 42 | 10.0 | 12.0 | 0.12 | 0.18 | 0 |
+| Tally portable core | 45 | 2.9 | 3.1 | 0.03 | 0.05 | 1 |
+| Frontend build | 45 | 1.9 | 2.2 | 0.03 | 0.03 | 1 |
+| Workflow consistency | 46 | 1.1 | 1.2 | 0.03 | 0.05 | 0 |
+| Rust format | 46 | 0.4 | 0.4 | 0.03 | 0.05 | 0 |
+| Tax-audit mutation records | 32 | 0.3 | 0.3 | 0.03 | 0.05 | 4 |
+
+Queue wait is negligible except on macOS. Outside the sample, on 26 Sep, one `Bundle smoke (macos-latest)` in a #728 run waited about 22 min for a runner.
+
+**Per step, the top steps of the heavy jobs** (successful steps of successful jobs, 21 runs; minutes)
+
+| Job | Step | n | p50 | p90 |
+| --- | --- | ---: | ---: | ---: |
+| Bundle smoke (win) | **Prove shipped executables lack the test-only approval seam** | 17 | **6.3** | 6.9 |
+| Bundle smoke (win) | tauri:build | 17 | 4.0 | 5.4 |
+| Bundle smoke (win) | Set up Windows native prerequisites | 17 | 0.9 | 1.1 |
+| Bundle smoke (mac) | **Prove … test-only approval seam** | 19 | **4.4** | 5.6 |
+| Bundle smoke (mac) | Build macOS bundles | 19 | 2.7 | 4.2 |
+| Native (mac) | Test native workspace | 17 | 5.1 | 6.1 |
+| Native (mac) | Test legacy voucher-scan and calibration harness features | 17 | 3.5 | 3.9 |
+| Native (mac) | Lint legacy harness features / Test PDF extraction | 17 | 1.3 / 1.3 | 1.6 / 1.6 |
+| Native (win) | Test native workspace | 17 | 5.0 | 5.2 |
+| Native (win) | Test PDF extraction through PDFium | 17 | 1.4 | 1.5 |
+| Tally portable core | Test portable Tally truth layer | 20 | 0.7 | 0.7 |
+| Frontend build | pnpm test / playwright install | 20 | 1.0 / 0.6 | 1.1 / 0.8 |
+
+**Cache hits** (Bundle smoke windows, 25 runs; runs that never reached the step excluded)
+
+| Cache | Result |
+| --- | --- |
+| pnpm | **22/22** |
+| Strawberry Perl | **22/22** |
+| rust-cache | **20/22** exact, 2 partial (restore-key fallback) |
+| package sccache restore | **18/20** hit, 2 miss |
+
+Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles from cache.
+
+**Failures, grouped:** 37 failed jobs.
+- 19 are only the `Required checks` aggregate echoing another job's failure or cancellation.
+- Of the 18 substantive failures:
+
+| Class | Jobs | Runs | Cause |
+| --- | ---: | ---: | --- |
+| **Code** | 4 | 4 | Tax-audit mutation gate: "N selected, 0 proven on this tree" after non-source input changed |
+| Code | 4 | 2 | `every_registered_test_matches_its_synthetic_golden` (bridge-tax-audit registry golden), mac and win |
+| Code | 4 | 1 | `real_tree_has_complete_migration_and_report_surface_coverage` / compatibility-surface Frontend test (36188402169) |
+| Code | 2 | 1 | clippy `needless_borrow`, mac and win |
+| **Infra** | 3 | 2 | sccache `couldn't connect to server` in the Bundle smoke (win) stats step. **All passed on rerun; fixed by #728** |
+| Infra | 1 | 1 | PDFium download HTTP 500 (Native mac). Passed on rerun |
+
+- Totals: **code 14, infra 4.** Every infra failure passed on rerun, and the sccache failures cost 3 extra Windows bundle runs.
+- The 4 mutation-gate failures are code by definition, but they look like a *process* choke point: the committed mutation results must be regenerated whenever non-source inputs move. Worth checking whether that regeneration needs the Mac.
+
+**What this says about throughput**
+- One CI cycle is p50 16 / p90 20 min, and `strict: true` makes every merge cost every other PR a cycle.
+- The critical path is Bundle smoke (windows), and 43% of it is the test-seam proof. That step builds a release test harness **without** `RUSTC_WORKSPACE_WRAPPER=sccache` (it runs `cargo` after the tauri build).
+- **Candidate, not built:** route that build through the same sccache server, or reuse artifacts. The Windows job would fall towards ~9–10 min and CI wall towards the macOS native job's ~14 min. That is a rough 2-min p50 saving per cycle, and more on p90. It needs its own measured PR.
+- 11 of 50 runs (22%) were cancelled by newer pushes. That is wasted runner time, but not wall-clock on the merge path.
