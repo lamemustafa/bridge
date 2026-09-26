@@ -39,7 +39,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "8a9de75fe9a35261049c1075e44c440bd950241ede0c408d29a7d8766014e232"
+      "sha256": "bcd86524771fdfed81a9db4d821f4c29d16f05ccc8b483ab31256f4712d701f3"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
@@ -51,11 +51,11 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "b917e2547a26effd0cd3583888801123721610f6c13bc2331b9d39223f7a8786"
+      "sha256": "58606d1c6c69b0ba702ad64daa68746716ae62373dcb950f729b667647f0530f"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
-      "sha256": "82aa81d6d4a980899993350bc732c5f6345ef838866d3ceb4e8891356d954304"
+      "sha256": "58b24ff27883a591294991a293143f94760c01f359638a005e5b96d9029e722a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
@@ -63,7 +63,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
-      "sha256": "8d093de84ae1786fba9d69295222a253f3245e300043b70c179bc12736538a3f"
+      "sha256": "8ea0d78ecff56822731e857c9dd3099cc42ed57bacac8e3fa3a1091a7fe7d11c"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "97b7055d6d08d21e315f2578775191efb79aae944960ac530249f358be149291"
+  "manifest_sha256": "ffe4beef8b356bc696801a29f63bd0e357a1c9a5f2a9f86ebea479fab395790c"
 }
