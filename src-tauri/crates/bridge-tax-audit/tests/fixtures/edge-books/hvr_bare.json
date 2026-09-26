@@ -1,0 +1,84 @@
+{
+ "comment": "high_value_register with nothing optional: no bank statement (s.194N coverage says so), no AIS rows (the SFT finding), an unknown recipient type (both thresholds stated, neither picked), one cash receipt under the limit and one two-line journal under the threshold.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_bare-000"
+  },
+  {
+   "name": "Customer A",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-hvr_bare-001"
+  },
+  {
+   "name": "Supplier C",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-hvr_bare-002"
+  }
+ ],
+ "tb": [],
+ "vouchers": [
+  {
+   "guid": "b01",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     5000000
+    ],
+    [
+     "Customer A",
+     -5000000
+    ]
+   ]
+  },
+  {
+   "guid": "b02",
+   "date": "2025-04-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Customer A",
+     1000000
+    ],
+    [
+     "Supplier C",
+     -1000000
+    ]
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [],
+ "entity_type": "individual",
+ "tests": [
+  "high_value_register"
+ ],
+ "s194n_recipient_type": "unknown"
+}

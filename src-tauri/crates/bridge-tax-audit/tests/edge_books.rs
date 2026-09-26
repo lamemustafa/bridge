@@ -26,9 +26,9 @@ use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
     bank_reconciliation, book_keeping_quality, cash_book_integrity, creditor_ageing_43bh,
-    ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1, statutory_dues_43b,
-    tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts, PartnersConfig, Tds26asConfig,
-    TdsConfig,
+    high_value_register, ledger_scrutiny, loans_interest, partners_40b_194t, stale_balances_41_1,
+    statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts,
+    PartnersConfig, Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -538,6 +538,57 @@ fn check(name: &str) {
                 let c = bank_reconciliation::check_invariants(&statement.rows, &r).unwrap();
                 (r, c)
             }
+            "high_value_register" => {
+                // As `parity/edge_golden.py` runs it: the statement and the AIS rows optional, the
+                // counterparty types already merged, the recipient type from `entity_type` unless
+                // the spec names one ("unknown" meaning none).
+                let statement = match &s["bank_statement"] {
+                    Value::Null => None,
+                    v => Some(bank_statement_from_json(v).unwrap()),
+                };
+                let docs = traces_documents_from_json(&s).unwrap();
+                let set = |k: &str| -> BTreeSet<String> { strs(&s[k]).into_iter().collect() };
+                let (terms, round_off) = (set("s194n_terms"), set("round_off_ledgers"));
+                let types: BTreeMap<String, String> = s["counterparty_types"]
+                    .as_object()
+                    .map(|o| {
+                        o.iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let recipient = match s["s194n_recipient_type"].as_str() {
+                    None => high_value_register::s194n_recipient_type(Some(
+                        s["entity_type"].as_str().unwrap_or("individual"),
+                    )),
+                    Some("unknown") => None,
+                    Some(high_value_register::RECIPIENT_CO_OPERATIVE) => {
+                        Some(high_value_register::Recipient::CoOperative)
+                    }
+                    Some(high_value_register::RECIPIENT_NOT_CO_OPERATIVE) => {
+                        Some(high_value_register::Recipient::NotCoOperative)
+                    }
+                    Some(t) => panic!("{name}: s194n_recipient_type {t:?} is not a recipient type"),
+                };
+                let inputs = high_value_register::Inputs {
+                    cash: &cash,
+                    bank: &bank,
+                    threshold_paise: None,
+                    bank_statement: statement.as_ref(),
+                    s194n_narration_terms: &terms,
+                    ais_rows: &docs.ais,
+                    s194n_recipient_type: recipient,
+                    round_off_ledgers: &round_off,
+                    counterparty_type_by_ledger: &types,
+                };
+                let r = high_value_register::run(&book, &rules, &inputs).unwrap();
+                // The reference module has no check_invariants: an empty evaluated list.
+                let rust = canonical_test_result(&book, &r, None).unwrap();
+                let golden = common::golden_named(&format!("edge.{name}.{test}"));
+                let diffs = compare(&golden, &rust, None).unwrap();
+                assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
+                continue;
+            }
             "twentysixas_receipts" => {
                 let docs = traces_documents_from_json(&s).unwrap();
                 let aliases = tds_26as_config(&s).deductor_aliases;
@@ -571,11 +622,12 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 13] = [
+const EDGE_TESTS: [&str; 14] = [
     "bank_reconciliation",
     "book_keeping_quality",
     "cash_book_integrity",
     "creditor_ageing_43bh",
+    "high_value_register",
     "ledger_scrutiny",
     "loans_interest",
     "partners_40b_194t",
@@ -1042,4 +1094,39 @@ fn a_repeated_books_guid_is_refused_not_panicked() {
     .expect("refused, not panicked");
     let err = result.expect_err("a repeated figure id is refused");
     assert!(format!("{err}").contains("match_pair_093394bf"), "{err}");
+}
+
+/// A two-line journal whose lines are both on one party ledger gives two figures one id; the
+/// reference raises `duplicate figure id ...journal_transfer_amount_0bce8b28_0431f39b` on this
+/// book, and the port refuses with an error, never a panic.
+#[test]
+fn a_journal_on_one_ledger_is_refused_not_panicked() {
+    let mut s = spec("hvr_bare");
+    for v in s["vouchers"].as_array_mut().unwrap() {
+        if v["guid"] == "b02" {
+            v["lines"] =
+                serde_json::json!([["Customer A", 20_000_000], ["Customer A", -20_000_000]]);
+        }
+    }
+    let (book, rules) = (build(&s), rules(&s));
+    let cash: BTreeSet<String> = strs(&s["cash"]).into_iter().collect();
+    let (none, no_types) = (BTreeSet::new(), BTreeMap::new());
+    let inputs = high_value_register::Inputs {
+        cash: &cash,
+        bank: &none,
+        threshold_paise: None,
+        bank_statement: None,
+        s194n_narration_terms: &none,
+        ais_rows: &[],
+        s194n_recipient_type: None,
+        round_off_ledgers: &none,
+        counterparty_type_by_ledger: &no_types,
+    };
+    let result = std::panic::catch_unwind(|| high_value_register::run(&book, &rules, &inputs))
+        .expect("refused, not panicked");
+    let err = result.expect_err("a repeated figure id is refused");
+    assert!(
+        format!("{err}").contains("journal_transfer_amount_0bce8b28_0431f39b"),
+        "{err}"
+    );
 }
