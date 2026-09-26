@@ -366,6 +366,12 @@ mod tests {
         assert_eq!(got.closing.rows.len(), 1);
         assert_eq!(got.closing.total_value_paise().unwrap(), -20_000);
         assert_eq!(got.is_integrated, Some(false));
+        let unknown = StockReadParts {
+            is_integrated: None,
+            ..parts.clone()
+        };
+        let got_unknown = stock_inputs(Some(&ok), Some(&unknown)).unwrap();
+        assert_eq!(got_unknown.is_integrated, None, "unknown stays unknown");
         // A closing summary from the masters takes each master's own closing fields.
         let masters = cfg(
             "opening_summary = \"from_masters\"\nopening_date = \"2025-04-01\"\n\

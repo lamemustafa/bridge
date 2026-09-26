@@ -1201,10 +1201,8 @@ fn a_journal_on_one_ledger_is_refused_not_panicked() {
     );
 }
 
-/// A goods inventory line whose quantity field is absent means the read did not carry quantities:
-/// the reference raises, naming the count and the first line, and the port refuses the same book
-/// with an error rather than skipping the line as a value-only one.
-/// Three rules no edge book reaches: the Stock-in-Hand voucher count reads the population only,
+/// Three rules no edge book reaches: the Stock-in-Hand voucher count reads the population only
+/// (not an optional or a cancelled voucher),
 /// an opening Stock Summary row with no quantity starts the walk at nil (not the master's
 /// opening), and negative at close counts goods items only.
 #[test]
@@ -1213,13 +1211,15 @@ fn stock_counts_the_population_seeds_nil_and_goods_only_at_close() {
     s["ledgers"].as_array_mut().unwrap().push(serde_json::json!(
         {"name": "Shop Stock", "chain": ["Stock-in-Hand", "Current Assets"], "guid": "edge-stock_quiet-t01"}
     ));
-    s["vouchers"]
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::json!(
-            {"guid": "q02", "date": "2025-05-01", "base_type": "Journal", "status": "cancelled",
-             "lines": [["Shop Stock", 500], ["Cash", -500]]}
-        ));
+    for (guid, status) in [("q02", "optional"), ("q03", "cancelled")] {
+        s["vouchers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(
+                {"guid": guid, "date": "2025-05-01", "base_type": "Journal", "status": status,
+                 "lines": [["Shop Stock", 500], ["Cash", -500]]}
+            ));
+    }
     s["vouchers"][0]["inventory"] =
         serde_json::json!([{"item": "Widget", "qty": 3, "amount": -300}]);
     s["stock_items"] = serde_json::json!({
@@ -1241,7 +1241,7 @@ fn stock_counts_the_population_seeds_nil_and_goods_only_at_close() {
     assert_eq!(
         figure("stock_in_hand_voucher_count"),
         int(0),
-        "a cancelled voucher"
+        "optional and cancelled"
     );
     assert_eq!(figure("opening_seed_from_summary_count"), int(1));
     // Seeded at nil, Widget goes to -3; from the master's 5 it would stay at 2.
@@ -1254,6 +1254,9 @@ fn stock_counts_the_population_seeds_nil_and_goods_only_at_close() {
     assert_eq!(figure("non_goods_negative_value_item_count"), int(1));
 }
 
+/// A goods inventory line whose quantity field is absent means the read did not carry quantities:
+/// the reference raises, naming the count and the first line, and the port refuses the same book
+/// with an error rather than skipping the line as a value-only one.
 #[test]
 fn a_goods_line_without_a_quantity_field_is_refused() {
     let mut s = spec("stock_quiet");

@@ -4814,5 +4814,21 @@
   "file": "src/stock.rs",
   "from": ".filter(|(n, row)| is_goods(items, n) && row.qty.unwrap_or(0.0) < -QTY_TOL)",
   "to": ".filter(|(_, row)| row.qty.unwrap_or(0.0) < -QTY_TOL)"
+ },
+ {
+  "id": "E3A-40",
+  "by": "reviewer-opus",
+  "what": "the Stock-in-Hand voucher count reads every voucher but a cancelled one (an optional one is counted)",
+  "file": "src/stock.rs",
+  "from": "    let typed_in = pop\n        .iter()\n",
+  "to": "    let typed_in = book\n        .vouchers\n        .iter()\n        .filter(|v| v.status != crate::book::VoucherStatus::Cancelled)\n"
+ },
+ {
+  "id": "E3A-41",
+  "by": "reviewer-opus",
+  "what": "an unknown ISINTEGRATED reaches stock as not integrated",
+  "file": "src/stock_read.rs",
+  "from": "is_integrated: parts.is_integrated,",
+  "to": "is_integrated: parts.is_integrated.or(Some(false)),"
  }
 ]
