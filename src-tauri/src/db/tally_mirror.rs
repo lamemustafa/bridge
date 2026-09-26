@@ -58,6 +58,7 @@ const MIRROR_MIGRATION_V26: &str =
     include_str!("migrations/0026_tally_capability_license_tier.sql");
 const MIRROR_MIGRATION_V27: &str =
     include_str!("migrations/0027_tally_retire_resurrected_guid_index.sql");
+const MIRROR_MIGRATION_V28: &str = include_str!("migrations/0028_schedule_iii_grouping_events.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -2511,9 +2512,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let grouping_events_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 28",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if grouping_events_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V28)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)

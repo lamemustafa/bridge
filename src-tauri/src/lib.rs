@@ -141,6 +141,8 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
             commands::reveal_exported_file,
             commands::export_outstandings_working_paper,
             commands::export_party_ledger_master,
+            commands::grouping_decisions::record_grouping_decisions,
+            commands::grouping_decisions::grouping_decision_history,
             commands::trial_balance::fetch_tally_trial_balance,
             commands::trial_balance::export_tally_trial_balance,
             commands::trial_balance::query_tally_trial_balance_capture_parent,

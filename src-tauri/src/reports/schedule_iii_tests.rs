@@ -5,6 +5,15 @@ use super::*;
 use crate::reports::party_ledger_master::build_party_ledger_master_workbook;
 use crate::tally::OutstandingsCurrencyAssertion;
 
+/// Builds the view with these decisions as one validated set for the book.
+fn view_with(
+    workbook: &PartyLedgerMasterWorkbook,
+    decisions: &[Decision],
+) -> Result<ScheduleIIIView, ScheduleIIIError> {
+    let set = DecisionSet::for_tests(workbook, decisions.to_vec())?;
+    build_schedule_iii_view(workbook, DecisionInput::Read(&set))
+}
+
 /// Tally's reserved root as every Bridge reader returns it
 /// (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)); a bare `Primary` would name a group.
 const RESERVED_ROOT: &str = "\u{fffd}#4; Primary";
@@ -63,7 +72,7 @@ fn maps_only_immutable_group_evidence_and_lists_everything_else() {
             },
         ],
     };
-    let view = build_schedule_iii_view(&workbook(source), &[]).unwrap();
+    let view = view_with(&workbook(source), &[]).unwrap();
     assert_eq!(view.lines.len(), 1);
     assert_eq!(view.lines[0].row_indices, vec![0]);
     assert_eq!(view.exclusions.len(), 1);
@@ -98,7 +107,7 @@ fn contra_signed_sundry_debtor_is_excluded_not_netted_against_its_group_subtotal
         }],
     };
 
-    let view = build_schedule_iii_view(&workbook(source), &[]).unwrap();
+    let view = view_with(&workbook(source), &[]).unwrap();
     assert_eq!(view.lines.len(), 1);
     assert_eq!(view.lines[0].row_indices, vec![1]);
     assert_eq!(view.lines[0].total.as_str(), "-300");
@@ -135,7 +144,7 @@ fn contra_signed_sundry_creditor_is_excluded_not_netted_against_its_group_subtot
         }],
     };
 
-    let view = build_schedule_iii_view(&workbook(source), &[]).unwrap();
+    let view = view_with(&workbook(source), &[]).unwrap();
     assert_eq!(view.lines.len(), 1);
     assert_eq!(view.lines[0].row_indices, vec![1]);
     assert_eq!(view.lines[0].total.as_str(), "300");
@@ -179,7 +188,7 @@ fn cash_in_hand_and_bank_accounts_keep_separate_group_subtotals_and_totals() {
         ],
     };
 
-    let view = build_schedule_iii_view(&workbook(source), &[]).unwrap();
+    let view = view_with(&workbook(source), &[]).unwrap();
     assert_eq!(view.lines.len(), 2);
     assert!(view.lines.iter().any(|line| {
         line.label == "Bank Accounts group subtotal"
@@ -230,7 +239,7 @@ fn contra_signed_bank_account_is_excluded_not_netted_against_its_group_subtotal(
         ],
     };
 
-    let view = build_schedule_iii_view(&workbook(source), &[]).unwrap();
+    let view = view_with(&workbook(source), &[]).unwrap();
     assert_eq!(view.lines.len(), 1);
     assert_eq!(view.lines[0].row_indices, vec![1]);
     assert_eq!(view.lines[0].total.as_str(), "-300");
@@ -262,7 +271,7 @@ fn empty_closing_balance_is_excluded_not_manufactured_as_zero() {
         groups: vec![],
     };
 
-    let view = build_schedule_iii_view(&workbook(source), &[]).unwrap();
+    let view = view_with(&workbook(source), &[]).unwrap();
     assert!(view.lines.is_empty());
     assert!(view.debit_total.is_zero());
     assert!(view.credit_total.is_zero());
@@ -424,7 +433,7 @@ fn without_decisions_the_view_is_final_and_every_line_is_group_evidence() {
         row("Customer", "Sundry Debtors", "-100"),
         row("Term loan", "Loans (Liability)", "500"),
     ]);
-    let view = build_schedule_iii_view(&source, &[]).unwrap();
+    let view = view_with(&source, &[]).unwrap();
     assert_eq!(view.finality, Finality::Final);
     assert!(view.decisions.is_empty());
     assert_eq!(view.lines.len(), 1);
@@ -441,7 +450,7 @@ fn a_decision_places_an_undetermined_ledger_under_its_head_without_moving_any_to
         row("Customer", "Sundry Debtors", "-100"),
         row("Term loan", "Loans (Liability)", "500"),
     ]);
-    let before = build_schedule_iii_view(&source, &[]).unwrap();
+    let before = view_with(&source, &[]).unwrap();
     let decisions = [decision(
         1,
         "Term loan",
@@ -449,7 +458,7 @@ fn a_decision_places_an_undetermined_ledger_under_its_head_without_moving_any_to
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert!(applied(&view, 1));
     assert_eq!(view.finality, Finality::Final);
@@ -472,7 +481,7 @@ fn a_decision_moves_one_ledger_out_of_its_group_subtotal_and_leaves_the_rest() {
         row("Customer", "Sundry Debtors", "-100"),
         row("Staff advance", "Sundry Debtors", "-40"),
     ]);
-    let before = build_schedule_iii_view(&source, &[]).unwrap();
+    let before = view_with(&source, &[]).unwrap();
     let decisions = [decision(
         7,
         "Staff advance",
@@ -480,7 +489,7 @@ fn a_decision_moves_one_ledger_out_of_its_group_subtotal_and_leaves_the_rest() {
         ScheduleIIIHead::ShortTermLoansAndAdvances,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert!(applied(&view, 7));
     let debtors = line(
@@ -510,7 +519,7 @@ fn a_credit_balance_debtor_can_be_decided_onto_a_liability_head() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert!(applied(&view, 2));
     assert!(view.exclusions.is_empty());
@@ -535,7 +544,7 @@ fn a_decision_for_a_ledger_no_longer_in_the_read_is_reported_and_the_view_is_not
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(not_applied(&view, 3), Some(&NotApplied::LedgerMissing));
     assert_eq!(view.finality, Finality::NotFinal);
@@ -556,7 +565,7 @@ fn a_ledger_moved_in_tally_after_the_decision_keeps_its_group_evidence_and_the_v
         ScheduleIIIHead::TradeReceivables,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(
         not_applied(&view, 4),
@@ -587,7 +596,7 @@ fn a_move_between_two_unmapped_predefined_groups_also_makes_the_decision_stale()
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(
         not_applied(&view, 5),
@@ -609,7 +618,7 @@ fn a_head_on_the_other_side_from_the_balance_is_not_applied() {
         ScheduleIIIHead::TradePayables,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(not_applied(&view, 6), Some(&NotApplied::OppositeSide));
     assert_eq!(view.finality, Finality::NotFinal);
@@ -629,7 +638,7 @@ fn a_zero_balance_sits_on_either_side() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert!(applied(&view, 15));
     assert!(view.exclusions.is_empty());
@@ -648,7 +657,7 @@ fn a_zero_balance_sits_on_either_side() {
 #[test]
 fn a_zero_balance_sits_on_a_debit_side_too() {
     let source = book(vec![row("Settled customer", "Sundry Debtors", "0")]);
-    let view = build_schedule_iii_view(&source, &[]).unwrap();
+    let view = view_with(&source, &[]).unwrap();
     assert!(view.exclusions.is_empty());
     assert_eq!(
         line(
@@ -666,7 +675,7 @@ fn a_zero_balance_sits_on_a_debit_side_too() {
         DerivedOutcome::GroupSubtotal(GroupSubtotalKind::SundryDebtors),
         ScheduleIIIHead::TradeReceivables,
     )];
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
     assert!(applied(&view, 25));
 }
 
@@ -680,7 +689,7 @@ fn an_advance_settled_to_zero_by_year_end_keeps_its_decision() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert!(applied(&view, 16));
     assert_eq!(view.finality, Finality::Final);
@@ -701,7 +710,7 @@ fn a_move_between_subgroups_of_one_group_applies_and_reports_the_ancestry_change
         ScheduleIIIHead::ShortTermLoansAndAdvances,
     )];
 
-    let unchanged = build_schedule_iii_view(&before, &decisions).unwrap();
+    let unchanged = view_with(&before, &decisions).unwrap();
     assert!(matches!(
         unchanged.decisions[0],
         DecisionStatus::Applied {
@@ -711,7 +720,7 @@ fn a_move_between_subgroups_of_one_group_applies_and_reports_the_ancestry_change
     ));
 
     let moved = book(vec![row("Advance", "Customers", "-40")]);
-    let view = build_schedule_iii_view(&moved, &decisions).unwrap();
+    let view = view_with(&moved, &decisions).unwrap();
 
     assert_eq!(
         view.decisions,
@@ -758,7 +767,7 @@ fn groups_above_the_nearest_predefined_group_are_not_recorded_so_a_gap_there_is_
     )];
     let after = with_parent(false);
 
-    let view = build_schedule_iii_view(&after, &decisions).unwrap();
+    let view = view_with(&after, &decisions).unwrap();
 
     assert_eq!(
         derivations(&before)[0].ancestry,
@@ -783,7 +792,7 @@ fn a_balance_that_changed_side_within_its_group_is_judged_against_the_head_not_a
         ScheduleIIIHead::TradeReceivables,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(not_applied(&view, 17), Some(&NotApplied::OppositeSide));
     assert_eq!(view.finality, Finality::NotFinal);
@@ -802,11 +811,11 @@ fn a_user_created_primary_group_is_a_standing_a_decision_can_rest_on() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
     assert!(applied(&view, 18));
 
     let moved = book(vec![row("Director", "Unsecured loans", "700")]);
-    let view = build_schedule_iii_view(&moved, &decisions).unwrap();
+    let view = view_with(&moved, &decisions).unwrap();
     assert_eq!(
         not_applied(&view, 18),
         Some(&NotApplied::GroupChanged {
@@ -827,7 +836,7 @@ fn a_ledger_directly_under_the_account_root_can_take_a_decision() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert!(applied(&view, 19));
 }
@@ -859,7 +868,7 @@ fn a_ledger_moved_from_the_account_root_into_a_group_makes_its_decision_stale() 
     )];
     let moved = book(vec![row("Suspense", "Director loans", "10")]);
 
-    let view = build_schedule_iii_view(&moved, &decisions).unwrap();
+    let view = view_with(&moved, &decisions).unwrap();
 
     assert_eq!(
         not_applied(&view, 23),
@@ -887,7 +896,7 @@ fn a_group_whose_parent_was_not_returned_is_a_gap_not_a_primary_group() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(not_applied(&view, 20), Some(&NotApplied::ReadIncomplete));
     assert!(view.exclusions[0].reason.contains("no parent in the read"));
@@ -903,7 +912,7 @@ fn a_ledger_with_no_parent_cannot_take_a_decision() {
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(not_applied(&view, 21), Some(&NotApplied::ReadIncomplete));
     assert_eq!(view.finality, Finality::NotFinal);
@@ -921,7 +930,7 @@ fn a_renamed_ledger_is_bound_by_its_case_folded_guid_and_reports_its_old_name() 
         ScheduleIIIHead::OtherCurrentLiabilities,
     )];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(
         view.decisions,
@@ -946,7 +955,7 @@ fn a_decision_for_another_year_is_offered_not_applied_and_leaves_the_view_final(
     );
     last_year.year = FinancialYear::beginning_in(FY_2026_27 - 1);
 
-    let view = build_schedule_iii_view(&source, &[last_year]).unwrap();
+    let view = view_with(&source, &[last_year]).unwrap();
 
     assert_eq!(not_applied(&view, 9), Some(&NotApplied::OtherYear));
     assert_eq!(view.finality, Finality::Final);
@@ -1031,7 +1040,7 @@ fn two_decisions_for_one_ledger_in_one_year_withhold_the_view() {
     ];
 
     assert!(matches!(
-        build_schedule_iii_view(&source, &decisions),
+        view_with(&source, &decisions),
         Err(ScheduleIIIError::DecisionRepeated)
     ));
 }
@@ -1057,7 +1066,7 @@ fn a_decision_cannot_rest_on_an_unestablished_balance_or_an_incomplete_group_rea
         ),
     ];
 
-    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    let view = view_with(&source, &decisions).unwrap();
 
     assert_eq!(
         not_applied(&view, 12),
@@ -1099,7 +1108,7 @@ fn conserved_fixture() -> (
         row("Customer", "Sundry Debtors", "-100"),
         row("Term loan", "Loans (Liability)", "500"),
     ]);
-    let view = build_schedule_iii_view(&book, &[]).unwrap();
+    let view = view_with(&book, &[]).unwrap();
     (book.source().clone(), view.lines, view.exclusions)
 }
 
@@ -1149,4 +1158,152 @@ fn conservation_refuses_a_row_index_outside_the_read() {
         check_conservation(&source, &lines, &exclusions),
         Err(ScheduleIIIError::NotConserved)
     ));
+}
+
+// --- Decision sets, availability and the save-time check (#737, H2) ---
+
+fn set_for(key: BookKey, year: u16, decisions: Vec<Decision>) -> DecisionSet {
+    DecisionSet::new(key, FinancialYear::beginning_in(year), decisions).unwrap()
+}
+
+#[test]
+fn a_decision_set_for_another_book_or_year_is_refused() {
+    let source = book(vec![row("Term loan", "Loans (Liability)", "500")]);
+    let other_book = set_for(
+        BookKey::for_tests("another-company", "1", "20250401"),
+        FY_2026_27,
+        Vec::new(),
+    );
+    assert!(matches!(
+        build_schedule_iii_view(&source, DecisionInput::Read(&other_book)),
+        Err(ScheduleIIIError::DecisionsForAnotherBook)
+    ));
+    let other_year = set_for(
+        BookKey::for_tests("COMPANY-GUID", "1", "20250401"),
+        FY_2026_27 + 1,
+        Vec::new(),
+    );
+    assert!(matches!(
+        build_schedule_iii_view(&source, DecisionInput::Read(&other_year)),
+        Err(ScheduleIIIError::DecisionsForAnotherYear)
+    ));
+}
+
+#[test]
+fn a_decision_set_holds_only_this_year_and_the_previous_one() {
+    let mut two_years_old = decision(
+        26,
+        "Term loan",
+        unmapped("loans (liability)"),
+        ScheduleIIIHead::OtherCurrentLiabilities,
+    );
+    two_years_old.year = FinancialYear::beginning_in(FY_2026_27 - 2);
+    assert!(matches!(
+        DecisionSet::new(
+            BookKey::for_tests("company-guid", "1", "20250401"),
+            FinancialYear::beginning_in(FY_2026_27),
+            vec![two_years_old],
+        ),
+        Err(ScheduleIIIError::DecisionsForAnotherYear)
+    ));
+}
+
+#[test]
+fn unreadable_decisions_leave_the_view_not_final_and_never_absent() {
+    let source = book(vec![
+        row("Customer", "Sundry Debtors", "-100"),
+        row("Term loan", "Loans (Liability)", "500"),
+    ]);
+    let read = view_with(&source, &[]).unwrap();
+    for why in [
+        DecisionsUnavailable::StoreUnavailable,
+        DecisionsUnavailable::Unreadable,
+    ] {
+        let view = build_schedule_iii_view(&source, DecisionInput::Unavailable(why)).unwrap();
+        assert_eq!(view.decision_source, DecisionSource::Unavailable(why));
+        assert_eq!(view.finality, Finality::NotFinal);
+        assert!(view.decisions.is_empty());
+        assert_eq!(view.lines, read.lines);
+        assert_eq!(view.exclusions, read.exclusions);
+    }
+    assert_eq!(read.decision_source, DecisionSource::Read);
+    assert_eq!(read.finality, Finality::Final);
+}
+
+#[test]
+fn a_save_is_confirmed_only_against_what_the_ca_saw() {
+    let seen_book = book(vec![
+        row("Staff advance", "Sundry Debtors", "-40"),
+        row("Term loan", "Loans (Liability)", "500"),
+    ]);
+    let seen: Vec<(LedgerGuid, Derivation)> = derivations(&seen_book)
+        .into_iter()
+        .zip(["guid-Staff advance", "guid-Term loan"])
+        .map(|(derivation, guid)| (LedgerGuid::new(guid).unwrap(), derivation))
+        .collect();
+
+    let confirmed = confirm_seen(&seen_book, &seen).unwrap();
+    assert_eq!(confirmed.len(), 2);
+    assert_eq!(confirmed[1].ledger_name(), "Term loan");
+    assert_eq!(confirmed[1].derivation(), &seen[1].1);
+
+    // Between the export and the save, the loan moved and the advance went.
+    let changed = book(vec![row("Term loan", "Current Liabilities", "500")]);
+    assert_eq!(
+        confirm_seen(&changed, &seen),
+        Err(vec![
+            SeenMismatch::LedgerMissing {
+                ledger: LedgerGuid::new("guid-Staff advance").unwrap(),
+            },
+            SeenMismatch::Moved {
+                ledger: LedgerGuid::new("guid-Term loan").unwrap(),
+                ledger_name: "Term loan".to_string(),
+                seen: seen[1].1.clone(),
+                now: derivations(&changed).remove(0),
+            },
+        ])
+    );
+}
+
+#[test]
+fn financial_year_containing_a_balance_date() {
+    for (date, first_year) in [("20260331", 2025), ("20260401", 2026), ("20270331", 2026)] {
+        assert_eq!(
+            FinancialYear::containing(&TallyDate::parse(date).unwrap()),
+            Some(FinancialYear::beginning_in(first_year)),
+            "{date}"
+        );
+    }
+}
+
+#[test]
+fn stored_codes_round_trip_and_an_unknown_one_is_refused() {
+    for head in ScheduleIIIHead::ALL {
+        assert_eq!(ScheduleIIIHead::from_code(head.code()), Some(head));
+    }
+    assert_eq!(ScheduleIIIHead::from_code("reserves_and_surplus"), None);
+
+    let derivation = Derivation {
+        outcome: DerivedOutcome::Undetermined(Undetermined::OppositeSide(
+            GroupSubtotalKind::SundryDebtors,
+        )),
+        ancestry: vec!["Customers".to_string(), "Sundry Debtors".to_string()],
+    };
+    let json = serde_json::to_string(&derivation).unwrap();
+    assert_eq!(
+        json,
+        r#"{"outcome":{"undetermined":{"opposite_side":"sundry_debtors"}},"ancestry":["Customers","Sundry Debtors"]}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<Derivation>(&json).unwrap(),
+        derivation
+    );
+    assert!(serde_json::from_str::<Derivation>(
+        r#"{"outcome":{"undetermined":"a_future_outcome"},"ancestry":[]}"#
+    )
+    .is_err());
+    assert!(serde_json::from_str::<Derivation>(
+        r#"{"outcome":{"undetermined":"account_root"},"ancestry":[],"extra":1}"#
+    )
+    .is_err());
 }

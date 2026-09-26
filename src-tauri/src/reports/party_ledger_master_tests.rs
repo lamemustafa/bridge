@@ -10,6 +10,7 @@ use bridge_tally_protocol::{
 };
 
 use super::*;
+use crate::reports::schedule_iii::{DecisionInput, DecisionSet};
 use crate::tally::OutstandingsCurrencyAssertion;
 use zip::ZipArchive;
 
@@ -183,9 +184,11 @@ fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
         groups,
     };
     let workbook = build_party_ledger_master_workbook(source).expect("captured source admits");
-    let xlsx =
-        super::super::party_ledger_master_xlsx::render_party_ledger_master_xlsx(&workbook, &[])
-            .expect("captured source renders a workbook");
+    let xlsx = super::super::party_ledger_master_xlsx::render_party_ledger_master_xlsx(
+        &workbook,
+        DecisionInput::Read(&DecisionSet::for_tests(&workbook, Vec::new()).unwrap()),
+    )
+    .expect("captured source renders a workbook");
     assert!(
         xlsx.starts_with(b"PK"),
         "captured source rendered an XLSX archive"
@@ -235,8 +238,11 @@ fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
             && row.fields.state == PartyLedgerMasterFieldObservation::NotObserved
     }));
 
-    let schedule = super::super::schedule_iii::build_schedule_iii_view(&workbook, &[])
-        .expect("captured Schedule III derivation succeeds");
+    let schedule = super::super::schedule_iii::build_schedule_iii_view(
+        &workbook,
+        DecisionInput::Read(&DecisionSet::for_tests(&workbook, Vec::new()).unwrap()),
+    )
+    .expect("captured Schedule III derivation succeeds");
     assert!(schedule.difference().is_zero());
     assert!(schedule
         .lines()
@@ -281,8 +287,11 @@ fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
             year: FinancialYear::beginning_in(2025),
         })
         .collect();
-    let decided = super::super::schedule_iii::build_schedule_iii_view(&workbook, &decisions)
-        .expect("a decision on every captured ledger still places each ledger once");
+    let decided = super::super::schedule_iii::build_schedule_iii_view(
+        &workbook,
+        DecisionInput::Read(&DecisionSet::for_tests(&workbook, decisions.clone()).unwrap()),
+    )
+    .expect("a decision on every captured ledger still places each ledger once");
     let established = source
         .rows
         .iter()
