@@ -493,7 +493,8 @@ jobs:
       # bridge#723: the default 600s idle shutdown can fire between the last
       # compile and the statistics step. `--show-stats` then reports zeroed
       # statistics with exit 0, and only `--stop-server` notices the server is
-      # gone. Keep the server alive for the job so that failure means a crash.
+      # gone. Keep the server alive for the job, so a server missing at that
+      # step means it crashed.
       SCCACHE_IDLE_TIMEOUT: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
