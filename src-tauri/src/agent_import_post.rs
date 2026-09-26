@@ -2,7 +2,9 @@
 //! subsequent calls only reconcile its identity.
 use super::*;
 use crate::agent::evidence_from_runtime_read;
-use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError};
+use crate::tally::approved_import::{
+    ApprovedImport, ApprovedImportAdmissionError, BeforeDispatchError, UnderLockRefusal,
+};
 use bridge_tally_protocol::native_outstandings::{parse_company_currency, BaseCurrencyName};
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
@@ -456,26 +458,41 @@ impl Server {
                     || {
                         // The file lock covers only the admission+synced append. It is not
                         // held over approval or network I/O. A competing process loses here.
-                        let _lock = self.lock_import_admission()?;
+                        let _lock = self
+                            .lock_import_admission()
+                            .map_err(BeforeDispatchError::Other)?;
                         let current = self
-                            .import_snapshot_while_admitted(Some(batch_id))?
-                            .ok_or_else(|| "import_batch_not_found".to_string())?;
+                            .import_snapshot_while_admitted(Some(batch_id))
+                            .map_err(BeforeDispatchError::Other)?
+                            .ok_or(BeforeDispatchError::Refused(
+                                UnderLockRefusal::BatchNotFound,
+                            ))?;
                         if current.dispatched {
-                            return Err("import_already_attempted".into());
+                            return Err(BeforeDispatchError::Refused(
+                                UnderLockRefusal::AlreadyAttempted,
+                            ));
                         }
-                        if self.import_remote_ids_recorded_while_admitted(
-                            native.remote_ids.as_slice(),
-                        )? {
-                            return Err("import_remote_id_reused".into());
+                        if self
+                            .import_remote_ids_recorded_while_admitted(native.remote_ids.as_slice())
+                            .map_err(BeforeDispatchError::Other)?
+                        {
+                            return Err(BeforeDispatchError::Refused(
+                                UnderLockRefusal::RemoteIdReused,
+                            ));
                         }
                         if current.batch.sha256 != line.sha256
                             || current.batch.endpoint_origin != line.endpoint_origin
                         {
-                            return Err("import_batch_changed".into());
+                            return Err(BeforeDispatchError::Refused(
+                                UnderLockRefusal::BatchChanged,
+                            ));
                         }
+                        // The append itself keeps the catch-all: it may have
+                        // recorded an intent (#711).
                         self.append_import_record_while_admitted(
                             &ledger::StatusRecord::dispatch_for(&line, &native),
                         )
+                        .map_err(BeforeDispatchError::Other)
                     },
                 )
                 .await;
@@ -582,6 +599,13 @@ impl Server {
                     )
                 }) {
                     "post_catalogue_unreadable"
+                } else if let Some(refusal) = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<UnderLockRefusal>())
+                {
+                    // Refused under the admission lock before the intent was
+                    // appended (#711): nothing was recorded or sent.
+                    refusal.code()
                 } else if error
                     .chain()
                     .any(|cause| cause.is::<crate::tally::approved_import::PreIntentQueueRefusal>())

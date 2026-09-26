@@ -3432,7 +3432,7 @@ impl TallyRuntime {
     ) -> anyhow::Result<ApprovedImportDispatch>
     where
         A: Fn(super::approved_import::QueuedAdmission<'_>) -> anyhow::Result<()>,
-        F: Fn() -> Result<(), String>,
+        F: Fn() -> Result<(), super::approved_import::BeforeDispatchError>,
     {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -3627,7 +3627,15 @@ impl TallyRuntime {
                         }
                     })?;
                     before_dispatch().map_err(|error| {
-                        with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
+                        let error = match error {
+                            super::approved_import::BeforeDispatchError::Refused(refusal) => {
+                                anyhow::Error::from(refusal)
+                            }
+                            super::approved_import::BeforeDispatchError::Other(error) => {
+                                anyhow::Error::msg(error)
+                            }
+                        };
+                        with_read_evidence(error, admission_evidence.clone())
                     })?;
                     let mut response_evidence = RuntimeReadEvidence::empty();
                     let body = client
