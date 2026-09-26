@@ -21,7 +21,10 @@
 //!   partly by bank (or against a discount) is a cash row, and a bank row, for the whole party
 //!   amount (`hvr_paths`' h15). A voucher naming two or more parties gives each only its own line,
 //!   and its tax, round-off and Sales/Purchase lines go to no party (`hvr_paths`' h11). So an
-//!   s.269ST row can over-state, or under-state, the cash one party moved.
+//!   s.269ST row can over-state, or under-state, the cash one party moved. Where a flagged row's
+//!   vouchers carry a different money line, the row shows that line; where the line is under the
+//!   threshold, the row is proven under it, keeps its tags, takes a title saying so and is
+//!   counted apart from the at-or-over pairs (`parity/PORT-NOTE-HVR.md`).
 //!
 //! The reference reads `[high_value_register].ca_threshold_paise` and `[s194n]` when the rules
 //! carry them and its own defaults otherwise. The vendored rules excerpt carries neither table, so
@@ -197,6 +200,32 @@ impl<'a> Row<'a> {
         *slot = (add(slot.0, share)?, add(slot.1, line)?);
         Ok(())
     }
+
+    /// The row's vouchers' own money line, summed.
+    fn line_total(&self) -> Result<i64> {
+        self.lines
+            .values()
+            .try_fold(0, |t, (_, line)| add(t, *line))
+    }
+
+    /// At or over `threshold` on the party's side, and on the vouchers' own line too; a row over on
+    /// the party's side but under on the line is proven under it (`parity/PORT-NOTE-HVR.md`).
+    fn over(&self, threshold: i64) -> Result<Over> {
+        Ok(if self.paise < threshold {
+            Over::No
+        } else if self.line_total()? < threshold {
+            Over::PartySideOnly
+        } else {
+            Over::Yes
+        })
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Over {
+    No,
+    PartySideOnly,
+    Yes,
 }
 
 type Rows<'a, K> = BTreeMap<(K, String), Row<'a>>;
@@ -518,12 +547,12 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                 } else {
                     None
                 };
-                let (any_count, any_total, over_count, evidence) = match (&day_rows, &voucher_rows)
-                {
-                    (Some(rows), _) => summarise(rows, row_threshold)?,
-                    (_, Some(rows)) => summarise(rows, row_threshold)?,
-                    _ => unreachable!("one grain is always computed"),
-                };
+                let (any_count, any_total, over_count, line_below_count, evidence) =
+                    match (&day_rows, &voucher_rows) {
+                        (Some(rows), _) => summarise(rows, row_threshold)?,
+                        (_, Some(rows)) => summarise(rows, row_threshold)?,
+                        _ => unreachable!("one grain is always computed"),
+                    };
                 fig(&mut r, &format!("{prefix}_any_amount_count"), count(TEST_ID, any_count)?, Unit::Count,
                     &format!("Distinct (party, {grain}) pairs with a {mode_name} {dir} on a population, \
                               non-Contra voucher."), vec![])?;
@@ -535,9 +564,20 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                 } else {
                     "CA-set vouching threshold"
                 };
+                let (verb, moved) = match direction {
+                    Direction::Receipt => ("debited", "received from"),
+                    Direction::Payment => ("credited", "paid to"),
+                };
                 fig(&mut r, &format!("{prefix}_at_or_over_threshold_count"), count(TEST_ID, over_count)?,
                     Unit::Count,
-                    &format!("(party, {grain}) pairs at or over the {over_what} ({row_threshold} paise)."), vec![])?;
+                    &format!("(party, {grain}) pairs at or over the {over_what} ({row_threshold} paise), \
+                              counting a pair only when its vouchers' own {mode_name} {verb} is at or over \
+                              it too."), vec![])?;
+                fig(&mut r, &format!("{prefix}_party_side_over_line_below_count"),
+                    count(TEST_ID, line_below_count)?, Unit::Count,
+                    &format!("(party, {grain}) pairs whose party side is at or over the {over_what} \
+                              ({row_threshold} paise) but whose vouchers' own {mode_name} {verb} is under \
+                              it; not counted as at or over."), vec![])?;
 
                 let Some(rows) = day_rows else {
                     continue; // row-level findings only at the (party, day) grain
@@ -557,14 +597,7 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                     // Where a voucher's own money line differs from the party's share of it, the row
                     // says so and shows that line (parity/PORT-NOTE-HVR.md).
                     let differs = data.lines.values().any(|(share, line)| share != line);
-                    let mut line_total = 0_i64;
-                    for (_, line) in data.lines.values() {
-                        line_total = add(line_total, *line)?;
-                    }
-                    let (verb, moved) = match direction {
-                        Direction::Receipt => ("debited", "received from"),
-                        Direction::Payment => ("credited", "paid to"),
-                    };
+                    let line_total = data.line_total()?;
                     let other_mode = if is_cash { "bank" } else { "cash" };
                     let mut amount_definition = format!(
                         "{} {dir} from/to one party ledger (tag {h}) on {day}, summed across every \
@@ -645,6 +678,15 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                             " The {mode_name} {verb} on these vouchers is shown with this row."
                         ));
                         limits.push(limit);
+                    }
+                    // Proven under the threshold on the line: a ledger-true title; the tags, limits,
+                    // asks and facts stay (parity/PORT-NOTE-HVR.md).
+                    if data.over(row_threshold)? == Over::PartySideOnly {
+                        title = format!(
+                            "{} {moved} one party on {day}: the party's side is at or over the {over_what}, \
+                             but the {mode_name} {verb} on these vouchers is below it",
+                            capitalize(mode_name)
+                        );
                     }
                     if ledger.as_str() == UNIDENTIFIED_PARTY {
                         title = title.replace("one party", "one unidentified party");
@@ -996,26 +1038,32 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
     Ok(r)
 }
 
-/// (pairs, total, pairs at or over `threshold`, evidence across every voucher of every pair --
-/// one ref per distinct (GUID, label), as the reference's set of refs).
+/// (pairs, total, pairs at or over `threshold` on the line too, pairs over on the party's side
+/// only, evidence across every voucher of every pair -- one ref per distinct (GUID, label), as the
+/// reference's set of refs).
 fn summarise<K>(
     rows: &Rows<'_, K>,
     threshold: i64,
-) -> Result<(usize, i64, usize, Vec<EvidenceRef>)> {
+) -> Result<(usize, i64, usize, usize, Vec<EvidenceRef>)> {
     let mut total = 0_i64;
+    let (mut over, mut line_below) = (0, 0);
     let mut refs: BTreeSet<(String, String)> = BTreeSet::new();
     for d in rows.values() {
         total = add(total, d.paise)?;
+        match d.over(threshold)? {
+            Over::Yes => over += 1,
+            Over::PartySideOnly => line_below += 1,
+            Over::No => {}
+        }
         for (g, v) in &d.vouchers {
             refs.insert((g.clone(), voucher_label(v)));
         }
     }
-    let over = rows.values().filter(|d| d.paise >= threshold).count();
     let evidence = refs
         .into_iter()
         .map(|(g, l)| EvidenceRef::with_label("voucher", &g, &l))
         .collect();
-    Ok((rows.len(), total, over, evidence))
+    Ok((rows.len(), total, over, line_below, evidence))
 }
 
 /// Python's `str.capitalize()` for the two ASCII mode names ("cash", "bank").
@@ -1211,7 +1259,8 @@ mod tests {
                     &[("Cash", 5_000_000), ("Customer A", -5_000_000)],
                 ),
                 // Customer B: g4's line is Rs 20,000 over its share and g5's Rs 20,000 under, so
-                // the row's totals agree while each voucher differs.
+                // the row's totals agree, both exactly at the Rs 2 lakh limit, while each voucher
+                // differs.
                 voucher(
                     "g4",
                     "20250602",
@@ -1227,9 +1276,9 @@ mod tests {
                     "20250602",
                     "Receipt",
                     &[
-                        ("Cash", 10_000_000),
+                        ("Cash", 8_000_000),
                         ("Bank", 2_000_000),
-                        ("Customer B", -12_000_000),
+                        ("Customer B", -10_000_000),
                     ],
                 ),
                 // No party: Rs 1.5 lakh paid in cash (and Rs 10,000 of cash taken back) with Rs 1
@@ -1303,6 +1352,20 @@ mod tests {
             b.facts.iter().any(|(k, _)| k == "cash_line"),
             "each voucher differs"
         );
+        // At the limit on both sides is at or over it, not proven under it.
+        assert_eq!(
+            b.title,
+            "Cash received from one party at or over the s.269ST(a) limb (a) person-per-day \
+             threshold on 2025-06-02"
+        );
+        assert_eq!(
+            figure("cash_receipt_day_at_or_over_threshold_count"),
+            Some(Value::Int(2))
+        );
+        assert_eq!(
+            figure("cash_receipt_day_party_side_over_line_below_count"),
+            Some(Value::Int(0))
+        );
 
         let u = finding_on("2025-06-03", "cash_payment");
         assert_eq!(
@@ -1322,5 +1385,25 @@ mod tests {
              cash credited on these vouchers is shown with this row."
         );
         assert!(u.limits[n - 1].starts_with("No party ledger is on this voucher"));
+        // Proven under the limit on the line: a true title, the tags kept, and counted apart at
+        // both grains.
+        assert_eq!(
+            u.title,
+            "Cash paid to one unidentified party on 2025-06-03: the party's side is at or over \
+             the s.269ST(a) limit, but the cash credited on these vouchers is below it"
+        );
+        assert_eq!(u.clauses, ["s.269ST(a)", "3CD-31(bc)"]);
+        for grain in ["day", "voucher"] {
+            assert_eq!(
+                figure(&format!("cash_payment_{grain}_at_or_over_threshold_count")),
+                Some(Value::Int(0))
+            );
+            assert_eq!(
+                figure(&format!(
+                    "cash_payment_{grain}_party_side_over_line_below_count"
+                )),
+                Some(Value::Int(1))
+            );
+        }
     }
 }
