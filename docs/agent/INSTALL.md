@@ -55,8 +55,8 @@ actually on.
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
 Voucher file preparation and bank-statement parsing are available by default;
-they write nothing to Tally. **Voucher posting is off by default** while two
-known limits remain. Tally aims an import at a company by its name and cannot bind it to a company's GUID. Bridge's last request before the post checks that exactly one loaded company has the target's GUID and name, and that no other loaded company has the same name ignoring case and spacing; otherwise it refuses the post (bridge#607). A company renamed to, or loaded under, the target's name (or one differing only in case or spacing) in the moment after that check could still receive the voucher, if it has the voucher's ledgers. Bridge may flag afterwards that the loaded companies changed, but cannot always say where the voucher went, and cannot prevent it (accepted residual, bridge#574). A ledger renamed and replaced in that same moment can likewise receive the post; Bridge marks the result as needing reconciliation when it sees that the ledger now resolves to a different master (bridge#623). And Bridge has no tool to delete or undo a voucher it has posted, so a wrong post must be corrected by hand in Tally. It records the REMOTEID each post sends, but no delete tool exists yet (bridge#579, bridge#582).
+they write nothing to Tally. **Voucher posting is off by default** while three
+known limits remain. Tally aims an import at a company by its name and cannot bind it to a company's GUID. Bridge's last request before the post checks that exactly one loaded company has the target's GUID and name, and that no other loaded company has the same name ignoring case and spacing; otherwise it refuses the post (bridge#607). A company renamed to, or loaded under, the target's name (or one differing only in case or spacing) in the moment after that check could still receive the voucher, if it has the voucher's ledgers. Bridge may flag afterwards that the loaded companies changed, but cannot always say where the voucher went, and cannot prevent it (accepted residual, bridge#574). A ledger renamed and replaced in that same moment means the post can land in the replacement ledger. Bridge marks the result as needing reconciliation when it sees that the ledger now resolves to a different master; a change that leaves the company's master mark unmoved, or is reverted before that check, is not seen, and a regroup in that moment is not detected (bridge#623). And Bridge has no tool to delete or undo a voucher it has posted, so a wrong post must be corrected by hand in Tally. It records the REMOTEID each post sends, but no delete tool exists yet (bridge#579, bridge#582).
 Turning on **Allow voucher posting (Journal, Payment, Receipt, Contra)** in the
 extension settings adds posting; every new posting still requires your approval in a separate Bridge
 dialog. Leave it off unless you accept those risks. If you installed an earlier
@@ -68,7 +68,7 @@ command-line installation can also post a saved batch of 2 to 50 such vouchers
 after one approval of a summary (per-ledger totals, not each voucher's date or
 narration), when `BRIDGE_AGENT_ENABLE_BATCH_POST` is on together with posting.
 That setting is off by default, the extension does not set it, and batch posting
-has not yet been proven against a live Tally (bridge#712). A Payment, Receipt or Contra is
+has not yet been proven through Bridge against a live Tally (bridge#712). A Payment, Receipt or Contra is
 refused if any of its ledgers, or their groups, moved since the file was built
 so that a bank or cash leg no longer classifies as it did. Tally assigns the number. Bridge uses a private request identity
 for the native attempt; the selected XML file stays unchanged. Do not manually
