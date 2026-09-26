@@ -117,6 +117,7 @@ async fn an_approved_review_is_recorded_once_and_changes_no_verdict() {
     let result = &response["structuredContent"]["result"];
     assert_eq!(result["operator_review"]["state"], "current", "{response}");
     assert_eq!(approval.reviews().len(), 1, "{response}");
+    assert_eq!(approval.review_counts(), [1], "{response}");
     assert!(approval.previews().is_empty(), "no post dialog: {response}");
     let review = &approval.reviews()[0];
     assert!(review.contains("Cash"), "the doubt is shown: {review}");
@@ -825,6 +826,8 @@ async fn a_review_of_the_captured_50_voucher_batch_binds_every_voucher() {
         "{response}"
     );
     assert_eq!(approval.reviews().len(), 1, "{response}");
+    // The dialog's title names the fifty vouchers it shows (#746).
+    assert_eq!(approval.review_counts(), [50], "{response}");
     let review = &approval.reviews()[0];
     for shown in [
         "Record that you reviewed 50 vouchers in \"BRIDGE AMEND LAB\"",
