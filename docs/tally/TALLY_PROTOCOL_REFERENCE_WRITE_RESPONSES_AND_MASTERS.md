@@ -702,4 +702,36 @@ measurement is a fabricated mutation of a live name. It measures the rule agains
 habits, not against real operator input.
 
 
+### 9.4e When fold-equal ledgers coexist, an import binds the exact name
+
+**VERIFIED 2026-09-26, licensed TallyPrime 7.1 Silver** (`education_mode=false`). One synthetic company, one run of each step. **Confidence: PARTIAL.**
+
+§9.4b and §9.4d measure a folded spelling against **one** live ledger. This measures an import naming one of **two** ledgers whose names fold equal. The twins differed by a trailing CR LF (written as `&#13;&#10;`, §9.4d), and in one case also by ASCII case.
+
+**Tally lets such twins coexist.** A gateway ledger `Create` for the second of each pair returned `CREATED 1`, `ALTERED 0`, three times:
+- plain after the CR LF name;
+- the CR LF name after plain;
+- a lowercase CR LF name after an uppercase plain one.
+
+A folded twin is therefore a second master, not a silent Alter of the first (contrast §9.4).
+
+Every voucher below was imported as a file over the gateway, with no errors. The ledger it posted to was read back per ledger GUID.
+
+| Order of creation | Name the voucher carried | Posted to |
+| --- | --- | --- |
+| CR LF ledger first, then plain | the CR LF name | the **CR LF** ledger |
+| plain first, then the CR LF ledger | the plain name | the **plain** ledger |
+| uppercase plain first, then lowercase CR LF | the uppercase plain name (a Payment) | the **uppercase plain** ledger |
+| uppercase plain first, then lowercase CR LF | the lowercase CR LF name | the **lowercase CR LF** ledger, the one created **second** |
+
+**When a ledger carries exactly the imported name, the import posts to it**, and creation order does not decide. In the first three rows the matched ledger was also the older twin. The last row names the newer one and still posts to the exact match.
+
+**Not measured:**
+- a name that matches **neither** twin exactly, only folding to both (e.g. mixed case without the CR LF): which twin Tally picks there is open;
+- twins made or edited in Tally's own screens;
+- Gold and Education.
+
+Until the fold-only case is measured, bridge#708 has Bridge refuse to build or post against a ledger that has a folded twin (`ledger_has_folded_twin`).
+
+
 #
