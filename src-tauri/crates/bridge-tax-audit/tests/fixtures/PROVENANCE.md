@@ -366,7 +366,7 @@ uv run -q --python 3.13 python parity/text_semantics.py ENGINE DUMP
 
 ## Engine re-sync (2026-09-22)
 
-The reference implementation's engine landed on brain main at
+The reference implementation's engine (a private repository) reached commit
 `105b6c3784f8ec09ef9d233d47ad97ccb1ea7832`. Between `57f2619b` and that commit, the only change that
 reaches a ported test's canonical dump is a new book invariant, POP-5: every in-books voucher has a
 GUID of its own. The other engine changes in that range (the wrap tool, the Word renderers,

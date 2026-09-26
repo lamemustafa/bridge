@@ -29,7 +29,7 @@ Tally read of any real assessee.
 
 ## How they were produced
 
-At brain engine commit `1038dc05`, under Python 3.13:
+At the reference engine (a private repository), commit `1038dc05`, under Python 3.13:
 
     python3 parity/generate_fixture.py tests/fixtures
     uv run -q --python 3.13 --with openpyxl --with xlrd --with python-docx --with jsonschema \
