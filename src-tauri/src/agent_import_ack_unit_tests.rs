@@ -344,6 +344,25 @@ fn a_review_names_its_doubt_and_two_doubts_need_a_name() {
         select_doubt(None, &masters_unavailable),
         Err("ack_doubt_ambiguous")
     );
+    // The mirror: a masters doubt with its file, beside a step doubt without.
+    let step_unavailable_beside = [
+        (DoubtKind::Masters, doubt()),
+        (DoubtKind::BatchStep, MastersRecord::DoubtRecordUnavailable),
+    ];
+    assert_eq!(
+        select_doubt(None, &step_unavailable_beside),
+        Err("ack_doubt_ambiguous")
+    );
+    // Both held only by the check record: no name could be reviewed, so the
+    // first is chosen and refused as unavailable, not as ambiguous.
+    let both_unavailable = [
+        (DoubtKind::Masters, MastersRecord::DoubtRecordUnavailable),
+        (DoubtKind::BatchStep, MastersRecord::DoubtRecordUnavailable),
+    ];
+    assert_eq!(
+        select_doubt(None, &both_unavailable),
+        Ok(DoubtKind::Masters)
+    );
     let step_unavailable = [
         (DoubtKind::Masters, NoDoubt),
         (DoubtKind::BatchStep, MastersRecord::DoubtRecordUnavailable),
