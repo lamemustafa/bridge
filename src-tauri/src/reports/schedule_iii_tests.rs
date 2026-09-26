@@ -646,6 +646,31 @@ fn a_zero_balance_sits_on_either_side() {
 }
 
 #[test]
+fn a_zero_balance_sits_on_a_debit_side_too() {
+    let source = book(vec![row("Settled customer", "Sundry Debtors", "0")]);
+    let view = build_schedule_iii_view(&source, &[]).unwrap();
+    assert!(view.exclusions.is_empty());
+    assert_eq!(
+        line(
+            &view,
+            LineBasis::GroupSubtotal(GroupSubtotalKind::SundryDebtors)
+        )
+        .unwrap()
+        .row_indices,
+        vec![0]
+    );
+
+    let decisions = [decision(
+        25,
+        "Settled customer",
+        DerivedOutcome::GroupSubtotal(GroupSubtotalKind::SundryDebtors),
+        ScheduleIIIHead::TradeReceivables,
+    )];
+    let view = build_schedule_iii_view(&source, &decisions).unwrap();
+    assert!(applied(&view, 25));
+}
+
+#[test]
 fn an_advance_settled_to_zero_by_year_end_keeps_its_decision() {
     let source = book(vec![row("Customer advance", "Sundry Debtors", "0")]);
     let decisions = [decision(
