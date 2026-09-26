@@ -1295,6 +1295,19 @@ mod tests {
                         ("Round Off", 24_000_000),
                     ],
                 ),
+                // No party: Rs 2 lakh received, Rs 1.5 lakh by bank and Rs 50,000 in cash, against
+                // round-off. Its bank row and its cash row each take the whole Rs 2 lakh, at the
+                // threshold, while each line is under it.
+                voucher(
+                    "g7",
+                    "20250604",
+                    "Receipt",
+                    &[
+                        ("Bank", 15_000_000),
+                        ("Cash", 5_000_000),
+                        ("Round Off", -20_000_000),
+                    ],
+                ),
             ],
             tb: BTreeMap::new(),
         };
@@ -1364,7 +1377,7 @@ mod tests {
         );
         assert_eq!(
             figure("cash_receipt_day_party_side_over_line_below_count"),
-            Some(Value::Int(0))
+            Some(Value::Int(1))
         );
 
         let u = finding_on("2025-06-03", "cash_payment");
@@ -1405,5 +1418,24 @@ mod tests {
                 Some(Value::Int(1))
             );
         }
+        // The same for a receipt, in both modes, each against its own threshold.
+        assert_eq!(
+            finding_on("2025-06-04", "cash_receipt").title,
+            "Cash received from one unidentified party on 2025-06-04: the party's side is at or \
+             over the s.269ST(a) limit, but the cash debited on these vouchers is below it"
+        );
+        assert_eq!(
+            finding_on("2025-06-04", "bank_receipt").title,
+            "Bank received from one unidentified party on 2025-06-04: the party's side is at or \
+             over the CA-set vouching threshold, but the bank debited on these vouchers is below it"
+        );
+        assert_eq!(
+            figure("bank_receipt_day_at_or_over_threshold_count"),
+            Some(Value::Int(0))
+        );
+        assert_eq!(
+            figure("bank_receipt_day_party_side_over_line_below_count"),
+            Some(Value::Int(1))
+        );
     }
 }

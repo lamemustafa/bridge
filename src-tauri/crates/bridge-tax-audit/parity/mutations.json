@@ -4486,5 +4486,21 @@
   "file": "src/high_value_register.rs",
   "from": "if data.over(row_threshold)? == Over::PartySideOnly {",
   "to": "if false && data.over(row_threshold)? == Over::PartySideOnly {"
+ },
+ {
+  "id": "E2B2-43",
+  "by": "reviewer-opus",
+  "what": "only a payment row proven under the threshold takes the ledger-true title",
+  "file": "src/high_value_register.rs",
+  "from": "if data.over(row_threshold)? == Over::PartySideOnly {",
+  "to": "if direction == Direction::Payment && data.over(row_threshold)? == Over::PartySideOnly {"
+ },
+ {
+  "id": "E2B2-44",
+  "by": "reviewer-opus",
+  "what": "the proven-under title names cash whatever the row's mode",
+  "file": "src/high_value_register.rs",
+  "from": "                            capitalize(mode_name)\n                        );\n                    }\n                    if ledger.as_str() == UNIDENTIFIED_PARTY {",
+  "to": "                            capitalize(\"cash\")\n                        );\n                    }\n                    if ledger.as_str() == UNIDENTIFIED_PARTY {"
  }
 ]
