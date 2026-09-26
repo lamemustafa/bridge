@@ -418,3 +418,48 @@ fn captured_bvl_native_ledgers_preserve_the_book_openings() {
         2
     );
 }
+
+/// Why the basic ledger read must refuse a several-currency book (#714): the
+/// export names no currency, so the parser cannot tell a dollar ledger from a
+/// rupee one. DERIVED from captured bytes: the several-currency book's master
+/// capture with its one composite opening row removed (nothing else changed,
+/// and no amount typed by hand). The parse then succeeds, and the dollar
+/// ledgers' openings come back as bare numbers carrying no currency. In this
+/// capture they are 0.00; a non-zero bare foreign opening is UNOBSERVED (P6),
+/// so this shows the missing currency, not a captured wrong amount.
+#[test]
+fn a_several_currency_export_returns_foreign_openings_as_bare_numbers() {
+    let capture = decode_utf16le(include_bytes!(
+        "fixtures/compliance_master_forex_live.utf16le.xml"
+    ));
+    let start = capture
+        .find("<LEDGER NAME=\"BRIDGE FX DEBTOR A\"")
+        .expect("the captured composite-opening row");
+    let end = start + capture[start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
+    assert!(
+        capture[start..end].contains(" @ "),
+        "the removed row is the composite one"
+    );
+    let derived = format!("{}{}", &capture[..start], &capture[end..]);
+    assert!(!derived.contains(" @ "), "no composite left");
+    let parsed = parse_native_ledger_source_records_with_evidence(
+        &derived,
+        "b14e9b2d-8a63-4779-804d-25d59eb787eb",
+    )
+    .expect("without the composite row the export parses");
+    // FX USD Debtor 01 and 02 are kept in dollars (the book's snapshot names
+    // their CURRENCYNAME `$`), yet each comes back as a plain opening with no
+    // currency at all (0.00 here).
+    for dollar in ["FX USD Debtor 01", "FX USD Debtor 02"] {
+        let row = parsed
+            .records
+            .iter()
+            .find(|record| record.record.name == dollar)
+            .unwrap_or_else(|| panic!("{dollar} is in the export"));
+        let opening = row.record.opening_balance.as_deref().unwrap();
+        assert!(
+            bridge_tally_primitives::ExactDecimal::parse(opening.to_string()).is_ok(),
+            "{dollar}: {opening}"
+        );
+    }
+}

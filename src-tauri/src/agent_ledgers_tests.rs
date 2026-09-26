@@ -976,6 +976,82 @@ mod through_the_tool {
         ))
     }
 
+    /// The captured currency read of a book with one master (INR).
+    fn single_currency() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        ))
+    }
+
+    /// A basic read of a book with several Currency masters is refused after
+    /// its currency read and before any ledger request: a bare opening names
+    /// no currency, so a dollar ledger would read as rupees (#714).
+    #[tokio::test]
+    async fn a_basic_read_of_a_several_currency_book_is_refused_before_any_ledger() {
+        let forex = "b14e9b2d-8a63-4779-804d-25d59eb787eb";
+        let companies = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        )));
+        let extent = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/company_extents_forex_live.utf16le.xml"
+        )));
+        let mut plans = Vec::new();
+        pair(&mut plans, companies.clone());
+        plans.extend([status(), companies.clone(), companies]);
+        pair(&mut plans, extent);
+        pair(
+            &mut plans,
+            xml(captured(include_bytes!(
+                "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+            ))),
+        );
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":forex})).await;
+        assert_eq!(requests, total, "no ledger request was sent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "company_several_currency_masters");
+        let remediation = error["remediation"].as_str().unwrap();
+        assert!(remediation.contains("#551"), "{error}");
+    }
+
+    /// A basic read whose currency collection holds no master is refused
+    /// after it, before any ledger request: one master is not established.
+    /// DERIVED from the captured single-master response with its one
+    /// `CURRENCY` element removed (#714).
+    #[tokio::test]
+    async fn a_basic_read_with_no_currency_master_is_refused_before_any_ledger() {
+        let captured_currency = single_currency();
+        let start = captured_currency.find("<CURRENCY ").unwrap();
+        let end =
+            start + captured_currency[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+        let mut none = captured_currency.clone();
+        none.replace_range(start..end, "");
+        assert!(!none.contains("<CURRENCY "), "no master left");
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let mut plans = identity_plans();
+        plans.extend([
+            status(),
+            company.clone(),
+            company,
+            extent.clone(),
+            status(),
+            extent,
+            status(),
+        ]);
+        pair(&mut plans, xml(none));
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":GUID})).await;
+        assert_eq!(requests, total, "no ledger request was sent");
+        let error = refusal(&response);
+        assert_eq!(error["code"], "ledger_export_invalid");
+        assert_eq!(error["cause"], "company_currency_probe_failed");
+    }
+
     /// As `basic_plans`, with the ledger export given and, when `groups` is
     /// supplied, the paired group collection a `group` filter adds inside the
     /// same extent and identity bracket.
@@ -995,6 +1071,8 @@ mod through_the_tool {
             extent.clone(),
             status(),
         ]);
+        // The basic read proves the book keeps one Currency master (#714).
+        pair(&mut plans, xml(single_currency()));
         pair(&mut plans, xml(ledgers));
         if let Some(groups) = groups {
             pair(&mut plans, xml(groups));

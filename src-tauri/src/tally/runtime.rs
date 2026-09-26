@@ -986,6 +986,16 @@ impl PartyLedgerMasterCurrencyAssertion {
     }
 }
 
+/// Whether a ledger export must first prove the book keeps one Currency
+/// master. Its opening balances carry no currency of their own, so the
+/// `ledger_masters` basic read asks for it; readers that report one named
+/// ledger (movement) or feed the desktop are unchanged (bridge#714).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LedgerCurrencyGate {
+    None,
+    SingleMasterOnly,
+}
+
 /// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
 /// as INR. The code is one of that function's static reasons, never data.
 #[derive(Debug, thiserror::Error)]
@@ -2648,9 +2658,15 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, None, false)
-            .await
-            .map(|read| (read.listing.ledgers, read.listing.evidence))
+        self.fetch_ledger_opening_with_evidence(
+            config,
+            identity,
+            None,
+            false,
+            LedgerCurrencyGate::None,
+        )
+        .await
+        .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
@@ -2665,9 +2681,15 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<LedgerListing> {
-        self.fetch_ledger_opening_with_evidence(config, identity, None, false)
-            .await
-            .map(|read| read.listing)
+        self.fetch_ledger_opening_with_evidence(
+            config,
+            identity,
+            None,
+            false,
+            LedgerCurrencyGate::SingleMasterOnly,
+        )
+        .await
+        .map(|read| read.listing)
     }
 
     /// As `fetch_ledgers_with_opening_as_of_evidence`, also reading the group
@@ -2681,7 +2703,13 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(LedgerListing, Vec<bridge_tally_protocol::TallyNamedMaster>)> {
         let read = self
-            .fetch_ledger_opening_with_evidence(config, identity, None, true)
+            .fetch_ledger_opening_with_evidence(
+                config,
+                identity,
+                None,
+                true,
+                LedgerCurrencyGate::SingleMasterOnly,
+            )
             .await?;
         let Some(groups) = read.groups else {
             unreachable!("a ledger read asked for groups returns them or an error");
@@ -2699,9 +2727,15 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         from: TallyDate,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        self.fetch_ledger_opening_with_evidence(config, identity, Some(from), false)
-            .await
-            .map(|read| (read.listing.ledgers, read.listing.evidence))
+        self.fetch_ledger_opening_with_evidence(
+            config,
+            identity,
+            Some(from),
+            false,
+            LedgerCurrencyGate::None,
+        )
+        .await
+        .map(|read| (read.listing.ledgers, read.listing.evidence))
     }
 
     async fn fetch_ledger_opening_with_evidence(
@@ -2710,6 +2744,7 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
         read_groups: bool,
+        currency_gate: LedgerCurrencyGate,
     ) -> anyhow::Result<LedgerOpeningRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -2730,6 +2765,33 @@ impl TallyRuntime {
                         evidence = opening_evidence;
                         bracket_verified_company_identity(&client, &identity).await?;
                         let opening_extent = client.fetch_company_book_extent(&identity).await?;
+                        if currency_gate == LedgerCurrencyGate::SingleMasterOnly {
+                            // A bare opening balance names no currency, so a
+                            // book with several Currency masters is refused
+                            // before any ledger request (bridge#714). A foreign
+                            // ledger's non-zero bare opening is UNOBSERVED; the
+                            // captured book's dollar openings are 0.00.
+                            let request = render_company_currency_request(identity.display_name());
+                            let (body, encoded_bytes, encoded_sha256) = client
+                                .fetch_native_report_paired(request.clone())
+                                .await?
+                                .require_stable(PairedReadValidationError::CurrencyMaster)?;
+                            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                                &request,
+                                encoded_sha256,
+                                encoded_bytes,
+                            ));
+                            let masters = parse_company_currency(&body)?.currency_count;
+                            if masters != 1 {
+                                return Err(anyhow::Error::new(CurrencyAdmissionRefusal(
+                                    if masters == 0 {
+                                        "company_currency_probe_failed"
+                                    } else {
+                                        "company_several_currency_masters"
+                                    },
+                                )));
+                            }
+                        }
                         let period = ledger_opening_period(
                             boundary_profile,
                             opening_extent.books_from(),
