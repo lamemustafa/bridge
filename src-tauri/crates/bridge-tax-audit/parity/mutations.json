@@ -4150,5 +4150,357 @@
   "file": "src/bank_reconciliation.rs",
   "from": "            split_groups_rev.push(si);\n            remaining_stmt.remove(&si);",
   "to": "            split_groups_rev.push(si);"
+ },
+ {
+  "id": "E2B2-01",
+  "by": "author",
+  "what": "a (party, day) row exactly at the limit is not reported",
+  "file": "src/high_value_register.rs",
+  "from": ".filter(|(_, d)| d.paise >= row_threshold)",
+  "to": ".filter(|(_, d)| d.paise > row_threshold)"
+ },
+ {
+  "id": "E2B2-02",
+  "by": "author",
+  "what": "the at-or-over count excludes a row exactly at the threshold",
+  "file": "src/high_value_register.rs",
+  "from": "        Ok(if self.paise < threshold {",
+  "to": "        Ok(if self.paise <= threshold {"
+ },
+ {
+  "id": "E2B2-03",
+  "by": "author",
+  "what": "Contra vouchers are walked",
+  "file": "src/high_value_register.rs",
+  "from": "if v.base_type == \"Contra\" {",
+  "to": "if v.base_type == \"Contra \" {"
+ },
+ {
+  "id": "E2B2-04",
+  "by": "author",
+  "what": "the other money ledger can be a party",
+  "file": "src/high_value_register.rs",
+  "from": "if mode_set.contains(&l.ledger) || other_money.contains(&l.ledger) {",
+  "to": "if mode_set.contains(&l.ledger) {"
+ },
+ {
+  "id": "E2B2-05",
+  "by": "author",
+  "what": "a cash loan receipt is not left out",
+  "file": "src/high_value_register.rs",
+  "from": "if under_any(x.entirely_groups) {",
+  "to": "if false && under_any(x.entirely_groups) {"
+ },
+ {
+  "id": "E2B2-06",
+  "by": "author",
+  "what": "only a 'bank' counterparty type is left out",
+  "file": "src/high_value_register.rs",
+  "from": ".is_some_and(|t| COUNTERPARTY_TYPES_EXCLUDED_FROM_269ST.contains(&t.as_str()))",
+  "to": ".is_some_and(|t| t == \"bank\")"
+ },
+ {
+  "id": "E2B2-07",
+  "by": "author",
+  "what": "a round-off line can be a party",
+  "file": "src/high_value_register.rs",
+  "from": "|| x.round_off_ledgers.contains(&l.ledger);",
+  "to": "|| false;"
+ },
+ {
+  "id": "E2B2-08",
+  "by": "author",
+  "what": "a single party does not take the whole transaction",
+  "file": "src/high_value_register.rs",
+  "from": "if party_amounts.len() == 1 {",
+  "to": "if party_amounts.len() == 2 {"
+ },
+ {
+  "id": "E2B2-09",
+  "by": "author",
+  "what": "a voucher with no party is dropped, not grouped as unidentified",
+  "file": "src/high_value_register.rs",
+  "from": "} else if fallback_total > 0 {",
+  "to": "} else if fallback_total > 0 && false {"
+ },
+ {
+  "id": "E2B2-10",
+  "by": "author",
+  "what": "counterparty types exclude in bank mode too",
+  "file": "src/high_value_register.rs",
+  "from": "                } else {\n                    &no_types\n                },",
+  "to": "                } else {\n                    i.counterparty_type_by_ledger\n                },"
+ },
+ {
+  "id": "E2B2-11",
+  "by": "author",
+  "what": "the Loans (Liability) exclusion applies to bank receipts too",
+  "file": "src/high_value_register.rs",
+  "from": "let entirely: &[&str] = if direction == Direction::Receipt && is_cash {",
+  "to": "let entirely: &[&str] = if direction == Direction::Receipt {"
+ },
+ {
+  "id": "E2B2-12",
+  "by": "author",
+  "what": "limb (b) leaves loans out of payments, not receipts",
+  "file": "src/high_value_register.rs",
+  "from": "let entirely: &[&str] = if direction == Direction::Receipt {\n            &[LOANS_LIABILITY_GROUP]",
+  "to": "let entirely: &[&str] = if direction == Direction::Payment {\n            &[LOANS_LIABILITY_GROUP]"
+ },
+ {
+  "id": "E2B2-13",
+  "by": "author",
+  "what": "a limb (b) group exactly at the limit is not reported",
+  "file": "src/high_value_register.rs",
+  "from": "for (k, d) in rows.iter().filter(|(_, d)| d.paise >= limit_269st) {",
+  "to": "for (k, d) in rows.iter().filter(|(_, d)| d.paise > limit_269st) {"
+ },
+ {
+  "id": "E2B2-14",
+  "by": "author",
+  "what": "a three-line journal counts as a transfer",
+  "file": "src/high_value_register.rs",
+  "from": "if v.lines.len() != 2 {",
+  "to": "if v.lines.len() < 2 {"
+ },
+ {
+  "id": "E2B2-15",
+  "by": "author",
+  "what": "one party line is enough for a journal transfer",
+  "file": "src/high_value_register.rs",
+  "from": "let all_parties = v.lines.iter().all(|l| {",
+  "to": "let all_parties = v.lines.iter().any(|l| {"
+ },
+ {
+  "id": "E2B2-16",
+  "by": "author",
+  "what": "journal codes swapped",
+  "file": "src/high_value_register.rs",
+  "from": "code: if l.amount_paise > 0 { \"I\" } else { \"J\" },",
+  "to": "code: if l.amount_paise > 0 { \"J\" } else { \"I\" },"
+ },
+ {
+  "id": "E2B2-17",
+  "by": "author",
+  "what": "a journal line exactly at the threshold is not reported",
+  "file": "src/high_value_register.rs",
+  "from": ".filter(|j| j.amount_paise >= threshold)",
+  "to": ".filter(|j| j.amount_paise > threshold)"
+ },
+ {
+  "id": "E2B2-18",
+  "by": "author",
+  "what": "a zero-debit statement row can match a withdrawal term",
+  "file": "src/high_value_register.rs",
+  "from": "if row.debit_paise <= 0 {",
+  "to": "if row.debit_paise < 0 {"
+ },
+ {
+  "id": "E2B2-19",
+  "by": "author",
+  "what": "withdrawal terms are not upper-cased",
+  "file": "src/high_value_register.rs",
+  "from": ".map(|t| py_upper(t))",
+  "to": ".map(|t| t.to_string())"
+ },
+ {
+  "id": "E2B2-20",
+  "by": "author",
+  "what": "the no-terms note is written when terms are set",
+  "file": "src/high_value_register.rs",
+  "from": "if terms.is_empty() {",
+  "to": "if !terms.is_empty() {"
+ },
+ {
+  "id": "E2B2-21",
+  "by": "author",
+  "what": "the AIS SFT finding is raised when rows are supplied",
+  "file": "src/high_value_register.rs",
+  "from": "if i.ais_rows.is_empty() {",
+  "to": "if !i.ais_rows.is_empty() {"
+ },
+ {
+  "id": "E2B2-22",
+  "by": "author",
+  "what": "statement evidence labels cut at 61 code points",
+  "file": "src/high_value_register.rs",
+  "from": "&prefix_chars(&row.narration, 60),",
+  "to": "&prefix_chars(&row.narration, 61),"
+ },
+ {
+  "id": "E2B2-23",
+  "by": "author",
+  "what": "the voucher grain keys by date",
+  "file": "src/high_value_register.rs",
+  "from": "                        |v| v.guid.clone(),\n",
+  "to": "                        |v| v.date.clone(),\n"
+ },
+ {
+  "id": "E2B2-24",
+  "by": "author",
+  "what": "a co-operative society's recipient type is unknown",
+  "file": "src/high_value_register.rs",
+  "from": "Some(\"cooperative_society\") => Some(Recipient::CoOperative),",
+  "to": "Some(\"cooperative_society\") => None,"
+ },
+ {
+  "id": "E2B2-25",
+  "by": "author",
+  "what": "a loan's lender_type wins over the roles map",
+  "file": "src/high_value_register.rs",
+  "from": "out.insert(ledger.clone(), t.to_string());",
+  "to": "out.entry(ledger.clone()).or_insert_with(|| t.to_string());"
+ },
+ {
+  "id": "E2B2-26",
+  "by": "author",
+  "what": "loan ledgers carry no counterparty type",
+  "file": "src/high_value_register.rs",
+  "from": ".map(|(ledger, cfg)| (ledger.clone(), cfg.lender_type.clone()))",
+  "to": ".filter(|_| false)\n        .map(|(ledger, cfg)| (ledger.clone(), cfg.lender_type.clone()))"
+ },
+ {
+  "id": "E2B2-27",
+  "by": "author",
+  "what": "the engagement's entity type is not passed",
+  "file": "src/lib.rs",
+  "from": "bound.entity_type.as_deref(),",
+  "to": "None,"
+ },
+ {
+  "id": "E2B2-28",
+  "by": "author",
+  "what": "the caller's AIS rows are not passed",
+  "file": "src/registry.rs",
+  "from": "&c.traces.ais)",
+  "to": "&[])"
+ },
+ {
+  "id": "E2B2-29",
+  "by": "author",
+  "what": "the counterparty types are read from the wrong key",
+  "file": "src/binding.rs",
+  "from": "&[\"roles\", \"counterparty_type_by_ledger\"],",
+  "to": "&[\"roles\", \"counterparty_types\"],"
+ },
+ {
+  "id": "E2B2-30",
+  "by": "reviewer-opus",
+  "what": "a blank s.194N narration term is accepted",
+  "file": "src/high_value_register.rs",
+  "from": "Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(",
+  "to": "Some(s) if s.is_empty() => Err(AuditError::Config(format!("
+ },
+ {
+  "id": "E2B2-31",
+  "by": "author",
+  "what": "a row is never marked as differing",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = false && data.lines.values().any(|(share, line)| share != line);"
+ },
+ {
+  "id": "E2B2-32",
+  "by": "author",
+  "what": "a row is marked only when every voucher's line differs",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = !data.lines.is_empty() && data.lines.values().all(|(share, line)| share != line);"
+ },
+ {
+  "id": "E2B2-33",
+  "by": "author",
+  "what": "a receipt's money line counts credits on the mode's ledgers too",
+  "file": "src/high_value_register.rs",
+  "from": "                Direction::Receipt if l.amount_paise > 0 => line = add(line, l.amount_paise)?,",
+  "to": "                Direction::Receipt => line = add(line, l.amount_paise.abs())?,"
+ },
+ {
+  "id": "E2B2-34",
+  "by": "author",
+  "what": "the below-threshold sentence is added at or over the threshold too",
+  "file": "src/high_value_register.rs",
+  "from": "                        if line_total < row_threshold {",
+  "to": "                        if line_total <= row_threshold {"
+ },
+ {
+  "id": "E2B2-35",
+  "by": "author",
+  "what": "a row's vouchers' lines are not summed, only the last kept",
+  "file": "src/high_value_register.rs",
+  "from": ".try_fold(0, |t, (_, line)| add(t, *line))",
+  "to": ".try_fold(0, |_, (_, line)| Ok(*line))"
+ },
+ {
+  "id": "E2B2-36",
+  "by": "author",
+  "what": "two vouchers sharing a GUID keep only the last share and line",
+  "file": "src/high_value_register.rs",
+  "from": "        *slot = (add(slot.0, share)?, add(slot.1, line)?);",
+  "to": "        *slot = (share, line);"
+ },
+ {
+  "id": "E2B2-37",
+  "by": "reviewer-opus",
+  "what": "the unidentified row's line is its share, so it never differs",
+  "file": "src/high_value_register.rs",
+  "from": "row.add(v, fallback_total, line)?;",
+  "to": "row.add(v, fallback_total, fallback_total)?;"
+ },
+ {
+  "id": "E2B2-38",
+  "by": "reviewer-opus",
+  "what": "a row is marked when its totals differ, not any voucher",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = data.lines.values().map(|(s, _)| *s).sum::<i64>() != data.lines.values().map(|(_, l)| *l).sum::<i64>();"
+ },
+ {
+  "id": "E2B2-39",
+  "by": "reviewer-opus",
+  "what": "a payment's money line counts debits on the mode's ledgers too",
+  "file": "src/high_value_register.rs",
+  "from": "                Direction::Payment if l.amount_paise < 0 => {",
+  "to": "                Direction::Payment => {"
+ },
+ {
+  "id": "E2B2-40",
+  "by": "author",
+  "what": "a row whose line is exactly at the threshold is taken as proven under it",
+  "file": "src/high_value_register.rs",
+  "from": "        } else if self.line_total()? < threshold {",
+  "to": "        } else if self.line_total()? <= threshold {"
+ },
+ {
+  "id": "E2B2-41",
+  "by": "author",
+  "what": "a row over on the party's side only is still counted as at or over",
+  "file": "src/high_value_register.rs",
+  "from": "            Over::PartySideOnly => line_below += 1,",
+  "to": "            Over::PartySideOnly => over += 1,"
+ },
+ {
+  "id": "E2B2-42",
+  "by": "author",
+  "what": "a row proven under the threshold keeps its at-or-over title",
+  "file": "src/high_value_register.rs",
+  "from": "if data.over(row_threshold)? == Over::PartySideOnly {",
+  "to": "if false && data.over(row_threshold)? == Over::PartySideOnly {"
+ },
+ {
+  "id": "E2B2-43",
+  "by": "reviewer-opus",
+  "what": "only a payment row proven under the threshold takes the ledger-true title",
+  "file": "src/high_value_register.rs",
+  "from": "if data.over(row_threshold)? == Over::PartySideOnly {",
+  "to": "if direction == Direction::Payment && data.over(row_threshold)? == Over::PartySideOnly {"
+ },
+ {
+  "id": "E2B2-44",
+  "by": "reviewer-opus",
+  "what": "the proven-under title names cash whatever the row's mode",
+  "file": "src/high_value_register.rs",
+  "from": "                            capitalize(mode_name)\n                        );\n                    }\n                    if ledger.as_str() == UNIDENTIFIED_PARTY {",
+  "to": "                            capitalize(\"cash\")\n                        );\n                    }\n                    if ledger.as_str() == UNIDENTIFIED_PARTY {"
  }
 ]
