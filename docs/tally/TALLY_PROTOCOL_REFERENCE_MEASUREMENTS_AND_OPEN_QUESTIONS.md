@@ -386,7 +386,7 @@ Bridge's own reads, and nothing else was changed in between.
 | Delete a voucher (Alt+D) | +2 | 0 | VERIFIED |
 | Enable cost centres, create one, make a ledger applicable | 0 | +3 | PARTIAL |
 | Regroup a ledger; change its opening balance; create a ledger; delete it | 0 | +1 each | VERIFIED |
-| Rename the base currency, then restore it | 0 | +2, then +1 | PARTIAL |
+| Rename the base currency, then restore it (a company with no vouchers) | absent throughout | +2, then +1 | PARTIAL |
 
 Further observations from the same runs:
 
@@ -396,7 +396,7 @@ Further observations from the same runs:
 - **Tally allocates bills itself.** A native import to a bill-wise party ledger read back with a bill
   allocation of the full amount already on that line.
 - **Cancelled and optional vouchers read differently.** A cancelled voucher keeps its number but
-  loses its ledger entries in the readback. An optional voucher's number changed when it was marked
+  loses its ledger entries in the readback, so Bridge labels it `posted_divergent` (bridge#758). An optional voucher's number changed when it was marked
   optional, and again, with no AlterID change, when a later voucher of the same type was posted.
   Its number is not a stable identity.
 - **A voucher held open in alteration** blocked none of Bridge's reads, builds or posts, and Tally
