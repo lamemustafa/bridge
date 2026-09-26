@@ -139,7 +139,7 @@ fn is_duties_and_taxes_parent(parent: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Book model (input) -- see SP/specs/book_schema.md for the full schema.
+// Book model (input) -- its producer, outside this repository, documents the full schema.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize, Default)]
