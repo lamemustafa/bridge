@@ -28,6 +28,11 @@ const expected = new Set([
   "function-argument-with-space|src-tauri/src/tally/tdl_engine.rs::ledger_period_balances_request|$$NumItems:BRIDGE Ledger Period Collection V1",
 ]);
 
+// Method names whose value is money. A `$$` function's own name is not
+// matched (a `$` preceded by `$` is skipped), and a FIELD with no <SET> is
+// not scanned; neither shape carries an amount in any builder today.
+const amountMethod = /(?:Balance|Amount|Opening|Closing|Totals?|Debit|Credit|Value)$/i;
+
 const actual = new Set();
 for (const sourceRoot of ["src-tauri", "tools"]) {
   for (const path of rustFiles(resolve(repositoryRoot, sourceRoot))) {
@@ -147,6 +152,21 @@ function scanRequestBuilderStrings(repositoryRoot, path, violations) {
     }
     for (const match of literal.value.matchAll(/<REPORT\s+NAME="([^"]+)"/g)) {
       violations.add(`custom-report|${file}::${identifier}|${match[1]}`);
+    }
+    // A report FIELD that SETs an amount-valued method without declaring
+    // <TYPE>Amount</TYPE> returns Tally's display text, with the sign dropped
+    // and digits grouped (protocol reference §6.3). The pinned set for this
+    // kind is empty: every amount FIELD must carry its TYPE.
+    for (const field of literal.value.matchAll(/<FIELD\b([^>]*)>([\s\S]*?)<\/FIELD>/g)) {
+      // Every single-`$` method anywhere in the SET counts, so an amount in a
+      // compound expression (`$Quantity + $OpeningBalance`) or inside a `$$`
+      // function's argument (`$$Abs:$ClosingBalance`) is caught too.
+      const set = /<SET>([\s\S]*?)<\/SET>/.exec(field[2]);
+      const methods = set ? [...set[1].matchAll(/(?<!\$)\$([A-Za-z_][A-Za-z0-9_]*)/g)] : [];
+      if (!methods.some((method) => amountMethod.test(method[1]))) continue;
+      if (/<TYPE>\s*Amount\s*<\/TYPE>/i.test(field[2])) continue;
+      const name = /NAME="([^"]*)"/.exec(field[1])?.[1] ?? "<unnamed>";
+      violations.add(`amount-field-without-type|${file}::${identifier}|${name}`);
     }
   }
 }

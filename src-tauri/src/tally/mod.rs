@@ -13,14 +13,13 @@ pub mod serial_queue;
 pub mod tdl_engine;
 pub mod validators;
 pub mod xml_parser;
-// Crate-internal only: `tally::connector` and `tally::connection` are the sole consumers.
+// Crate-internal only: `tally::connector` is the sole consumer.
 mod canonical_window;
 
 pub use bridge_tally_core as core;
 pub use connection::{
-    ConnectionStatus, SelectedReadObservation, SelectedReadScopeEvidence, TallyClient, TallyConfig,
-    TallyProbeResult, TallyProduct, SELECTED_LEDGER_QUERY_PROFILE_ID,
-    SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    ConnectionStatus, SelectedReadScopeEvidence, TallyClient, TallyConfig, TallyProbeResult,
+    TallyProduct,
 };
 pub(crate) use connector::core_snapshot_start_authorized_codes;
 pub use connector::{

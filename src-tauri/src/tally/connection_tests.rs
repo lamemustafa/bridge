@@ -124,7 +124,6 @@ use bridge_tally_core::{
 use bridge_tally_protocol::native_outstandings::NativeLedgerExportPeriod;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use std::time::Duration;
-use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -364,28 +363,6 @@ fn product_marker_is_not_accepted_inside_unrelated_content() {
         detect_product("prefix Tally ERP 9 Server is Running suffix"),
         TallyProduct::Unknown
     ));
-}
-
-#[tokio::test]
-async fn selected_read_request_digest_matches_the_dispatched_wire_entity() {
-    let plan = ScenarioPlan::new(Fixture::NormalExport).with_encoding(WireEncoding::Utf16Le);
-    let simulator = Simulator::spawn(plan).expect("spawn synthetic Tally endpoint");
-    let client = TallyClient::new(TallyConfig {
-        host: simulator.address().ip().to_string(),
-        port: simulator.address().port(),
-    })
-    .expect("build synthetic Tally client");
-
-    let observation = client
-        .qualify_selected_ledgers(
-            "BRIDGE SYNTHETIC BOOK",
-            "00000000-0000-4000-8000-000000000001",
-        )
-        .await
-        .expect("qualify synthetic selected-ledger read");
-    let dispatched = simulator.finish().expect("finish synthetic Tally exchange");
-
-    assert_eq!(observation.request_sha256, dispatched.request_body_sha256);
 }
 
 #[test]

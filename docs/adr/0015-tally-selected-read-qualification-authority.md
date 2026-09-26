@@ -164,3 +164,54 @@ decision here or in a superseding ADR — not by re-adding a pinned
 "deliberately unexposed" allow-list, which this PR also removed from
 `scripts/tauri-command-registration.test.mjs` as no longer meaningful once
 nothing is deliberately unexposed.
+
+## Amendment (2026-09-26, #732): the runtime qualification path is deleted
+
+The 2026-09-17 amendment left the runtime layer "a separate decision". #732 made it. The path's
+ledger read (`ledgers_v1`) SETs `$OpeningBalance` in a FIELD without `<TYPE>Amount</TYPE>`. For
+`$ClosingBalance`, such a FIELD was measured returning a display string with the sign dropped
+(protocol reference §6.3). The same for `$OpeningBalance` is inferred, not measured. Tracing who
+consumed that read showed nothing live reached the path. Following AGENTS.md P4, the path is
+deleted rather than fixed.
+
+**Deleted:**
+- `TallyRuntime::qualify_selected_ledgers`, `TallyRuntime::qualify_selected_vouchers` and
+  `TallyRuntime::fetch_companies_for_reservation`. The last one existed, by its own doc, so a
+  reservation owner could qualify its selected reads.
+- `TallyClient::qualify_selected_ledgers` and `TallyClient::qualify_selected_vouchers`,
+  `SelectedReadObservation`, and `SELECTED_LEDGER_QUERY_PROFILE_ID` and
+  `SELECTED_VOUCHER_QUERY_PROFILE_ID`.
+- What the compiler then reported as unused:
+  - `post_xml_with_request_wire_sha256` and `observed_encoding_label`;
+  - `validate_selected_read_identity_evidence`, `validate_selected_ledgers` and
+    `verify_selected_company_name`;
+  - `EducationReportFamilyRefusal` and `refuse_report_formula_in_education`;
+  - `CachedProbeReservation::authorize`;
+  - the `runtime_identity` fields that only `authorize` read.
+- `tdl_engine::sales_vouchers_request` and `tdl_engine::selected_vouchers_request`, which nothing
+  called. `tdl_engine::ledgers_request` is now `#[cfg(test)]`, as `groups_request` already was.
+- The five tests that called the deleted methods. A sixth test,
+  `ordinary_read_admission_and_review_reservation_are_mutually_exclusive`, keeps its live
+  assertions and drops the two that called `authorize`.
+
+**Kept:**
+- `CachedProbeReservation`, which `reserve_cached_probe_fresh` still creates for two commands.
+- The `db::tally_mirror` commitment material.
+- The `ledgers_v1` and `vouchers_v2` profiles in `bridge-tally-protocol`, which
+  `tools/bridge-tally-live-read` still sends. `ledgers_v1`'s opening-balance FIELD now declares
+  `<TYPE>Amount</TYPE>`. Its sealed template digest and the ledger canary's, which derives from it,
+  are updated deliberately.
+
+**Gated:** `scripts/check-tally-request-builder-hazards.mjs` now fails on any request-builder FIELD
+that SETs an amount-valued method without `<TYPE>Amount</TYPE>`. Its pinned set for that kind is
+empty. Removing the TYPE from `ledgers_v1`, or from the period-balance request's closing FIELD,
+makes it fail.
+
+**How this was measured:**
+- **Compiler.** `cargo check --locked --workspace --all-targets --all-features` for `src-tauri/`
+  and for `tools/` builds with every deleted item gone. `cargo clippy` with `--all-features` and
+  `-D warnings` reports nothing.
+- **Tests.** `bridge`'s sources carry exactly five fewer `#[test]`/`#[tokio::test]` attributes
+  than master (1441 to 1436): the five deleted tests.
+- **Results.** `cargo test -p bridge-tally-protocol` passes 348 of 348. `cargo test -p bridge
+  --lib`: 1425 passed, 0 failed, 6 ignored.

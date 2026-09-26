@@ -75,46 +75,10 @@ fn legacy_company_list_request() -> String {
     .to_string()
 }
 
-pub fn sales_vouchers_request(company: &str, from: &str, to: &str) -> String {
-    format!(
-        r#"
-<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>EXPORT</TALLYREQUEST>
-    <TYPE>COLLECTION</TYPE>
-    <ID>Sales Vouchers</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY>
-        <SVFROMDATE>{}</SVFROMDATE>
-        <SVTODATE>{}</SVTODATE>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="Sales Vouchers">
-            <TYPE>Voucher</TYPE>
-            <FILTERS>SalesOnly</FILTERS>
-            <FETCH>Date, VoucherTypeName, VoucherNumber, PartyLedgerName</FETCH>
-          </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="SalesOnly">$$IsSales:$VoucherTypeName</SYSTEM>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
-</ENVELOPE>
-"#,
-        xml_escape(company),
-        xml_escape(from),
-        xml_escape(to)
-    )
-    .trim()
-    .to_string()
-}
-
+/// No production path sends this: the live-read tool renders `ledgers_v1`
+/// through `ReadOnlyProfile::LedgersV1`. It compiles only for the tests below
+/// that check its formula hazard and escaping.
+#[cfg(test)]
 pub fn ledgers_request(company: &str) -> String {
     bridge_tally_protocol::xml_read_profiles::compatibility::ledgers_request(company)
 }
@@ -206,12 +170,6 @@ pub fn groups_request(company: &str) -> String {
     )
     .trim()
     .to_string()
-}
-
-pub fn selected_vouchers_request(company: &str, from: &str, to: &str) -> String {
-    bridge_tally_protocol::xml_read_profiles::compatibility::selected_vouchers_request(
-        company, from, to,
-    )
 }
 
 /// Experimental Bridge-defined ledger-balance cross-view. The request emits no
@@ -334,9 +292,9 @@ mod tests {
             .collect();
         let guarded = [
             // `ReadOnlyProfileId::education_refuses_report_formula`: the tools'
-            // Education transport, and `qualify_selected_ledgers`' bracket.
+            // Education transport.
             "render_ledgers",
-            // The same flag, and `qualify_selected_vouchers`' bracket.
+            // The same flag.
             "render_vouchers",
             // `RuntimeTallyConnector::read_core_period_balance_report`.
             "ledger_period_balances_request",

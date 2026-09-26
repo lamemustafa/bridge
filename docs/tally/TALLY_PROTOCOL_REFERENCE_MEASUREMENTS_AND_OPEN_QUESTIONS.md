@@ -377,8 +377,8 @@ promoted.
   already precedes it, or from the run's own probe. The run carries on and records
   `report_tie_out_unavailable` and `education_report_family_unsupported`. A later window's
   successful report clears the second code, as it does the other tie-out codes.
-- **Selected-ledger and selected-voucher qualifiers.** Read the mode from their opening identity
-  bracket.
+- **Selected-ledger and selected-voucher qualifiers.** Deleted with the rest of their runtime
+  path (bridge#732; ADR 0015's 2026-09-26 amendment): no command or tool reached them.
 - **The live-read tool.** Takes its mode from its configuration; it does not observe it. In
   Education, the ledger step is recorded as failed with `education_report_family_unsupported`, and
   the voucher steps as not attempted.

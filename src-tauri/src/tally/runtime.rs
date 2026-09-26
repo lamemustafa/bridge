@@ -4,7 +4,7 @@ use super::{
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
 use crate::reports::party_ledger_master::PartyLedgerMasterSource;
-use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
+use crate::tally::connection::canonical_loopback_origin;
 #[cfg(feature = "voucher-scan")]
 use crate::tally::connection::{LedgerOpeningCoverageRead, OutstandingsSegmentObservation};
 use crate::tally::connection::{NativePairedRead, PairedReadValidationError};
@@ -843,26 +843,6 @@ async fn bracket_verified_company_identity_observing_mode(
 #[derive(Debug, thiserror::Error)]
 #[error("window_part_boundary_unsupported_in_education")]
 pub(crate) struct EducationBoundaryRefusal;
-
-/// A read was refused before it was sent: the endpoint reported Education mode,
-/// and the request is one of Bridge's custom reports whose TDL passes a spaced
-/// collection identifier to a `$$` function. Education answered one such report
-/// (`ledgers_v1`) with a blocking "Bad formula!" dialog on the Tally screen,
-/// which holds the XML gateway until someone dismisses it (bridge#45); the
-/// others carry the same construct. Such a read needs a licensed
-/// Tally until the Collection-based reads replace it.
-#[derive(Debug, thiserror::Error)]
-#[error("education_report_family_unsupported")]
-pub(crate) struct EducationReportFamilyRefusal;
-
-/// Refuses a report-formula read when the bracket that precedes it observed
-/// Education mode ([`EducationReportFamilyRefusal`]).
-fn refuse_report_formula_in_education(profile: DateBoundaryProfile) -> anyhow::Result<()> {
-    if profile == DateBoundaryProfile::EducationRestricted {
-        return Err(EducationReportFamilyRefusal.into());
-    }
-    Ok(())
-}
 
 fn admit_company_identity(
     companies: &[TallyCompany],
@@ -2036,7 +2016,6 @@ pub struct TallyRuntime {
     audit_drain_probe_interval: std::time::Duration,
     audit_drain_probe_stale: std::time::Duration,
     audit_drain_probe_slow: std::time::Duration,
-    runtime_identity: Arc<()>,
     control: PortableReadRuntime,
     #[cfg(feature = "voucher-scan")]
     outstandings_segment_policy: Option<CalibratedSegmentPolicy>,
@@ -2060,7 +2039,6 @@ pub struct TallyRuntime {
 /// atomically replaced. Drop never touches a different or newer review.
 pub struct CachedProbeReservation {
     session: Arc<TallySession>,
-    runtime_identity: Arc<()>,
     review_id: String,
     observed_at_unix_ms: i64,
     result: TallyProbeResult,
@@ -2078,27 +2056,6 @@ impl CachedProbeReservation {
 
     pub fn review_id(&self) -> &str {
         &self.review_id
-    }
-
-    fn authorize(&self, runtime: &TallyRuntime, config: &TallyConfig) -> anyhow::Result<()> {
-        if !self.armed
-            || !Arc::ptr_eq(&self.runtime_identity, &runtime.runtime_identity)
-            || self.session.endpoint != EndpointKey::from_config(config)?
-        {
-            anyhow::bail!("Tally reviewed setup operation ownership changed");
-        }
-        if self
-            .session
-            .cached_probe
-            .read()
-            .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?
-            .as_ref()
-            .is_some_and(|probe| probe.reserved && probe.review_id == self.review_id)
-        {
-            Ok(())
-        } else {
-            anyhow::bail!("Tally reviewed setup operation ownership changed")
-        }
     }
 
     pub fn release(&mut self) -> anyhow::Result<bool> {
@@ -2186,7 +2143,6 @@ impl Default for TallyRuntime {
             audit_drain_probe_interval: AUDIT_DRAIN_PROBE_INTERVAL,
             audit_drain_probe_stale: AUDIT_DRAIN_PROBE_STALE,
             audit_drain_probe_slow: AUDIT_DRAIN_PROBE_SLOW,
-            runtime_identity: Arc::new(()),
             control: PortableReadRuntime::default(),
             #[cfg(feature = "voucher-scan")]
             outstandings_segment_policy: None,
@@ -2621,26 +2577,6 @@ impl TallyRuntime {
         .await
     }
 
-    /// Re-enumerates companies while one reviewed setup operation holds the
-    /// exclusive cached-probe reservation. This is deliberately separate from
-    /// `fetch_companies`: an ordinary read must remain forbidden while setup
-    /// authority is reserved, but the reservation owner needs a fresh tuple
-    /// check before it can qualify its selected reads.
-    pub async fn fetch_companies_for_reservation(
-        &self,
-        config: TallyConfig,
-        reservation: &CachedProbeReservation,
-    ) -> anyhow::Result<Vec<TallyCompany>> {
-        reservation.authorize(self, &config)?;
-        self.execute(
-            config,
-            ReadOperation::CompanyList,
-            ReadRetryPolicy::SINGLE_ATTEMPT,
-            |client| async move { client.fetch_companies().await },
-        )
-        .await
-    }
-
     pub async fn fetch_ledgers(
         &self,
         config: TallyConfig,
@@ -3061,36 +2997,6 @@ impl TallyRuntime {
                         .await?;
                     bracket_verified_company_identity(&client, &identity).await?;
                     Ok(ledgers)
-                }
-            },
-        )
-        .await
-    }
-
-    pub async fn qualify_selected_ledgers(
-        &self,
-        config: TallyConfig,
-        reservation: &CachedProbeReservation,
-        identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<SelectedReadObservation> {
-        reservation.authorize(self, &config)?;
-        let identity = identity.clone();
-        self.execute(
-            config,
-            ReadOperation::MasterExport,
-            ReadRetryPolicy::SINGLE_ATTEMPT,
-            move |client| {
-                let identity = identity.clone();
-                async move {
-                    refuse_report_formula_in_education(
-                        bracket_verified_company_identity_observing_mode(&client, &identity)
-                            .await?,
-                    )?;
-                    let observation = client
-                        .qualify_selected_ledgers(identity.display_name(), identity.company_guid())
-                        .await?;
-                    bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(observation)
                 }
             },
         )
@@ -4552,45 +4458,6 @@ impl TallyRuntime {
         partial_after_outstandings_read_transport_failure(result)
     }
 
-    pub async fn qualify_selected_vouchers(
-        &self,
-        config: TallyConfig,
-        reservation: &CachedProbeReservation,
-        identity: &VerifiedCompanyIdentity,
-        from: String,
-        to: String,
-    ) -> anyhow::Result<SelectedReadObservation> {
-        reservation.authorize(self, &config)?;
-        let identity = identity.clone();
-        self.execute(
-            config,
-            ReadOperation::VoucherExport,
-            ReadRetryPolicy::SINGLE_ATTEMPT,
-            move |client| {
-                let identity = identity.clone();
-                let from = from.clone();
-                let to = to.clone();
-                async move {
-                    refuse_report_formula_in_education(
-                        bracket_verified_company_identity_observing_mode(&client, &identity)
-                            .await?,
-                    )?;
-                    let observation = client
-                        .qualify_selected_vouchers(
-                            identity.display_name(),
-                            identity.company_guid(),
-                            &from,
-                            &to,
-                        )
-                        .await?;
-                    bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(observation)
-                }
-            },
-        )
-        .await
-    }
-
     pub(super) async fn post_xml_cancellable_validated<P>(
         &self,
         config: TallyConfig,
@@ -4733,7 +4600,6 @@ impl TallyRuntime {
         probe.reserved = true;
         let reservation = CachedProbeReservation {
             session: Arc::clone(&session),
-            runtime_identity: Arc::clone(&self.runtime_identity),
             review_id: probe.review_id.clone(),
             observed_at_unix_ms: probe.observed_at_unix_ms,
             result: probe.result.clone(),

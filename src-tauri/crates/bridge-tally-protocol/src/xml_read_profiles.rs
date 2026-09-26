@@ -778,6 +778,7 @@ fn render_ledgers(company: &str) -> String {
                     </FIELD>
                     <FIELD NAME="BRIDGE Ledger Opening Balance V1">
                         <SET>$OpeningBalance</SET>
+                        <TYPE>Amount</TYPE>
                         <XMLTAG>"OPENINGBALANCE"</XMLTAG>
                     </FIELD>
                     <COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No" NAME="BRIDGE Ledger Collection V1">
