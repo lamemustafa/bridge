@@ -140,3 +140,10 @@ Queue item 3: stopping here and waiting for Lane D.
 
 - All 12 check runs on `bdb8e53` completed with success or skipped. Passed: `Workflow consistency`, `Frontend build`, `Required checks`, `Tally portable core`, `Rust format`, `Dependency security`, `GitGuardian Security Checks`, `Tax-audit mutation records`, `Determine bundle scope`. Skipped as not applicable to a scripts-only change: `Native checks (matrix)`, `Bundle smoke (matrix)`, `Retain two compiler-cache snapshots per OS`.
 - The PR is still a draft, waiting on Lane D. Queue item 3: stopped and waiting.
+
+## Sat Sep 26 08:23:34 UTC 2026 — PR #688 merged
+
+- The owner merged PR #688 at 2026-09-26 07:46 UTC. The head was `926f50e`, after two master merges: `cbf06e4` by Lane P and `926f50e` by the owner. CI on `926f50e`: every run passed or was skipped as not applicable.
+- Lane P re-measured on Git 2.43: master gives 19 tests with 4 failures, and the PR gives 20 tests with 3 failures. A delta review found no P1 or P2. That review attributed the leftover merge-driver failure to running as root. My measurement says it comes from Git 2.43's unexpanded `%S/%X/%Y` (step 1.4 item 3).
+- I posted that measured cause, and the owner decision it needs (a minimum Git version and/or a driver message that names the cause), once on #527: https://github.com/lamemustafa/bridge/issues/527#issuecomment-5844579201
+- PR check-ins have stopped. Queue item 3: waiting for Lane D.
