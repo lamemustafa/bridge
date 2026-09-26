@@ -289,3 +289,9 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - no Sonnet/Opus review of the doc, which is required before #760 leaves draft.
 
 **Needs a decision:** #740 question 1, whether losing the stored self-checksum is acceptable. The implementing PR should follow only after that.
+
+## 2026-09-26 18:58 UTC: Status
+
+- #760 (the #740 option A design doc) was **closed without merging** at 18:58 UTC. Not reopened.
+- The design text remains on branch `cloud-p/order-independent-seal` (`7dd4086`) and in #740, if it is wanted later.
+- Unchanged: #728 is ready and parked for Lane D; #729 is a draft awaiting the owner's cache-deletion decision.
