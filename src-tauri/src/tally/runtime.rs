@@ -986,14 +986,15 @@ impl PartyLedgerMasterCurrencyAssertion {
     }
 }
 
-/// Whether a ledger export must first prove the book keeps one Currency
-/// master. Its opening balances carry no currency of their own, so the
-/// `ledger_masters` basic read asks for it; readers that report one named
-/// ledger (movement) or feed the desktop are unchanged (bridge#714).
+/// Whether a ledger export must first prove the book keeps exactly one
+/// Currency master, and that it is INR. Its opening balances carry no
+/// currency of their own, so the `ledger_masters` basic read (bridge#714)
+/// and `ledger_movement` (bridge#716) ask for it. The ungated
+/// `fetch_ledgers` path has no production caller; only tests use it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LedgerCurrencyGate {
     None,
-    SingleMasterOnly,
+    SingleInrMaster,
 }
 
 /// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
@@ -2686,7 +2687,7 @@ impl TallyRuntime {
             identity,
             None,
             false,
-            LedgerCurrencyGate::SingleMasterOnly,
+            LedgerCurrencyGate::SingleInrMaster,
         )
         .await
         .map(|read| read.listing)
@@ -2708,7 +2709,7 @@ impl TallyRuntime {
                 identity,
                 None,
                 true,
-                LedgerCurrencyGate::SingleMasterOnly,
+                LedgerCurrencyGate::SingleInrMaster,
             )
             .await?;
         let Some(groups) = read.groups else {
@@ -2727,12 +2728,17 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         from: TallyDate,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
+        // A named ledger's opening and movement carry no currency either, so a
+        // book with several Currency masters, or whose one master is not INR,
+        // is refused before any ledger or voucher read (bridge#716). Telling a
+        // rupee ledger from a foreign one there needs each ledger's
+        // CURRENCYNAME, which this export does not fetch.
         self.fetch_ledger_opening_with_evidence(
             config,
             identity,
             Some(from),
             false,
-            LedgerCurrencyGate::None,
+            LedgerCurrencyGate::SingleInrMaster,
         )
         .await
         .map(|read| (read.listing.ledgers, read.listing.evidence))
@@ -2765,7 +2771,7 @@ impl TallyRuntime {
                         evidence = opening_evidence;
                         bracket_verified_company_identity(&client, &identity).await?;
                         let opening_extent = client.fetch_company_book_extent(&identity).await?;
-                        if currency_gate == LedgerCurrencyGate::SingleMasterOnly {
+                        if currency_gate == LedgerCurrencyGate::SingleInrMaster {
                             // A bare opening balance names no currency, so a
                             // book with several Currency masters is refused
                             // before any ledger request (bridge#714). A foreign
@@ -2781,15 +2787,19 @@ impl TallyRuntime {
                                 encoded_sha256,
                                 encoded_bytes,
                             ));
-                            let masters = parse_company_currency(&body)?.currency_count;
-                            if masters != 1 {
-                                return Err(anyhow::Error::new(CurrencyAdmissionRefusal(
-                                    if masters == 0 {
-                                        "company_currency_probe_failed"
-                                    } else {
-                                        "company_several_currency_masters"
-                                    },
-                                )));
+                            // A single master that is not INR is refused too: its
+                            // figures would come back as bare numbers with nothing
+                            // naming the currency (bridge#716), as `admit_inr`
+                            // refuses for the other monetary reads.
+                            let currency = parse_company_currency(&body)?;
+                            let refusal = match (currency.currency_count, currency.is_inr) {
+                                (1, true) => None,
+                                (0, _) => Some("company_currency_probe_failed"),
+                                (1, false) => Some("company_base_currency_not_inr"),
+                                _ => Some("company_several_currency_masters"),
+                            };
+                            if let Some(code) = refusal {
+                                return Err(anyhow::Error::new(CurrencyAdmissionRefusal(code)));
                             }
                         }
                         let period = ledger_opening_period(
