@@ -177,3 +177,12 @@ The check-in found V's independent review of #763 unanswered: a P2 (three reader
 - P2: fixed with tests only in `3197bb99a7d60e42c37c6c34ee8e8a30536320d8`. The cases are derived from the captured partial-commit response and labelled as derived: padding and a comment keep the captured text and digest, and a child element is refused, with a control row. Each of the three mutants now fails one test. 352 protocol tests pass; fmt, clippy and seal are clean.
 - P3: kept fail-closed, named in the PR body, and pinned by the refusal test.
 - No master merge (the PR is parked per Lane D). Reply: PR comment 5847290350. On the other five PRs there are no reviews, review threads or findings from anyone else. The check-in routine is not re-armed.
+
+## 2026-09-26T15:25Z: #749 merged up with master for the pinned queue (Lane D)
+Lane D called #749 as the front of the pinned merge queue after #771 (`6b4cd77c`). I merged master into `cloud-q/711-under-lock-refusals`. The conflict was only in the compatibility surface and matrix: I took master's copies and resealed (`--verify` clean). ADR 0004 rows 12 and 14 and the agent README merged cleanly and read coherently.
+- Checks on the merge:
+  - targeted posting tests (`agent_import`, `approved_import`, `tally::runtime`, `agent_catalog`): 529 passed;
+  - `approval_seam_gate`: 10 passed;
+  - full `bridge` lib: 1439 passed, 1 failed (the known root-only `readonly_directory…` red);
+  - fmt and clippy `-D warnings` clean.
+- New head `b0eadd1deeca38a3556a96b507abe71b5b3df6af`, pushed as a fast-forward of `5e15d10`. Only #749 was touched.
