@@ -124,3 +124,20 @@ test("a file with two candidate version lines is refused, not half-written", () 
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("a README with two current-version sentences is refused before any file is written", () => {
+  const base = mkdtempSync(join(tmpdir(), "next-version-"));
+  try {
+    for (const file of [...Object.keys(VERSION_FILES), "README.md"]) {
+      mkdirSync(dirname(join(base, file)), { recursive: true });
+      copyFileSync(join(repository, file), join(base, file));
+    }
+    const readme = join(base, "README.md");
+    writeFileSync(readme, `${readFileSync(readme, "utf8")}\ncurrent development source is version \`0.0.1\`\n`);
+    const packageBefore = readFileSync(join(base, "package.json"), "utf8");
+    assert.throws(() => writeVersions("0.9.0", base), /README\.md: expected exactly one current-version sentence, found 2/);
+    assert.equal(readFileSync(join(base, "package.json"), "utf8"), packageBefore, "no file was written");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
