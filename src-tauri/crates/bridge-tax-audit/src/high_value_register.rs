@@ -178,10 +178,25 @@ pub fn s194n_recipient_type(entity_type: Option<&str>) -> Option<Recipient> {
 }
 
 /// One row: its total and the vouchers behind it, by GUID (a repeated GUID keeps the last voucher,
-/// as the reference's dict does).
+/// as the reference's dict does), and per GUID the party's share of those vouchers against their
+/// own money line in the row's mode and direction (see `parity/PORT-NOTE-HVR.md`).
+#[derive(Default)]
 pub struct Row<'a> {
     pub paise: i64,
     pub vouchers: BTreeMap<String, &'a Voucher>,
+    /// GUID -> (share, line), each added per voucher as it is read, so two vouchers sharing a GUID
+    /// add together and one voucher's line is never set against two vouchers' shares.
+    pub lines: BTreeMap<String, (i64, i64)>,
+}
+
+impl<'a> Row<'a> {
+    fn add(&mut self, v: &'a Voucher, share: i64, line: i64) -> Result<()> {
+        self.paise = add(self.paise, share)?;
+        self.vouchers.insert(v.guid.clone(), v);
+        let slot = self.lines.entry(v.guid.clone()).or_insert((0, 0));
+        *slot = (add(slot.0, share)?, add(slot.1, line)?);
+        Ok(())
+    }
 }
 
 type Rows<'a, K> = BTreeMap<(K, String), Row<'a>>;
@@ -238,6 +253,22 @@ pub fn mode_rows<'a, K: Ord>(
         if !money_leg {
             continue;
         }
+        // The voucher's own money line in this mode and direction: debits on a receipt, the
+        // magnitude of credits on a payment.
+        let mut line = 0_i64;
+        for l in v.lines.iter().filter(|l| mode_set.contains(&l.ledger)) {
+            match direction {
+                Direction::Receipt if l.amount_paise > 0 => line = add(line, l.amount_paise)?,
+                Direction::Payment if l.amount_paise < 0 => {
+                    let m = l
+                        .amount_paise
+                        .checked_neg()
+                        .ok_or_else(|| overflow(TEST_ID))?;
+                    line = add(line, m)?;
+                }
+                _ => {}
+            }
+        }
         let mut party_amounts: BTreeMap<String, i64> = BTreeMap::new();
         let mut fallback_total = 0_i64;
         for l in &v.lines {
@@ -282,22 +313,14 @@ pub fn mode_rows<'a, K: Ord>(
         }
         if !party_amounts.is_empty() {
             for (ledger, amt) in party_amounts {
-                let row = rows.entry((key_fn(v), ledger)).or_insert_with(|| Row {
-                    paise: 0,
-                    vouchers: BTreeMap::new(),
-                });
-                row.paise = add(row.paise, amt)?;
-                row.vouchers.insert(v.guid.clone(), v);
+                let row = rows.entry((key_fn(v), ledger)).or_default();
+                row.add(v, amt, line)?;
             }
         } else if fallback_total > 0 {
             let row = rows
                 .entry((key_fn(v), UNIDENTIFIED_PARTY.to_string()))
-                .or_insert_with(|| Row {
-                    paise: 0,
-                    vouchers: BTreeMap::new(),
-                });
-            row.paise = add(row.paise, fallback_total)?;
-            row.vouchers.insert(v.guid.clone(), v);
+                .or_default();
+            row.add(v, fallback_total, line)?;
         }
     }
     Ok(rows)
@@ -531,10 +554,46 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                 for ((date, h), (_, ledger), data) in keyed {
                     let day = iso(&date);
                     let rid = format!("{prefix}_{day}_{h}");
-                    let f_amt = fig(&mut r, &format!("{prefix}_row_amount_{rid}"), Value::Int(data.paise), Unit::Paise,
-                        &format!("{} {dir} from/to one party ledger (tag {h}) on {day}, summed across every \
-                                  population voucher that day.", capitalize(mode_name)),
-                        voucher_evidence(&data.vouchers))?;
+                    // Where a voucher's own money line differs from the party's share of it, the row
+                    // says so and shows that line (parity/PORT-NOTE-HVR.md).
+                    let differs = data.lines.values().any(|(share, line)| share != line);
+                    let mut line_total = 0_i64;
+                    for (_, line) in data.lines.values() {
+                        line_total = add(line_total, *line)?;
+                    }
+                    let (verb, moved) = match direction {
+                        Direction::Receipt => ("debited", "received from"),
+                        Direction::Payment => ("credited", "paid to"),
+                    };
+                    let other_mode = if is_cash { "bank" } else { "cash" };
+                    let mut amount_definition = format!(
+                        "{} {dir} from/to one party ledger (tag {h}) on {day}, summed across every \
+                         population voucher that day.",
+                        capitalize(mode_name)
+                    );
+                    if differs {
+                        amount_definition.push_str(&format!(
+                            " This is the party's side of each voucher; on one or more of the row's \
+                             vouchers it differs from the {mode_name} line, which is shown with it."
+                        ));
+                    }
+                    let f_amt = fig(
+                        &mut r,
+                        &format!("{prefix}_row_amount_{rid}"),
+                        Value::Int(data.paise),
+                        Unit::Paise,
+                        &amount_definition,
+                        voucher_evidence(&data.vouchers),
+                    )?;
+                    let f_line = if differs {
+                        Some(fig(&mut r, &format!("{prefix}_row_{mode_name}_line_{rid}"),
+                            Value::Int(line_total), Unit::Paise,
+                            &format!("The {mode_name} {verb} on the vouchers in this row, summed, whichever \
+                                      parties it was for."),
+                            voucher_evidence(&data.vouchers))?)
+                    } else {
+                        None
+                    };
                     let (mut title, clauses, mut limits, mut ask) = if is_cash
                         && direction == Direction::Receipt
                     {
@@ -568,6 +627,25 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                                visible in Tally.".to_string()],
                          vec!["Vouch this entry to the bank statement and the underlying document.".to_string()])
                     };
+                    if differs {
+                        let mut limit = format!(
+                            "The amount is this party's own side of each voucher, not the voucher's own \
+                             {mode_name} line. On one or more of the row's vouchers the two differ, so such a \
+                             voucher carries other lines as well (such as money moving by {other_mode}, a \
+                             discount or deduction, a round-off, a loan, a counterparty this register leaves \
+                             out, several parties sharing the line, or money moving the other way)."
+                        );
+                        if line_total < row_threshold {
+                            limit.push_str(&format!(
+                                " The {mode_name} {verb} on these vouchers is below the threshold, so the \
+                                 {mode_name} {moved} this party on them is below it too."
+                            ));
+                        }
+                        limit.push_str(&format!(
+                            " The {mode_name} {verb} on these vouchers is shown with this row."
+                        ));
+                        limits.push(limit);
+                    }
                     if ledger.as_str() == UNIDENTIFIED_PARTY {
                         title = title.replace("one party", "one unidentified party");
                         limits.push("No party ledger is on this voucher -- the books cannot name the \
@@ -588,11 +666,16 @@ pub fn run(book: &Book, rules: &Rules, i: &Inputs<'_>) -> Result<TestResult> {
                     )?;
                     let mut evidence = voucher_evidence(&data.vouchers);
                     evidence.push(party_ref(ledger));
+                    let mut facts =
+                        vec![("amount".to_string(), f_amt), ("date".to_string(), f_date)];
+                    if let Some(f_line) = f_line {
+                        facts.push((format!("{mode_name}_line"), f_line));
+                    }
                     r.findings.push(Finding {
                         id: format!("{TEST_ID}/{rid}"),
                         clauses,
                         title,
-                        facts: vec![("amount".to_string(), f_amt), ("date".to_string(), f_date)],
+                        facts,
                         evidence,
                         confidence: Confidence::NeedsDocument,
                         limits,

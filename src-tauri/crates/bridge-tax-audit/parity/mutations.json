@@ -4390,5 +4390,53 @@
   "file": "src/high_value_register.rs",
   "from": "Some(s) if s.trim().is_empty() => Err(AuditError::Config(format!(",
   "to": "Some(s) if s.is_empty() => Err(AuditError::Config(format!("
+ },
+ {
+  "id": "E2B2-31",
+  "by": "author",
+  "what": "a row is never marked as differing",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = false && data.lines.values().any(|(share, line)| share != line);"
+ },
+ {
+  "id": "E2B2-32",
+  "by": "author",
+  "what": "a row is marked only when every voucher's line differs",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = !data.lines.is_empty() && data.lines.values().all(|(share, line)| share != line);"
+ },
+ {
+  "id": "E2B2-33",
+  "by": "author",
+  "what": "a receipt's money line counts credits on the mode's ledgers too",
+  "file": "src/high_value_register.rs",
+  "from": "                Direction::Receipt if l.amount_paise > 0 => line = add(line, l.amount_paise)?,",
+  "to": "                Direction::Receipt => line = add(line, l.amount_paise.abs())?,"
+ },
+ {
+  "id": "E2B2-34",
+  "by": "author",
+  "what": "the below-threshold sentence is added at or over the threshold too",
+  "file": "src/high_value_register.rs",
+  "from": "                        if line_total < row_threshold {",
+  "to": "                        if line_total <= row_threshold {"
+ },
+ {
+  "id": "E2B2-35",
+  "by": "author",
+  "what": "a row's vouchers' lines are not summed, only the last kept",
+  "file": "src/high_value_register.rs",
+  "from": "                        line_total = add(line_total, *line)?;",
+  "to": "                        line_total = *line;"
+ },
+ {
+  "id": "E2B2-36",
+  "by": "author",
+  "what": "two vouchers sharing a GUID keep only the last share and line",
+  "file": "src/high_value_register.rs",
+  "from": "        *slot = (add(slot.0, share)?, add(slot.1, line)?);",
+  "to": "        *slot = (share, line);"
  }
 ]
