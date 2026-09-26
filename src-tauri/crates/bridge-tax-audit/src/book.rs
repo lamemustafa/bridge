@@ -986,15 +986,7 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
             ));
         }
     }
-    // The reference's `load_company_isintegrated`: the same first COMPANY carrying a GUID; an
-    // absent or empty tag is unknown, anything else is whether it reads "yes".
-    let is_integrated = company
-        .descendants_named("COMPANY")
-        .into_iter()
-        .find(|c| !c.child_text("GUID").is_empty())
-        .map(|c| c.child_text("ISINTEGRATED"))
-        .filter(|v| !v.is_empty())
-        .map(|v| crate::support::py_lower(v) == "yes");
+    let is_integrated = company_is_integrated(&company);
     Ok(Book {
         company_name: company_name.to_string(),
         company_guid: guid.to_string(),
@@ -1010,6 +1002,18 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
             is_integrated,
         }),
     })
+}
+
+/// The reference's `load_company_isintegrated`: the same first COMPANY carrying a GUID; an absent
+/// or empty tag is unknown, anything else is whether it reads "yes".
+pub(crate) fn company_is_integrated(company: &Element) -> Option<bool> {
+    company
+        .descendants_named("COMPANY")
+        .into_iter()
+        .find(|c| !c.child_text("GUID").is_empty())
+        .map(|c| c.child_text("ISINTEGRATED"))
+        .filter(|v| !v.is_empty())
+        .map(|v| crate::support::py_lower(v) == "yes")
 }
 
 #[cfg(test)]

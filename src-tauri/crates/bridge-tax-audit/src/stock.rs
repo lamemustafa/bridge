@@ -16,6 +16,12 @@
 //!   carries a quantity, whatever the unit (a value-only item's normally carry none). The output's
 //!   own text ("excluded from every quantity-based figure") is the reference's, kept word for word
 //!   for parity; it overstates the exclusion in the same way.
+//! * The went-negative finding's limit is also the reference's text, kept word for word, and
+//!   misstates the walk twice: it starts from the opening Stock Summary's quantity where the
+//!   summary lists the item (only the rest from the master's own opening), not "from each item's
+//!   own opening quantity"; and a line's direction is the stock journal's IN/OUT tag, else the sign
+//!   of the inventory line's own amount (below), not "the ledger-entry sign each allocation is
+//!   nested under".
 //! * "Went negative during the year": each item's running quantity from its period-start quantity
 //!   (the opening Stock Summary's, else the master's own opening), walked through the population's
 //!   inventory lines by date. Same-day order is not in the export, so the walk runs twice (stock-in

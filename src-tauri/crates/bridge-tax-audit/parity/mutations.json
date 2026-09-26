@@ -4748,8 +4748,8 @@
   "by": "author",
   "what": "ISINTEGRATED 'Yes' reads as not integrated",
   "file": "src/book.rs",
-  "from": ".map(|v| crate::support::py_lower(v) == \"yes\");",
-  "to": ".map(|v| crate::support::py_lower(v) != \"yes\");"
+  "from": ".map(|v| crate::support::py_lower(v) == \"yes\")",
+  "to": ".map(|v| crate::support::py_lower(v) != \"yes\")"
  },
  {
   "id": "E3A-32",
@@ -4774,5 +4774,45 @@
   "file": "src/stock.rs",
   "from": "    let goods_lines: Vec<(&Voucher, &InventoryLine)> = pop\n        .iter()\n        .flat_map(|v| v.inventory.iter().map(move |il| (*v, il)))",
   "to": "    let goods_lines: Vec<(&Voucher, &InventoryLine)> = book\n        .vouchers\n        .iter()\n        .flat_map(|v| v.inventory.iter().map(move |il| (v, il)))"
+ },
+ {
+  "id": "E3A-35",
+  "by": "reviewer-sonnet",
+  "what": "an absent or empty ISINTEGRATED reads as not integrated, not unknown",
+  "file": "src/book.rs",
+  "from": "        .filter(|v| !v.is_empty())\n        .map(|v| crate::support::py_lower(v) == \"yes\")\n}",
+  "to": "        .map(|v| crate::support::py_lower(v) == \"yes\")\n}"
+ },
+ {
+  "id": "E3A-36",
+  "by": "reviewer-sonnet",
+  "what": "a from_masters closing takes the opening fields",
+  "file": "src/stock_read.rs",
+  "from": "Side::Closing => (it.closing_qty, it.closing_value_paise),",
+  "to": "Side::Closing => (it.opening_qty, it.opening_value_paise),"
+ },
+ {
+  "id": "E3A-37",
+  "by": "reviewer-sonnet",
+  "what": "the Stock-in-Hand voucher count reads every voucher, not the population",
+  "file": "src/stock.rs",
+  "from": "    let typed_in = pop\n",
+  "to": "    let typed_in = book.vouchers\n"
+ },
+ {
+  "id": "E3A-38",
+  "by": "reviewer-sonnet",
+  "what": "an opening summary row with no quantity starts at the master's opening, not nil",
+  "file": "src/stock.rs",
+  "from": "qty.insert(n.clone(), row.qty.unwrap_or(0.0));",
+  "to": "qty.insert(n.clone(), row.qty.or(items.get(n).and_then(|m| m.opening_qty)).unwrap_or(0.0));"
+ },
+ {
+  "id": "E3A-39",
+  "by": "reviewer-sonnet",
+  "what": "negative at close counts a value-only item too",
+  "file": "src/stock.rs",
+  "from": ".filter(|(n, row)| is_goods(items, n) && row.qty.unwrap_or(0.0) < -QTY_TOL)",
+  "to": ".filter(|(_, row)| row.qty.unwrap_or(0.0) < -QTY_TOL)"
  }
 ]
