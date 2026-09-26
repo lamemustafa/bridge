@@ -18,14 +18,20 @@ fn the_withheld_listing_is_capped_and_in_window_order() {
     let listed = listed_withheld(&withheld_rows(MAX_WITHHELD_LISTED + 1), 200_000);
     assert_eq!(listed.len(), MAX_WITHHELD_LISTED);
     assert_eq!(listed[0]["guid"], "guid-0000");
-    assert_eq!(listed[MAX_WITHHELD_LISTED - 1]["guid"], format!("guid-{:04}", MAX_WITHHELD_LISTED - 1));
+    assert_eq!(
+        listed[MAX_WITHHELD_LISTED - 1]["guid"],
+        format!("guid-{:04}", MAX_WITHHELD_LISTED - 1)
+    );
 }
 
 #[test]
 fn a_listed_withheld_voucher_names_no_party_ledger_or_amount() {
     let listed = listed_withheld(&withheld_rows(1), 200_000);
     let keys: Vec<&String> = listed[0].as_object().unwrap().keys().collect();
-    assert_eq!(keys, vec!["cause", "date", "guid", "voucher_number", "voucher_type"]);
+    assert_eq!(
+        keys,
+        vec!["cause", "date", "guid", "voucher_number", "voucher_type"]
+    );
     assert_eq!(listed[0]["cause"], WITHHELD_FOREIGN_CURRENCY);
 }
 

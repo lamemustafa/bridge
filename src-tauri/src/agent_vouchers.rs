@@ -225,7 +225,7 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             payload["result"]["withheld_vouchers"] =
                 Value::Array(listed_withheld(&withheld, server.settings.max_bytes));
             payload["result"]["coverage"] = json!(format!(
-                "items exclude {withheld_total} voucher(s) whose amounts Tally stored in a foreign currency; they are listed in withheld_vouchers, and total counts items only"
+                "items exclude {withheld_total} voucher(s) whose amounts Tally stored in a foreign currency; withheld_vouchers lists them up to its bound, withheld_total counts them all, and total counts items only"
             ));
         }
         Ok(ToolOutcome {
@@ -413,7 +413,11 @@ fn listed_withheld(withheld: &[Value], response_budget_bytes: usize) -> Vec<Valu
     let budget = response_budget_bytes / 4;
     let mut used = 0usize;
     let mut listed = Vec::new();
-    for summary in withheld.iter().take(MAX_WITHHELD_LISTED).map(withheld_summary) {
+    for summary in withheld
+        .iter()
+        .take(MAX_WITHHELD_LISTED)
+        .map(withheld_summary)
+    {
         used = used.saturating_add(summary.to_string().len());
         if used > budget {
             break;

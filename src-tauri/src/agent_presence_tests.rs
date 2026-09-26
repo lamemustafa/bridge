@@ -1840,8 +1840,7 @@ async fn voucher_presence_still_refuses_a_composite_window_by_its_amount_code() 
     simulator.cancel();
     let _ = simulator.finish();
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"],
-        "bill_allocation_amount_invalid",
+        response["structuredContent"]["result"]["error"]["code"], "bill_allocation_amount_invalid",
         "{response}"
     );
 }

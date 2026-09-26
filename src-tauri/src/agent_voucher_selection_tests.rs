@@ -696,7 +696,10 @@ async fn a_composite_voucher_is_withheld_and_the_rest_of_the_window_is_returned(
     // `items` does not cover the window, and the state says so first.
     assert_eq!(result["state"], "partial", "{result}");
     assert_eq!(result["reason"], "vouchers_withheld");
-    assert_eq!(response["structuredContent"]["evidence"]["state"], "partial");
+    assert_eq!(
+        response["structuredContent"]["evidence"]["state"],
+        "partial"
+    );
     assert_eq!(result["total"], 2);
     let numbers: Vec<&str> = result["items"]
         .as_array()
@@ -714,7 +717,10 @@ async fn a_composite_voucher_is_withheld_and_the_rest_of_the_window_is_returned(
             "cause": "foreign_currency_amount_unparsed",
         }])
     );
-    assert!(result["coverage"].as_str().unwrap().contains("exclude 1 voucher"));
+    assert!(result["coverage"]
+        .as_str()
+        .unwrap()
+        .contains("exclude 1 voucher"));
     // No composite reaches the payload.
     assert!(!result.to_string().contains(" @ "), "{result}");
 }
@@ -731,7 +737,13 @@ async fn a_withheld_listing_is_the_same_on_every_page() {
         assert_eq!(response["isError"], false, "{response}");
         pages.push(response["structuredContent"]["result"].clone());
     }
-    for key in ["withheld_total", "withheld_vouchers", "coverage", "total", "state"] {
+    for key in [
+        "withheld_total",
+        "withheld_vouchers",
+        "coverage",
+        "total",
+        "state",
+    ] {
         assert_eq!(pages[0][key], pages[1][key], "{key}");
     }
     assert_ne!(pages[0]["items"], pages[1]["items"]);

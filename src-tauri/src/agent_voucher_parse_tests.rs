@@ -1327,12 +1327,18 @@ fn a_captured_composite_voucher_is_withheld_with_its_identity_and_no_amount() {
     assert_eq!(view["voucher_type"], "Sales");
     assert_eq!(view["voucher_number"], "1");
     assert_eq!(view["alter_id"], 18);
-    assert!(view["guid"].as_str().unwrap().starts_with(FOREX_COMPANY_GUID));
+    assert!(view["guid"]
+        .as_str()
+        .unwrap()
+        .starts_with(FOREX_COMPANY_GUID));
     // Its entries keep their ledgers, for the ledger filter, and nothing else.
     let entries = view["amounts"].as_array().unwrap();
     assert_eq!(entries.len(), 2);
     for entry in entries {
-        assert_eq!(entry.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["ledger"]);
+        assert_eq!(
+            entry.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["ledger"]
+        );
         assert!(entry["ledger"].is_string());
     }
     assert!(!view.to_string().contains(" @ "), "{view}");
@@ -1450,7 +1456,10 @@ fn the_captured_empty_rate_composite_withholds_too() {
     assert!(bridge_tally_protocol::currency_composite::is_currency_composite(empty_rate));
     let mutated = captured.replacen(sales, empty_rate, 1);
     let rows = parse_agent_rows_withholding(&mutated, FOREX_COMPANY_GUID).unwrap();
-    assert_eq!(withheld_view(&rows[0])[WITHHELD_MARKER], WITHHELD_FOREIGN_CURRENCY);
+    assert_eq!(
+        withheld_view(&rows[0])[WITHHELD_MARKER],
+        WITHHELD_FOREIGN_CURRENCY
+    );
 }
 
 #[test]

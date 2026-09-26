@@ -151,7 +151,8 @@ enum CompositePolicy {
 
 impl CompositePolicy {
     fn withholds(self, amount: &str) -> bool {
-        self == Self::Withhold && bridge_tally_protocol::currency_composite::is_currency_composite(amount)
+        self == Self::Withhold
+            && bridge_tally_protocol::currency_composite::is_currency_composite(amount)
     }
 }
 
@@ -454,14 +455,15 @@ fn parse_voucher_rows(
                             .get("AMOUNT")
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
-                        let parsed_amount = match bridge_tally_core::ExactDecimal::parse(amount.clone()) {
-                            Ok(parsed) => Some(parsed),
-                            Err(_) if composites.withholds(amount) => {
-                                withheld = true;
-                                None
-                            }
-                            Err(_) => return Err("voucher_amount_invalid".to_string()),
-                        };
+                        let parsed_amount =
+                            match bridge_tally_core::ExactDecimal::parse(amount.clone()) {
+                                Ok(parsed) => Some(parsed),
+                                Err(_) if composites.withholds(amount) => {
+                                    withheld = true;
+                                    None
+                                }
+                                Err(_) => return Err("voucher_amount_invalid".to_string()),
+                            };
                         let polarity = entry_row
                             .get("ISDEEMEDPOSITIVE")
                             .filter(|value| !value.trim().is_empty())
@@ -484,10 +486,9 @@ fn parse_voucher_rows(
                             "is_deemed_positive": if is_deemed_positive { "Yes" } else { "No" },
                             "bill_allocations": std::mem::take(&mut allocations),
                         });
-                        if parsed_amount
-                            .as_ref()
-                            .is_some_and(|parsed| !tally_entry_polarity_agrees(parsed, is_deemed_positive))
-                        {
+                        if parsed_amount.as_ref().is_some_and(|parsed| {
+                            !tally_entry_polarity_agrees(parsed, is_deemed_positive)
+                        }) {
                             parsed_entry["polarity_disagrees_with_amount"] = Value::Bool(true);
                         }
                         entries.push(parsed_entry);
@@ -748,8 +749,16 @@ pub(super) fn window_with_composite_vouchers(count: usize) -> String {
             .collect()
     };
     let composites = amounts(&forex);
-    let negative = composites.iter().find(|value| value.starts_with('-')).unwrap().clone();
-    let positive = composites.iter().find(|value| !value.starts_with('-')).unwrap().clone();
+    let negative = composites
+        .iter()
+        .find(|value| value.starts_with('-'))
+        .unwrap()
+        .clone();
+    let positive = composites
+        .iter()
+        .find(|value| !value.starts_with('-'))
+        .unwrap()
+        .clone();
     let mut window = decode(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
     ));
@@ -761,7 +770,11 @@ pub(super) fn window_with_composite_vouchers(count: usize) -> String {
         let mut voucher = window[start..end].to_string();
         for plain in amounts(&voucher) {
             let at = voucher.find(&format!(">{plain}</AMOUNT>")).unwrap();
-            let composite = if plain.starts_with('-') { &negative } else { &positive };
+            let composite = if plain.starts_with('-') {
+                &negative
+            } else {
+                &positive
+            };
             voucher.replace_range(at + 1..at + 1 + plain.len(), composite);
         }
         window.replace_range(start..end, &voucher);

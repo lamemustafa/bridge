@@ -3946,10 +3946,9 @@ async fn a_withheld_voucher_is_admitted_through_a_divided_window() {
         (day("20260802"), 5),
     ]);
     let mut plans = paired(&xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")])));
-    plans.extend(paired(&xml_plan(with_first_voucher_composite(&relabelled(
-        &vouchers_kept(2),
-        &[(2, "20260801"), (3, "20260801")],
-    )))));
+    plans.extend(paired(&xml_plan(with_first_voucher_composite(
+        &relabelled(&vouchers_kept(2), &[(2, "20260801"), (3, "20260801")]),
+    ))));
     plans.extend(paired(&xml_plan(relabelled(
         &vouchers_kept(2),
         &[(4, "20260802"), (5, "20260802")],

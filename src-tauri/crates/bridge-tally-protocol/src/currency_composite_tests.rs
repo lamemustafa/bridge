@@ -78,7 +78,14 @@ fn a_damaged_composite_is_not_one() {
 
 #[test]
 fn a_plain_amount_is_not_a_composite() {
-    for plain in ["-4250.00", "4250.00", "0.00", "", "$ 100.00", "-I\u{20b9} 8600.00"] {
+    for plain in [
+        "-4250.00",
+        "4250.00",
+        "0.00",
+        "",
+        "$ 100.00",
+        "-I\u{20b9} 8600.00",
+    ] {
         assert!(!is_currency_composite(plain), "{plain:?}");
     }
 }
