@@ -228,3 +228,8 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - Item 3 per-step timings come from 21 of the 50 runs, because a container restart lost the full re-fetch; the job-level and failure numbers cover all 50.
 - GitHub access was through the MCP API rather than `gh`, which is not available here.
 - The cache inventory came from a read-only throwaway workflow, since no MCP cache endpoint exists.
+
+## 2026-09-26 07:46 UTC: Status
+
+- #688 (Git 2.43 upload-pack trust, #527) **merged** by Lane D at 07:46 UTC on head `926f50e`.
+- #728 and #729 are unchanged: green, and each trial-merges cleanly with master at `b5039c8`.
