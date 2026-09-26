@@ -341,8 +341,8 @@ impl TallyImportResult {
 /// document order, trimmed as a whole (#735). Both the kept text and its
 /// evidence digest read it here. `read_optional_text` unescapes the element's
 /// raw span at once, which kept CDATA markup in the text and refused the whole
-/// response on a bare `&` inside a CDATA section. Any other markup inside the
-/// element still refuses the response.
+/// response on a bare `&` inside a CDATA section. An XML comment inside the
+/// element is dropped; any other markup still refuses the response.
 fn read_line_error_text(reader: &mut Reader<&[u8]>, name: QName<'_>) -> anyhow::Result<String> {
     let expected = name.as_ref().to_ascii_uppercase();
     crate::native_ledger_collection::with_untrimmed_text(reader, |reader| {
