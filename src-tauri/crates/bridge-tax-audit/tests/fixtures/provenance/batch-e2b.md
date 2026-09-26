@@ -32,7 +32,7 @@ placeholder.
 
 ## How they were produced
 
-At brain engine commit `1038dc05`, under Python 3.13 (the edge books themselves are written by
+At the reference engine (a private repository), commit `1038dc05`, under Python 3.13 (the edge books themselves are written by
 hand in a small generator, as data, then read by both sides):
 
     uv run -q --python 3.13 --with openpyxl --with xlrd --with python-docx --with jsonschema \

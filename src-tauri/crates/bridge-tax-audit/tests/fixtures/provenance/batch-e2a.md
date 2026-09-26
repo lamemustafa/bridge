@@ -26,7 +26,7 @@ a bank statement of any real assessee, and every account reference is a masked p
 
 ## How they were produced
 
-At brain engine commit `1038dc05` (brain main), under Python 3.13:
+At the reference engine (a private repository), commit `1038dc05`, under Python 3.13:
 
     uv run -q --python 3.13 --with openpyxl --with xlrd --with python-docx --with jsonschema \
         --with striprtf --with pdfplumber python parity/python_golden.py ENGINE \
