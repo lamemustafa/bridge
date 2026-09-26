@@ -81,3 +81,6 @@ Master gained #727 (mine) and #708 (lane-f). #731 and #736 conflicted only in th
 No review threads are open on any of them. The only bot comments are Codex usage-limit notices.
 
 Since #708 merged, #717 part 1 (the cause on the in-queue group re-read) is no longer blocked by overlap. I'll take it next.
+
+## 2026-09-26T07:48Z: #717 (part 1) draft PR #743 (pinned)
+Head `2db5ba5ee9f1c3d30057bef8ebc91556ad5c378a`. Before this change, the queue's group re-read reported `post_queue_read_failed` with no cause. It now reports `group_export_invalid` with the snapshot parser's cause, through the same helper the pre-approval read uses. The tests failed first; the reverted-cause proof is in the PR. Posting path, so both Sonnet and Opus reviews are pending. Part 2 (the STATUS class) is still waiting on the owner's decision.
