@@ -850,6 +850,108 @@ fn native_post_refuses_supplied_numbers_without_disabling_manual_files() {
     );
 }
 
+/// bridge#626 over a batch: a folded twin of a ledger named only by the
+/// SECOND voucher refuses the post, before approval and again in the queue.
+/// Both checks read every voucher's ledgers, not the first voucher's. The
+/// twin is the same test-local rewrite of the capture as the single-voucher
+/// test (an unrelated ledger renamed `Cash` plus CR LF), no evidence of Tally
+/// behaviour.
+#[test]
+fn a_folded_twin_named_only_by_a_later_voucher_refuses_the_batch() {
+    let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let decode = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let captured = decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    ));
+    let catalogue = decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    ));
+    let single_currency = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
+    // Voucher 1 names no ledger with a twin; only voucher 2 names `Cash`.
+    let line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-00000000-0000-4000-8000-000000000626",
+        "identity_scheme":"batch_v1", "company_guid":company_guid,
+        "txn_ids":["TWIN-1","TWIN-2"],
+        "date_from":"20260907", "date_to":"20260907", "sha256":"e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef",
+        "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":219},
+        "vouchers":[
+            {"bridge_txn_id":"TWIN-1","date":"20260907","voucher_type":"Journal",
+             "narration":"first","reference":null,"voucher_number":null,
+             "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"3.00","side":"Dr"},
+                {"ledger":"Café Naïve Traders","amount":"3.00","side":"Cr"}]},
+            {"bridge_txn_id":"TWIN-2","date":"20260907","voucher_type":"Journal",
+             "narration":"second","reference":null,"voucher_number":null,
+             "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"5.00","side":"Dr"},
+                {"ledger":"Cash","amount":"5.00","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let payload = ImportPayload {
+        company_guid: company_guid.into(),
+        vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
+    };
+    let requested = requested_ledger_names(&payload);
+    assert_eq!(
+        requested,
+        ["Bridge Nested Debtor WR4", "Café Naïve Traders", "Cash"],
+        "every voucher's ledgers"
+    );
+    let ledger_binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue,
+        "WR2 Unicode Lab",
+        company_guid,
+    )
+    .unwrap()
+    .bind_selected(requested.clone())
+    .unwrap();
+    let recheck = |catalogue: &str| {
+        recheck_import_admission(
+            &line,
+            company_guid,
+            "WR2 Unicode Lab",
+            &captured,
+            &captured,
+            catalogue,
+            None,
+            &single_currency,
+            &ledger_binding,
+        )
+    };
+    // Control: the captured catalogue holds no twin of any named ledger.
+    recheck(&catalogue).expect("no twin, so the queued batch is admitted");
+    assert_eq!(
+        catalogue.matches("WR2 Sales").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = catalogue.replace("WR2 Sales", "Cash&#13;&#10;");
+    // Before approval, the post checks the names requested across the batch.
+    let twinned_parents = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &twinned,
+        "WR2 Unicode Lab",
+        company_guid,
+    )
+    .unwrap();
+    assert!(!super::super::folded_twins(&requested, twinned_parents.parents()).is_empty());
+    // In the queue, the recheck reads every voucher's ledgers again.
+    let error = recheck(&twinned).expect_err("a twin of voucher 2's ledger must refuse the batch");
+    assert!(matches!(
+        error.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::LedgerFoldedTwin)
+    ));
+}
+
 #[test]
 fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candidate() {
     let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
