@@ -56,15 +56,18 @@ actually on.
 
 Voucher file preparation and bank-statement parsing are available by default;
 they write nothing to Tally. **Voucher posting is off by default** while two
-known limits remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher (bridge#574). And Bridge cannot delete or roll back a voucher it
-has posted, so a wrong post must be corrected by hand in Tally (bridge#579).
+known limits remain. Tally aims an import at a company by its name, not its GUID. Bridge's last request before the post checks that exactly one loaded company has the target's GUID and name, and that no other loaded company's name could match it; otherwise it refuses the post. Afterwards it reports which companies' vouchers changed (bridge#607). A company renamed to, or loaded under, the target's exact name in the moment after that check would still receive the voucher: Bridge would report it, but cannot prevent it (bridge#574). And Bridge has no tool to delete or undo a voucher it has posted, so a wrong post must be corrected by hand in Tally. It records the identity each post sends (bridge#579, bridge#582).
 Turning on **Allow voucher posting (Journal, Payment, Receipt, Contra)** in the
 extension settings adds posting; every new posting still requires your approval in a separate Bridge
 dialog. Leave it off unless you accept those risks. If you installed an earlier
 version, check the setting: an earlier default may still be saved as on.
 
-Native posting currently accepts one Journal, Payment, Receipt or Contra with
-existing ledgers and no supplied voucher number. A Payment, Receipt or Contra is
+Native posting through the extension accepts one Journal, Payment, Receipt or
+Contra per approval, with existing ledgers and no supplied voucher number. A
+source build can also post a saved batch of 2 to 50 such vouchers after one
+approval of the batch's summary, when `BRIDGE_AGENT_ENABLE_BATCH_POST` is on
+together with posting. That setting is off by default, and the extension does
+not set it (bridge#712). A Payment, Receipt or Contra is
 refused if any of its ledgers, or their groups, moved since the file was built
 so that a bank or cash leg no longer classifies as it did. Tally assigns the number. Bridge uses a private request identity
 for the native attempt; the selected XML file stays unchanged. Do not manually
