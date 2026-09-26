@@ -916,6 +916,25 @@ one refuses the whole read (bridge#612).
 How Bridge resolves the two-digit years is a design choice, documented at
 `native_outstandings/date.rs`.
 
+### 12a.11 Balance Sheet and Profit and Loss by name on licensed 7.1
+
+**VERIFIED 2026-09-26, licensed TallyPrime 7.1 Silver** (`education_mode=false`). Two synthetic companies: one with 3 vouchers, one with 29,900. One run of each request. **Confidence: PARTIAL.** This extends §12a.1, measured on 7.0 EDU for the Bills reports, to the two financial statements.
+
+Requests used §12a.1's shape with `<ID>Balance Sheet</ID>` and `<ID>Profit and Loss</ID>`. Responses:
+- **Success carries no `HEADER` or `STATUS`**, as in §12a.1.
+- **Balance Sheet.** Top-level `BSNAME` / `BSAMT` pairs. The line name is in `BSNAME/DSPACCNAME/DSPDISPNAME`; amounts are in `BSAMT/BSMAINAMT` and `BSAMT/BSSUBAMT`. The default export gave five top-level lines: four primary groups and the `Profit & Loss A/c` line.
+- **Profit and Loss.** Top-level `DSPACCNAME` / `PLAMT` pairs. The amount is in `PLAMT/BSMAINAMT` (a heading such as `Cost of Sales :`) or `PLAMT/PLSUBAMT` (a group such as `Purchase Accounts`).
+- **Amounts are plain signed decimals.** There is no digit grouping, symbol or `Dr`/`Cr` suffix, and a debit is negative, as in the trial balance. Examples: `-4250.00`; `222962422.38` and `-222962422.38` on the larger book.
+- **An empty window gives empty amount elements**, not `0.00`: a month with no activity returned all five Balance Sheet amounts empty. An empty amount is not zero (§7).
+- **The figures tie to the native trial balance (§5.6)** for the small book's full year. Current liabilities equalled the sundry creditors' TB closing. The P&L line equalled the P&L ledger's TB closing (`0.00`) plus the year's result. `Purchase Accounts` equalled the purchase ledger's TB closing.
+- **Cost:** 0.14–0.72 s and 0.7–1.8 KB per request on the small book; **0.23 s and 1.8 KB for a one-month Balance Sheet on the 29,900-voucher book**. No full year was requested on the larger book.
+
+`<ID>Stock Summary</ID>` returned an empty `<ENVELOPE/>` on a company not known to hold inventory. An empty envelope cannot tell "no items" from "not rendered", so it is not read as zero. **Not measured:**
+- Stock Summary on a book with inventory, and closing stock's line in either statement;
+- the explode flag;
+- a foreign-currency book;
+- Education and Gold.
+
 ---
 
 ## 13. Open questions
@@ -955,3 +974,6 @@ How Bridge resolves the two-digit years is a design choice, documented at
 | 2026-09-25 | §11c.5: added the `ALTVCHID` step on multi-voucher gateway imports and on screen edits (PARTIAL: one run each, lab scripts, not Bridge's post path), the basis of `post_import`'s reported `target_voucher_step`. |
 | 2026-09-25 | §9.13: a scoped correction recording two licensed TallyPrime 7.1 Gold field runs of Bridge-built Payment, Receipt and Contra files sent over the gateway by a script, with `verify_import` returning `posted_verified` (VERIFIED on one book; PARTIAL on a second, where larger reads failed, bridge#485). §3.1 and §5.3's import-verification note now cite it. Native `post_import` on Gold is still not observed. |
 | 2026-09-26 | §9.14: "an upsert omitting `REFERENCE` kept the stored value" moves from PARTIAL to VERIFIED for a gateway-written `REFERENCE` on licensed 7.1 Silver, on a second independent run through Bridge's own amendment file (bridge#239). A `REFERENCE` typed in Tally's screens remains unmeasured. |
+| 2026-09-26 | §6.3: a custom-report FIELD without `<TYPE>Amount</TYPE>` returned money as a display string (sign dropped, digits grouped); with it, signed. One variable, licensed 7.1 Silver, PARTIAL |
+| 2026-09-26 | §9.4e: fold-equal ledgers (a trailing CR LF, and case) coexist, and an import binds the exact name in both creation orders; the fold-only case is open. Licensed 7.1 Silver, PARTIAL |
+| 2026-09-26 | §12a.11: Balance Sheet and Profit and Loss by name on licensed 7.1: structure, plain signed amounts, empty not zero, a trial-balance tie, cost. PARTIAL |
