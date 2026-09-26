@@ -189,3 +189,17 @@ Lane D called #749 as the front of the pinned merge queue after #771 (`6b4cd77c`
 
 ## 2026-09-26T16:43Z: #749 merged (#711)
 Lane D merged #749 at head `7ecc92c`. That is my `b0eadd1` plus Lane D's merge of #764. Still open and waiting on Lane D's pinned queue, in order: #743, #731, #736, #733, #763. Lane Q merges master into each one only when Lane D calls it.
+
+## 2026-09-26T16:52Z: #743 merged up with master for the pinned queue (Lane D)
+Lane D called #743 next, after #749 merged (`7cc78e71`). I merged master into `cloud-q/717-group-reread-cause`. Conflicts and how each was resolved:
+- the compatibility surface and matrix: took master's copies and resealed (`--verify` clean);
+- `agent_import_post.rs`: kept both arms, #717's `group_export_invalid` and #711's under-lock refusal code, since they match different error types;
+- ADR 0004 row 12: took master's row, which holds #711's under-lock text, and applied #717's two edits to it (thirteen becomes fourteen named refusals; `group_export_invalid` is added to the list). Against master, the ADR differs only by those edits.
+
+Checks on the merge:
+- `approval_seam_gate`: 10 passed;
+- targeted posting and group tests: 571 passed;
+- full `bridge` lib: 1441 passed, 1 failed (the known root-only `readonly_directory…` red);
+- fmt and clippy `-D warnings` clean.
+
+New head `30c8956459a92a93641eb93eff0691f23f9243d1`, pushed as a fast-forward of `76046e4`. Only #743 was touched.
