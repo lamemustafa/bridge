@@ -266,3 +266,10 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 
 - Opus review of the port found no P1. Its two P2 test gaps were an unidentified row that differs, and marking by row totals instead of per GUID. Both are pinned by extending the unit test (fa9a9d0c), and E2B2-37..39 added. **All 39 E2B2 killed** (sampled). A Sonnet review of the port and a check of fa9a9d0c found none.
 - **Pushed `lane-e/e2b-hvr` @ fa9a9d0c** and commented on #713. E2b full run started, sharded to `cloud/lane-e-e2b-shards-2`.
+
+## 2026-09-26 03:20 UTC — E2b records pushed (6e2b984f); #713 ready for Lane D's review
+
+- E2b full run on fa9a9d0c: 4 shards (13–14 min each), all on `cloud/lane-e-e2b-shards-2`, merged with `--merge`. **558 run, 553 killed**; the 5 survivors are the accepted X11, X12, A04, A19, S08. All 39 E2B2 killed. `--verify --changed-since origin/master`: 558/558 proven on crate tree e6a7aab84c779eb1.
+- 342 tests pass at 6e2b984f. Sonnet pre-push check: none (records-only; records equal the shard merge key-for-key; fast-forward).
+- **Pushed `lane-e/e2b-hvr` @ 6e2b984f**, updated #713's body (candidate SHA, 342 tests, E2B2-01..39, 558/553, review record, net LOC +6921/−565 crate, +1526/−24 source and tests, 6 tests) and commented there.
+- Waiting on: Lane D's fresh independent review and the local real-book re-run at 6e2b984f. Next for this lane: re-stack E3a (and then E4) on 6e2b984f locally; their PRs open only after #713 merges.
