@@ -88,3 +88,12 @@ Head `2db5ba5ee9f1c3d30057bef8ebc91556ad5c378a`. Before this change, the queue's
 ## 2026-09-26T07:55Z: #743 (#717 part 1), ready (pinned, posting path)
 Head `d8f4a626ec3dfdac10f2c14be51cb447d5d601b1`. Opus: no P1/P2; its P3 (ADR 0004 row 12 count and list) is fixed and resealed. Sonnet: no findings (e2e module 82/82). Needs an Opus independent reviewer.
 CI: #731 (`5da9116`) and #736 (`3fd05f5`) are green after the master merges.
+
+## 2026-09-26T08:49Z: check-in
+Master gained #712 (batch posting D2a), #688 and #741. #731, #736 and #743 conflicted only in the compatibility JSON. For each I merged master, took master's JSON, re-ran the reseal, verified it, and tested the merged tree. Merge commits carry the session trailer.
+- #731 `253b74fc2288f73d0d2554acd7976a9192e01f8a`: approved_import (14) and seam gate (10) pass.
+- #736 `e7c42681333769b8d39a93e39017a0fcceffffa7`: amend tests (27) pass.
+- #743 `e499614bb36dc18d9fc4721ea6e494765d8b0543`: the full bridge suite passes on the merged tree with #712 (1414; only the known root-host red fails), and clippy is clean.
+- #733 and #734: trial merges with master are clean; left for Lane D.
+
+No human review threads are open.
