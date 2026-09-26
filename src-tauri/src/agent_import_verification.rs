@@ -302,6 +302,14 @@ pub(super) fn verify_batch(
                     .entry("matching_content_observed")
                     .and_modify(|count| *count += 1);
                 json!({"bridge_txn_id":expected.bridge_txn_id,"status":"matching_content_observed","marker":marker,"attribution":"not_established","accounting_effective":voucher_is_accounting_effective(matched)?,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
+            } else if matched.cancelled == Some(true) {
+                // Tally drops a cancelled voucher's entries from this read
+                // (captured: fixtures/D3_CANCELLED_CAPTURE_PROVENANCE.md), so
+                // its content never matches; it is cancelled, not changed.
+                counts
+                    .entry("posted_not_effective")
+                    .and_modify(|count| *count += 1);
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_not_effective","marker":marker,"reason":"voucher_cancelled","voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             } else if diffs.is_empty() && voucher_is_accounting_effective(matched)? {
                 fully_verified_identities.insert(observed_identities[matched_index].clone());
                 counts
@@ -312,12 +320,12 @@ pub(super) fn verify_batch(
                 counts
                     .entry("posted_not_effective")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_not_effective","marker":marker,"reason":"voucher_cancelled_or_optional","voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_not_effective","marker":marker,"reason":"voucher_optional","voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             } else {
                 counts
                     .entry("posted_divergent")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","marker":marker,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","marker":marker,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             };
             if effective_date_unobserved {
                 matched_value["not_observed"] = json!(["effective_date"]);

@@ -1245,8 +1245,7 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
         let mut ineffective = changed.clone();
         ineffective.cancelled = cancelled;
         ineffective.optional = optional;
-        let result =
-            verify_observed_batch(&line, &[ineffective]).expect("changed voucher result");
+        let result = verify_observed_batch(&line, &[ineffective]).expect("changed voucher result");
         assert_eq!(result["vouchers"][0]["status"], status);
     }
     let mut missing = observed;

@@ -801,7 +801,10 @@ fn d3_server(simulator: &SequenceSimulator, directory: &std::path::Path) -> Serv
     )
     .unwrap();
     fs::write(
-        server.imports_dir().unwrap().join(format!("{D3_BATCH}.xml")),
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{D3_BATCH}.xml")),
         include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/d3-batch-import.xml"),
     )
     .unwrap();
@@ -961,17 +964,12 @@ async fn a_voucher_cancelled_in_tally_reads_not_effective_not_divergent() {
     assert_eq!(result["counts"]["posted_not_effective"], 1, "{verified}");
     assert_eq!(result["counts"]["posted_divergent"], 0, "{verified}");
     assert_eq!(result["counts"]["posted_verified"], 49, "{verified}");
-    let cancelled = result["vouchers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|voucher| voucher["bridge_txn_id"] == "D3-003")
-        .unwrap_or_else(|| panic!("D3-003 is reported: {verified}"));
+    // The one voucher not verified is D3-003, reported as cancelled.
     assert_eq!(
-        cancelled,
-        &json!({"bridge_txn_id":"D3-003","status":"posted_not_effective","marker":"narration_tag",
+        result["unverified_vouchers"],
+        json!([{"bridge_txn_id":"D3-003","status":"posted_not_effective","marker":"narration_tag",
             "reason":"voucher_cancelled","voucher_number":"3",
-            "guid":"17a10910-773c-42c6-bd66-7bba9a392536-00000550","master_id":1360,"alter_id":1685}),
+            "guid":"17a10910-773c-42c6-bd66-7bba9a392536-00000550","master_id":"1360","alter_id":1685}]),
         "{verified}"
     );
     assert_eq!(
