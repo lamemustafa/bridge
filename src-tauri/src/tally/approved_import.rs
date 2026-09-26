@@ -195,6 +195,11 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// import lookup could take for it (bridge#626).
     #[error("ledger_has_folded_twin")]
     LedgerFoldedTwin,
+    /// The group collection the queue re-read for a bank voucher's
+    /// classification could not be parsed. Carries the snapshot parser's own
+    /// data-free code, as the read before approval does (bridge#717).
+    #[error("group_export_invalid")]
+    GroupExportInvalid { cause: Option<&'static str> },
     /// A bank voucher reached the queue without its group read, or a Journal
     /// with one: a wiring fault, refused before any request is sent.
     #[error("import_post_admission_inconsistent")]
@@ -232,6 +237,19 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// data-free cause the refusal carries.
     #[error("post_catalogue_unreadable")]
     CatalogueUnreadable(#[source] bridge_tally_protocol::StandardLedgerCatalogError),
+}
+
+/// The data-free code a group snapshot refusal carries as its `cause`, for
+/// the read before approval and the queue's re-read alike (bridge#676, #717).
+pub(crate) fn group_snapshot_cause(
+    error: &bridge_tally_protocol::native_outstandings::NativeOutstandingsError,
+) -> Option<&'static str> {
+    use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
+    match error {
+        NativeOutstandingsError::InvalidResponse(code) => Some(code),
+        NativeOutstandingsError::TallyReportedFailure => Some("group_status_not_success"),
+        _ => None,
+    }
 }
 
 /// A failure inside the endpoint queue before the dispatch intent is recorded

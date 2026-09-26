@@ -1186,6 +1186,62 @@ async fn a_group_collection_that_reports_failure_is_refused_with_its_cause() {
     refused_on_the_group_read(failed, "group_status_not_success").await;
 }
 
+/// bridge#717: the group collection the queue re-reads after approval is
+/// refused as `group_export_invalid` with the same data-free `cause` the read
+/// before approval carries, not as a causeless queue failure. Nothing is sent
+/// and no intent is written.
+async fn refused_on_the_queued_group_read(queued_groups: String, cause: &str) {
+    let mut plans = bank_before_approval(catalogue(), groups());
+    let after = bank_after_approval(catalogue(), queued_groups, xml(created_one()));
+    let expected = plans.len() + after.len() - 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_bank_batch(&server, payment());
+    let before = journal(directory.path());
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "group_export_invalid",
+        "{response}"
+    );
+    assert_eq!(result["error"]["cause"], cause, "{response}");
+    assert_eq!(result["attempt_recorded"], false, "{response}");
+    assert_eq!(scripted.previews().len(), 1, "approval was asked once");
+    assert_eq!(
+        observed.len(),
+        expected,
+        "the post is never sent: {response}"
+    );
+    assert_eq!(
+        appended_kinds(&before, &journal(directory.path())),
+        ["verification_status"]
+    );
+}
+
+#[tokio::test]
+async fn a_queued_group_collection_of_another_company_is_refused_with_its_cause() {
+    let groups = groups();
+    let other = groups.replacen(
+        ">61c6de69-1748-461c-ad3f-162cb949df9f</BRIDGECOMPANYGUID>",
+        ">00000000-0000-4000-8000-000000000717</BRIDGECOMPANYGUID>",
+        1,
+    );
+    assert_ne!(other, groups, "one row's company GUID changed");
+    refused_on_the_queued_group_read(other, "group_response_company_guid_mismatch").await;
+}
+
+#[tokio::test]
+async fn a_queued_group_collection_that_reports_failure_is_refused_with_its_cause() {
+    let failed = replaced_once(&groups(), "<STATUS>1</STATUS>", "<STATUS>0</STATUS>");
+    refused_on_the_queued_group_read(failed, "group_status_not_success").await;
+}
+
 /// Already changed since the build: refused before approval is asked, and no
 /// request follows the classification reads.
 #[tokio::test]

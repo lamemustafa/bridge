@@ -13,9 +13,7 @@ use bridge_tally_core::master_binding::{
     MasterClass, SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
-use bridge_tally_protocol::native_outstandings::{
-    parse_native_group_snapshot, NativeOutstandingsError,
-};
+use bridge_tally_protocol::native_outstandings::parse_native_group_snapshot;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -1361,13 +1359,7 @@ impl Server {
                     .with_prior_evidence(evidence.clone());
                 // The snapshot parser already names each refusal with a data-free
                 // code; keep it as the cause instead of dropping it (bridge#676).
-                failure.cause = match error {
-                    NativeOutstandingsError::InvalidResponse(code) => Some(code),
-                    NativeOutstandingsError::TallyReportedFailure => {
-                        Some("group_status_not_success")
-                    }
-                    _ => None,
-                };
+                failure.cause = crate::tally::approved_import::group_snapshot_cause(&error);
                 failure
             })?;
         Ok((groups, evidence))
