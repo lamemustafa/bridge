@@ -7,7 +7,8 @@ Tally's built-in Balance Sheet and Profit and Loss, requested by report name (pr
 - **Host / gateway:** TallyPrime **Silver (licensed)**, 7.1, `education_mode=false`, `http://127.0.0.1:9001` (a lab instance).
 - **Date:** 2026-09-26.
   - The statement captures were taken between 11:14 and 11:17 IST. `tally_status` was healthy before and after that session.
-  - The group tree and Trial Balance were taken between 16:53 and 16:55 IST. `tally_status` was healthy before them. In the same minutes, the Balance Sheet and Profit and Loss were requested again and came back byte-identical to the 11:14 captures (the same SHA-256), so the book had not changed.
+  - The `BRIDGE READS LAB` group tree and Trial Balance were taken between 16:53 and 16:55 IST. `tally_status` was healthy before them. In the same minutes, the Balance Sheet and Profit and Loss were requested again and came back byte-identical to the 11:14 captures (the same SHA-256), so the book had not changed.
+  - The `BRIDGE CORPUS DENSE` group tree, one-month Trial Balance and one-month Profit and Loss were taken between 17:10 and 17:12 IST, with `tally_status` healthy before and after. The one-month Balance Sheet requested with them was byte-identical to the morning's capture.
 - **Encoding:** responses are **BOM-less UTF-16LE**, exactly as received. Requests are the exact bytes sent: **UTF-16LE with a BOM**. `.gitattributes` marks this tree `-text`.
 - **Request shape:**
   - A statement request is §12a.1's built-in report request. Its text is what `render_native_statement_request` renders (a test asserts this).
@@ -29,6 +30,13 @@ Tally's built-in Balance Sheet and Profit and Loss, requested by report name (pr
 | `statement_trial_balance_fy_live.utf16le.xml` | 11238 | `c85ddd0d95c4a0863a96e760bfe2eb19cd53227255b771a0b7b8143c0bfd2a2d` | `BRIDGE READS LAB` | native Trial Balance (7 ledgers) | 2025-04-01 to 2026-03-31 |
 | `statement_groups_fy_request.utf16le.xml` | 1066 | `1eea1e25ad0a3bca798f3baf233afd7f9226dfaca253174674b7b0f15e8fe9cc` | `BRIDGE READS LAB` | request for the group tree | none |
 | `statement_trial_balance_fy_request.utf16le.xml` | 1144 | `2b66b57d39579ec152f6c41ff96ea98185862af7cf55efdc536813bd470bec3d` | `BRIDGE READS LAB` | request for the Trial Balance | as above |
+| `statement_groups_dense_live.utf16le.xml` | 54280 | `c4e1fbe12c1ec9b3e1c6f51216b47719ccc65b97b221af559fa4aae34f8c1368` | `BRIDGE CORPUS DENSE` | List of Groups (28 groups) | none (a master collection) |
+| `statement_trial_balance_dense_month_live.utf16le.xml` | 150310 | `854f7d5d9af632d5e3d77c274cf0c56d0dcaf33c59fb668a8a13385b90b5d0a9` | `BRIDGE CORPUS DENSE` | native Trial Balance (123 ledgers) | 2025-05-01 to 2025-05-31 |
+| `statement_profit_and_loss_dense_month_live.utf16le.xml` | 368 | `0c001bd969026ea82cd5e15af8bd48c8e896f31b89be9aa3ba308d4b67b8a62a` | `BRIDGE CORPUS DENSE` | Profit and Loss | 2025-05-01 to 2025-05-31 |
+| `statement_groups_dense_request.utf16le.xml` | 1072 | `2bd1e72ec6d5fffe6a5802c86ef956fff5dbe6ea605e721e814cac18e71f993b` | `BRIDGE CORPUS DENSE` | request for the group tree | none |
+| `statement_trial_balance_dense_month_request.utf16le.xml` | 1150 | `eee3528ba911a5a7c080949eb65b85acac78cb4a99fbe370e1f74a8b02a324ef` | `BRIDGE CORPUS DENSE` | request for the Trial Balance | 2025-05-01 to 2025-05-31 |
+| `statement_balance_sheet_dense_month_request.utf16le.xml` | 764 | `0f893f2dce868cfee3c37a22007dba7df12a66bd2e65787049a4e53c3382c301` | `BRIDGE CORPUS DENSE` | request for the one-month Balance Sheet | 2025-05-01 to 2025-05-31 |
+| `statement_profit_and_loss_dense_month_request.utf16le.xml` | 768 | `b50c2e7ec3dc132e85ec7df6b2b5a0b643374d4812ced547f17b76fee66caf5d` | `BRIDGE CORPUS DENSE` | request for the one-month Profit and Loss | 2025-05-01 to 2025-05-31 |
 
 ## What each capture establishes
 
@@ -41,10 +49,16 @@ Tally's built-in Balance Sheet and Profit and Loss, requested by report name (pr
   - `reports::statements` derives both statements from the first two and ties them to the last two.
   - Every compared line matched: Current Liabilities `4250.00`, the carried `Profit & Loss A/c` `-4250.00` and `Purchase Accounts` `-4250.00`.
   - Primary groups with no ledger are empty in Tally's statements and zero in the derivation.
+- **A part-year window on the heavy book.** The group tree, Trial Balance and both statements are all `BRIDGE CORPUS DENSE` for May 2025, and every line ties. Confidence: partial (one book, one month).
+  - In a part-year window a P&L ledger's Trial Balance covers the window only: the sales ledger opens May at `0.00`.
+  - The year's earlier result sits in the `Profit & Loss A/c` ledger's opening, `109235760.65`.
+  - Tally's Balance Sheet `Profit & Loss A/c` line, `222962422.38`, is that ledger's closing plus the P&L ledgers' closings: the derivation's carried line.
+  - Current Assets ties at `-222962422.38`, and Sales Accounts at `113726661.73`, the window's movement.
+- **Screening.** The heavy book's 123 ledgers are generated names (`DN Party 001` to `DN Party 120`, `DN Sales`, `Cash`, `Profit & Loss A/c`). All captures carry no GSTIN, PAN, contact or address field.
 
 ## Known limits
 
-- One release (7.1), Silver, two synthetic books.
+- One release (7.1), Silver, two synthetic books, one full year and one month.
   - Each statement request was run twice, hours apart, with identical bytes.
   - Each group tree and Trial Balance request was run once.
 - No book here holds inventory, so no closing-stock line was observed.

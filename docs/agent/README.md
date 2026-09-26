@@ -200,7 +200,10 @@ statement for the window (#692).
     Stock-in-Hand balance has no established gross or net result.
 - **`tie_out`.** It compares Tally's own statement lines with the derived lines
   by display name, and enforces nothing. The Balance Sheet's Profit & Loss line
-  has been compared with Tally's only over a full year.
+  has been compared with Tally's over one full year on one book and one month
+  on another. In a part-year window a P&L ledger's Trial Balance covers the
+  window only, and the year's earlier result sits in the Profit & Loss A/c
+  ledger's opening; the carried line includes both.
 
 ### Ledger-movement opening decision
 

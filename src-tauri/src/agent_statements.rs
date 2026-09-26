@@ -96,7 +96,7 @@ impl Server {
                         "Each line sums Trial Balance amounts under one reserved primary group; empty amounts are excluded and counted, never read as zero",
                         "A ledger under a user-created primary group, or with an incomplete group chain, is listed in unclassified; while any carries an amount, no result is established",
                         "Closing stock is not derived: with a Stock-in-Hand balance, gross and net results are not established",
-                        "tie_out compares Tally's own statement lines by display name and enforces nothing; Tally's carried Profit & Loss line has been compared only over a full year",
+                        "tie_out compares Tally's own statement lines by display name and enforces nothing; Tally's carried Profit & Loss line has been compared over one full year on one book and one month on another",
                         "Not voucher-level reconciliation or an atomic snapshot",
                     ],
                 },

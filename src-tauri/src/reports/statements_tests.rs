@@ -389,3 +389,71 @@ fn a_same_company_capture_ties_to_tallys_own_statements() {
     );
     assert!(tie.derived_only.is_empty());
 }
+
+const DENSE_GUID: &str = "d45bc1b0-e5e3-4261-b3b2-cce3915f42d3";
+const DENSE_TB: &[u8] = include_bytes!(
+    "../../crates/bridge-tally-protocol/tests/fixtures/statement_trial_balance_dense_month_live.utf16le.xml"
+);
+const DENSE_GROUPS: &[u8] = include_bytes!(
+    "../../crates/bridge-tally-protocol/tests/fixtures/statement_groups_dense_live.utf16le.xml"
+);
+const DENSE_BS: &[u8] = include_bytes!(
+    "../../crates/bridge-tally-protocol/tests/fixtures/statement_balance_sheet_dense_month_live.utf16le.xml"
+);
+const DENSE_PL: &[u8] = include_bytes!(
+    "../../crates/bridge-tally-protocol/tests/fixtures/statement_profit_and_loss_dense_month_live.utf16le.xml"
+);
+
+/// One month of a 29,900-voucher book. In a part-year window a P&L ledger's
+/// Trial Balance covers the window only, and the year's earlier result sits in
+/// the Profit & Loss A/c ledger's opening. The carried line still ties.
+#[test]
+fn a_part_year_window_on_a_heavy_book_ties_to_tallys_own_statements() {
+    let report = parse_native_trial_balance(&utf16(DENSE_TB), DENSE_GUID).unwrap();
+    let groups = parse_native_group_snapshot(&utf16(DENSE_GROUPS), DENSE_GUID).unwrap();
+    let derived = derive_statements(&report, &groups).unwrap();
+
+    assert!(derived.unclassified.is_empty());
+    assert_sum(&line(&derived.profit_and_loss, "Sales Accounts").amount, "113726661.73", 1, 1);
+    assert_eq!(line(&derived.balance_sheet, "Current Assets").ledger_count, 121);
+    let root = derived.profit_and_loss_ledger.as_ref().unwrap();
+    assert_eq!(
+        root.closing,
+        NativeTrialBalanceAmount::Present(decimal("109235760.65"))
+    );
+    assert_established(&derived.net_result, "113726661.73");
+    assert_established(&derived.balance_sheet_profit_and_loss, "222962422.38");
+
+    for (kind, bytes, expected) in [
+        (
+            NativeStatementKind::BalanceSheet,
+            DENSE_BS,
+            vec![
+                ("Capital Account", TieStatus::MatchedEmptyAsZero),
+                ("Loans (Liability)", TieStatus::MatchedEmptyAsZero),
+                ("Current Liabilities", TieStatus::MatchedEmptyAsZero),
+                ("Profit & Loss A/c", TieStatus::Matched),
+                ("Current Assets", TieStatus::Matched),
+            ],
+        ),
+        (
+            NativeStatementKind::ProfitAndLoss,
+            DENSE_PL,
+            vec![("Sales Accounts", TieStatus::Matched)],
+        ),
+    ] {
+        let statement = bridge_tally_protocol::native_statement_reports::parse_native_statement(
+            kind,
+            &utf16(bytes),
+        )
+        .unwrap();
+        let tie = tie_out(&derived, &statement);
+        let statuses: Vec<_> = tie
+            .lines
+            .iter()
+            .map(|line| (line.name.as_str(), line.status.clone()))
+            .collect();
+        assert_eq!(statuses, expected, "{kind:?}");
+        assert!(tie.derived_only.is_empty(), "{kind:?}");
+    }
+}
