@@ -529,7 +529,7 @@ fn ledger_parent_mismatch(book: &BookLedger, row: &BTreeMap<String, String>) -> 
 }
 
 /// Which writable field(s) on an existing ledger differ from the book and
-/// need a partial `Alter` (Brain trap: `Create` on an existing ledger
+/// need a partial `Alter` (protocol reference §9.4: `Create` on an existing ledger
 /// overwrites its opening balance instead of merging; a partial `Alter`
 /// carrying only the changed field(s) is the safe write here). Used for
 /// Tally's own default ledgers (Cash/Profit & Loss A/c) and, since
@@ -687,8 +687,8 @@ fn render_ledger_xml(l: &BookLedger) -> String {
     // Only when the book actually carries a real GST/duty classification
     // (not empty, not Tally's own inert default "Others") AND the ledger is
     // parented under Duties & Taxes -- the 2026-09-14 rehearsal sent
-    // `<TAXTYPE>Others</TAXTYPE>` on every ledger, including "HDFC Bank
-    // 1649" and "Wages and Salary", which is not a duty head at all.
+    // `<TAXTYPE>Others</TAXTYPE>` on every ledger, including a bank ledger
+    // and a wages ledger, neither of which is a duty head.
     let tax_type = l
         .tax_type
         .as_deref()
@@ -1283,7 +1283,7 @@ pub(in crate::agent) async fn lab_import_masters(
     // ---- Ledger reconcile: partial Alter for every pre-existing ledger --
     // Tally default (Cash/Profit & Loss A/c) or ordinary (coordinator
     // instruction, 2026-09-14) -- whose only differences from the book are
-    // in writable fields (Brain trap: Create on an existing ledger
+    // in writable fields (protocol reference §9.4: Create on an existing ledger
     // overwrites its opening balance; a partial Alter carrying only the
     // changed field(s) is the safe write here). Only runs if nothing above
     // already stopped on a mismatch, and only sends an Alter for ledgers
