@@ -261,6 +261,34 @@ once. `<PLAINXML>Yes</PLAINXML>` was tested and is *not* the cause.
 
 Largely moot if you use collection exports (§2.1).
 
+### 6.3 A custom-report FIELD without `TYPE` renders money for display
+
+**VERIFIED 2026-09-26, licensed TallyPrime 7.1 Silver** (`education_mode=false`). One synthetic company, one run of each request. **Confidence: PARTIAL**: one release, one book, and `$ClosingBalance` only.
+
+Two custom reports were sent over the same ledgers and the same full-year window. They differ in exactly one element, the `<TYPE>Amount</TYPE>` on one FIELD. Each report carried two amount FIELDs per ledger:
+
+```xml
+<FIELD NAME="BridgeProbeClosingRaw"><SET>$ClosingBalance</SET><TYPE>Amount</TYPE><XMLTAG>"CLOSINGRAW"</XMLTAG></FIELD>
+<FIELD NAME="BridgeProbeClosingFmt"><SET>$ClosingBalance</SET><TYPE>Amount</TYPE><FORMAT>"No Symbol, No Comma"</FORMAT><XMLTAG>"CLOSINGFMT"</XMLTAG></FIELD>
+```
+
+The second request removed only the first FIELD's `<TYPE>Amount</TYPE>`. A `List of Ledgers` collection read of the same window gave the signed reference values.
+
+| Ledger `CLOSINGBALANCE` (collection) | FIELD with `TYPE Amount` | FIELD without `TYPE` | `TYPE Amount` + `FORMAT "No Symbol, No Comma"` |
+| --- | --- | --- | --- |
+| `-4250.00` (2 ledgers) | `-4250.00` | **`4,250.00`** | `-4250.00` |
+| `4250.00` | `4250.00` | `4,250.00` | `4250.00` |
+| empty (4 ledgers) | empty | empty | empty |
+
+**Without `TYPE`, the FIELD returns a display string.** The minus sign is dropped and Indian digit grouping is added, so a debit balance reads as the same magnitude as a credit. With `<TYPE>Amount</TYPE>`, with or without that `FORMAT`, the value came back signed and ungrouped, byte-equal to the collection's. Neither report raised a dialog, and each took under 0.6 s.
+
+**Rule.** Read money through a collection `FETCH` (§2.1, §3). A custom report that must carry an amount through a FIELD declares `<TYPE>Amount</TYPE>` on it. A FIELD without it returns display text, which must never be parsed as an amount. **Not measured:** `$TBalOpening` / `$TBalClosing`, other amount methods, Gold, Education, and other releases.
+
+Captured requests as sent (UTF-16LE with BOM) and their responses, SHA-256:
+- collection: request `c27358c32393f57d…`, response `71d52c899fb15330…`;
+- report with `TYPE`: request `333404b08c98d51c…`, response `078d40c5cb23c677…`;
+- report without `TYPE`: request `5083c1ba411fce41…`, response `b268769604d005e1…`.
+
 ---
 
 ## 7. Balances
