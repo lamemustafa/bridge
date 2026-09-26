@@ -829,6 +829,133 @@ async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_requ
     }
 }
 
+/// With no doubt named, a batch whose masters doubt is held only by the check
+/// record, beside a step doubt with its own file, needs a name; one whose two
+/// doubts are both held only by the check record is refused as unavailable,
+/// since no name could be reviewed. Either way, before any request.
+#[tokio::test]
+async fn an_unnamed_review_beside_a_doubt_without_its_file_is_refused_before_any_request() {
+    let changed = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
+    let step =
+        json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false});
+    for (step_file_fails, code) in [
+        (false, "ack_doubt_ambiguous"),
+        (true, "ack_doubt_record_unavailable"),
+    ] {
+        let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let line = dispatched_batch(&server);
+        let imports = server.imports_dir().unwrap();
+        server
+            .record_post_checks_pending(&line.batch_id, true)
+            .unwrap();
+        let masters_doubt = imports.join(format!("{}.masters_doubt.json", line.batch_id));
+        let step_doubt = imports.join(format!("{}.batch_step_doubt.json", line.batch_id));
+        block(masters_doubt.clone());
+        if step_file_fails {
+            block(step_doubt.clone());
+        }
+        server.record_batch_step_verdict(&line.batch_id, &step);
+        server.record_masters_verdict_for(&line.batch_id, changed.clone(), true);
+        fs::remove_dir_all(&masters_doubt).unwrap();
+        if step_file_fails {
+            fs::remove_dir_all(&step_doubt).unwrap();
+        }
+        assert_eq!(step_doubt.is_file(), !step_file_fails, "{code}");
+        // The check record holds both doubts, each marked when its file failed.
+        let check: Value = serde_json::from_slice(
+            &fs::read(imports.join(format!("{}.masters_check.json", line.batch_id))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(check["state"], "posted_under_changed_masters", "{check}");
+        assert_eq!(check["doubt_record"], "unavailable", "{check}");
+        assert_eq!(check["batch_step"]["state"], "unmatched", "{check}");
+        assert_eq!(
+            check["batch_step"]["doubt_record"],
+            if step_file_fails {
+                json!("unavailable")
+            } else {
+                Value::Null
+            },
+            "{check}"
+        );
+        let response = acknowledge(
+            &server,
+            json!({"company_guid":GUID,"batch_id":line.batch_id}),
+            ScriptedApproval::approving(),
+        )
+        .await;
+        let error = &response["structuredContent"]["result"]["error"];
+        assert_eq!(error["code"], code, "{response}");
+        if code == "ack_doubt_ambiguous" {
+            assert_eq!(error["cause"], "masters_and_batch_step", "{response}");
+        }
+        assert!(sent(simulator).is_empty(), "{code}: no request");
+    }
+}
+
+/// A masters review was recorded while its doubt file existed; that file was
+/// later lost, and the step doubt's own file was never written. An unnamed
+/// review is refused as unavailable before any request, never answered
+/// `ack_already_recorded` by the stale masters review.
+#[tokio::test]
+async fn two_doubts_without_their_files_refuse_before_a_stale_review_can_answer() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let line = dispatched_batch(&server);
+    let imports = server.imports_dir().unwrap();
+    server
+        .record_post_checks_pending(&line.batch_id, true)
+        .unwrap();
+    let step_doubt = imports.join(format!("{}.batch_step_doubt.json", line.batch_id));
+    block(step_doubt.clone());
+    server.record_batch_step_verdict(
+        &line.batch_id,
+        &json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false}),
+    );
+    server.record_masters_verdict_for(
+        &line.batch_id,
+        json!({"state":"posted_under_changed_masters","ledgers":["Cash"]}),
+        true,
+    );
+    fs::remove_dir_all(&step_doubt).unwrap();
+    let masters_doubt = imports.join(format!("{}.masters_doubt.json", line.batch_id));
+    assert!(masters_doubt.is_file(), "the masters doubt was written");
+    // The check record holds both doubts: the masters one unmarked, since its
+    // file was written, and the step one marked, since its file was not.
+    let check: Value = serde_json::from_slice(
+        &fs::read(imports.join(format!("{}.masters_check.json", line.batch_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(check["state"], "posted_under_changed_masters", "{check}");
+    assert_eq!(check["doubt_record"], Value::Null, "{check}");
+    assert_eq!(check["batch_step"]["state"], "unmatched", "{check}");
+    assert_eq!(
+        check["batch_step"]["doubt_record"], "unavailable",
+        "{check}"
+    );
+    // A review of it recorded, then its doubt file lost.
+    fs::write(
+        imports.join(format!("{}.masters_ack.json", line.batch_id)),
+        b"{}",
+    )
+    .unwrap();
+    fs::remove_file(&masters_doubt).unwrap();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":GUID,"batch_id":line.batch_id}),
+        ScriptedApproval::approving(),
+    )
+    .await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "ack_doubt_record_unavailable",
+        "{response}"
+    );
+    assert!(sent(simulator).is_empty(), "no request");
+}
+
 /// One voucher's doubt recorded only in the check record is refused after
 /// the read, as every single-voucher refusal is, and never as no doubt.
 #[tokio::test]

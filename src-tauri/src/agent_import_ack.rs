@@ -115,9 +115,14 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
 /// without its own file is observed too (#722), so two observed doubts need a
 /// name (`ack_doubt_ambiguous`). A check still pending, or a record that
 /// cannot be read, is not observed: this choice is made from the records
-/// before the read, which can finish a pending check. With none observed, the
-/// kind whose record says why (pending, unreadable) is chosen, so the refusal
-/// names it.
+/// before the read, which can finish a pending check. Two doubts that are
+/// both held only by the check record are refused here
+/// (`ack_doubt_record_unavailable`): neither can be reviewed, so a name could
+/// not help. Refusing here also means a stale review of the one that would
+/// have been chosen cannot answer the unnamed call with `ack_already_recorded`.
+/// A single chosen doubt's review record is still checked first, as before
+/// #722. With none observed, the kind whose record says why (pending,
+/// unreadable) is chosen, so the refusal names it.
 fn select_doubt(
     requested: Option<DoubtKind>,
     states: &[(DoubtKind, MastersRecord)],
@@ -139,12 +144,18 @@ fn select_doubt(
         })
         .map(|(kind, _)| *kind)
         .collect::<Vec<_>>();
+    let unavailable = |kind: &DoubtKind| {
+        states
+            .iter()
+            .any(|(held, state)| held == kind && *state == MastersRecord::DoubtRecordUnavailable)
+    };
     match observed.as_slice() {
         [kind] => Ok(*kind),
         [] => Ok(states
             .iter()
             .find(|(_, state)| *state != MastersRecord::NoDoubt)
             .map_or(DoubtKind::Masters, |(kind, _)| *kind)),
+        [_, ..] if observed.iter().all(unavailable) => Err("ack_doubt_record_unavailable"),
         _ => Err("ack_doubt_ambiguous"),
     }
 }
