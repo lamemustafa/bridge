@@ -1821,6 +1821,19 @@ Vch/Ledger deletion/alteration is not permitted"
 }
 
 #[test]
+fn an_empty_lineerror_adds_no_empty_entry_to_the_rejection_message() {
+    let response = rejection_with_line_errors(
+        "<LINEERROR>Could not set OPENINGBALANCE : Duplicate name</LINEERROR>\
+<LINEERROR></LINEERROR>",
+    );
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(&response).expect("valid RESPONSE shape");
+    assert_eq!(outcome.tally_line_errors().len(), 2);
+    assert!(tally_rejection_message("Ledger", &outcome)
+        .ends_with(" LINEERROR: Could not set OPENINGBALANCE : Duplicate name"));
+}
+
+#[test]
 fn a_lineerror_split_by_a_reference_stays_one_text() {
     // quick_xml delivers `&amp;` as its own `GeneralRef` event, separate from
     // the surrounding `Text`. The ledger name "RAM & SONS" is invented.

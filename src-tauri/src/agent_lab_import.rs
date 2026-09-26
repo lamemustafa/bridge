@@ -1571,10 +1571,13 @@ fn tally_rejection_message(
     outcome: &bridge_tally_protocol::TallyImportOutcome,
 ) -> String {
     let counters = outcome.counters();
+    // An empty LINEERROR is counted by the outcome but says nothing, so it
+    // adds no empty entry to the message.
     let texts = outcome
         .tally_line_errors()
         .iter()
         .map(bridge_tally_protocol::TallyLineError::text)
+        .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
     let mut suffix = if texts.is_empty() {
         String::new()
