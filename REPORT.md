@@ -156,3 +156,6 @@ Head `2e66550a4462f9434994d9e02f6a626b66a9fef1`. Sonnet review running. The five
 
 ## 2026-09-26T11:46Z: #735 PR #763 ready (pinned)
 Head `59cf3da6a3c8e6e7b5b8b72d623f4e93588767f8`. Sonnet found no functional defect; its mutation test confirms the CDATA test fails without the fix and that the captured digest is unchanged. Its P3 (a doc comment overclaimed sanitisation for the new caller) is fixed and resealed. Lane Q is done: #763 and the five parked PRs are waiting on Lane D.
+
+## 2026-09-26T12:18Z: #763 merged up with master
+CI was green on `59cf3da`, but GitHub reported a merge conflict after master took #751. The conflict was only in the compatibility surface and matrix. I took master's copies, resealed (`--verify` clean), and pushed merge head `753d7c7ea7b28bd6696812d333df61ceba287dce`. `bridge-tally-protocol`: 350 passed; the targeted `bridge` tests: 119 passed; fmt and clippy clean. The five parked PRs were not touched.
