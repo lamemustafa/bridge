@@ -42,7 +42,7 @@ fn source_with_precision(decimal_places: u8) -> PartyLedgerMasterSource {
 #[test]
 fn three_decimal_currency_renders_1234_without_a_two_decimal_format() {
     let workbook = build_party_ledger_master_workbook(source_with_precision(3)).unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut sheet = String::new();
     std::io::Read::read_to_string(
@@ -103,7 +103,7 @@ fn renders_evidence_currency_and_returned_fields_in_the_workbook() {
         groups: vec![],
     })
     .unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     for name in [
@@ -167,7 +167,7 @@ fn normally_signed_sundry_debtor_renders_as_a_group_subtotal_not_trade_receivabl
     })
     .unwrap();
 
-    let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     for name in [
@@ -227,7 +227,7 @@ fn gstin_not_observed_is_labeled_while_an_explicit_empty_gstin_is_not() {
         groups: vec![],
     })
     .unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut sheet = String::new();
     std::io::Read::read_to_string(
@@ -288,7 +288,7 @@ fn worksheet_with_parent(parent: PartyLedgerMasterFieldObservation) -> (String, 
         groups: vec![],
     })
     .unwrap();
-    let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+    let bytes = render_party_ledger_master_xlsx(&workbook, &[]).unwrap();
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut sheet = String::new();
     std::io::Read::read_to_string(
@@ -344,4 +344,132 @@ fn explicitly_empty_parent_renders_an_empty_group_cell() {
         !cell_has_value,
         "an explicitly empty parent must not write a Group-cell value"
     );
+}
+
+#[test]
+fn decided_heads_their_basis_and_a_stale_decision_reach_the_group_subtotal_sheet() {
+    use crate::reports::schedule_iii::{
+        DecisionId, Derivation, DerivedOutcome, FinancialYear, GroupSubtotalKind, LedgerGuid,
+        ScheduleIIIHead,
+    };
+    let ledger = |name: &str, guid: &str, balance: &str| PartyLedgerMasterRow {
+        name: name.to_string(),
+        parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+        fields: PartyLedgerMasterFields::default(),
+        guid: guid.to_string(),
+        master_id: guid.to_string(),
+        alter_id: "9".to_string(),
+        opening_balance: ExactDecimal::parse(balance.to_string()).unwrap(),
+        closing_balance: Some(ExactDecimal::parse(balance.to_string()).unwrap()),
+    };
+    let mut source = source_with_precision(2);
+    source.rows = vec![
+        ledger("Customer balance", "customer-guid", "-300.00"),
+        ledger("Moved party", "moved-guid", "-50.00"),
+    ];
+    source.groups = vec![bridge_tally_protocol::TallyNamedMaster {
+        name: "Sundry Debtors".to_string(),
+        parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+        reserved_name: Some("Sundry Debtors".to_string()),
+    }];
+    let workbook = build_party_ledger_master_workbook(source).unwrap();
+    let decision = |id: u64, guid: &str, name: &str, made_against: GroupSubtotalKind| Decision {
+        id: DecisionId(id),
+        ledger: LedgerGuid::new(guid).unwrap(),
+        ledger_name_when_made: name.to_string(),
+        made_against: Derivation {
+            outcome: DerivedOutcome::GroupSubtotal(made_against),
+            ancestry: vec!["Sundry Debtors".to_string()],
+        },
+        head: ScheduleIIIHead::TradeReceivables,
+        year: FinancialYear::beginning_in(2026),
+    };
+    let decisions = [
+        decision(
+            1,
+            "customer-guid",
+            "Customer balance",
+            GroupSubtotalKind::SundryDebtors,
+        ),
+        decision(
+            2,
+            "moved-guid",
+            "Moved party",
+            GroupSubtotalKind::SundryCreditors,
+        ),
+    ];
+
+    let bytes = render_party_ledger_master_xlsx(&workbook, &decisions).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    for name in ["xl/worksheets/sheet2.xml", "xl/sharedStrings.xml"] {
+        std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
+    }
+
+    // Exact cells: only a decided line or trace row reads exactly "CA grouping
+    // decision", and only a group-subtotal one "Tally group evidence".
+    assert!(text.contains("<t>Trade receivables</t>"));
+    assert!(text.contains("<t>CA grouping decision</t>"));
+    assert!(text.contains("<t>Tally group evidence</t>"));
+    assert!(text.contains("CA GROUPING DECISIONS"));
+    assert!(text.contains(
+        "1 applied; 1 not applied and need attention; 0 for another financial year. NOT FINAL"
+    ));
+    assert!(text.contains("group changed after the decision. Now: Sundry Debtors group subtotal"));
+}
+
+#[test]
+fn a_decision_whose_ledger_moved_between_subgroups_reports_the_change_on_the_row_and_in_the_list() {
+    use crate::reports::schedule_iii::{
+        DecisionId, Derivation, DerivedOutcome, FinancialYear, GroupSubtotalKind, LedgerGuid,
+        ScheduleIIIHead,
+    };
+    let group =
+        |name: &str, parent: &str, reserved: &str| bridge_tally_protocol::TallyNamedMaster {
+            name: name.to_string(),
+            parent: PartyLedgerMasterFieldObservation::Returned(parent.to_string()),
+            reserved_name: Some(reserved.to_string()),
+        };
+    let mut source = source_with_precision(2);
+    source.rows[0].name = "Advance".to_string();
+    source.rows[0].parent = PartyLedgerMasterFieldObservation::Returned("Customers".to_string());
+    source.rows[0].closing_balance = Some(ExactDecimal::parse("-40.00".to_string()).unwrap());
+    source.groups = vec![
+        group("Sundry Debtors", "Primary", "Sundry Debtors"),
+        group("Staff advances", "Sundry Debtors", ""),
+        group("Customers", "Sundry Debtors", ""),
+    ];
+    let workbook = build_party_ledger_master_workbook(source).unwrap();
+    let decisions = [Decision {
+        id: DecisionId(1),
+        ledger: LedgerGuid::new("ledger-guid").unwrap(),
+        ledger_name_when_made: "Advance".to_string(),
+        made_against: Derivation {
+            outcome: DerivedOutcome::GroupSubtotal(GroupSubtotalKind::SundryDebtors),
+            ancestry: vec!["Staff advances".to_string(), "Sundry Debtors".to_string()],
+        },
+        head: ScheduleIIIHead::ShortTermLoansAndAdvances,
+        year: FinancialYear::beginning_in(2026),
+    }];
+
+    let bytes = render_party_ledger_master_xlsx(&workbook, &decisions).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut strings = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("xl/sharedStrings.xml").unwrap(),
+        &mut strings,
+    )
+    .unwrap();
+
+    let drift = "Ancestry changed since the decision: Sundry Debtors";
+    assert_eq!(
+        strings.matches(drift).count(),
+        2,
+        "on the row and in the list"
+    );
+    assert!(strings.contains("Staff advances → Sundry Debtors"));
+    assert!(strings.contains("CA grouping decision. Ancestry changed since the decision"));
+    assert!(strings.contains("Applied. Ancestry changed since the decision"));
+    assert!(strings.contains("Nothing needs attention."));
 }

@@ -183,8 +183,9 @@ fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
         groups,
     };
     let workbook = build_party_ledger_master_workbook(source).expect("captured source admits");
-    let xlsx = super::super::party_ledger_master_xlsx::render_party_ledger_master_xlsx(&workbook)
-        .expect("captured source renders a workbook");
+    let xlsx =
+        super::super::party_ledger_master_xlsx::render_party_ledger_master_xlsx(&workbook, &[])
+            .expect("captured source renders a workbook");
     assert!(
         xlsx.starts_with(b"PK"),
         "captured source rendered an XLSX archive"
@@ -234,19 +235,104 @@ fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
             && row.fields.state == PartyLedgerMasterFieldObservation::NotObserved
     }));
 
-    let schedule = super::super::schedule_iii::build_schedule_iii_view(source)
+    let schedule = super::super::schedule_iii::build_schedule_iii_view(&workbook, &[])
         .expect("captured Schedule III derivation succeeds");
-    assert!(schedule.difference.is_zero());
+    assert!(schedule.difference().is_zero());
     assert!(schedule
-        .lines
+        .lines()
         .iter()
-        .all(|line| line.label.ends_with("group subtotal")));
-    assert!(schedule.exclusions.iter().any(|entry| {
-        source.rows[entry.row_index].name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
-            && entry.reason.contains("opposite polarity")
+        .all(|line| line.label().ends_with("group subtotal")));
+    assert!(schedule.exclusions().iter().any(|entry| {
+        source.rows[entry.row_index()].name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
+            && entry.reason().contains("opposite polarity")
     }));
-    assert!(schedule.exclusions.iter().any(|entry| {
-        source.rows[entry.row_index].name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
-            && entry.reason.contains("opposite polarity")
+    assert!(schedule.exclusions().iter().any(|entry| {
+        source.rows[entry.row_index()].name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
+            && entry.reason().contains("opposite polarity")
     }));
+
+    // Census on the captured book (#737): propose a CA grouping decision for
+    // every ledger, made against what the read says of it, on a head on its
+    // balance's side. An applied decision moves only its own ledger, onto its
+    // head; a refused one leaves its ledger where the view with no decisions
+    // put it. Only two captured ledgers have a balance, both excluded before,
+    // so this does not exercise moving a ledger off a group-subtotal line;
+    // the synthetic tests in schedule_iii_tests.rs do.
+    use super::super::schedule_iii::{
+        derivations, Decision, DecisionId, DecisionStatus, Finality, FinancialYear, LedgerGuid,
+        LineBasis, NotApplied, ScheduleIIIHead, ScheduleIIIView,
+    };
+    let decisions: Vec<Decision> = source
+        .rows
+        .iter()
+        .zip(derivations(&workbook))
+        .enumerate()
+        .map(|(index, (row, made_against))| Decision {
+            id: DecisionId(index as u64),
+            ledger: LedgerGuid::new(&row.guid).expect("captured GUID"),
+            ledger_name_when_made: row.name.clone(),
+            made_against,
+            head: match &row.closing_balance {
+                Some(balance) if balance.is_negative() => {
+                    ScheduleIIIHead::ShortTermLoansAndAdvances
+                }
+                _ => ScheduleIIIHead::OtherCurrentLiabilities,
+            },
+            year: FinancialYear::beginning_in(2025),
+        })
+        .collect();
+    let decided = super::super::schedule_iii::build_schedule_iii_view(&workbook, &decisions)
+        .expect("a decision on every captured ledger still places each ledger once");
+    let established = source
+        .rows
+        .iter()
+        .filter(|row| row.closing_balance.is_some())
+        .count();
+    assert_eq!(
+        established, 2,
+        "the captured book establishes two closing balances"
+    );
+    assert_eq!(decided.finality(), Finality::NotFinal);
+
+    // Where each row sits: on a line (by basis) or excluded (None).
+    let placement = |view: &ScheduleIIIView| {
+        let mut placed = vec![None; source.rows.len()];
+        for line in view.lines() {
+            for index in line.row_indices() {
+                assert!(placed[*index].replace(Some(line.basis())).is_none());
+            }
+        }
+        for exclusion in view.exclusions() {
+            assert!(placed[exclusion.row_index()].replace(None).is_none());
+        }
+        assert!(placed.iter().all(Option::is_some), "every ledger is placed");
+        placed
+    };
+    let before = placement(&schedule);
+    let after = placement(&decided);
+    let mut applied = 0;
+    for (index, (decision, status)) in decisions.iter().zip(decided.decisions()).enumerate() {
+        match status {
+            DecisionStatus::Applied { row_index, .. } => {
+                applied += 1;
+                assert_eq!(*row_index, index);
+                assert_eq!(after[index], Some(Some(LineBasis::Decided(decision.head))));
+            }
+            DecisionStatus::NotApplied {
+                reason: NotApplied::BalanceNotEstablished,
+                ..
+            } => assert_eq!(after[index], before[index]),
+            other => panic!("unexpected status for a captured ledger: {other:?}"),
+        }
+    }
+    assert_eq!(applied, established);
+    for (index, row) in source.rows.iter().enumerate() {
+        if row.closing_balance.is_none() {
+            assert_eq!(
+                after[index],
+                Some(None),
+                "an unestablished ledger stays excluded"
+            );
+        }
+    }
 }
