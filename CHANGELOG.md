@@ -32,6 +32,11 @@ issue.
 - Work with books of more than 1,000 ledgers in the ledger catalogue (#643).
 - Get a whole `verify_import` verdict at once, with the verified vouchers in
   pages (#673).
+- Source builds only: with `BRIDGE_AGENT_ENABLE_BATCH_POST` on as well as
+  posting, post 2 to 50 vouchers of one saved batch after one approval, which
+  shows a summary by ledger. It is off by default and not in the extension
+  until a live batch post is proven. A batch counts as clean only when Tally's
+  counts match exactly; otherwise you review it (#712, #721).
 
 **Safer posting**
 
