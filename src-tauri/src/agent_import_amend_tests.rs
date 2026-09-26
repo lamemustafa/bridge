@@ -628,9 +628,15 @@ async fn an_amendment_built_against_an_unchanged_book_reuses_the_original_remote
         "reference",
         "bill-wise or cost-centre allocations",
         "Import promptly",
+        // #632: a second amendment built from the same state overwrites the
+        // first when both files are imported; Bridge is not there to stop it.
+        "Import and verify each amendment before building the next one for the same batch",
     ] {
         assert!(warning.contains(named), "{named} in {warning}");
     }
+    assert!(result["next_step"].as_str().unwrap().contains(
+        "Import and verify each amendment before building the next one for the same batch"
+    ));
     assert!(result["warnings"][1]
         .as_str()
         .unwrap()
