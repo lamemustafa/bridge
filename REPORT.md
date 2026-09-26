@@ -261,3 +261,8 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
   - both regenerated goldens now match byte-for-byte.
 - E2B2-31..36 record the new logic. Four of them survived the goldens (marking on any vs all vouchers, the line's direction, the line summed per voucher, a repeated GUID). One unit test pins them (59577a29), which is the 6th test E2b adds, all small. **All 36 E2B2 killed.** 342 tests pass; clippy and fmt clean.
 - Fresh Sonnet and Opus reviews of the port against the note are running. Next: push, the E2b full mutation run (sharded to `cloud/lane-e-e2b-shards-2`), records, then the fresh independent review Lane D asked for on #713. After that, re-stack E3a and E4 and redo their records.
+
+## 2026-09-26 02:12 UTC — E2b port reviewed and pushed (fa9a9d0c); full run started
+
+- Opus review of the port found no P1. Its two P2 test gaps were an unidentified row that differs, and marking by row totals instead of per GUID. Both are pinned by extending the unit test (fa9a9d0c), and E2B2-37..39 added. **All 39 E2B2 killed** (sampled). A Sonnet review of the port and a check of fa9a9d0c found none.
+- **Pushed `lane-e/e2b-hvr` @ fa9a9d0c** and commented on #713. E2b full run started, sharded to `cloud/lane-e-e2b-shards-2`.
