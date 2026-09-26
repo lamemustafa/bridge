@@ -681,7 +681,9 @@ fn dispatched_batch(server: &Server) -> ImportLedgerLine {
 
 /// The review shows each entry of the voucher as the post dialog showed it
 /// for the same voucher (#730): the build's lines, from the post dialog, are
-/// each a line of the review, read back from Tally's capture.
+/// each a line of the review, read back from Tally's capture. This proves the
+/// sign. The capture's amounts are already in canonical form, so it cannot
+/// prove the digits are kept; the unit fixture with `-1234.50` does that.
 #[tokio::test]
 async fn the_review_shows_each_entry_as_the_post_dialog_did() {
     let mut plans = reconcile_readback();

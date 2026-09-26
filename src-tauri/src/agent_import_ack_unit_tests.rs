@@ -46,9 +46,9 @@ fn the_review_shows_the_doubt_and_the_voucher() {
     );
 }
 
-/// A debit is shown negated, in the digits Tally sent, as the post dialog
-/// showed it (#730), so the person reads the same figure in both dialogs:
-/// `1234.50`, never `1234.5`. A debit Tally holds with an unexpected positive
+/// A debit is shown negated, in the digits Tally sent (#730): `1234.50`,
+/// never `1234.5`, so where Tally echoes the build's figure the person reads
+/// the same text in both dialogs. A debit Tally holds with an unexpected positive
 /// sign is not rescued into looking normal: it shows negative, as it is. A
 /// zero debit takes no sign, and a credit shows as it is, whatever its sign.
 /// An amount that is not a decimal refuses.

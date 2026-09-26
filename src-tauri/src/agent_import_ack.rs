@@ -442,9 +442,10 @@ fn render_review_text(
         return Err("ack_review_format_text".into());
     }
     // Tally signs a debit negative. A debit is shown negated, in the digits
-    // Tally sent, as the post dialog showed it, and a credit as it is (#730,
-    // the pattern of #721's batch totals), so a debit with an unexpected sign
-    // still shows as it is.
+    // Tally sent, and a credit as it is (#730), so a debit with an unexpected
+    // sign still shows as it is. Negated as #721's batch totals are, but not
+    // normalised: where Tally echoes the build's figure, as it did for the
+    // captured two-decimal amounts, the line reads as the post dialog's did.
     let entries = row
         .entries
         .iter()
@@ -618,8 +619,6 @@ fn batch_review_preview(
     Ok(preview)
 }
 
-/// Which of the post dialog's caps `preview` exceeds: native message boxes
-/// have no scrollable review surface, so a review over any is refused.
 /// `amount` negated without normalising it: `-1.00` reads `1.00`, not `1`,
 /// so the figure keeps the digits Tally sent. A zero keeps its digits and
 /// takes no sign.
@@ -632,6 +631,8 @@ fn negated_as_written(amount: &ExactDecimal) -> String {
     }
 }
 
+/// Which of the post dialog's caps `preview` exceeds: native message boxes
+/// have no scrollable review surface, so a review over any is refused.
 fn caps_exceeded(preview: &str) -> Vec<&'static str> {
     let mut exceeded = Vec::new();
     if preview.chars().count() > 1_600 {
