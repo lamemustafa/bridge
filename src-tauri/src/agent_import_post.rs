@@ -940,17 +940,21 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     })
 }
 
-/// A batch's step doubt: its target's voucher mark did not move by exactly
-/// Tally's CREATED, or that was never recorded (pending, unreadable or
-/// absent). Nothing in the step says which voucher, so the review is of the
-/// whole batch.
+/// A batch's step doubt: Bridge has no record of the target's voucher mark
+/// moving by exactly Tally's CREATED. It moved otherwise, could not be read,
+/// or its verdict was never recorded or cannot be read. Both finalizers show
+/// the message only when the saved response is clean (CREATED parsed, and
+/// equal to the batch) and every voucher read back verified, so it may say
+/// that Tally reported creating the batch and that the batch is posted.
+/// Nothing in the step says which voucher, so the review is of the whole
+/// batch.
 fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
     if step.is_some_and(|step| step["state"] == "matched") {
         return None;
     }
     Some((
         "batch_step_unconfirmed",
-        "Tally reported creating the batch, but this company's voucher mark was not confirmed to have moved by exactly that many: it moved by a different amount, or the mark could not be read. Another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
+        "Tally reported creating the batch, and every voucher reads back, but Bridge did not confirm that this company's voucher mark moved by exactly that many: the mark moved by another amount or backwards, it could not be read, or the check did not finish. Another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
     ))
 }
 
