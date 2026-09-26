@@ -263,3 +263,10 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - Master took #734 and #750 (both pinned) at `19dd541`. #728 and #729 conflicted on the two aggregate lines a **fourth** time.
 - Same checked procedure. New heads: #728 `1c6cc6b`, #729 `53eaa29`.
 - Running total today: 4 rounds × 2 PRs = 8 forced CI runs and 8 reseal builds, with no content change.
+
+## 2026-09-26 11:27 UTC: Lane D direction: #728/#729 parked; remaining budget goes to #740 option A
+
+- Lane D: cloud credit is nearly spent. Stop re-merging #728 and #729 after master moves; Lane D will run update-branch when each reaches the front of the queue.
+- I **stopped** the hourly re-merge check-in. Last heads: #728 `1c6cc6b`, #729 `53eaa29`, both green at 11:12 UTC. Both will conflict on the two aggregate lines after the next pinned merge, which is expected.
+- **Resolving them later:** merge master, then compare the pin list and claims at stages 1/2/3 of both JSON files. If neither side changed them, take master's generated files, run `scripts/reseal.sh` as its own commit, then `--verify`. The same recipe was used four times today.
+- **Next:** #740 option A, an order-independent seal (per-file hashes stored, aggregate computed by the gate), as a design plus a draft PR. It stays a draft: it changes what the seal stores, and that is the owner's decision (#740 question 1).
