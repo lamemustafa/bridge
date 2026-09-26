@@ -27,7 +27,7 @@ Lane E, 2026-09-25. Every book here is invented: no fixture is a Tally read of a
 
 ## How they were produced
 
-At brain engine commit `1038dc05`, under Python 3.13:
+At the reference engine (a private repository), commit `1038dc05`, under Python 3.13:
 
     uv run -q --python 3.13 --with openpyxl --with xlrd --with python-docx --with jsonschema \
         --with striprtf --with pdfplumber python parity/python_golden.py ENGINE \
