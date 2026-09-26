@@ -2,7 +2,7 @@
   "manifest_version": "0.1",
   "name": "bridge-tally",
   "display_name": "ComplyEaze Bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read the TallyPrime books on this computer, and prepare Journal, Payment, Receipt and Contra vouchers as a local file. Posting is off by default; when voucher posting is turned on in the settings below, it can post one Journal, Payment, Receipt or Contra at a time, and every posting needs your approval in a native dialog. What it reads, including amounts, goes to your AI provider; Response redaction below can only mask party names or drop narration.",
   "author": {
     "name": "Bridge contributors"
@@ -46,7 +46,7 @@
     "enable_writes": {
       "type": "boolean",
       "title": "Allow voucher posting (Journal, Payment, Receipt, Contra)",
-      "description": "Off by default. Turning this on lets the connector post one approved Journal, Payment, Receipt or Contra into Tally. Two known limits remain: the post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher (bridge#574), and Bridge cannot delete or roll back a voucher it has posted, so a wrong post must be corrected by hand in Tally (bridge#579). Leave it off unless you accept that risk. It also lets you record, in a separate native dialog, that you reviewed a posted voucher whose ledgers changed master; that writes nothing to Tally. Reads, bank-statement parsing and voucher file preparation are available either way.",
+      "description": "Off by default. Turning this on lets the connector post one approved Journal, Payment, Receipt or Contra into Tally at a time. Three known limits remain. Tally aims an import at a company by name and cannot bind it to a GUID: Bridge's last request before the post refuses unless exactly one loaded company has the target's GUID and name and no other has the same name ignoring case and spacing (bridge#607), but a company renamed to, or loaded under, that name or one differing only in case or spacing in the moment after the check could still receive the voucher; Bridge may flag afterwards that the companies changed, but cannot always say where it went, and cannot prevent it (accepted residual, bridge#574). And Bridge has no tool to delete or undo a voucher it has posted, so a wrong post must be corrected by hand in Tally (bridge#579). A ledger renamed and replaced in that same moment means the post can land in the replacement ledger; Bridge marks it as needing reconciliation when it sees the ledger now resolves to a different master, but not every such change is seen (bridge#623). Leave it off unless you accept that risk. It also lets you record, in a separate native dialog, that you reviewed a posted voucher whose ledgers changed master; that writes nothing to Tally. Reads, bank-statement parsing and voucher file preparation are available either way.",
       "default": false
     }
   }
