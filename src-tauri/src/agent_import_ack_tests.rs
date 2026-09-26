@@ -117,6 +117,7 @@ async fn an_approved_review_is_recorded_once_and_changes_no_verdict() {
     let result = &response["structuredContent"]["result"];
     assert_eq!(result["operator_review"]["state"], "current", "{response}");
     assert_eq!(approval.reviews().len(), 1, "{response}");
+    assert_eq!(approval.review_counts(), [1], "{response}");
     assert!(approval.previews().is_empty(), "no post dialog: {response}");
     let review = &approval.reviews()[0];
     assert!(review.contains("Cash"), "the doubt is shown: {review}");
@@ -679,6 +680,108 @@ fn dispatched_batch(server: &Server) -> ImportLedgerLine {
     line
 }
 
+/// A single Payment Bridge posted, captured (fixtures `wa1-payment-*`, one
+/// `verify_import`): its debit reads back from Tally as `-1.00`, with the
+/// trailing zeros the post dialog showed.
+const WA1_BATCH: &str = "bridge-78ce4328-9c2a-4827-8584-821d6d656b40";
+
+/// That readback, in the captured order, as [`d3_batch_readback`] reads its.
+fn wa1_payment_readback() -> Vec<ScenarioPlan> {
+    let extent = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-company-extent.utf16le.xml"
+    ));
+    let high_water = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-company-high-water.utf16le.xml"
+    ));
+    let census = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-voucher-census.utf16le.xml"
+    ));
+    let readback = captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-import-verification.utf16le.xml"
+    ));
+    "SEESESEHSHSEECSCSEEVSVSEEVSVSE"
+        .chars()
+        .map(|step| match step {
+            'S' => status(),
+            'E' => xml(extent.clone()),
+            'H' => xml(high_water.clone()),
+            'C' => xml(census.clone()),
+            _ => xml(readback.clone()),
+        })
+        .collect()
+}
+
+/// The review shows each entry of the voucher exactly as the post dialog
+/// showed it for the same voucher (#730): the post dialog's lines, rendered
+/// from the post's own journal, are each a line of the review, read back from
+/// Tally's capture. Tally sent the debit as `-1.00`, so this proves the sign
+/// and the digits: a canonical negation would read `Dr 1`.
+#[tokio::test]
+async fn the_review_shows_each_entry_as_the_post_dialog_did() {
+    let mut plans = wa1_payment_readback();
+    plans.extend(wa1_payment_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let origin =
+        super::super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    fs::write(
+        directory.path().join("agent-import-ledger.jsonl"),
+        include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-journal.jsonl"
+        )
+        .replace("http://127.0.0.1:9102", &origin),
+    )
+    .unwrap();
+    let imports = server.imports_dir().unwrap();
+    fs::write(
+        imports.join(format!("{WA1_BATCH}.xml")),
+        include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-import.xml"
+        ),
+    )
+    .unwrap();
+    for record in ["masters_check", "masters_doubt"] {
+        fs::write(imports.join(format!("{WA1_BATCH}.{record}.json")), DOUBT).unwrap();
+    }
+    let line = server
+        .import_ledger()
+        .unwrap()
+        .into_iter()
+        .find(|line| line.batch_id == WA1_BATCH)
+        .unwrap();
+    let post = admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap();
+    let approval = ScriptedApproval::approving();
+    let response = acknowledge(
+        &server,
+        json!({"company_guid":D3_GUID,"batch_id":WA1_BATCH}),
+        approval.clone(),
+    )
+    .await;
+    assert!(
+        response["structuredContent"]["result"]["error"].is_null(),
+        "{response}"
+    );
+    assert_eq!(approval.reviews().len(), 1, "{response}");
+    let review = &approval.reviews()[0];
+    let entries = post
+        .lines()
+        .filter(|line| line.starts_with("Dr ") || line.starts_with("Cr "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        ["Dr 1.00  \"Test Expense B\"", "Cr 1.00  \"Cash\""],
+        "{post}"
+    );
+    for entry in entries {
+        assert!(
+            review.lines().any(|line| line == entry),
+            "{entry}: {review}"
+        );
+    }
+    let _ = sent(simulator);
+}
+
 /// A batch of several vouchers with no doubt recorded is refused before any
 /// request: there is nothing to review. (Before batch reviews, slice D2b,
 /// any batch was refused here as `ack_batch_not_posted`.)
@@ -723,6 +826,124 @@ async fn a_batch_step_review_left_pending_is_refused_before_any_request() {
         "{response}"
     );
     assert!(sent(simulator).is_empty());
+}
+
+/// A doubt whose own file cannot be written (#722): the write is made to fail
+/// by a directory standing where the file goes. The check record keeps the
+/// doubt and says why no review can find it, and a review of that doubt is
+/// refused before any request, for each kind. The control is the same doubt
+/// with its file written, whose check record carries no mark; that such a
+/// doubt reads as reviewable is the unit tests' control.
+#[tokio::test]
+async fn a_batch_doubt_whose_own_file_was_not_written_is_refused_before_any_request() {
+    let changed = json!({"state":"posted_under_changed_masters","ledgers":["Cash"]});
+    let step =
+        json!({"before":10,"after":13,"step":3,"reported_created":2,"matches_created":false});
+    for (kind, blocked) in [
+        ("masters", "masters_doubt.json"),
+        ("batch_step", "batch_step_doubt.json"),
+    ] {
+        for write_fails in [true, false] {
+            let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let server = server_at(simulator.address(), directory.path());
+            let line = dispatched_batch(&server);
+            let imports = server.imports_dir().unwrap();
+            server
+                .record_post_checks_pending(&line.batch_id, true)
+                .unwrap();
+            let doubt_path = imports.join(format!("{}.{blocked}", line.batch_id));
+            if write_fails {
+                block(doubt_path.clone());
+            }
+            // In the post's own order: the step verdict, then the masters
+            // verdict, which rewrites the check record around the step.
+            let (step, masters) = if kind == "masters" {
+                (json!({"matches_created":true}), changed.clone())
+            } else {
+                (step.clone(), json!({"state":"unchanged"}))
+            };
+            server.record_batch_step_verdict(&line.batch_id, &step);
+            server.record_masters_verdict_for(&line.batch_id, masters, true);
+            if write_fails {
+                fs::remove_dir_all(&doubt_path).unwrap();
+            }
+            assert_eq!(doubt_path.is_file(), !write_fails, "{kind}");
+            let check: Value = serde_json::from_slice(
+                &fs::read(imports.join(format!("{}.masters_check.json", line.batch_id))).unwrap(),
+            )
+            .unwrap();
+            let verdict = if kind == "masters" {
+                &check
+            } else {
+                &check["batch_step"]
+            };
+            // The verdict recorded is the doubt itself, for either kind.
+            assert_eq!(
+                verdict["state"],
+                if kind == "masters" {
+                    "posted_under_changed_masters"
+                } else {
+                    "unmatched"
+                },
+                "{kind}: {check}"
+            );
+            assert_eq!(
+                verdict["doubt_record"],
+                if write_fails {
+                    json!("unavailable")
+                } else {
+                    Value::Null
+                },
+                "{kind}: {check}"
+            );
+            // Marked or not, the verdict is still doubt.
+            let expected = if kind == "masters" {
+                "posted_under_changed_masters"
+            } else {
+                "batch_step_unconfirmed"
+            };
+            assert_eq!(
+                post_doubt(
+                    read_masters_check(&imports, &line.batch_id).as_ref(),
+                    line.vouchers.len()
+                )
+                .map(|(code, _)| code),
+                Some(expected),
+                "{kind}: {check}"
+            );
+            if !write_fails {
+                continue;
+            }
+            let response = acknowledge(
+                &server,
+                json!({"company_guid":GUID,"batch_id":line.batch_id,"doubt":kind}),
+                ScriptedApproval::approving(),
+            )
+            .await;
+            assert_eq!(
+                response["structuredContent"]["result"]["error"]["code"],
+                "ack_doubt_record_unavailable",
+                "{kind}: {response}"
+            );
+            assert!(sent(simulator).is_empty(), "{kind}: no request");
+        }
+    }
+}
+
+/// One voucher's doubt recorded only in the check record is refused after
+/// the read, as every single-voucher refusal is, and never as no doubt.
+#[tokio::test]
+async fn a_doubt_recorded_only_in_the_check_record_is_refused() {
+    let marked = br#"{"state":"posted_under_changed_masters","ledgers":["Cash"],"doubt_record":"unavailable"}"#;
+    refused(
+        reconcile_readback(),
+        clean(),
+        Some(marked),
+        None,
+        "ack_doubt_record_unavailable",
+    )
+    .await;
 }
 
 /// The live batch post of slice D3 (a licensed TallyPrime 7.1 Silver lab, 50
@@ -849,6 +1070,8 @@ async fn a_review_of_the_captured_50_voucher_batch_binds_every_voucher() {
         "{response}"
     );
     assert_eq!(approval.reviews().len(), 1, "{response}");
+    // The dialog's title names the fifty vouchers it shows (#746).
+    assert_eq!(approval.review_counts(), [50], "{response}");
     let review = &approval.reviews()[0];
     for shown in [
         "Record that you reviewed 50 vouchers in \"BRIDGE AMEND LAB\"",

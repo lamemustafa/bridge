@@ -436,8 +436,13 @@ been observed live on a synthetic Silver 7.1 company, each reading back
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the
-   side that must be bank or cash. Choose **Post voucher** on
-   macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
+   side that must be bank or cash. A batch's dialog shows the same company and
+   endpoint, and summarises the vouchers: their count, types and date range,
+   each ledger's totals, and the overall totals. It does not show any voucher's
+   own date, amounts, entries, narration or reference: equal ledger totals do
+   not prove each voucher is right, so check those before building the batch.
+   Choose **Post voucher** (for a batch,
+   **Post N vouchers**) on macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
    declines on macOS; Return may leave the dialog open. Windows defaults to
    **No**. Long or directionally ambiguous previews are refused; use the
    manual file workflow instead. A desktop session is required.
