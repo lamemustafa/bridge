@@ -303,3 +303,11 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - Lane D's real-book re-run at 86bb1937 against e41d9010: EQUAL on all three clients; CI green on 86bb1937 (Required checks, mutation records, native Windows/macOS). **#713 merged** as 58263156; master's crate tree equals 86bb1937's (3c2ddfb9).
 - E3a re-stack pushed: `lane-e/e3a-stock` @ fa07ed0a (Sonnet review of the merge: none). Its full run first died on a full disk (my build and worker dirs; deleted, ~20G free), and was restarted at 05:51, sharded to `cloud/lane-e-e3a-shards-3`.
 - Next: when the run finishes, merge master into E3a (crate conflicts to the branch side; crate tree unchanged, so the records stay valid), records commit, verify, Sonnet check, push, then open the E3a draft PR (with the stock-part reader's string-literal count). E4 is re-stacked locally on fa07ed0a (3ea7f045), with its gates pending until the disk is free of E3a's run.
+
+## 2026-09-26 07:05 UTC — E3a: a merge error caught before push; E3a full run redone on c49ca0f5
+
+- E3a's full run on fa07ed0a finished (597 run, 592 killed, 5 accepted), and its records were committed as 7f104d39.
+- **An error of mine, caught before any push:** merging origin/master into E3a (e30a52b8), I resolved every crate file to the branch side on the premise that master's crate equalled the E2b head. The check printed two different trees, and I misread them. Master had since taken **#727 (b5039c89, the manifest cap for #662)**, which changes `src/read.rs`, so the resolution dropped it.
+- **Fixed in c49ca0f5.** `read.rs` is now the plain three-way merge (no conflict): E3a's changes plus #727's, identical to #727's own diff. Checked file by file: every crate file differs from master by exactly E3a's own changes, and non-crate files equal master. 347 tests pass (345 plus #727's 2); clippy and fmt clean.
+- The fix changes the crate tree, so the fa07ed0a records no longer apply. E3a's full run is running again on c49ca0f5, sharded to `cloud/lane-e-e3a-shards-4`. Nothing of E3a past fa07ed0a is pushed.
+- Queue note: #662's cap landed via #727 (not this lane). When the after-stack items come up, #662's issue is checked for anything left.
