@@ -63,14 +63,14 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
     // its own type: a post approval is an `ApprovedImport`, a review a
     // `ReviewAcknowledged`, and nothing converts one into the other.
     for call_site in [
-        "approve(preview).await?;\n        Ok(Self {",
-        "approve_review(preview).await?;\n        Ok(Self(()))",
+        "approve(count, preview).await?;\n        Ok(Self {",
+        "approve_review(count, preview).await?;\n        Ok(Self(()))",
     ] {
         if source.matches(call_site).count() != 1 {
             problems.push(format!("expected exactly one call site `{call_site}`"));
         }
     }
-    for call in ["approve(preview)", "approve_review(preview)"] {
+    for call in ["approve(count, preview)", "approve_review(count, preview)"] {
         if source.matches(call).count() != 1 {
             problems.push(format!("`{call}` must be called exactly once"));
         }
@@ -270,10 +270,13 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
             "#[cfg(not(test))]\nuse confirm as approve;",
             "#[cfg(not(debug_assertions))]\nuse confirm as approve;",
         ),
-        source.replace("approve(preview).await?;", "confirm(preview).await?;"),
         source.replace(
-            "approve_review(preview).await?;",
-            "confirm_review(preview).await?;",
+            "approve(count, preview).await?;",
+            "confirm(count, preview).await?;",
+        ),
+        source.replace(
+            "approve_review(count, preview).await?;",
+            "confirm_review(count, preview).await?;",
         ),
         source.replace(
             "#[cfg(not(test))]\nuse confirm_review as approve_review;",
@@ -285,8 +288,8 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
         ),
         // A review answer must never build a post approval.
         source.replace(
-            "approve_review(preview).await?;\n        Ok(Self(()))",
-            "approve(preview).await?;\n        Ok(Self(()))",
+            "approve_review(count, preview).await?;\n        Ok(Self(()))",
+            "approve(count, preview).await?;\n        Ok(Self(()))",
         ),
         format!(
             "{source}\nimpl From<ReviewAcknowledged> for ApprovedImport {{ fn from(_: ReviewAcknowledged) -> Self {{ unreachable!() }} }}\n"
@@ -519,11 +522,11 @@ fn each_dialog_answers_with_its_own_token() {
         source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "show_review_acknowledgement,")),
         source.replace(POST_ENTRY, &post_as_review),
         source.replace(REVIEW_ENTRY, &review_as_post),
-        source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "|_| true,")),
+        source.replace(POST_ENTRY, &POST_ENTRY.replace("show_review,", "|_, _| true,")),
         source.replace(POST_ENTRY, &POST_ENTRY.replace("std::io::stdin()", "&b\"\"[..]")),
         swapped,
         format!(
-            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_| true, std::io::stdin(), std::io::stdout()) }}\n"
+            "{source}\nfn extra() -> bool {{ answer_with_token(POST_TOKEN_PREFIX, |_, _| true, std::io::stdin(), std::io::stdout()) }}\n"
         ),
     ] {
         assert_ne!(broken, source);
@@ -535,14 +538,16 @@ fn each_dialog_answers_with_its_own_token() {
 /// and the parent's stub tests run only on unix. So the four native dialog
 /// functions, `confirm` and `confirm_review`, and the two functions that
 /// decide from the child's answer (`confirm_with`, `confirm_review_with`)
-/// are pinned here verbatim, with the button labels. The file's `cfg`
+/// are pinned here verbatim, with the button labels and the functions that
+/// word each title and the post button (#746). On Windows the post dialog's
+/// title is the only text that says what Yes does. The file's `cfg`
 /// attributes are counted as well: a platform or test split anywhere in it,
 /// such as a `#[cfg(windows)]` twin of a pinned function, must change this
 /// gate. This pins text, not the platform's behaviour.
 const REVIEW_ACK_DIALOG: &str = r#"#[cfg(not(windows))]
-fn show_review_acknowledgement(preview: &str) -> bool {
+fn show_review_acknowledgement(count: VoucherCount, preview: &str) -> bool {
     rfd::MessageDialog::new()
-        .set_title("Bridge — record that you reviewed one voucher")
+        .set_title(review_title(count))
         .set_description(preview)
         .set_level(rfd::MessageLevel::Warning)
         .set_buttons(rfd::MessageButtons::OkCancelCustom(
@@ -554,12 +559,12 @@ fn show_review_acknowledgement(preview: &str) -> bool {
 }"#;
 
 const REVIEW_ACK_DIALOG_WINDOWS: &str = r#"#[cfg(windows)]
-fn show_review_acknowledgement(preview: &str) -> bool {
+fn show_review_acknowledgement(count: VoucherCount, preview: &str) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
     };
     let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
-    let title: Vec<u16> = "Bridge — record that you reviewed this voucher?"
+    let title: Vec<u16> = review_question(count)
         .encode_utf16()
         .chain(Some(0))
         .collect();
@@ -576,33 +581,31 @@ fn show_review_acknowledgement(preview: &str) -> bool {
 }"#;
 
 const POST_DIALOG: &str = r#"#[cfg(not(windows))]
-fn show_review(preview: &str) -> bool {
+fn show_review(count: VoucherCount, preview: &str) -> bool {
+    let (title, button) = post_words(count);
     rfd::MessageDialog::new()
-        .set_title("Bridge — approve one voucher")
+        .set_title(title)
         .set_description(preview)
         .set_level(rfd::MessageLevel::Warning)
         // The Cancel label supplies the native Escape action. Posting requires
         // the explicitly matched positive button; Return may leave this dialog open.
         .set_buttons(rfd::MessageButtons::OkCancelCustom(
             "Cancel".into(),
-            POST_LABEL.into(),
+            button.clone(),
         ))
         .show()
-        == rfd::MessageDialogResult::Custom(POST_LABEL.into())
+        == rfd::MessageDialogResult::Custom(button)
 }"#;
 
 const POST_DIALOG_WINDOWS: &str = r#"#[cfg(windows)]
-fn show_review(preview: &str) -> bool {
+fn show_review(count: VoucherCount, preview: &str) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNOCANCEL,
     };
     // rfd without common-controls-v6 discards custom labels. Use the existing
     // Win32 dependency so No is the default and Escape/close remain Cancel.
     let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
-    let title: Vec<u16> = "Bridge — post this voucher?"
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
+    let title: Vec<u16> = post_question(count).encode_utf16().chain(Some(0)).collect();
     // SAFETY: Both buffers are NUL-terminated and live for the synchronous dialog;
     // no parent HWND is borrowed. No application state is exposed to callbacks.
     unsafe {
@@ -615,11 +618,62 @@ fn show_review(preview: &str) -> bool {
     }
 }"#;
 
-const CONFIRM_WITH: &str = r#"async fn confirm_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
+/// The post button a batch sees (#746): what `show_review` shows and
+/// compares against, so it is pinned with the dialog.
+const POST_WORDS: &str = r#"#[cfg(not(windows))]
+fn post_words(count: VoucherCount) -> (String, String) {
+    match count.batch() {
+        None => ("Bridge — approve one voucher".into(), POST_LABEL.into()),
+        Some(count) => (
+            format!("Bridge — approve {count} vouchers"),
+            format!("Post {count} vouchers"),
+        ),
+    }
+}"#;
+
+/// Each dialog's title for one voucher and for a batch (#746): the review's,
+/// then the Windows review's and the Windows post's questions.
+const REVIEW_TITLE: &str = r#"#[cfg(not(windows))]
+fn review_title(count: VoucherCount) -> String {
+    match count.batch() {
+        None => "Bridge — record that you reviewed one voucher".into(),
+        Some(count) => format!("Bridge — record that you reviewed {count} vouchers"),
+    }
+}"#;
+
+const REVIEW_QUESTION: &str = r#"#[cfg(windows)]
+fn review_question(count: VoucherCount) -> String {
+    match count.batch() {
+        None => "Bridge — record that you reviewed this voucher?".into(),
+        Some(count) => format!("Bridge — record that you reviewed these {count} vouchers?"),
+    }
+}"#;
+
+const POST_QUESTION: &str = r#"#[cfg(windows)]
+fn post_question(count: VoucherCount) -> String {
+    match count.batch() {
+        None => "Bridge — post this voucher?".into(),
+        Some(count) => format!("Bridge — post {count} vouchers?"),
+    }
+}"#;
+
+const CONFIRM_WITH: &str = r#"async fn confirm_with(
+    executable: &std::path::Path,
+    count: VoucherCount,
+    preview: &str,
+) -> Result<(), String> {
     if preview.len() > MAX_PREVIEW_BYTES {
         return Err("import_review_too_large".into());
     }
-    match nonce_bound_dialog(executable, "--confirm-journal", POST_TOKEN_PREFIX, preview).await {
+    match nonce_bound_dialog(
+        executable,
+        "--confirm-journal",
+        POST_TOKEN_PREFIX,
+        count,
+        preview,
+    )
+    .await
+    {
         Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),
         // A person's decline is no token and exit 1: `run_confirmation`
         // returns false. A clean exit without the token is never that; it is
@@ -632,11 +686,23 @@ const CONFIRM_WITH: &str = r#"async fn confirm_with(executable: &std::path::Path
     }
 }"#;
 
-const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(executable: &std::path::Path, preview: &str) -> Result<(), String> {
+const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(
+    executable: &std::path::Path,
+    count: VoucherCount,
+    preview: &str,
+) -> Result<(), String> {
     if preview.len() > MAX_PREVIEW_BYTES {
         return Err("ack_review_too_large".into());
     }
-    match nonce_bound_dialog(executable, "--confirm-review", REVIEW_TOKEN_PREFIX, preview).await {
+    match nonce_bound_dialog(
+        executable,
+        "--confirm-review",
+        REVIEW_TOKEN_PREFIX,
+        count,
+        preview,
+    )
+    .await
+    {
         Ok(answer) if answer.token_matched => Ok(()),
         Ok(_) => Err("ack_review_declined".into()),
         Err(DialogFailure::Unavailable) => Err("ack_review_unavailable".into()),
@@ -644,27 +710,31 @@ const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(executable: &s
     }
 }"#;
 
-const DIALOG_ANSWER_PINS: [(&str, usize); 11] = [
+const DIALOG_ANSWER_PINS: [(&str, usize); 15] = [
     ("const POST_LABEL: &str = \"Post voucher\";", 1),
     (
         "pub(crate) const REVIEW_BUTTON: &str = \"I reviewed it\";",
         1,
     ),
     (POST_DIALOG, 1),
+    (POST_WORDS, 1),
+    (POST_QUESTION, 1),
+    (REVIEW_TITLE, 1),
+    (REVIEW_QUESTION, 1),
     (POST_DIALOG_WINDOWS, 1),
     (REVIEW_ACK_DIALOG, 1),
     (REVIEW_ACK_DIALOG_WINDOWS, 1),
     (
-        "async fn confirm(preview: &str) -> Result<(), String> {
+        "async fn confirm(count: VoucherCount, preview: &str) -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|_| \"import_approval_unavailable\")?;
-    confirm_with(&executable, preview).await
+    confirm_with(&executable, count, preview).await
 }",
         1,
     ),
     (
-        "async fn confirm_review(preview: &str) -> Result<(), String> {
+        "async fn confirm_review(count: VoucherCount, preview: &str) -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|_| \"ack_review_unavailable\")?;
-    confirm_review_with(&executable, preview).await
+    confirm_review_with(&executable, count, preview).await
 }",
         1,
     ),
@@ -679,10 +749,10 @@ const DIALOG_ANSWER_PINS: [(&str, usize); 11] = [
 const CFG_CENSUS: [(&str, usize); 6] = [
     ("#[cfg(test)]", 5),
     ("#[cfg(not(test))]", 2),
-    ("#[cfg(unix)]", 6),
-    ("#[cfg(windows)]", 3),
-    ("#[cfg(not(windows))]", 4),
-    ("cfg", 21),
+    ("#[cfg(unix)]", 7),
+    ("#[cfg(windows)]", 6),
+    ("#[cfg(not(windows))]", 7),
+    ("cfg", 28),
 ];
 
 fn dialog_answer_problems(source: &str) -> Vec<String> {
@@ -726,8 +796,8 @@ fn each_dialog_answers_only_on_its_positive_button() {
     assert_eq!(dialog_answer_problems(&source), Vec::<String>::new());
     for broken in [
         source.replacen(
-            "== rfd::MessageDialogResult::Custom(POST_LABEL.into())",
-            "!= rfd::MessageDialogResult::Custom(POST_LABEL.into())",
+            "== rfd::MessageDialogResult::Custom(button)",
+            "!= rfd::MessageDialogResult::Custom(button)",
             1,
         ),
         source.replacen(
@@ -744,13 +814,13 @@ fn each_dialog_answers_only_on_its_positive_button() {
         source.replacen("\"Post voucher\"", "\"Cancel\"", 1),
         source.replacen("\"I reviewed it\"", "\"Cancel\"", 1),
         source.replacen(
-            "confirm_with(&executable, preview).await\n}",
-            "let _ = (executable, preview);\n    Ok(())\n}",
+            "confirm_with(&executable, count, preview).await\n}",
+            "let _ = (executable, count, preview);\n    Ok(())\n}",
             1,
         ),
         source.replacen(
-            "confirm_review_with(&executable, preview).await\n}",
-            "let _ = (executable, preview);\n    Ok(())\n}",
+            "confirm_review_with(&executable, count, preview).await\n}",
+            "let _ = (executable, count, preview);\n    Ok(())\n}",
             1,
         ),
         source.replacen(
@@ -763,13 +833,12 @@ fn each_dialog_answers_only_on_its_positive_button() {
             "Ok(_) => Ok(()),",
             1,
         ),
-        // rfd post dialog discards its answer: it still computes the comparison, then returns true.
         // A Windows-only twin that approves, beside the real one made
         // non-Windows: every pinned body is still present.
         source.replacen(
             CONFIRM_WITH,
             &format!(
-                "#[cfg(not(windows))]\n{CONFIRM_WITH}\n#[cfg(windows)]\nasync fn confirm_with(_: &std::path::Path, _: &str) -> Result<(), String> {{\n    Ok(())\n}}"
+                "#[cfg(not(windows))]\n{CONFIRM_WITH}\n#[cfg(windows)]\nasync fn confirm_with(_: &std::path::Path, _: VoucherCount, _: &str) -> Result<(), String> {{\n    Ok(())\n}}"
             ),
             1,
         ),
@@ -787,6 +856,35 @@ fn each_dialog_answers_only_on_its_positive_button() {
             1,
         ),
         source.replacen("\"Yes\";", "\"No\";", 1),
+        // A batch's post button reads as the decline, or the dialog shows one
+        // button and compares against another (#746).
+        source.replacen("format!(\"Post {count} vouchers\")", "\"Cancel\".into()", 1),
+        source.replacen("            button.clone(),\n", "            \"Post\".into(),\n", 1),
+        // The Windows post dialog asks the review's question, so Yes reads as
+        // recording a review while it posts (#746).
+        source.replacen(
+            "None => \"Bridge — post this voucher?\".into(),",
+            "None => \"Bridge — record that you reviewed this voucher?\".into(),",
+            1,
+        ),
+        source.replacen(
+            "format!(\"Bridge — post {count} vouchers?\")",
+            "format!(\"Bridge — record that you reviewed these {count} vouchers?\")",
+            1,
+        ),
+        // A review dialog's title reads as approving a post (#746).
+        source.replacen(
+            "format!(\"Bridge — record that you reviewed {count} vouchers\")",
+            "format!(\"Bridge — approve {count} vouchers\")",
+            1,
+        ),
+        // The Windows review dialog asks the post's question (#746).
+        source.replacen(
+            "format!(\"Bridge — record that you reviewed these {count} vouchers?\")",
+            "format!(\"Bridge — post {count} vouchers?\")",
+            1,
+        ),
+        // rfd post dialog discards its answer: it still computes the comparison, then returns true.
         source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
         // Windows post dialog discards its answer: it still computes the comparison, then returns true.
         source.replacen(POST_DIALOG_WINDOWS, &discard_answer(POST_DIALOG_WINDOWS), 1),

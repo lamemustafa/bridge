@@ -16,7 +16,7 @@
 //! party ledger) is caught only if it moves the ALTERID, which is not yet
 //! measured for an edit made in Tally's own screens.
 use super::*;
-use crate::tally::approved_import::{ReviewAcknowledged, REVIEW_BUTTON};
+use crate::tally::approved_import::{ReviewAcknowledged, VoucherCount, REVIEW_BUTTON};
 
 /// Names the fields [`voucher_fingerprint`] covers, and in which order. A new
 /// field is a new version, so a record never matches a fingerprint computed
@@ -83,8 +83,9 @@ impl DoubtKind {
 }
 
 /// A batch's step records, read as [`read_masters_records`] reads the masters
-/// ones: an observed doubt (its own file, `unmatched`), a pending step, no
-/// doubt, or unreadable.
+/// ones: an observed doubt (its own file, `unmatched`), a doubt the check
+/// record holds whose own file is absent, a pending step, no doubt, or
+/// unreadable.
 fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
     let Ok(doubt) = read_masters_record_raw(&batch_step_doubt_path(imports, batch_id)) else {
         return MastersRecord::Unreadable;
@@ -101,15 +102,22 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
             Ok(Some((_, check))) if check["batch_step"]["state"] == MASTERS_CHECK_PENDING => {
                 MastersRecord::Pending
             }
+            Ok(Some((_, check))) if check["batch_step"]["state"] == "unmatched" => {
+                MastersRecord::DoubtRecordUnavailable
+            }
             Ok(_) => MastersRecord::NoDoubt,
         },
     }
 }
 
 /// Which doubt a review is for. Named, it must be one the batch can hold;
-/// unnamed, it is the one observed doubt. Two observed doubts need a name
-/// (`ack_doubt_ambiguous`). With none observed, the kind whose record says
-/// why (pending, unreadable) is chosen, so the refusal names it.
+/// unnamed, it is the one observed doubt. A doubt the check record holds
+/// without its own file is observed too (#722), so two observed doubts need a
+/// name (`ack_doubt_ambiguous`). A check still pending, or a record that
+/// cannot be read, is not observed: this choice is made from the records
+/// before the read, which can finish a pending check. With none observed, the
+/// kind whose record says why (pending, unreadable) is chosen, so the refusal
+/// names it.
 fn select_doubt(
     requested: Option<DoubtKind>,
     states: &[(DoubtKind, MastersRecord)],
@@ -123,7 +131,12 @@ fn select_doubt(
     }
     let observed = states
         .iter()
-        .filter(|(_, state)| matches!(state, MastersRecord::Doubt { .. }))
+        .filter(|(_, state)| {
+            matches!(
+                state,
+                MastersRecord::Doubt { .. } | MastersRecord::DoubtRecordUnavailable
+            )
+        })
         .map(|(kind, _)| *kind)
         .collect::<Vec<_>>();
     match observed.as_slice() {
@@ -147,6 +160,11 @@ enum MastersRecord {
     Doubt {
         raw: Vec<u8>,
     },
+    /// The check record holds a doubt whose own file is absent, so there are
+    /// no doubt bytes to bind a review to (#722). Its write failed, which
+    /// marks the verdict `doubt_record: unavailable`, or the file was lost or
+    /// removed later, which leaves no mark: absence alone decides.
+    DoubtRecordUnavailable,
     Unreadable,
 }
 
@@ -189,6 +207,9 @@ fn read_masters_records(imports: &Path, batch_id: &str) -> MastersRecord {
             Err(()) => MastersRecord::Unreadable,
             Ok(Some((_, check))) if check["state"] == MASTERS_CHECK_PENDING => {
                 MastersRecord::Pending
+            }
+            Ok(Some((_, check))) if check["state"] == "posted_under_changed_masters" => {
+                MastersRecord::DoubtRecordUnavailable
             }
             Ok(_) => MastersRecord::NoDoubt,
         },
@@ -322,6 +343,7 @@ fn admit_review(
             .into())
         }
         MastersRecord::NoDoubt => return Err("ack_no_observed_doubt".into()),
+        MastersRecord::DoubtRecordUnavailable => return Err("ack_doubt_record_unavailable".into()),
     };
     let result = &payload["result"];
     if result["dispatch"]["response_state"] != "response_clean" {
@@ -691,6 +713,11 @@ pub(super) fn operator_review(
     let record = read_masters_record_raw(&masters_ack_path(imports, &line.batch_id));
     let raw = match (masters, &record) {
         (MastersRecord::Doubt { raw }, _) => raw,
+        // A doubt whose own file is absent can take no review (#722). With a
+        // review already recorded, that review reads stale below instead.
+        (MastersRecord::DoubtRecordUnavailable, Ok(None)) => {
+            return Some(json!({"state":"doubt_record_unavailable"}))
+        }
         (_, Ok(None)) => return None,
         // A record whose doubt can no longer be read answers nothing it can
         // be checked against, and says so rather than disappearing.
@@ -729,9 +756,10 @@ pub(super) fn operator_review(
 }
 
 /// `operator_review` for a batch: each kind of doubt reported on its own,
-/// `pending` while that kind's verdict is not recorded, and `null` where no
-/// doubt of that kind is observed: none, or one recorded only in the check
-/// record because its own file was not written. A review covers only the doubt
+/// `pending` while that kind's verdict is not recorded,
+/// `doubt_record_unavailable` where the check record holds a doubt whose own
+/// file is absent (#722; a review already recorded then reads stale), and
+/// `null` where no doubt of that kind is observed. A review covers only the doubt
 /// it names, and only while every voucher it bound is unchanged; a stale
 /// review names the vouchers that changed. `None` when no doubt is observed.
 fn batch_operator_review(
@@ -752,12 +780,19 @@ fn batch_operator_review(
                 json!({"state":"unreadable"})
             }
             // A review whose doubt can no longer be read answers nothing, and
-            // says so rather than disappearing.
-            MastersRecord::Pending | MastersRecord::NoDoubt
+            // says so rather than disappearing: a review record outranks a
+            // doubt file that is now absent.
+            MastersRecord::Pending
+            | MastersRecord::NoDoubt
+            | MastersRecord::DoubtRecordUnavailable
                 if kind.ack_path(imports, &line.batch_id).exists() =>
             {
                 any = true;
                 json!({"state":"stale","covers_doubt":false,"vouchers_unchanged":false})
+            }
+            MastersRecord::DoubtRecordUnavailable => {
+                any = true;
+                json!({"state":"doubt_record_unavailable"})
             }
             MastersRecord::Pending => {
                 any = true;
@@ -883,6 +918,9 @@ impl Server {
                 (_, Some(MastersRecord::NoDoubt)) => {
                     return Err("ack_no_observed_doubt".to_string().into())
                 }
+                (_, Some(MastersRecord::DoubtRecordUnavailable)) => {
+                    return Err("ack_doubt_record_unavailable".to_string().into())
+                }
                 (DoubtKind::BatchStep, Some(MastersRecord::Pending)) => {
                     return Err("ack_check_pending".to_string().into())
                 }
@@ -936,7 +974,12 @@ impl Server {
             })
             .collect::<Vec<_>>();
 
-        let approval = ReviewAcknowledged::confirm(&preview).await.map_err(fail)?;
+        // The dialog's title names how many vouchers it shows (#746).
+        let count = VoucherCount::new(reviewed_rows.len())
+            .ok_or_else(|| fail("ack_readback_not_matched".to_string()))?;
+        let approval = ReviewAcknowledged::confirm(count, &preview)
+            .await
+            .map_err(fail)?;
 
         // What was approved must still be what Tally and the records hold.
         let mut rows_after = None;
