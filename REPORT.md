@@ -295,3 +295,9 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - #760 (the #740 option A design doc) was **closed without merging** at 18:58 UTC. Not reopened.
 - The design text remains on branch `cloud-p/order-independent-seal` (`7dd4086`) and in #740, if it is wanted later.
 - Unchanged: #728 is ready and parked for Lane D; #729 is a draft awaiting the owner's cache-deletion decision.
+
+## 2026-09-26 19:02 UTC: #740 option A adopted
+
+- Correction to the previous entry: Lane D reports that #760 was closed because its design was **implemented and merged as #782** (`62f4a4f0`, 26 Sep 18:58 UTC), with the owner's approval.
+- Lane D also reports the self-checksum question (#740 question 1) was answered in #782 and its reviews: the lost self-checksum is covered by `validate_files` on the merge result under `strict: true`.
+- #728 and #729 stay parked until tomorrow. All lanes are paused for the night.
