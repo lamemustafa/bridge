@@ -507,6 +507,40 @@ every note for them first, and for maintainers second.
 - Once a month, add a "what changed" entry to `CHANGELOG.md`, even in a month
   without a build.
 
+**Choosing the version**
+
+SemVer 2.0.0 defines major, minor and patch only from 1.0.0. Before that,
+"anything MAY change at any time" (rule 4), and its FAQ suggests a minor bump
+for each release. This project applies that as follows:
+
+| What merged since the last release | Before 1.0.0 | From 1.0.0 |
+| --- | --- | --- |
+| Something an existing user relies on was removed or changed (label `breaking`) | minor (0.3.0 → 0.4.0) | major |
+| A new capability (`type:feature`) | minor | minor |
+| Only fixes, rectifications or maintenance (`type:bug`, `type:rectify`, `type:chore`, `dependencies`) | patch (0.3.0 → 0.3.1) | patch |
+| Documentation only | no release | no release |
+
+`node scripts/next-version.mjs` proposes the version:
+- It reads the pull requests squash-merged since the last `mcp-preview-*` or
+  `v*` tag, from `git log`.
+- It classifies each by its own labels, or else by the labels of the issues it
+  closes.
+- It refuses, and names them, while any pull request is unclassified. Label
+  them, or choose the level yourself with `--level`, which the output records.
+
+`--apply` writes the version to `package.json`, `packaging/mcpb/manifest.json`,
+`src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, the `bridge` entry in
+`src-tauri/Cargo.lock`, and the README sentence naming the current version.
+It checks every file first and writes none if one fails. Then:
+
+1. Run `scripts/reseal.sh`, because three of those files are pinned.
+2. Rewrite the draft notes it prints in plain words, in `CHANGELOG.md`.
+3. Commit, and open the version pull request.
+4. After it merges, dispatch the preview release with the matching tag.
+
+`scripts/check-license-metadata.mjs` fails CI when the five version files
+disagree.
+
 **Every release note has four parts, in this order**
 
 1. **What you can do now.** Plain sentences a CA would say, one per change.

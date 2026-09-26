@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const expectedLicense = "Apache-2.0";
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-const [packageText, cargo, tauriText, license, notice, readme, frontendNotices, rustNotices] =
+const [packageText, cargo, tauriText, license, notice, readme, frontendNotices, rustNotices, mcpbText, cargoLock] =
   await Promise.all([
     read("package.json"),
     read("src-tauri/Cargo.toml"),
@@ -15,6 +15,8 @@ const [packageText, cargo, tauriText, license, notice, readme, frontendNotices, 
     read("README.md"),
     read("THIRD_PARTY_LICENSES.txt"),
     read("THIRD_PARTY_LICENSES_RUST.txt"),
+    read("packaging/mcpb/manifest.json"),
+    read("src-tauri/Cargo.lock"),
   ]);
 
 const packageJson = JSON.parse(packageText);
@@ -26,7 +28,12 @@ if (packageJson.license !== expectedLicense) failures.push("package.json license
 if (!/^license = "Apache-2\.0"$/m.test(cargo)) failures.push("Cargo.toml license");
 if (tauri.bundle?.license !== expectedLicense) failures.push("Tauri bundle license");
 if (tauri.bundle?.licenseFile !== "../LICENSE") failures.push("Tauri licenseFile");
-if (!cargoVersion || packageJson.version !== cargoVersion || packageJson.version !== tauri.version) {
+// The release admission check reads package.json and the MCPB manifest, and
+// the bundle smoke check compares the server's CARGO_PKG_VERSION with the
+// manifest; scripts/next-version.mjs writes all five together.
+const lockVersion = cargoLock.match(/\[\[package\]\]\nname = "bridge"\nversion = "([^"]+)"\n/)?.[1];
+const mcpbVersion = JSON.parse(mcpbText).version;
+if (!cargoVersion || [cargoVersion, tauri.version, mcpbVersion, lockVersion].some((version) => version !== packageJson.version)) {
   failures.push("manifest version consistency");
 }
 if (packageJson.version === "0.1.0") failures.push("MIT v0.1.0 version boundary");
