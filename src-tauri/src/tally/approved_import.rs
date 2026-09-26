@@ -553,39 +553,51 @@ pub(crate) mod test_seam {
         assert!(!stub_ran(&script));
     }
 
-    /// Only the token echoing this call's nonce is an answer. An older build
-    /// that ignores `--confirm-review` and exits 0, a process that echoes its
-    /// input, and a token for another nonce are refused; the right token is
-    /// accepted whatever the exit status, which is not an answer.
+    /// Only the token echoing this call's nonce is an answer, and it is
+    /// accepted whatever the exit status. A person's decline is no token and
+    /// exit 1. A clean exit without the token is never that (#689): it is an
+    /// executable that is not this dialog, so it is refused as unavailable:
+    /// an older build that ignores `--confirm-review`, a process that echoes
+    /// its input, a token for another nonce, or the post dialog's token.
     #[cfg(unix)]
     #[tokio::test]
     async fn the_review_is_answered_only_by_the_token_for_its_nonce() {
         let directory = tempfile::tempdir().unwrap();
         let answers = [
-            ("an older build exits 0", "cat > /dev/null; exit 0"),
-            ("an echo of the input", "cat"),
+            (
+                "a person's decline: no token, exit 1",
+                "cat > /dev/null; exit 1",
+                Err("ack_review_declined"),
+            ),
+            (
+                "an older build exits 0",
+                "cat > /dev/null; exit 0",
+                Err("ack_review_unavailable"),
+            ),
+            ("an echo of the input", "cat", Err("ack_review_unavailable")),
             (
                 "a token for another nonce",
                 "cat > /dev/null; echo bridge-review-acknowledged:00000000-0000-4000-8000-000000000000",
+                Err("ack_review_unavailable"),
             ),
             (
                 "the post dialog's token for this nonce",
                 "read nonce; printf 'bridge-post-approved:%s\\n' \"$nonce\"; cat > /dev/null",
+                Err("ack_review_unavailable"),
             ),
             (
                 "the token, but a failing exit",
                 "read nonce; printf 'bridge-review-acknowledged:%s\\n' \"$nonce\"; cat > /dev/null; exit 1",
+                Ok(()),
             ),
         ];
-        for (name, body) in answers {
+        for (name, body, expected) in answers {
+            // The stand-in must have run: a spawn failure is also
+            // `ack_review_unavailable`, and would pass a row without reaching
+            // the clean-exit-without-token arm it is here to pin.
             let script = stub(directory.path(), body);
             let result = super::confirm_review_with(&script, ONE, "Review").await;
-            let expected = if name == "the token, but a failing exit" {
-                Ok(())
-            } else {
-                Err("ack_review_declined".to_string())
-            };
-            assert_eq!(result, expected, "{name}");
+            assert_eq!(result, expected.map_err(str::to_string), "{name}");
             assert!(stub_ran(&script), "{name}: the stand-in ran");
         }
         // The control: the token for this call's nonce is accepted.
@@ -867,7 +879,8 @@ async fn confirm_with(
 
 /// The review dialog for a doubted post (#239): its own subprocess mode, so
 /// its title and button never read as approving a post. It is answered by
-/// the token alone, as the post dialog is by the token and a clean exit.
+/// the token alone, as the post dialog is by the token and a clean exit; a
+/// clean exit without the token is unavailable, as the post dialog's is.
 async fn confirm_review(count: VoucherCount, preview: &str) -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|_| "ack_review_unavailable")?;
     confirm_review_with(&executable, count, preview).await
@@ -891,6 +904,11 @@ async fn confirm_review_with(
     .await
     {
         Ok(answer) if answer.token_matched => Ok(()),
+        // A person's decline is no token and exit 1: `run_review_confirmation`
+        // returns false. A clean exit without the token is never that; it is
+        // an executable that is not this dialog, such as one ignoring the
+        // flag (#689).
+        Ok(answer) if answer.exited_cleanly => Err("ack_review_unavailable".into()),
         Ok(_) => Err("ack_review_declined".into()),
         Err(DialogFailure::Unavailable) => Err("ack_review_unavailable".into()),
         Err(DialogFailure::TimedOut) => Err("ack_review_timed_out".into()),

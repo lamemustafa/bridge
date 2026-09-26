@@ -704,6 +704,11 @@ const CONFIRM_REVIEW_WITH: &str = r#"async fn confirm_review_with(
     .await
     {
         Ok(answer) if answer.token_matched => Ok(()),
+        // A person's decline is no token and exit 1: `run_review_confirmation`
+        // returns false. A clean exit without the token is never that; it is
+        // an executable that is not this dialog, such as one ignoring the
+        // flag (#689).
+        Ok(answer) if answer.exited_cleanly => Err("ack_review_unavailable".into()),
         Ok(_) => Err("ack_review_declined".into()),
         Err(DialogFailure::Unavailable) => Err("ack_review_unavailable".into()),
         Err(DialogFailure::TimedOut) => Err("ack_review_timed_out".into()),
@@ -852,6 +857,21 @@ fn each_dialog_answers_only_on_its_positive_button() {
                 "        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
                 "        Ok(answer) if answer.exited_cleanly => Ok(()),\n        Ok(answer) if answer.token_matched && answer.exited_cleanly => Ok(()),",
                 1,
+            ),
+            1,
+        ),
+        // The review dialog's clean-exit arm (#689) turned into an approval.
+        source.replacen(
+            "Ok(answer) if answer.exited_cleanly => Err(\"ack_review_unavailable\".into()),",
+            "Ok(answer) if answer.exited_cleanly => Ok(()),",
+            1,
+        ),
+        // A Windows-only review twin that acknowledges, beside the real one
+        // made non-Windows.
+        source.replacen(
+            CONFIRM_REVIEW_WITH,
+            &format!(
+                "#[cfg(not(windows))]\n{CONFIRM_REVIEW_WITH}\n#[cfg(windows)]\nasync fn confirm_review_with(_: &std::path::Path, _: &str) -> Result<(), String> {{\n    Ok(())\n}}"
             ),
             1,
         ),
