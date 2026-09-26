@@ -1538,9 +1538,9 @@ fn split_read_checks(
 }
 
 /// #680: the carry-forward #494 added, driven through the reader. A 4-day
-/// window is refused, then its left 2-day half is: the right 2-day half is at
-/// least a span already refused on this call, so it is split without being
-/// sent, and all four days are read singly, in date order.
+/// window is refused, and so is its left 2-day half. The right 2-day half is
+/// as wide as a span already refused on this call, so it is split without
+/// being sent, and all four days are read singly, in date order.
 #[tokio::test]
 async fn a_sibling_as_wide_as_a_refused_part_is_split_without_being_sent() {
     let shape = VoucherReadShape::ImportVerification;
