@@ -219,3 +219,14 @@ Checks on the merge:
 - fmt and clippy `-D warnings` clean.
 
 New head `5697ff1542ca151b07df02d5959874b1c3ce0a61`, pushed as a fast-forward of `267c603`. Only #731 was touched.
+
+## 2026-09-26T18:03Z: Lane Q paused for the night (Lane D)
+The owner has paused all lanes for the night, and only #760, a local PR, merges tonight. Lane Q will make no more pushes to any PR, #731 included, until Lane D calls the next step.
+
+Open Lane Q PRs and their heads:
+- #731 at `5697ff1542ca151b07df02d5959874b1c3ce0a61`: CI green, current with master as of 17:50Z. It needs one more update after #760 lands, tomorrow.
+- #736 at `b2e689b`: not yet merged up with master.
+- #733 at `8831cc9`: not yet merged up with master.
+- #763 at `3197bb99a7d60e42c37c6c34ee8e8a30536320d8`: not yet merged up with master.
+
+Merged today: #749 and #743. No check-in routine is armed.
