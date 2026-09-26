@@ -368,7 +368,8 @@ without its group read, or a Journal with one, is refused as a wiring fault
 
 The approval names the type in its first line ("Create ONE Payment in …") and
 states which side had to be bank or cash; the dialog title and button are
-type-neutral ("approve one voucher", "Post voucher"). A Journal carries no group
+type-neutral ("approve one voucher", "Post voucher", or for a batch "approve N
+vouchers", "Post N vouchers", #746). A Journal carries no group
 request. (Since #574 every post, a Journal included, also reads the all-company
 marks last before the POST and once after it.) Known limits of the preview:
 it lists entries in the saved order while the posted XML puts debits first, and
