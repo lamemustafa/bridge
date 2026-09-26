@@ -939,6 +939,34 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
     )
     .expect("paired captured source establishes absence of the new candidate");
 
+    // bridge#626: a ledger added since approval that folds equal to a named one
+    // refuses the queued post. The catalogue is a test-local rewrite of the
+    // capture, an unrelated ledger renamed `Cash` plus CR LF, and no evidence
+    // of Tally behaviour. The named ledgers' binding is unchanged, so only the
+    // twin check can refuse it.
+    assert_eq!(
+        catalogue.matches("WR2 Sales").count(),
+        2,
+        "name and NAME.LIST"
+    );
+    let twinned = catalogue.replace("WR2 Sales", "Cash&#13;&#10;");
+    let error = recheck_import_admission(
+        &absent,
+        company_guid,
+        "WR2 Unicode Lab",
+        &captured,
+        &captured,
+        &twinned,
+        None,
+        &single_currency,
+        &ledger_binding,
+    )
+    .expect_err("a folded twin added since approval must refuse the queued post");
+    assert!(matches!(
+        error.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::LedgerFoldedTwin)
+    ));
+
     // A bank voucher is classified from the group collection read beside the
     // catalogue. Without that read the queue refuses rather than post on half
     // a check, and a Journal that somehow carries one is a wiring fault too.
@@ -1480,6 +1508,21 @@ fn a_masters_doubt_after_the_post_downgrades_a_clean_verified_post() {
     assert_eq!(
         clear["dispatch"]["state"], "previous_attempt_reconciled",
         "{clear}"
+    );
+}
+
+/// bridge#626 slice 1 changes no post code: this pins the refusal that already
+/// applies to a ledger name ending in CR LF. Such a name can now be built and
+/// imported from the file, but the native dialog cannot yet show it so that an
+/// operator can tell it from its twin; slice 2 changes that, and this test.
+#[test]
+fn native_preview_refuses_a_ledger_name_ending_in_a_line_break() {
+    let (mut line, endpoint) = batch();
+    line.vouchers[0].entries[0].ledger.push_str("\r\n");
+    refresh_batch_sha256(&mut line);
+    assert_eq!(
+        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        "import_review_layout_text"
     );
 }
 
