@@ -284,3 +284,11 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 
 - Lane D holds #713 on the independent review's narrowed P1: a flagged row whose money line is `below` the threshold keeps its at-or-over title, its clause tags and its place in the at-or-over count. The reference is fixed first (row stays listed with a true title, drops the statutory tags, leaves the at-or-over count, a separate count reconciles), then goldens and port note regenerate. This lane ports it when it lands on `lane-e/e2b-hvr`, then E2b full run, records, fresh review.
 - A container restart killed E3a's full run on 16fb0f06 after shard 1 (148 killed, pushed). Worktrees rebuilt from origin; shards 2–4 rerunning. These records will be superseded once E2b changes again (E3a must re-stack), but the run is not interrupted.
+
+## 2026-09-26 04:45 UTC — E2b proven-under port pushed (d1f4c226); full run started
+
+- Lane D pushed 02d3c2fd: port note section "A row proven under the threshold" and all three goldens regenerated at reference e41d9010.
+- Ported in ca23ea7c (`Row::over`/`line_total`; split at-or-over count and new `_party_side_over_line_below_count`, both grains; ledger-true title for a proven-under day row). Failing first: at 02d3c2fd `every_edge_book_matches_the_reference` fails; with the port all 342 pass.
+- Opus (400 random balanced books; counts always partition the old count; output otherwise byte-identical) and Sonnet: no P1. Opus's P2 test gaps fixed in d1f4c226 (unidentified receipt proven under in both modes). Sonnet's P2 (no golden exercises bank/receipt/unidentified proven-under or multi-voucher lines) passed to Lane D on #713. Sonnet pre-push check: none.
+- Mutations: E2B2-02/35 re-pointed, E2B2-40..44 added; all 44 E2B2 killed (sampled). Pushed `lane-e/e2b-hvr` @ d1f4c226. E2b full run started, sharded to `cloud/lane-e-e2b-shards-3`.
+- E3a's full run on 16fb0f06 finished (all 4 shards on `cloud/lane-e-e3a-shards-2`) but is superseded by this E2b change; its records are not pushed. E3a and E4 re-stack after E2b's records.
