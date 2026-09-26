@@ -1950,6 +1950,37 @@ fn a_batch_keeps_its_masters_and_step_verdicts_independently() {
     );
 }
 
+/// A step Bridge never observed is doubt, never a match: the after-snapshot
+/// unreadable (no step at all), Tally's CREATED unreadable (a null
+/// `matches_created`), the field absent, or a mark that went backwards.
+#[test]
+fn a_step_that_was_never_observed_to_match_is_recorded_as_doubt() {
+    for step in [
+        Value::Null,
+        json!({"before":10,"after":12,"step":2,"reported_created":null,"matches_created":null}),
+        json!({"before":10,"after":12,"step":2,"reported_created":2}),
+        json!({"before":12,"after":10,"step":null,"reported_created":2,"matches_created":false}),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = records_server(directory.path());
+        server.record_post_checks_pending("batch-a", true).unwrap();
+        server.record_batch_step_verdict("batch-a", &step);
+        let imports = server.imports_dir().unwrap();
+        let doubt: Value = serde_json::from_slice(
+            &fs::read(super::super::batch_step_doubt_path(&imports, "batch-a")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(doubt["state"], "unmatched", "{step}: {doubt}");
+        let recorded =
+            server.record_masters_verdict_for("batch-a", json!({"state":"unchanged"}), true);
+        assert_eq!(
+            post_doubt(Some(&recorded), 2).map(|(code, _)| code),
+            Some("batch_step_unconfirmed"),
+            "{step}: {recorded}"
+        );
+    }
+}
+
 /// A step doubt, once observed, is never cleared by a later matched verdict.
 #[test]
 fn an_observed_step_doubt_outlives_a_later_verdict() {
