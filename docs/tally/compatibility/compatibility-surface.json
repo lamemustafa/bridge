@@ -103,7 +103,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "a91ac35c2bef17c40a11d928b38a555192227b64c85b98ac265e07b07b8f2525"
+      "sha256": "40ebc1c07130b1a4eea6bd4eab99d93f0ad8c67f9a37fb3a1520e1c7572c9bd6"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -151,11 +151,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "1e4568e1b5374ff04960330918d615ed3454f74e307c0a97ffe812b9d4da3a83"
+      "sha256": "ac2dd86869e6f2a1fef36c950af6963bd458a923881b2c90bdf53f9a7233302e"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "e9b02e6cced41cb624c9fe1715f43eec67b3cabde2d48ff8ef64dbf4ee36d03d"
+      "sha256": "a9121654739b3b59f5479296c5fa22b045f504471d19d7886d9552db2f987347"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/Cargo.toml",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "8e4b0a658cd8d00baa2f52cd8de4021ee3479044f2accc8204124608ba473672"
+  "manifest_sha256": "51f430061b775b56565ca1a9a46443a9144f8de30d175527d343e83a4fa20cad"
 }
