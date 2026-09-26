@@ -1,7 +1,7 @@
 use bridge_tally_protocol::{
     decode_tally_xml_response_bytes_limited, parse_native_group_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence, ExpectedTallyTextEncoding,
-    ParsedSourceIdentityKind,
+    NativeCollectionError, ParsedSourceIdentityKind,
 };
 use sha2::{Digest, Sha256};
 
@@ -88,4 +88,37 @@ fn zero_entry_voucher_is_preserved_as_a_supported_shape() {
     assert_eq!(parsed.records.len(), 1);
     assert_eq!(parsed.records[0].record.ledger_entry_count, Some(0));
     assert!(parsed.records[0].record.ledger_entries.is_empty());
+}
+
+/// bridge#676: the group parser shares the voucher-type parser's typed
+/// refusals. A captured group list read for another company binds no row.
+#[test]
+fn a_group_list_of_another_company_is_refused_as_an_identity_mismatch() {
+    let xml = decode_utf16le(GROUPS_WITH_IDENTITY);
+    assert_eq!(
+        parse_native_group_source_records_with_evidence(
+            &xml,
+            "00000000-0000-0000-0000-000000000000"
+        )
+        .expect_err("no group row carries this company's prefix"),
+        NativeCollectionError::CompanyIdentityMismatch
+    );
+}
+
+/// bridge#676 review: a group list cut off inside its first row, right after
+/// the row's GUID, ends inside the group row parser. That is the response's
+/// fault, not the row's.
+#[test]
+fn a_group_list_cut_off_inside_a_row_is_malformed_not_the_row() {
+    let xml = decode_utf16le(GROUPS_WITH_IDENTITY);
+    let end = xml.find("</GUID>").unwrap() + "</GUID>".len();
+    assert!(
+        xml[..end].contains("<GROUP NAME="),
+        "the cut is inside a group row"
+    );
+    assert_eq!(
+        parse_native_group_source_records_with_evidence(&xml[..end], COMPANY_GUID)
+            .expect_err("a group list cut inside its first row is refused"),
+        NativeCollectionError::MalformedResponse
+    );
 }

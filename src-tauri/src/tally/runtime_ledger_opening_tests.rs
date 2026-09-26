@@ -203,6 +203,7 @@ async fn all_ledger_openings_probe_before_export_even_with_a_stale_licensed_cach
                     &identity,
                     scoped.then(|| TallyDate::parse("20260815").unwrap()),
                     false,
+                    LedgerCurrencyGate::None,
                 )
                 .await
         });

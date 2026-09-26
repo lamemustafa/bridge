@@ -7,6 +7,12 @@ use std::io::BufRead;
 // Bound individual records, not append-only journal history.
 pub(super) const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
 
+/// The most vouchers one native post may send, and so the most REMOTEIDs one
+/// dispatch intent may record: the writer refuses more and the reader admits
+/// no more. Imports of 50 were measured on the raw gateway (protocol reference
+/// §11c.5, PARTIAL); through Bridge's own post path it is not yet measured.
+pub(super) const MAX_BATCH_POST_VOUCHERS: usize = 50;
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum StatusKind {
@@ -32,6 +38,13 @@ pub(in crate::agent) struct StatusRecord {
     /// (bridge#579). Written with the dispatch intent, before the POST.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_remote_id: Option<String>,
+    /// The REMOTEIDs a native batch post sends, one per voucher, in order.
+    /// Written with a batch's dispatch intent, before the POST, and never
+    /// beside `native_remote_id`. A binary older than this field refuses a
+    /// journal holding one (`deny_unknown_fields`): loudly, never by
+    /// skipping a record of what was sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_remote_ids: Option<Vec<String>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -65,6 +78,7 @@ impl StatusRecord {
             response: None,
             native_request_sha256: Some(request_sha256),
             native_remote_id: Some(remote_id.hyphenated().to_string()),
+            native_remote_ids: None,
         }
     }
     /// The dispatch intent of one native post, bound to the request it sends:
@@ -74,7 +88,21 @@ impl StatusRecord {
         batch: &ImportLedgerLine,
         request: &super::post::NativePostRequest,
     ) -> Self {
-        Self::dispatch_native(batch, request.request_sha256.clone(), request.remote_id)
+        match request.remote_ids.as_slice() {
+            // One voucher keeps the single-id shape, so a journal written by
+            // a one-voucher post stays readable by an older binary.
+            [remote_id] => Self::dispatch_native(batch, request.request_sha256.clone(), *remote_id),
+            remote_ids => Self {
+                native_remote_id: None,
+                native_remote_ids: Some(
+                    remote_ids
+                        .iter()
+                        .map(|remote_id| remote_id.hyphenated().to_string())
+                        .collect(),
+                ),
+                ..Self::dispatch_native(batch, request.request_sha256.clone(), Uuid::nil())
+            },
+        }
     }
 
     pub(super) fn response(batch: &ImportLedgerLine, response: DispatchResponse) -> Self {
@@ -86,6 +114,7 @@ impl StatusRecord {
             response: Some(response),
             native_request_sha256: None,
             native_remote_id: None,
+            native_remote_ids: None,
         }
     }
 }
@@ -100,6 +129,7 @@ impl From<&ImportLedgerLine> for StatusRecord {
             response: None,
             native_request_sha256: None,
             native_remote_id: None,
+            native_remote_ids: None,
         }
     }
 }
@@ -242,14 +272,32 @@ pub(super) fn find_batch_id_by_sha256(
     }
 }
 
-/// Whether any dispatch intent in the journal already records `remote_id`.
+/// A REMOTEID as the journal records it: a canonical, lower-case, hyphenated
+/// UUID that is not nil.
+fn is_canonical_remote_id(remote_id: &str) -> bool {
+    Uuid::parse_str(remote_id)
+        .is_ok_and(|id| !id.is_nil() && id.hyphenated().to_string() == remote_id)
+}
+
+/// Whether any dispatch intent in the journal already records any of
+/// `remote_ids`, as a single post's REMOTEID or as one of a batch's.
 /// The whole journal is admitted on the way, as for every other read.
-pub(super) fn remote_id_recorded(reader: impl BufRead, remote_id: Uuid) -> Result<bool, String> {
-    let wanted = remote_id.hyphenated().to_string();
+pub(super) fn remote_ids_recorded(
+    reader: impl BufRead,
+    remote_ids: &[Uuid],
+) -> Result<bool, String> {
+    let wanted = remote_ids
+        .iter()
+        .map(|remote_id| remote_id.hyphenated().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
     let mut recorded = false;
     scan_records(reader, |record, _| {
         if let Record::Status(update) = record {
-            recorded |= update.native_remote_id.as_deref() == Some(wanted.as_str());
+            recorded |= update
+                .native_remote_id
+                .iter()
+                .chain(update.native_remote_ids.iter().flatten())
+                .any(|recorded_id| wanted.contains(recorded_id));
         }
     })?;
     Ok(recorded)
@@ -262,7 +310,8 @@ fn scan_records(
     // Compact records must be checked even for unrelated batches. Retain only
     // the latest hash per distinct ID, not every historical voucher payload.
     // Memory therefore still grows with distinct IDs, not with status history.
-    let mut latest: BTreeMap<String, String> = BTreeMap::new();
+    // Each batch's latest hash, with its voucher count for its REMOTEIDs.
+    let mut latest: BTreeMap<String, (String, usize)> = BTreeMap::new();
     let mut dispatched: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut line = Vec::new();
     let mut ordinal = 0_usize;
@@ -274,7 +323,10 @@ fn scan_records(
         let record = if value.get("record_type").is_some() {
             let update: StatusRecord =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
-            if latest.get(&update.batch_id) != Some(&update.batch_sha256) {
+            let Some((batch_sha256, voucher_count)) = latest.get(&update.batch_id) else {
+                return Err("import_ledger_invalid".into());
+            };
+            if *batch_sha256 != update.batch_sha256 {
                 return Err("import_ledger_invalid".into());
             }
             if let Some(hash) = &update.native_request_sha256 {
@@ -288,10 +340,23 @@ fn scan_records(
             // A recorded REMOTEID belongs only to a native dispatch intent,
             // beside its request hash, and must be a canonical UUID.
             if let Some(remote_id) = &update.native_remote_id {
+                if update.native_request_sha256.is_none() || !is_canonical_remote_id(remote_id) {
+                    return Err("import_ledger_invalid".into());
+                }
+            }
+            // A batch's REMOTEIDs follow the same rule, and are distinct, one
+            // per voucher of the batch, at least two (one is `native_remote_id`)
+            // and at most the batch cap.
+            if let Some(remote_ids) = &update.native_remote_ids {
+                let distinct = remote_ids.iter().collect::<std::collections::BTreeSet<_>>();
                 if update.native_request_sha256.is_none()
-                    || Uuid::parse_str(remote_id)
-                        .map(|id| id.is_nil() || id.hyphenated().to_string() != *remote_id)
-                        .unwrap_or(true)
+                    || update.native_remote_id.is_some()
+                    || remote_ids.len() != *voucher_count
+                    || !(2..=MAX_BATCH_POST_VOUCHERS).contains(&remote_ids.len())
+                    || distinct.len() != remote_ids.len()
+                    || !remote_ids
+                        .iter()
+                        .all(|remote_id| is_canonical_remote_id(remote_id))
                 {
                     return Err("import_ledger_invalid".into());
                 }
@@ -325,11 +390,14 @@ fn scan_records(
             let batch: ImportLedgerLine =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
             if dispatched.contains_key(&batch.batch_id)
-                && latest.get(&batch.batch_id) != Some(&batch.sha256)
+                && latest.get(&batch.batch_id).map(|(sha256, _)| sha256) != Some(&batch.sha256)
             {
                 return Err("import_ledger_invalid".into());
             }
-            latest.insert(batch.batch_id.clone(), batch.sha256.clone());
+            latest.insert(
+                batch.batch_id.clone(),
+                (batch.sha256.clone(), batch.vouchers.len()),
+            );
             Record::Batch(Box::new(batch))
         };
         visit(record, VerificationGeneration(ordinal));

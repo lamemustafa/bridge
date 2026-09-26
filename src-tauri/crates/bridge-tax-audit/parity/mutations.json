@@ -4164,8 +4164,8 @@
   "by": "author",
   "what": "the at-or-over count excludes a row exactly at the threshold",
   "file": "src/high_value_register.rs",
-  "from": "let over = rows.values().filter(|d| d.paise >= threshold).count();",
-  "to": "let over = rows.values().filter(|d| d.paise > threshold).count();"
+  "from": "        Ok(if self.paise < threshold {",
+  "to": "        Ok(if self.paise <= threshold {"
  },
  {
   "id": "E2B2-03",
@@ -4428,8 +4428,8 @@
   "by": "author",
   "what": "a row's vouchers' lines are not summed, only the last kept",
   "file": "src/high_value_register.rs",
-  "from": "                        line_total = add(line_total, *line)?;",
-  "to": "                        line_total = *line;"
+  "from": ".try_fold(0, |t, (_, line)| add(t, *line))",
+  "to": ".try_fold(0, |_, (_, line)| Ok(*line))"
  },
  {
   "id": "E2B2-36",
@@ -4462,6 +4462,46 @@
   "file": "src/high_value_register.rs",
   "from": "                Direction::Payment if l.amount_paise < 0 => {",
   "to": "                Direction::Payment => {"
+ },
+ {
+  "id": "E2B2-40",
+  "by": "author",
+  "what": "a row whose line is exactly at the threshold is taken as proven under it",
+  "file": "src/high_value_register.rs",
+  "from": "        } else if self.line_total()? < threshold {",
+  "to": "        } else if self.line_total()? <= threshold {"
+ },
+ {
+  "id": "E2B2-41",
+  "by": "author",
+  "what": "a row over on the party's side only is still counted as at or over",
+  "file": "src/high_value_register.rs",
+  "from": "            Over::PartySideOnly => line_below += 1,",
+  "to": "            Over::PartySideOnly => over += 1,"
+ },
+ {
+  "id": "E2B2-42",
+  "by": "author",
+  "what": "a row proven under the threshold keeps its at-or-over title",
+  "file": "src/high_value_register.rs",
+  "from": "if data.over(row_threshold)? == Over::PartySideOnly {",
+  "to": "if false && data.over(row_threshold)? == Over::PartySideOnly {"
+ },
+ {
+  "id": "E2B2-43",
+  "by": "reviewer-opus",
+  "what": "only a payment row proven under the threshold takes the ledger-true title",
+  "file": "src/high_value_register.rs",
+  "from": "if data.over(row_threshold)? == Over::PartySideOnly {",
+  "to": "if direction == Direction::Payment && data.over(row_threshold)? == Over::PartySideOnly {"
+ },
+ {
+  "id": "E2B2-44",
+  "by": "reviewer-opus",
+  "what": "the proven-under title names cash whatever the row's mode",
+  "file": "src/high_value_register.rs",
+  "from": "                            capitalize(mode_name)\n                        );\n                    }\n                    if ledger.as_str() == UNIDENTIFIED_PARTY {",
+  "to": "                            capitalize(\"cash\")\n                        );\n                    }\n                    if ledger.as_str() == UNIDENTIFIED_PARTY {"
  },
  {
   "id": "E3A-01",

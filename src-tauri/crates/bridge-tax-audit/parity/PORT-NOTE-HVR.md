@@ -60,6 +60,33 @@ Neither regenerated golden has a row that both differs and is the unidentified-p
 order of limit 4 and the unidentified-party limit is stated from the reference's source, not shown
 by a golden.
 
+## A row proven under the threshold (reference commit `e41d9010`)
+
+A later change, from the review of the port: when a row's vouchers' own money line is under the row
+threshold, the row is proven under it for this ledger (the party's money in this mode on those
+vouchers cannot exceed that line), yet it was titled and counted as at or over the threshold.
+
+**The set.** For each (mode, direction, grain) -- both grains -- `line_below` is the set of pairs in
+the at-or-over set (`amount >= row_threshold`) whose lines, summed over the pair's vouchers, are
+under `row_threshold`. With `limit_name` = `s.269ST(a) limit` for cash and `CA-set vouching
+threshold` for bank:
+
+1. `{prefix}_at_or_over_threshold_count`: its value becomes the at-or-over pairs **not** in
+   `line_below`, and its definition becomes
+   `(party, {grain}) pairs at or over the {limit_name} ({row_threshold} paise), counting a pair only when its vouchers' own {mode} {verb} is at or over it too.`
+2. A new figure `{prefix}_party_side_over_line_below_count`, unit `count`, value the size of
+   `line_below`, no evidence, definition
+   `(party, {grain}) pairs whose party side is at or over the {limit_name} ({row_threshold} paise) but whose vouchers' own {mode} {verb} is under it; not counted as at or over.`
+   The two counts always add up to the old count.
+3. A (party, day) finding whose row is in `line_below` (the same as `below` above) keeps its id,
+   clause tags, limits, asks, facts and confidence exactly as before; only its title is replaced by
+   `{Mode} {moved} one party on {date}: the party's side is at or over the {limit_name}, but the {mode} {verb} on these vouchers is below it`
+   (`{Mode}` capitalised, `{date}` ISO), and for the unidentified-party row "one party" then becomes
+   "one unidentified party", as before.
+
+The tags stay on purpose: one person can hold several ledgers, and whether the person's cash that
+day reaches the limit is for the CA to judge.
+
 ## Why the sentences are true (for a reviewer of the port)
 
 - The party's money in this mode on these vouchers can never exceed `line_total`, because both are
@@ -76,3 +103,9 @@ by a golden.
   its cash and its bank row, and one cash receipt row (2025-05-17) differs: three new figures, three
   amount definitions, and three findings' facts and limits.
 - No figure value changes, and no finding is added or removed.
+
+At `e41d9010` (the proven-under change), all three goldens change: each gains the eight
+`*_party_side_over_line_below_count` figures and the eight reworded at-or-over definitions; in
+`synthetic` (2025-04-01) and `hvr_paths` (2025-06-02) the cash payment row is proven under the limit,
+so its at-or-over counts (day and voucher) drop by one, its below counts are one, and its finding's
+title is replaced. No finding is added or removed.

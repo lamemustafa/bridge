@@ -28,6 +28,7 @@ workspace = true
 [dependencies]
 anyhow = "1"
 bridge-tally-primitives = { path = "../bridge-tally-primitives" }
+icu_properties = "2.2"
 quick-xml = { version = "0.41", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"], optional = true }
