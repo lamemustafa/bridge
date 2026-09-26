@@ -30,14 +30,13 @@ pub struct TrialBalanceRead {
 pub struct StatementsRead {
     pub trial_balance: TrialBalanceRead,
     pub derived: crate::reports::statements::DerivedStatements,
-    /// Tally's own Profit and Loss against the derived lines, for a P&L read.
-    pub profit_and_loss_tie: Option<crate::reports::statements::TieOut>,
 }
 
 /// A Trial Balance whose company passed the single-INR admission: every ledger
-/// of a book with one currency master. Only this module constructs it, from
-/// the admission `admit_inr` returned, so a read of a several-currency book can
-/// never become one. The statement derivation accepts nothing else (#692; the
+/// of a book with one currency master. What guarantees that is that only this
+/// module constructs it, in one place, right after `admit_inr` succeeds in the
+/// same bracket; the admission argument records the dependency, and cannot by
+/// itself prove it. A read of a several-currency book can never become one. The statement derivation accepts nothing else (#692; the
 /// currency-scope work in #715 keeps its partial read a different type).
 #[derive(Debug, Clone)]
 pub(crate) struct SingleCurrencyTrialBalance(NativeTrialBalance);
@@ -139,7 +138,7 @@ impl TallyRuntime {
 
     /// Tally's `kind` statement derived from the Trial Balance and group tree.
     /// Tally's own Balance Sheet for the same window gates every result, and for
-    /// a P&L Tally's own Profit and Loss is compared for the report.
+    /// a P&L Tally's own Profit and Loss gates gross and net as well.
     pub(crate) async fn fetch_statements(
         &self,
         config: TallyConfig,
@@ -155,15 +154,11 @@ impl TallyRuntime {
             &sources.trial_balance,
             &sources.groups,
             &sources.balance_sheet,
+            sources.profit_and_loss.as_ref(),
         )?;
-        let profit_and_loss_tie = sources
-            .profit_and_loss
-            .as_ref()
-            .map(|statement| crate::reports::statements::profit_and_loss_tie(&derived, statement));
         Ok(StatementsRead {
             trial_balance,
             derived,
-            profit_and_loss_tie,
         })
     }
 

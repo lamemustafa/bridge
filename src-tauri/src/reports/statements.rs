@@ -15,12 +15,13 @@
 //! - a ledger under Stock-in-Hand carries an amount, since closing stock is
 //!   not derivable from the Trial Balance;
 //! - Tally's own Balance Sheet for the same window does not tie, line for
-//!   line, to the derived one. This is the gate for everything the Trial
-//!   Balance cannot see: stock valued from stock items, or a line such as an
-//!   unadjusted forex difference.
+//!   line, to the derived one. This is the gate for what the Trial Balance
+//!   cannot see as at `to`, such as stock valued from stock items (expected,
+//!   not yet measured on an inventory book).
 //!
-//! Tally's own Profit and Loss, where supplied, is compared line by line and
-//! reported; it gates nothing.
+//! Gross and net are the window's movement, which the Balance Sheet does not
+//! pin: stock held at `from` and gone by `to` could pass it. So where Tally's
+//! own Profit and Loss is supplied, gross and net are gated on it too.
 
 use bridge_tally_core::ExactDecimal;
 use crate::tally::runtime::SingleCurrencyTrialBalance;
@@ -178,14 +179,17 @@ pub struct DerivedStatements {
     pub balance_sheet_profit_and_loss: Established,
     /// Tally's own Balance Sheet against the derived one: the gate.
     pub balance_sheet_tie: TieOut,
+    /// Tally's own Profit and Loss against the derived lines, where supplied:
+    /// the gate for gross and net.
+    pub profit_and_loss_tie: Option<TieOut>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StatementsError {
     #[error("statement_arithmetic_overflow")]
     Arithmetic,
-    /// A row whose four amounts are all present, where opening plus the
-    /// window's debit and credit is not its closing.
+    /// A row where opening plus the window's debit and credit, an empty amount
+    /// taken as zero for this check alone, is not its closing.
     #[error("statement_trial_balance_row_inconsistent")]
     RowInconsistent,
     /// Two ledgers at the Tally root, where only Profit & Loss A/c can sit.
@@ -194,6 +198,9 @@ pub enum StatementsError {
     /// The gate was handed a statement that is not a Balance Sheet.
     #[error("statement_gate_not_a_balance_sheet")]
     GateNotABalanceSheet,
+    /// The P&L gate was handed a statement that is not a Profit and Loss.
+    #[error("statement_gate_not_a_profit_and_loss")]
+    GateNotAProfitAndLoss,
 }
 
 impl StatementsError {
@@ -203,6 +210,7 @@ impl StatementsError {
             Self::RowInconsistent => "statement_trial_balance_row_inconsistent",
             Self::RootLedgerRepeated => "statement_root_ledger_repeated",
             Self::GateNotABalanceSheet => "statement_gate_not_a_balance_sheet",
+            Self::GateNotAProfitAndLoss => "statement_gate_not_a_profit_and_loss",
         }
     }
 }
@@ -215,15 +223,21 @@ enum Placement {
 }
 
 /// Derives both statements and gates every result on `tally_balance_sheet`,
-/// Tally's own Balance Sheet for the same company and window. Nothing in that
+/// Tally's own Balance Sheet for the same company and window, and gross and
+/// net also on `tally_profit_and_loss` where supplied. Nothing in either
 /// response identifies the company (§12a.1); the caller's bracket binds it.
 pub fn derive_statements(
     trial_balance: &SingleCurrencyTrialBalance,
     groups: &[TallyNamedMaster],
     tally_balance_sheet: &NativeStatement,
+    tally_profit_and_loss: Option<&NativeStatement>,
 ) -> Result<DerivedStatements, StatementsError> {
     if tally_balance_sheet.kind != NativeStatementKind::BalanceSheet {
         return Err(StatementsError::GateNotABalanceSheet);
+    }
+    if tally_profit_and_loss.is_some_and(|tally| tally.kind != NativeStatementKind::ProfitAndLoss)
+    {
+        return Err(StatementsError::GateNotAProfitAndLoss);
     }
     let trial_balance = trial_balance.report();
     let index = GroupIndex::build(groups.iter().cloned());
@@ -329,6 +343,9 @@ pub fn derive_statements(
         Some("unclassified_ledger_carries_an_amount")
     } else if stock_ledger_count > 0 {
         Some("closing_stock_not_derivable_from_trial_balance")
+    } else if profit_and_loss_ledger.is_none() {
+        // Tally's carried line then has nothing to tie to; name the cause.
+        Some("profit_and_loss_ledger_not_returned")
     } else {
         None
     };
@@ -367,8 +384,25 @@ pub fn derive_statements(
         },
         None => Established::Established { value },
     };
-    let gross_result = gated(gross);
-    let net_result = gated(net);
+    // Gross and net are gated on Tally's own Profit and Loss too, where supplied.
+    let cost_of_sales = sum_of(&|name| COST_OF_SALES_GROUPS.contains(&name))?;
+    let profit_and_loss_tie =
+        tally_profit_and_loss.map(|tally| tie_lines(&profit_and_loss, None, tally));
+    let profit_and_loss_failures = profit_and_loss_tie
+        .as_ref()
+        .map(|tie| profit_and_loss_gate_failures(tie, &cost_of_sales))
+        .unwrap_or_default();
+    let movement_gated = |value: ExactDecimal| match gated(value) {
+        Established::Established { .. } if !profit_and_loss_failures.is_empty() => {
+            Established::NotEstablished {
+                reason: "tally_profit_and_loss_differs",
+                lines: profit_and_loss_failures.clone(),
+            }
+        }
+        result => result,
+    };
+    let gross_result = movement_gated(gross);
+    let net_result = movement_gated(net);
     let balance_sheet_profit_and_loss = match carried {
         Established::Established { value } => gated(value),
         blocked_carried => match blocked {
@@ -387,6 +421,7 @@ pub fn derive_statements(
         net_result,
         balance_sheet_profit_and_loss,
         balance_sheet_tie,
+        profit_and_loss_tie,
     })
 }
 
@@ -400,14 +435,58 @@ fn gate_failures(tie: &TieOut) -> Vec<String> {
         .filter(|line| match &line.status {
             TieStatus::Matched | TieStatus::MatchedEmptyAsZero => false,
             TieStatus::Differs { .. } => true,
-            TieStatus::NotCompared { .. } => [&line.tally_sub, &line.tally_main]
-                .iter()
-                .any(|amount| matches!(amount, NativeStatementAmount::Present(value) if !value.is_zero())),
+            TieStatus::NotCompared { .. } => carries_an_amount(line),
         })
         .map(|line| line.name.clone())
         .collect();
     failures.extend(tie.derived_only.iter().cloned());
     failures
+}
+
+/// Tally's P&L heading for the trading section, spelled byte for byte as
+/// captured once on licensed 7.1 (the full-year lab capture). It is the one
+/// uncompared line allowed an amount, and only while that amount is exactly
+/// the derived Purchase Accounts and Direct Expenses: the cost of sales with
+/// no stock. Any other spelling is uncompared, and an amount there refuses.
+const COST_OF_SALES_HEADING: &str = "Cost of Sales :";
+const COST_OF_SALES_GROUPS: [&str; 2] = ["Purchase Accounts", "Direct Expenses"];
+
+/// As [`gate_failures`], for Tally's own Profit and Loss, with the one
+/// heading allowed when its amount is the derived cost of sales. A stock line
+/// (Opening or Closing Stock) is uncompared and refuses, and stock also moves
+/// the heading off the derived cost of sales.
+fn profit_and_loss_gate_failures(tie: &TieOut, cost_of_sales: &ExactDecimal) -> Vec<String> {
+    let mut failures: Vec<String> = tie
+        .lines
+        .iter()
+        .filter(|line| match &line.status {
+            TieStatus::Matched | TieStatus::MatchedEmptyAsZero => false,
+            TieStatus::Differs { .. } => true,
+            TieStatus::NotCompared { .. } if !carries_an_amount(line) => false,
+            TieStatus::NotCompared { .. } if line.name == COST_OF_SALES_HEADING => {
+                !single_amount(line).is_some_and(|amount| amount.numeric_eq(cost_of_sales))
+            }
+            TieStatus::NotCompared { .. } => true,
+        })
+        .map(|line| line.name.clone())
+        .collect();
+    failures.extend(tie.derived_only.iter().cloned());
+    failures
+}
+
+fn carries_an_amount(line: &TieLine) -> bool {
+    [&line.tally_sub, &line.tally_main]
+        .iter()
+        .any(|amount| matches!(amount, NativeStatementAmount::Present(value) if !value.is_zero()))
+}
+
+/// The line's amount when exactly one of its two columns is present.
+fn single_amount(line: &TieLine) -> Option<&ExactDecimal> {
+    match (&line.tally_sub, &line.tally_main) {
+        (NativeStatementAmount::Present(value), NativeStatementAmount::Empty)
+        | (NativeStatementAmount::Empty, NativeStatementAmount::Present(value)) => Some(value),
+        _ => None,
+    }
 }
 
 fn place(chain: &bridge_tally_protocol::group_ancestry::AncestryChain) -> Placement {
@@ -501,13 +580,6 @@ pub struct TieOut {
     pub lines: Vec<TieLine>,
     /// Derived lines with a present non-zero amount that no Tally line names.
     pub derived_only: Vec<String>,
-}
-
-/// Compares Tally's own Profit and Loss with the derived P&L lines, for the
-/// report only. `builtin` must be the statement for the same company and
-/// window; nothing in a built-in response can prove that (§12a.1).
-pub fn profit_and_loss_tie(derived: &DerivedStatements, builtin: &NativeStatement) -> TieOut {
-    tie_lines(&derived.profit_and_loss, None, builtin)
 }
 
 fn tie_lines(

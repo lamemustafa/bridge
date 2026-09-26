@@ -202,13 +202,22 @@ too (#692).
     line for line to the derived one (`balance_sheet_gate`). A line that
     differs, a Tally line with an amount nothing derived matches, or a derived
     line Tally does not show, refuses every result as
-    `tally_balance_sheet_differs`, with those lines named.
+    `tally_balance_sheet_differs`, with those lines named;
+  - the Profit & Loss A/c ledger is returned in the Trial Balance.
+- **Reasons** a result is `not_established`: `unclassified_ledger_carries_an_amount`,
+  `closing_stock_not_derivable_from_trial_balance`,
+  `profit_and_loss_ledger_not_returned`, `tally_balance_sheet_differs`, and for
+  gross and net `tally_profit_and_loss_differs`.
 - **Limits.**
-  - The gate is what catches what the Trial Balance cannot see, such as stock
-    valued from stock items or an unadjusted forex difference (#683). No
-    inventory book has been measured; one is expected to refuse.
+  - The gates are what catch what the Trial Balance cannot see, such as stock
+    valued from stock items. No inventory book has been measured; one is
+    expected to refuse.
   - A book with more than one currency master is refused before the Trial
-    Balance is read.
+    Balance is read (measured once on the lab's multi-currency book), so an
+    unadjusted forex difference (#683) never reaches the gate.
+  - A Tally line the derivation has no counterpart for, such as a heading with
+    an amount or a difference in opening balances, refuses the results rather
+    than being guessed at.
   - Tally's own statements carry no company identity; the company, mode and
     book-extent checks around the read are what bind them.
   - The gate has been measured over one full year on one book and one month on
@@ -216,8 +225,17 @@ too (#692).
     window only, and the year's earlier result sits in the Profit & Loss A/c
     ledger's opening; the carried line includes both. A window spanning more
     than one financial year is unmeasured.
-- **`tie_out`** (P&L only) compares Tally's own Profit and Loss by display
-  name, for the report; it gates nothing.
+- **Gross and net** are the window's movement, which the Balance Sheet does
+  not pin: stock held at `from` and gone by `to` could pass it. So
+  `profit_and_loss` also reads Tally's own Profit and Loss and compares it in
+  `tie_out`. Gross and net are refused as `tally_profit_and_loss_differs`
+  unless it ties:
+  - no line differs, and no derived line with an amount is missing from it;
+  - no line of its with an amount is uncompared, except the `Cost of Sales :`
+    heading, spelled exactly so, while its amount is exactly the derived
+    Purchase Accounts plus Direct Expenses (the cost of sales without stock).
+    That allowance was observed once, on one book.
+  - An Opening or Closing Stock line refuses.
 
 ### Ledger-movement opening decision
 

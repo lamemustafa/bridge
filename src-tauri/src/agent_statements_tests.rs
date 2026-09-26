@@ -6,7 +6,10 @@
 //! synthetic companies; the group tree's company GUID is rewritten to the
 //! Trial Balance's so the response binds. Tally's statements are synthetic
 //! text in the captured shape. These tests prove the tool glue: arguments, the
-//! read sequence, the gate's verdict in the payload, and masking. The
+//! gate's verdict in the payload, and masking. The simulator serves `plans()`
+//! in order, so a read the tool skips or reorders fails its response check,
+//! and a missing read stalls `finish()`; `sent == expected` holds by
+//! construction whenever `finish()` succeeds and proves nothing more. The
 //! derivation's figures are proven in `reports::statements`.
 use super::super::*;
 use tally_protocol_simulator::{
@@ -177,6 +180,17 @@ async fn a_balance_sheet_that_does_not_tie_names_the_line_and_establishes_nothin
         assert_eq!(refused["reason"], "tally_balance_sheet_differs");
         assert_eq!(refused["lines"], json!(["Current Assets"]));
     }
+}
+
+#[tokio::test]
+async fn a_masked_refusal_hides_the_lines_it_names() {
+    let (response, sent, expected) =
+        call_with("profit_and_loss", plans("-11026.00", true), Redaction::MaskParties).await;
+    assert_eq!(sent, expected);
+    let refused = &result(&response)["result"]["net_result"];
+    assert_eq!(refused["reason"], "tally_balance_sheet_differs", "{refused}");
+    assert_eq!(refused["lines"].as_array().unwrap().len(), 1);
+    assert_ne!(refused["lines"][0], "Current Assets", "{refused}");
 }
 
 #[tokio::test]

@@ -439,7 +439,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "352e09c3860e44c033ef28f0181c0f6d6bb476d8f704f51d5731df8945b0fcfe"
+      "sha256": "02c5ff09f1e396eec67f5bb0f23650136939f19c243a93553d651a30d05aa954"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -551,7 +551,7 @@
     },
     {
       "path": "src-tauri/src/agent_statements.rs",
-      "sha256": "76945b35d5448899dd58748affd6b3dc6055d49a500686472032608c2b332407"
+      "sha256": "706052c0a775c94562c2285d2c9ff19146c6f6cd74097401d8ace6f0a45067e2"
     },
     {
       "path": "src-tauri/src/agent_tests.rs",
@@ -827,11 +827,11 @@
     },
     {
       "path": "src-tauri/src/reports/statements.rs",
-      "sha256": "728a3be7bccbaba6270282336b356a7c5261353fc1eedcc8b870f172ca9a2b49"
+      "sha256": "6ec2cf8072ab13f7537d90218039693826c832101028d4a3ba63f028fddd589e"
     },
     {
       "path": "src-tauri/src/reports/statements_tests.rs",
-      "sha256": "93bcc2f0f95d281eb41ea52f281ec9cf964356ef873e64dd3e85087d3015e3f1"
+      "sha256": "ce7a99d0c59d771c079ce33dd66a4a3c883636e74003dd7bbfff657e34f5f9b7"
     },
     {
       "path": "src-tauri/src/reports/trial_balance.rs",
@@ -935,7 +935,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime_trial_balance.rs",
-      "sha256": "a08c104792156b0d7cbf7cedb56499175bc7921376a04b8529d6d56513590dca"
+      "sha256": "296287e595895a59934dd2e14125bf5884dd361fc2578beb7f0dea211773216e"
     },
     {
       "path": "src-tauri/src/tally/runtime_trial_balance_tests.rs",
@@ -1138,5 +1138,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "3243c4af40b71fb9cc43b3ec078bd6523f879bfc8abc395e205ee1ab40093f73"
+  "manifest_sha256": "d093ed4fd4f0eef6c823f587651d7834fc82223994fd40713ecdc692733d3f6b"
 }
