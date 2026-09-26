@@ -922,6 +922,19 @@ async fn two_doubts_without_their_files_refuse_before_a_stale_review_can_answer(
     fs::remove_dir_all(&step_doubt).unwrap();
     let masters_doubt = imports.join(format!("{}.masters_doubt.json", line.batch_id));
     assert!(masters_doubt.is_file(), "the masters doubt was written");
+    // The check record holds both doubts: the masters one unmarked, since its
+    // file was written, and the step one marked, since its file was not.
+    let check: Value = serde_json::from_slice(
+        &fs::read(imports.join(format!("{}.masters_check.json", line.batch_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(check["state"], "posted_under_changed_masters", "{check}");
+    assert_eq!(check["doubt_record"], Value::Null, "{check}");
+    assert_eq!(check["batch_step"]["state"], "unmatched", "{check}");
+    assert_eq!(
+        check["batch_step"]["doubt_record"], "unavailable",
+        "{check}"
+    );
     // A review of it recorded, then its doubt file lost.
     fs::write(
         imports.join(format!("{}.masters_ack.json", line.batch_id)),

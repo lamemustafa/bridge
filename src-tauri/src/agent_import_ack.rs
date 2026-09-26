@@ -118,11 +118,11 @@ fn read_step_records(imports: &Path, batch_id: &str) -> MastersRecord {
 /// before the read, which can finish a pending check. Two doubts that are
 /// both held only by the check record are refused here
 /// (`ack_doubt_record_unavailable`): neither can be reviewed, so a name could
-/// not help, and the refusal comes before a review record of either, which is
-/// stale without its doubt, can answer `ack_already_recorded`. With none
-/// observed, the
-/// kind whose record says why (pending, unreadable) is chosen, so the refusal
-/// names it.
+/// not help. Refusing here also means a stale review of the one that would
+/// have been chosen cannot answer the unnamed call with `ack_already_recorded`.
+/// A single chosen doubt's review record is still checked first, as before
+/// #722. With none observed, the kind whose record says why (pending,
+/// unreadable) is chosen, so the refusal names it.
 fn select_doubt(
     requested: Option<DoubtKind>,
     states: &[(DoubtKind, MastersRecord)],
