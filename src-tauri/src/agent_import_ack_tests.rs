@@ -679,6 +679,40 @@ fn dispatched_batch(server: &Server) -> ImportLedgerLine {
     line
 }
 
+/// The review shows each entry of the voucher as the post dialog showed it
+/// for the same voucher (#730): the build's lines, from the post dialog, are
+/// each a line of the review, read back from Tally's capture.
+#[tokio::test]
+async fn the_review_shows_each_entry_as_the_post_dialog_did() {
+    let mut plans = reconcile_readback();
+    plans.extend(reconcile_readback());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (server, args) = doubted(&simulator, directory.path());
+    let line = server
+        .import_ledger()
+        .unwrap()
+        .into_iter()
+        .rfind(|line| line.batch_id == BATCH)
+        .unwrap();
+    let post = admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap();
+    let approval = ScriptedApproval::approving();
+    let response = acknowledge(&server, args, approval.clone()).await;
+    assert_eq!(approval.reviews().len(), 1, "{response}");
+    let review = &approval.reviews()[0];
+    let entries = post
+        .lines()
+        .filter(|line| line.starts_with("Dr ") || line.starts_with("Cr "))
+        .collect::<Vec<_>>();
+    assert_eq!(entries.len(), 2, "{post}");
+    for entry in entries {
+        assert!(
+            review.lines().any(|line| line.trim() == entry),
+            "{entry}: {review}"
+        );
+    }
+}
+
 /// A batch of several vouchers with no doubt recorded is refused before any
 /// request: there is nothing to review. (Before batch reviews, slice D2b,
 /// any batch was refused here as `ack_batch_not_posted`.)

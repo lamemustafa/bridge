@@ -441,9 +441,10 @@ fn render_review_text(
     {
         return Err("ack_review_format_text".into());
     }
-    // Tally signs a debit negative. A debit is shown negated, as the post
-    // dialog showed it, and a credit as it is (#730, the pattern of #721's
-    // batch totals), so a debit with an unexpected sign still shows as it is.
+    // Tally signs a debit negative. A debit is shown negated, in the digits
+    // Tally sent, as the post dialog showed it, and a credit as it is (#730,
+    // the pattern of #721's batch totals), so a debit with an unexpected sign
+    // still shows as it is.
     let entries = row
         .entries
         .iter()
@@ -451,18 +452,11 @@ fn render_review_text(
             let amount = ExactDecimal::parse(entry.amount.clone())
                 .map_err(|_| "ack_readback_not_matched".to_string())?;
             let (side, shown) = if entry.is_deemed_positive.eq_ignore_ascii_case("yes") {
-                let negated = ExactDecimal::zero()
-                    .checked_subtract(&amount)
-                    .map_err(|_| "ack_readback_not_matched".to_string())?;
-                ("Dr", negated)
+                ("Dr", negated_as_written(&amount))
             } else {
-                ("Cr", amount)
+                ("Cr", amount.as_str().to_string())
             };
-            Ok(format!(
-                "{side} {}  {}",
-                shown.as_str(),
-                quoted(&entry.ledger)
-            ))
+            Ok(format!("{side} {shown}  {}", quoted(&entry.ledger)))
         })
         .collect::<Result<Vec<_>, String>>()?
         .join("\n");
@@ -626,6 +620,18 @@ fn batch_review_preview(
 
 /// Which of the post dialog's caps `preview` exceeds: native message boxes
 /// have no scrollable review surface, so a review over any is refused.
+/// `amount` negated without normalising it: `-1.00` reads `1.00`, not `1`,
+/// so the figure keeps the digits Tally sent. A zero keeps its digits and
+/// takes no sign.
+fn negated_as_written(amount: &ExactDecimal) -> String {
+    let text = amount.as_str();
+    match text.strip_prefix('-') {
+        Some(magnitude) => magnitude.to_string(),
+        None if amount.is_zero() => text.to_string(),
+        None => format!("-{text}"),
+    }
+}
+
 fn caps_exceeded(preview: &str) -> Vec<&'static str> {
     let mut exceeded = Vec::new();
     if preview.chars().count() > 1_600 {

@@ -21,7 +21,7 @@ fn doubt() -> Value {
 }
 
 #[test]
-fn the_review_shows_the_doubt_and_the_voucher_as_read() {
+fn the_review_shows_the_doubt_and_the_voucher() {
     let mut voucher = row_json(2, "Paid");
     voucher["amounts"][1]["is_deemed_positive"] = json!("No");
     voucher["amounts"][1]["amount"] = json!("1.00");
@@ -46,23 +46,30 @@ fn the_review_shows_the_doubt_and_the_voucher_as_read() {
     );
 }
 
-/// A debit is shown negated, as the post dialog showed it (#730), so the
-/// person reads the same figure in both dialogs. A debit Tally holds with an
-/// unexpected positive sign is not rescued into looking normal: it shows
-/// negative, as it is. An amount that is not a decimal refuses.
+/// A debit is shown negated, in the digits Tally sent, as the post dialog
+/// showed it (#730), so the person reads the same figure in both dialogs:
+/// `1234.50`, never `1234.5`. A debit Tally holds with an unexpected positive
+/// sign is not rescued into looking normal: it shows negative, as it is. A
+/// zero debit takes no sign, and a credit shows as it is, whatever its sign.
+/// An amount that is not a decimal refuses.
 #[test]
 fn a_debit_reads_as_the_post_dialog_showed_it_and_an_odd_sign_shows_as_it_is() {
-    let mut voucher = row_json(3, "Paid");
+    let mut voucher = row_json(5, "Paid");
     voucher["amounts"][0]["amount"] = json!("-1234.50");
     voucher["amounts"][1]["amount"] = json!("2.00");
     voucher["amounts"][2]["is_deemed_positive"] = json!("No");
     voucher["amounts"][2]["amount"] = json!("1232.50");
+    voucher["amounts"][3]["amount"] = json!("-0.00");
+    voucher["amounts"][4]["is_deemed_positive"] = json!("No");
+    voucher["amounts"][4]["amount"] = json!("-3.10");
     let voucher: ReadVoucher = serde_json::from_value(voucher).unwrap();
     let preview = review_preview(BATCH, MARKER, "Books", &doubt(), &voucher).unwrap();
     for shown in [
         "Dr 1234.50  \"Ledger 0\"",
         "Dr -2.00  \"Ledger 1\"",
         "Cr 1232.50  \"Ledger 2\"",
+        "Dr 0.00  \"Ledger 3\"",
+        "Cr -3.10  \"Ledger 4\"",
     ] {
         assert!(preview.contains(shown), "{shown}: {preview}");
     }
@@ -84,7 +91,7 @@ fn each_review_cap_refuses_on_its_own() {
     let wide_ledgers = |entries: usize| {
         let mut voucher = row(entries, "Paid");
         for (index, entry) in voucher.entries.iter_mut().enumerate() {
-            entry.ledger = format!("{index:02}{}", "L".repeat(83));
+            entry.ledger = format!("{index:02}{}", "L".repeat(85));
         }
         voucher
     };
