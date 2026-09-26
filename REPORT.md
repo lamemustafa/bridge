@@ -318,3 +318,10 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - Sonnet pre-push check of 2ce19df6: none. It confirmed, file by file, that every crate file differs from master by exactly E3a's own patch, and that non-crate files equal master. 347 tests; clippy and fmt clean.
 - **#744 "E3a: port stock"** opened as a draft and subscribed. The stock-part reader's string literals: **24 distinct**, 19 compared against input (2 Tally values, 3 config, 2 part kinds, 12 XML names) and 5 used only to build lookup keys. Real books: pending (local, Lane D).
 - Next: E4. Its local re-stack (3ea7f045, on fa07ed0a) needs master and the new E3a merged in, then gates, a full run and records. Its PR opens only after #744 merges.
+
+## 2026-09-26 09:30 UTC — E4 re-stacked and recorded: `lane-e/e4-party-monthly` @ 1ae8fca5; #744 green
+
+- #744 (E3a, draft) CI is all green on 2ce19df6, with no review threads. It waits on Lane D (real books, review).
+- E4 re-stacked on E3a's head 2ce19df6 (ec130793). Every crate file differs from E3a by exactly E4's own patch, #727's cap is present, non-crate files equal master, and mutations.json is E3a's 597 plus E4-01..35. 351 tests; clippy and fmt clean. The Sonnet review found none; pushed.
+- E4 full run on ec130793 (4 shards on `cloud/lane-e-e4-shards`): **632 run, 627 killed**, 5 accepted survivors; all 35 E4 killed. `--verify`: 632/632. Master moved to 35db3e79 with its crate unchanged since #727. Sonnet pre-push check: none. **Pushed 1ae8fca5.**
+- E4's PR opens after #744 merges (then merge master and re-check the crate tree; a crate change reruns the records).
