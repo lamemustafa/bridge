@@ -270,3 +270,22 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - I **stopped** the hourly re-merge check-in. Last heads: #728 `1c6cc6b`, #729 `53eaa29`, both green at 11:12 UTC. Both will conflict on the two aggregate lines after the next pinned merge, which is expected.
 - **Resolving them later:** merge master, then compare the pin list and claims at stages 1/2/3 of both JSON files. If neither side changed them, take master's generated files, run `scripts/reseal.sh` as its own commit, then `--verify`. The same recipe was used four times today.
 - **Next:** #740 option A, an order-independent seal (per-file hashes stored, aggregate computed by the gate), as a design plus a draft PR. It stays a draft: it changes what the seal stores, and that is the owner's decision (#740 question 1).
+
+## 2026-09-26 11:29 UTC: #740 option A → design, draft PR #760
+
+**Status:** draft [#760](https://github.com/lamemustafa/bridge/pull/760) adds `docs/proposed-order-independent-seal.md`. It is docs-only and not pinned; `reseal.sh --verify` reports current.
+
+**Core of the design:**
+- Store only the per-file hashes (surface and support-manifest schema 2).
+- The gate computes `digest()` with **exactly today's function**, `checksum(domain, surface with manifest_sha256 = "")`. That is what `seal()` stores now, so receipts and attestations stay valid in both directions and nothing is re-signed.
+- `validate_files` (the per-file byte check), the REQUIRED coverage and `MAX_SURFACE_FILES` are unchanged.
+- Same-file edits still conflict on that file's hash line, so a merge can never attest unreviewed bytes.
+- Retired: `seal-surface`, `repoint-matrix`, and later the local merge driver (code-negative).
+
+**Found while designing:** `tools/bridge-tally-live-read` binds receipts to `surface.manifest_sha256` at two sites, and they must switch to `digest()`. It is in the change list.
+
+**Not done (budget):**
+- no implementation;
+- no Sonnet/Opus review of the doc, which is required before #760 leaves draft.
+
+**Needs a decision:** #740 question 1, whether losing the stored self-checksum is acceptable. The implementing PR should follow only after that.
