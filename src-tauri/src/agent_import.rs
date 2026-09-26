@@ -13,7 +13,9 @@ use bridge_tally_core::master_binding::{
     SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
-use bridge_tally_protocol::native_outstandings::parse_native_group_snapshot;
+use bridge_tally_protocol::native_outstandings::{
+    parse_native_group_snapshot, NativeOutstandingsError,
+};
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -1261,10 +1263,21 @@ impl Server {
         let (xml, evidence) = self
             .post_read(identity, native_group_snapshot_read(company_name))
             .await?;
-        let groups = parse_native_group_snapshot(&xml, identity.company_guid()).map_err(|_| {
-            ToolFailure::from("group_export_invalid".to_string())
-                .with_prior_evidence(evidence.clone())
-        })?;
+        let groups =
+            parse_native_group_snapshot(&xml, identity.company_guid()).map_err(|error| {
+                let mut failure = ToolFailure::from("group_export_invalid".to_string())
+                    .with_prior_evidence(evidence.clone());
+                // The snapshot parser already names each refusal with a data-free
+                // code; keep it as the cause instead of dropping it (bridge#676).
+                failure.cause = match error {
+                    NativeOutstandingsError::InvalidResponse(code) => Some(code),
+                    NativeOutstandingsError::TallyReportedFailure => {
+                        Some("group_status_not_success")
+                    }
+                    _ => None,
+                };
+                failure
+            })?;
         Ok((groups, evidence))
     }
 

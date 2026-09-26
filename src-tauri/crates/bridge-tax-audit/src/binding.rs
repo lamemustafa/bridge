@@ -643,6 +643,21 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
             *slot = Some(lbinder.bind_list(&names_at(value, &location)?, &location)?);
         }
     }
+    // `[roles].bank_reconciliation_ledger`, a single name, binds before `tax_ledgers`, as in the
+    // reference's `LEDGER_PATHS`.
+    let bank_reconciliation_ledger = match roles.and_then(|r| r.get("bank_reconciliation_ledger")) {
+        None => None,
+        Some(v) => {
+            let location = "roles.bank_reconciliation_ledger";
+            let name = v.as_str().ok_or_else(|| {
+                AuditError::refused(
+                    BIND_ID_MALFORMED,
+                    format!("{location}: expected a name, got {v}"),
+                )
+            })?;
+            Some(lbinder.bind_one(name, location)?)
+        }
+    };
     if let Some(value) = roles.and_then(|r| r.get("tax_ledgers")) {
         book_keeping_quality.tax_ledgers = Some(match value.as_table() {
             None => crate::TaxLedgers::NotATable,
@@ -928,6 +943,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         cash_groups,
         bank_groups,
         round_off_ledgers,
+        bank_reconciliation_ledger,
         loan_ledgers_configured,
         loans,
         depreciation,
@@ -1133,6 +1149,13 @@ mod tests {
         let err = e.bind(&b).unwrap_err();
         assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
         assert!(format!("{err}").contains("roles.round_off_ledgers"));
+
+        let e = engagement("bank_reconciliation_ledger = \"Current A/c\"\n");
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("roles.bank_reconciliation_ledger"));
+        let e = engagement("bank_reconciliation_ledger = 5\n");
+        assert_eq!(e.bind(&b).unwrap_err().code(), Some(BIND_ID_MALFORMED));
     }
 
     #[test]
