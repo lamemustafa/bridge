@@ -37,7 +37,8 @@ const BATCH_RECORD_VERSION: u32 = 2;
 enum DoubtKind {
     /// The #239 masters check found a ledger now resolving to another master.
     Masters,
-    /// A batch's voucher mark did not move by exactly Tally's CREATED.
+    /// Bridge did not confirm that a batch's voucher mark moved by exactly
+    /// Tally's CREATED.
     BatchStep,
 }
 
