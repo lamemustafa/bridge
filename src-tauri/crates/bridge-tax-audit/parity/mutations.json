@@ -4438,5 +4438,29 @@
   "file": "src/high_value_register.rs",
   "from": "        *slot = (add(slot.0, share)?, add(slot.1, line)?);",
   "to": "        *slot = (share, line);"
+ },
+ {
+  "id": "E2B2-37",
+  "by": "reviewer-opus",
+  "what": "the unidentified row's line is its share, so it never differs",
+  "file": "src/high_value_register.rs",
+  "from": "row.add(v, fallback_total, line)?;",
+  "to": "row.add(v, fallback_total, fallback_total)?;"
+ },
+ {
+  "id": "E2B2-38",
+  "by": "reviewer-opus",
+  "what": "a row is marked when its totals differ, not any voucher",
+  "file": "src/high_value_register.rs",
+  "from": "let differs = data.lines.values().any(|(share, line)| share != line);",
+  "to": "let differs = data.lines.values().map(|(s, _)| *s).sum::<i64>() != data.lines.values().map(|(_, l)| *l).sum::<i64>();"
+ },
+ {
+  "id": "E2B2-39",
+  "by": "reviewer-opus",
+  "what": "a payment's money line counts debits on the mode's ledgers too",
+  "file": "src/high_value_register.rs",
+  "from": "                Direction::Payment if l.amount_paise < 0 => {",
+  "to": "                Direction::Payment => {"
  }
 ]

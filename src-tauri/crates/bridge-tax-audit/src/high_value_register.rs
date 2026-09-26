@@ -1166,10 +1166,10 @@ mod tests {
         // its share, Rs 80,000, differs from its line, the debit only), and g3 (Rs 50,000, share =
         // line). The row (Rs 2.8 lakh) is over the limit; its cash line is Rs 3 lakh, summed per
         // voucher, both g1 vouchers added together.
-        let voucher = |guid: &str, lines: &[(&str, i64)]| Voucher {
+        let voucher = |guid: &str, on: &str, base_type: &str, lines: &[(&str, i64)]| Voucher {
             guid: guid.to_string(),
-            date: TallyDate::parse("20250601").unwrap(),
-            base_type: "Receipt".to_string(),
+            date: TallyDate::parse(on).unwrap(),
+            base_type: base_type.to_string(),
             status: VoucherStatus::Regular,
             lines: lines
                 .iter()
@@ -1188,21 +1188,73 @@ mod tests {
             group_masters: BTreeMap::new(),
             ledgers: BTreeMap::new(),
             vouchers: vec![
-                voucher("g1", &[("Cash", 15_000_000), ("Customer A", -15_000_000)]),
                 voucher(
                     "g1",
+                    "20250601",
+                    "Receipt",
+                    &[("Cash", 15_000_000), ("Customer A", -15_000_000)],
+                ),
+                voucher(
+                    "g1",
+                    "20250601",
+                    "Receipt",
                     &[
                         ("Cash", 10_000_000),
                         ("Cash", -2_000_000),
                         ("Customer A", -8_000_000),
                     ],
                 ),
-                voucher("g3", &[("Cash", 5_000_000), ("Customer A", -5_000_000)]),
+                voucher(
+                    "g3",
+                    "20250601",
+                    "Receipt",
+                    &[("Cash", 5_000_000), ("Customer A", -5_000_000)],
+                ),
+                // Customer B: g4's line is Rs 20,000 over its share and g5's Rs 20,000 under, so
+                // the row's totals agree while each voucher differs.
+                voucher(
+                    "g4",
+                    "20250602",
+                    "Receipt",
+                    &[
+                        ("Cash", 12_000_000),
+                        ("Cash", -2_000_000),
+                        ("Customer B", -10_000_000),
+                    ],
+                ),
+                voucher(
+                    "g5",
+                    "20250602",
+                    "Receipt",
+                    &[
+                        ("Cash", 10_000_000),
+                        ("Bank", 2_000_000),
+                        ("Customer B", -12_000_000),
+                    ],
+                ),
+                // No party: Rs 1.5 lakh paid in cash (and Rs 10,000 of cash taken back) with Rs 1
+                // lakh by bank, all against round-off, so the unidentified row's share (Rs 2.4
+                // lakh) is over the limit while its cash line (Rs 1.5 lakh) is under it.
+                voucher(
+                    "g6",
+                    "20250603",
+                    "Payment",
+                    &[
+                        ("Cash", -15_000_000),
+                        ("Cash", 1_000_000),
+                        ("Bank", -10_000_000),
+                        ("Round Off", 24_000_000),
+                    ],
+                ),
             ],
             tb: BTreeMap::new(),
         };
-        let (cash, bank) = (BTreeSet::from(["Cash".to_string()]), BTreeSet::new());
+        let (cash, bank) = (
+            BTreeSet::from(["Cash".to_string()]),
+            BTreeSet::from(["Bank".to_string()]),
+        );
         let (none, no_types) = (BTreeSet::new(), BTreeMap::new());
+        let round_off = BTreeSet::from(["Round Off".to_string()]);
         let inputs = Inputs {
             cash: &cash,
             bank: &bank,
@@ -1211,7 +1263,7 @@ mod tests {
             s194n_narration_terms: &none,
             ais_rows: &[],
             s194n_recipient_type: None,
-            round_off_ledgers: &none,
+            round_off_ledgers: &round_off,
             counterparty_type_by_ledger: &no_types,
         };
         let r = run(&book, &Rules::vendored().unwrap(), &inputs).unwrap();
@@ -1238,5 +1290,37 @@ mod tests {
             .limits
             .iter()
             .any(|l| l.contains("is below the threshold")));
+
+        let finding_on = |day: &str, what: &str| {
+            let f = r
+                .findings
+                .iter()
+                .find(|f| f.id.contains(&format!("{what}_day_{day}")));
+            f.unwrap_or_else(|| panic!("no {what} finding on {day}"))
+        };
+        let b = finding_on("2025-06-02", "cash_receipt");
+        assert!(
+            b.facts.iter().any(|(k, _)| k == "cash_line"),
+            "each voucher differs"
+        );
+
+        let u = finding_on("2025-06-03", "cash_payment");
+        assert_eq!(
+            figure("cash_payment_day_row_cash_line_"),
+            Some(Value::Int(15_000_000))
+        );
+        assert!(u.facts.iter().any(|(k, _)| k == "cash_line"));
+        let n = u.limits.len();
+        assert_eq!(
+            u.limits[n - 2],
+            "The amount is this party's own side of each voucher, not the voucher's own cash \
+             line. On one or more of the row's vouchers the two differ, so such a voucher carries \
+             other lines as well (such as money moving by bank, a discount or deduction, a \
+             round-off, a loan, a counterparty this register leaves out, several parties sharing \
+             the line, or money moving the other way). The cash credited on these vouchers is \
+             below the threshold, so the cash paid to this party on them is below it too. The \
+             cash credited on these vouchers is shown with this row."
+        );
+        assert!(u.limits[n - 1].starts_with("No party ledger is on this voucher"));
     }
 }
