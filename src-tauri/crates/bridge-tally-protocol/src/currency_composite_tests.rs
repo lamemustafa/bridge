@@ -147,11 +147,25 @@ fn a_rate_not_per_the_foreign_symbol_is_not_a_composite() {
     assert!(!is_currency_composite(&other_per), "{other_per}");
 }
 
+/// Signs are the caller's rule (a voucher entry's), not the shape's: a ledger
+/// balance can pair a foreign and a base amount of opposite signs.
 #[test]
-fn amounts_of_different_signs_are_not_a_composite() {
+fn amounts_of_different_signs_are_still_a_composite_shape() {
     let captured = captured_rated_negative();
     let base_start = captured.find(" = ").unwrap() + " = ".len();
     assert!(captured[base_start..].starts_with('-'));
     let unsigned_base = format!("{}{}", &captured[..base_start], &captured[base_start + 1..]);
-    assert!(!is_currency_composite(&unsigned_base), "{unsigned_base}");
+    assert!(is_currency_composite(&unsigned_base), "{unsigned_base}");
+}
+
+#[test]
+fn a_composite_in_one_currency_is_not_one() {
+    let captured = captured_rated_negative();
+    // The foreign amount and the rate's unit become the base symbol.
+    let one_currency = captured
+        .replacen("-$ ", "-I\u{20b9} ", 1)
+        .replacen("/$", "/I\u{20b9}", 1);
+    assert_ne!(one_currency, captured);
+    assert!(one_currency.starts_with("-I\u{20b9} "), "{one_currency}");
+    assert!(!is_currency_composite(&one_currency), "{one_currency}");
 }

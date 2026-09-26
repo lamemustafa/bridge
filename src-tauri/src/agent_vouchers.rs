@@ -408,7 +408,9 @@ const MAX_WITHHELD_LISTED: usize = 100;
 
 /// The first withheld vouchers, in window order: at most
 /// [`MAX_WITHHELD_LISTED`], and no more than a quarter of the response budget,
-/// as `candidates` are bounded. `withheld_total` stays exact.
+/// as `candidates` are bounded. Like theirs, the quarter counts each entry's
+/// serialized bytes, not the MCP text copy of the payload, which repeats them
+/// escaped. `withheld_total` stays exact.
 fn listed_withheld(withheld: &[Value], response_budget_bytes: usize) -> Vec<Value> {
     let budget = response_budget_bytes / 4;
     let mut used = 0usize;

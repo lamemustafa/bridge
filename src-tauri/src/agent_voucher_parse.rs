@@ -153,7 +153,26 @@ impl CompositePolicy {
     fn withholds(self, amount: &str) -> bool {
         self == Self::Withhold
             && bridge_tally_protocol::currency_composite::is_currency_composite(amount)
+            && composite_signs_agree(amount)
     }
+}
+
+/// A voucher entry's composite carries one sign on both amounts, as every
+/// captured one does; a zero foreign amount (a base-only adjustment) carries
+/// none. The shared classifier does not compare signs, since a ledger balance
+/// can pair opposite ones. Only called on a string it accepted.
+fn composite_signs_agree(composite: &str) -> bool {
+    let Some((foreign, rest)) = composite.split_once(" @ ") else {
+        return false;
+    };
+    let Some((_, base)) = rest.split_once(" = ") else {
+        return false;
+    };
+    let foreign_is_zero = foreign
+        .trim_start_matches('-')
+        .split_once(' ')
+        .is_some_and(|(_, digits)| digits.bytes().all(|b| b == b'0' || b == b'.'));
+    foreign_is_zero || foreign.starts_with('-') == base.starts_with('-')
 }
 
 /// Under [`CompositePolicy::Refuse`] no row is ever withheld: a composite has
@@ -208,8 +227,10 @@ impl WithheldVoucher {
         Self(row)
     }
 
-    /// The row as the date, ledger and voucher-type filters read it: identity,
-    /// type fields and entry ledgers, marked withheld, with no amount.
+    /// The row as the date, ledger and voucher-type filters read it: the parsed
+    /// voucher with each entry cut to its ledger, marked withheld, with no
+    /// amount. The view never leaves the tool: `vouchers` lists a withheld
+    /// voucher by GUID, date, type, number and cause only.
     pub(super) fn filter_view(&self) -> Value {
         self.0.clone()
     }

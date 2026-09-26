@@ -249,7 +249,9 @@ composite, such as `-$ 100.00 @ I₹ 86/$  = -I₹ 8600.00` (#674).
   `vouchers_withheld`, `total` counts `items` only, and `coverage` says what
   was left out.
 - **No amount is read from a composite.** Anything that is neither a plain
-  decimal nor an exact composite still refuses the whole window.
+  decimal nor an exact composite still refuses the whole window. So does a
+  composite whose foreign and base amounts carry opposite signs, unless the
+  foreign amount is zero: a voucher entry's two amounts share one sign.
 - **Every other voucher reader still refuses such a window** (for example
   `voucher_presence`, `ledger_movement`, verify_import and the Bridge app's
   voucher screen), because each of them sums, matches or verifies amounts.

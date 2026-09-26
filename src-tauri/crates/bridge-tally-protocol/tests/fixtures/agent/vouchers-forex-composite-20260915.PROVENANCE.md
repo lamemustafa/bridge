@@ -20,7 +20,7 @@ A live `vouchers` window read of the synthetic several-currency lab book, holdin
 
 - **One voucher.** It is a Sales voucher (ALTERID 18) on a rupee party ledger, entered as `$100 @ 86`, with a bill-wise New Ref.
 - **The composite.** Tally stores `-$ 100.00 @ I₹ 86/$  = -I₹ 8600.00` as the AMOUNT of the party entry and of its bill allocation, and `$ 100.00 @ I₹ 86/$  = I₹ 8600.00` as the AMOUNT of the sales entry.
-- **Elsewhere in the voucher.** A `VATEXPAMOUNT` element carries the composite too; the voucher parser does not read that element.
+- **Elsewhere in the voucher.** Two `VATEXPAMOUNT` elements, one on each entry, carry the entry's composite too; the voucher parser does not read that element.
 - **The failure it reproduces.** Before #674, `vouchers` refused this whole window with `bill_allocation_amount_invalid`.
 
 ## Screening

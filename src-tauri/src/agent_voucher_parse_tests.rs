@@ -1472,3 +1472,67 @@ fn the_captured_request_is_what_vouchers_renders_today() {
         request
     );
 }
+
+/// Synthetic mutation: the captured forex voucher with the party entry's own
+/// AMOUNT (its first composite in the text) replaced by `amount`.
+fn forex_with_party_entry_amount(amount: &str) -> String {
+    let captured = captured_forex_composite_vouchers();
+    let composite = "-$ 100.00 @ I\u{20b9} 86/$  = -I\u{20b9} 8600.00";
+    let at = captured
+        .find(&format!("<AMOUNT>{composite}</AMOUNT>"))
+        .unwrap()
+        + "<AMOUNT>".len();
+    format!(
+        "{}{amount}{}",
+        &captured[..at],
+        &captured[at + composite.len()..]
+    )
+}
+
+#[test]
+fn a_voucher_composite_whose_amounts_differ_in_sign_still_refuses() {
+    // A balance can pair opposite signs, so the shape passes; a voucher entry
+    // cannot, so its window refuses by the entry's amount code.
+    let opposite = "-$ 100.00 @ I\u{20b9} 86/$  = I\u{20b9} 8600.00";
+    assert!(bridge_tally_protocol::currency_composite::is_currency_composite(opposite));
+    let mutated = forex_with_party_entry_amount(opposite);
+    assert_eq!(
+        parse_agent_rows_withholding(&mutated, FOREX_COMPANY_GUID).unwrap_err(),
+        "voucher_amount_invalid"
+    );
+}
+
+#[test]
+fn a_zero_foreign_amount_withholds_whatever_the_base_sign() {
+    // A base-only adjustment: no foreign amount, so no sign to disagree with.
+    for zero in [
+        "$ 0.00 @ I\u{20b9} /$  = -I\u{20b9} 8600.00",
+        "$ 0.00 @ I\u{20b9} /$  = I\u{20b9} 8600.00",
+    ] {
+        let mutated = forex_with_party_entry_amount(zero);
+        let rows = parse_agent_rows_withholding(&mutated, FOREX_COMPANY_GUID).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(withheld_view(&rows[0])["voucher_number"], "1", "{zero}");
+    }
+}
+
+#[test]
+fn a_composite_on_an_entry_with_no_bill_allocation_withholds_or_refuses_by_its_own_code() {
+    // Synthetic mutation: the party entry's bill allocation removed, so the
+    // entry's own AMOUNT is the first composite the parser meets.
+    let captured = captured_forex_composite_vouchers();
+    let start = captured.find("<BILLALLOCATIONS.LIST>\r\n").unwrap();
+    let end = start
+        + captured[start..].find("</BILLALLOCATIONS.LIST>").unwrap()
+        + "</BILLALLOCATIONS.LIST>".len();
+    let entry_only = format!("{}{}", &captured[..start], &captured[end..]);
+    assert!(captured[start..end].contains(" @ "));
+    assert_eq!(entry_only.matches("<BILLALLOCATIONS.LIST").count(), 1);
+    assert_eq!(
+        parse_agent_rows(&entry_only, FOREX_COMPANY_GUID).unwrap_err(),
+        "voucher_amount_invalid"
+    );
+    let rows = parse_agent_rows_withholding(&entry_only, FOREX_COMPANY_GUID).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(withheld_view(&rows[0])["voucher_number"], "1");
+}

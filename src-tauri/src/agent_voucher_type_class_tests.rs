@@ -780,4 +780,58 @@ mod through_the_tool {
             "voucher_type_guid_foreign"
         );
     }
+
+    /// #674: the type selector runs before the withheld vouchers are set
+    /// aside, so a withheld voucher still counts in `voucher_types`. Synthetic
+    /// mutation: the live capture with its first voucher's amounts replaced by
+    /// the composites a live read of the several-currency book captured.
+    #[tokio::test]
+    async fn a_withheld_voucher_still_counts_in_voucher_types() {
+        let mut window = captured_window();
+        let start = window.find("<VOUCHER ").unwrap();
+        let end = start + window[start..].find("</VOUCHER>").unwrap();
+        let mut voucher = window[start..end].to_string();
+        let amounts: Vec<String> = voucher
+            .split("<AMOUNT>")
+            .skip(1)
+            .map(|tail| tail[..tail.find("</AMOUNT>").unwrap()].to_string())
+            .collect();
+        assert!(!amounts.is_empty());
+        for plain in amounts {
+            let composite = if plain.starts_with('-') {
+                "-$ 100.00 @ I\u{20b9} 86/$  = -I\u{20b9} 8600.00"
+            } else {
+                "$ 100.00 @ I\u{20b9} 86/$  = I\u{20b9} 8600.00"
+            };
+            voucher = voucher.replacen(
+                &format!("<AMOUNT>{plain}</AMOUNT>"),
+                &format!("<AMOUNT>{composite}</AMOUNT>"),
+                1,
+            );
+        }
+        window.replace_range(start..end, &voucher);
+        let high_water = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{COMPANY}</GUID><ALTVCHID>3</ALTVCHID><ALTMSTID>224</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
+        let mut plans = vec![company(), status(), company(), status()];
+        for payload in [high_water, window] {
+            plans.extend(bracketed(payload));
+        }
+        let (response, _simulator) = call_on(plans, json!({"voucher_class": "Purchase"})).await;
+        assert_eq!(response["isError"], false, "{response}");
+        let result = &response["structuredContent"]["result"];
+        assert_eq!(result["total"], 2, "{result}");
+        assert_eq!(result["withheld_total"], 1, "{result}");
+        assert_eq!(
+            result["voucher_types"]["included"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|kind| (
+                    kind["name"].as_str().unwrap(),
+                    kind["rows"].as_u64().unwrap()
+                ))
+                .collect::<Vec<_>>(),
+            [("PURCHASE A/C", 2), ("Purchase Local", 1)],
+            "{result}"
+        );
+    }
 }
