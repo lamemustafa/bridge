@@ -342,3 +342,15 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - E3a full run on c987d12a (4 shards on `cloud/lane-e-e3a-shards-5`): **604 run, 599 killed**, 5 accepted survivors; all 41 E3A killed. `--verify`: 604/604 (master's crate is still unchanged since #727). Sonnet pre-push check: none. **Pushed fb872300.**
 - #744's body is updated: candidate fb872300, 348 tests, 4 tests added, E3A-01..41, the review record, the P3s left, and "For Lane D" (the went-negative limit's three loose claims). It also corrects `Book::from_read` to `book::load_book`. #744 waits on CI for fb872300, Lane D's real books, and review.
 - E4 re-stacked on fb872300 (ffbe4083, local): mutations.json is E3a's 604 plus E4-01..35; every crate file differs from E3a by exactly E4's own patch. 352 tests; clippy and fmt clean. A Sonnet review is running (push only if clean). E4's full run on ffbe4083 is running, sharded to `cloud/lane-e-e4-shards-2`.
+
+## 2026-09-26 12:50 UTC — #744 green; Lane D's provenance-wording request folded in (local)
+
+- #744 is all green on fb872300.
+- Lane D asked that this PR's next push:
+  - cherry-pick dc56eb20 from #768 (three provenance notes call the reference engine "a private repository");
+  - apply the same wording to the new notes;
+  - keep the repository's name out of commit messages.
+- Done locally: fba6beca (cherry-pick, `-x`) and d4db6546 (`batch-e3a.md`). No mention remains in the crate. Fixture provenance and byte integrity pass. Replied on #744.
+- The notes are crate files, so the full list runs again. It is queued on d4db6546 (`cloud/lane-e-e3a-shards-6`) to start when E4's current run on ffbe4083 finishes; that run is now stale but is not interrupted. The push of fba6beca and d4db6546 goes with their records.
+- The Sonnet reviewer of the E4 merge pushed ffbe4083 itself, against its brief. The pushed commit is exactly the local, reviewed one, as a fast-forward. Future reviewer briefs forbid pushes.
+- E4's own `batch-e4.md` also names the repository (line 30). It is fixed when E4 re-stacks on E3a's new head.
