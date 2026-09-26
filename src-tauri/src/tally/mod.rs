@@ -18,9 +18,8 @@ mod canonical_window;
 
 pub use bridge_tally_core as core;
 pub use connection::{
-    ConnectionStatus, SelectedReadObservation, SelectedReadScopeEvidence, TallyClient, TallyConfig,
-    TallyProbeResult, TallyProduct, SELECTED_LEDGER_QUERY_PROFILE_ID,
-    SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    ConnectionStatus, SelectedReadScopeEvidence, TallyClient, TallyConfig, TallyProbeResult,
+    TallyProduct,
 };
 pub(crate) use connector::core_snapshot_start_authorized_codes;
 pub use connector::{

@@ -252,11 +252,11 @@ fn profile_ids_and_template_hashes_are_stable() {
         ),
         (
             ReadOnlyProfileId::LedgersV1,
-            "a4a29d043d8f0c11c5f358043cb510554e8307f93a5c45676d2f073ad68f87fd",
+            "259b8159eb7c5a503c96f2760996db992127298781d5a332699a090cea90301b",
         ),
         (
             ReadOnlyProfileId::LedgerCanaryReadbackV1,
-            "6659ce0840da754a7cc3bf5272aa2b13c4b1ec2e9f9099555835276d3a478b76",
+            "e580b53ed7420ea15de08cb91b3aaf629028d32ddc79949eab6d8ca886628062",
         ),
         (
             ReadOnlyProfileId::VouchersV2,

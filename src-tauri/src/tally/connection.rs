@@ -45,13 +45,12 @@ use bridge_tally_protocol::{
         DateBoundaryProfile, OutstandingsError,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
-    parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
+    parse_native_ledger_source_records_with_evidence,
     parse_native_party_ledger_master_records_with_evidence,
-    parse_native_voucher_source_records_with_evidence,
-    parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
-    parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
+    parse_native_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
+    parse_standard_ledger_identity_observation,
     xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
-    TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
+    TallyTextEncoding,
 };
 use bridge_tally_transport::{
     canonical_loopback_origin as transport_canonical_origin, TallyEndpointConfig,
@@ -578,21 +577,6 @@ pub(crate) struct SelectedReadCapabilityObservation {
     pub date_window_verified: bool,
 }
 
-pub const SELECTED_LEDGER_QUERY_PROFILE_ID: &str = BRIDGE_LEDGER_EXPORT_SCHEMA;
-pub const SELECTED_VOUCHER_QUERY_PROFILE_ID: &str = BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelectedReadObservation {
-    /// SHA-256 of the exact HTTP entity bytes dispatched for the selected read.
-    /// Pre-U1 UTF-8 observations and current UTF-16LE observations therefore
-    /// retain one stable meaning even though their wire encodings differ.
-    pub request_sha256: String,
-    /// SHA-256 of the decoded XML re-encoded as UTF-8, not of the wire bytes.
-    pub decoded_response_sha256: String,
-    pub response_encoding: &'static str,
-    pub result_bucket: &'static str,
-}
-
 #[derive(Clone)]
 pub struct TallyClient {
     config: TallyConfig,
@@ -1082,20 +1066,6 @@ impl TallyClient {
         self.record_observed_body_bytes(encoded_bytes);
         self.record_observed_encoding(response.encoding());
         Ok((response.into_text(), encoded_bytes, encoded_sha256))
-    }
-
-    async fn post_xml_with_request_wire_sha256(
-        &self,
-        xml: String,
-    ) -> anyhow::Result<(String, String)> {
-        let response = self.http.post_xml_decoded(xml).await?;
-        let request_sha256 = response
-            .request_body_sha256()
-            .ok_or_else(|| anyhow::anyhow!("Tally POST omitted request wire commitment"))?
-            .to_owned();
-        self.record_observed_body_bytes(response.encoded_bytes());
-        self.record_observed_encoding(response.encoding());
-        Ok((response.into_text(), request_sha256))
     }
 
     #[cfg(feature = "voucher-scan")]
@@ -1818,36 +1788,6 @@ impl TallyClient {
         .map_err(anyhow::Error::from)
     }
 
-    pub async fn qualify_selected_ledgers(
-        &self,
-        company: &str,
-        expected_company_guid: &str,
-    ) -> anyhow::Result<SelectedReadObservation> {
-        let request = tdl_engine::ledgers_request(company);
-        let (xml, request_sha256) = self.post_xml_with_request_wire_sha256(request).await?;
-        let decoded_response_sha256 = sha256_hex(xml.as_bytes());
-        bridge_tally_protocol::validate_exact_selected_export_structure(&xml, "LEDGER")?;
-        let parsed = parse_ledger_source_records_with_evidence(&xml)?;
-        xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
-        verify_selected_company_name(&parsed.evidence, company)?;
-        validate_selected_read_identity_evidence(
-            parsed.records.len(),
-            parsed.evidence.identified_record_count,
-            parsed.evidence.duplicate_identities.len(),
-        )?;
-        validate_selected_ledgers(&parsed.records)?;
-        Ok(SelectedReadObservation {
-            request_sha256,
-            decoded_response_sha256,
-            response_encoding: self.observed_encoding_label()?,
-            result_bucket: if parsed.records.is_empty() {
-                "empty_observed"
-            } else {
-                "non_empty_observed"
-            },
-        })
-    }
-
     pub async fn fetch_vouchers(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -1894,40 +1834,6 @@ impl TallyClient {
             .into_iter()
             .map(|record| record.record)
             .collect())
-    }
-
-    pub async fn qualify_selected_vouchers(
-        &self,
-        company: &str,
-        expected_company_guid: &str,
-        from: &str,
-        to: &str,
-    ) -> anyhow::Result<SelectedReadObservation> {
-        let request = tdl_engine::selected_vouchers_request(company, from, to);
-        let (xml, request_sha256) = self.post_xml_with_request_wire_sha256(request).await?;
-        let decoded_response_sha256 = sha256_hex(xml.as_bytes());
-        bridge_tally_protocol::validate_exact_selected_export_structure(&xml, "VOUCHER")?;
-        let parsed = parse_selected_voucher_source_records_with_evidence(&xml)?;
-        xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
-        verify_selected_company_name(&parsed.evidence, company)?;
-        verify_selected_voucher_window_context(&parsed.evidence, from, to)?;
-        validate_selected_read_identity_evidence(
-            parsed.records.len(),
-            parsed.evidence.identified_record_count,
-            parsed.evidence.duplicate_identities.len(),
-        )?;
-        crate::tally::canonical_window::validate_selected_voucher_window(from, to, &parsed)
-            .map_err(anyhow::Error::new)?;
-        Ok(SelectedReadObservation {
-            request_sha256,
-            decoded_response_sha256,
-            response_encoding: self.observed_encoding_label()?,
-            result_bucket: if parsed.records.is_empty() {
-                "empty_observed"
-            } else {
-                "non_empty_observed"
-            },
-        })
     }
 
     pub(crate) fn reset_observed_body_bytes(&self) {
@@ -1987,17 +1893,6 @@ impl TallyClient {
             state: CapabilityState::Supported,
             confidence: EvidenceConfidence::Observed,
             safe_reason_code: Some(reason.to_string()),
-        }
-    }
-
-    fn observed_encoding_label(&self) -> anyhow::Result<&'static str> {
-        match self.observed_encoding.load(Ordering::Acquire) {
-            ENCODING_UTF8 => Ok("utf8"),
-            ENCODING_UTF8_BOM => Ok("utf8_bom"),
-            ENCODING_UTF16_LE => Ok("utf16le"),
-            ENCODING_UTF16_LE_BOM => Ok("utf16le_bom"),
-            ENCODING_UTF16_BE_BOM => Ok("utf16be_bom"),
-            _ => anyhow::bail!("response_encoding_not_observed"),
         }
     }
 }
@@ -2126,91 +2021,6 @@ fn has_presentation_equivalent_guid_siblings(companies: &[TallyCompany]) -> bool
                     || company.books_from != other.books_from)
         })
     })
-}
-
-fn validate_selected_read_identity_evidence(
-    parsed_record_count: usize,
-    identified_record_count: u64,
-    duplicate_identity_count: usize,
-) -> anyhow::Result<()> {
-    let parsed_record_count = u64::try_from(parsed_record_count)
-        .map_err(|_| anyhow::anyhow!("Selected Tally read exceeded the supported record count"))?;
-    if identified_record_count != parsed_record_count {
-        anyhow::bail!("Selected Tally read omitted stable record identity");
-    }
-    if duplicate_identity_count != 0 {
-        anyhow::bail!("Selected Tally read repeated stable record identity");
-    }
-    Ok(())
-}
-
-fn validate_selected_ledgers(
-    records: &[bridge_tally_protocol::ParsedSourceRecord<TallyLedger>],
-) -> anyhow::Result<()> {
-    let mut names = BTreeSet::new();
-    for source in records {
-        let source_id = source
-            .source_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Selected ledger omitted stable identity"))?;
-        if source.identity_kind.is_none() {
-            anyhow::bail!("Selected ledger omitted identity kind");
-        }
-        bridge_tally_core::SourceRecordId::parse(source_id.clone())?;
-        bridge_tally_core::RawSourceSha256::parse(source.raw_source_sha256.clone())?;
-        if let Some(alter_id) = &source.alter_id {
-            bridge_tally_core::SourceAlterId::parse(alter_id.clone())?;
-        }
-        let name = bridge_tally_core::ForeignText::from_tally(source.record.name.clone());
-        if !names.insert(name.as_str().to_string()) {
-            anyhow::bail!("Selected ledger response repeated a normalized name");
-        }
-        let party_gstin = match &source.record.party_gstin {
-            bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(value)
-                if !value.trim().is_empty() =>
-            {
-                Some(value)
-            }
-            bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(_)
-            | bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved => None,
-        };
-        for value in [
-            source.record.parent.nonempty_returned_text(),
-            party_gstin.map(String::as_str),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|value| !value.trim().is_empty())
-        {
-            bridge_tally_core::ForeignText::from_tally(value);
-        }
-        if let Some(opening_balance) = source
-            .record
-            .opening_balance
-            .as_ref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            bridge_tally_core::ExactDecimal::parse(opening_balance.clone())?;
-        }
-    }
-    Ok(())
-}
-
-fn verify_selected_company_name(
-    evidence: &bridge_tally_protocol::ExportEvidence,
-    expected_name: &str,
-) -> anyhow::Result<()> {
-    let actual_name = evidence
-        .company_context
-        .as_ref()
-        .and_then(|context| context.name.as_deref())
-        .ok_or_else(|| anyhow::anyhow!("Selected Tally read omitted company name context"))?;
-    let actual_name = normalize_company_name(actual_name).map_err(anyhow::Error::msg)?;
-    let expected_name = normalize_company_name(expected_name).map_err(anyhow::Error::msg)?;
-    if actual_name != expected_name {
-        anyhow::bail!("Selected Tally read company name context did not match the request");
-    }
-    Ok(())
 }
 
 fn party_ledger_request_commitment(requests: &[String; 3]) -> String {

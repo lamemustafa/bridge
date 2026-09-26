@@ -334,9 +334,9 @@ mod tests {
             .collect();
         let guarded = [
             // `ReadOnlyProfileId::education_refuses_report_formula`: the tools'
-            // Education transport, and `qualify_selected_ledgers`' bracket.
+            // Education transport.
             "render_ledgers",
-            // The same flag, and `qualify_selected_vouchers`' bracket.
+            // The same flag.
             "render_vouchers",
             // `RuntimeTallyConnector::read_core_period_balance_report`.
             "ledger_period_balances_request",
