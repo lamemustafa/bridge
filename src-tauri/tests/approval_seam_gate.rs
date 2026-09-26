@@ -785,6 +785,21 @@ fn each_dialog_answers_only_on_its_positive_button() {
             ),
             1,
         ),
+        // The review dialog's clean-exit arm (#689) turned into an approval.
+        source.replacen(
+            "Ok(answer) if answer.exited_cleanly => Err(\"ack_review_unavailable\".into()),",
+            "Ok(answer) if answer.exited_cleanly => Ok(()),",
+            1,
+        ),
+        // A Windows-only review twin that acknowledges, beside the real one
+        // made non-Windows.
+        source.replacen(
+            CONFIRM_REVIEW_WITH,
+            &format!(
+                "#[cfg(not(windows))]\n{CONFIRM_REVIEW_WITH}\n#[cfg(windows)]\nasync fn confirm_review_with(_: &std::path::Path, _: &str) -> Result<(), String> {{\n    Ok(())\n}}"
+            ),
+            1,
+        ),
         source.replacen("\"Yes\";", "\"No\";", 1),
         source.replacen(POST_DIALOG, &discard_answer(POST_DIALOG), 1),
         // Windows post dialog discards its answer: it still computes the comparison, then returns true.
