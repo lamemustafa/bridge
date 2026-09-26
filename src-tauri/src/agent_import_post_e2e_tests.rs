@@ -575,13 +575,14 @@ async fn a_batch_post_records_its_step_verdict_before_the_readback() {
     let directory = tempfile::tempdir().unwrap();
     let server = batch_server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch_of_two(&server);
+    let scripted = ScriptedApproval::approving();
     let response = SCRIPTED_APPROVAL
-        .scope(
-            ScriptedApproval::approving(),
-            server.call_tool("post_import", args),
-        )
+        .scope(scripted.clone(), server.call_tool("post_import", args))
         .await;
     let _ = sent(simulator);
+    // The dialog was asked about both vouchers, so its title and button name
+    // two (#746).
+    assert_eq!(scripted.counts(), [2]);
     let imports = server.imports_dir().unwrap();
     let doubt: Value = serde_json::from_slice(
         &fs::read(imports.join(format!("{}.batch_step_doubt.json", line.batch_id))).unwrap(),
@@ -849,6 +850,7 @@ async fn a_declined_post_sends_nothing_and_journals_no_intent() {
         scripted.previews(),
         [admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap()]
     );
+    assert_eq!(scripted.counts(), [1], "one voucher keeps its own words");
 }
 
 /// The dispatch intent is in the journal before the POST is received. The

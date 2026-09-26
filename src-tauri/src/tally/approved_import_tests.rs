@@ -60,11 +60,11 @@ fn every_voucher_date_must_pass_the_education_boundary() {
 const NONCE: &str = "00000000-0000-4000-8000-000000000687";
 
 /// What the post child wrote, and what it returned, for `input` and `dialog`.
-fn child_answer(dialog: fn(&str) -> bool, input: &str) -> (bool, Vec<u8>) {
+fn child_answer(dialog: fn(VoucherCount, &str) -> bool, input: &str) -> (bool, Vec<u8>) {
     answer_as(POST_TOKEN_PREFIX, dialog, input)
 }
 
-fn answer_as(prefix: &str, dialog: fn(&str) -> bool, input: &str) -> (bool, Vec<u8>) {
+fn answer_as(prefix: &str, dialog: fn(VoucherCount, &str) -> bool, input: &str) -> (bool, Vec<u8>) {
     let mut output = Vec::new();
     let approved = answer_with_token(prefix, dialog, input.as_bytes(), &mut output);
     (approved, output)
@@ -76,11 +76,11 @@ fn a_declined_dialog_writes_no_token() {
     // input being refused before the decline it is about.
     static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let (approved, output) = child_answer(
-        |_| {
+        |_, _| {
             SHOWN.store(true, std::sync::atomic::Ordering::SeqCst);
             false
         },
-        &format!("{NONCE}\nPost one voucher"),
+        &format!("{NONCE}\n1\nPost one voucher"),
     );
     assert!(
         SHOWN.load(std::sync::atomic::Ordering::SeqCst),
@@ -94,8 +94,8 @@ fn a_declined_dialog_writes_no_token() {
 fn the_core_answers_with_the_prefix_it_is_given() {
     let (approved, output) = answer_as(
         REVIEW_TOKEN_PREFIX,
-        |_| true,
-        &format!("{NONCE}\nReview one voucher"),
+        |_, _| true,
+        &format!("{NONCE}\n1\nReview one voucher"),
     );
     assert!(approved);
     assert_eq!(
@@ -106,7 +106,7 @@ fn the_core_answers_with_the_prefix_it_is_given() {
 
 #[test]
 fn an_approved_dialog_writes_exactly_the_token_for_its_nonce() {
-    let (approved, output) = child_answer(|_| true, &format!("{NONCE}\nPost one voucher"));
+    let (approved, output) = child_answer(|_, _| true, &format!("{NONCE}\n1\nPost one voucher"));
     assert!(approved);
     assert_eq!(
         output,
@@ -117,10 +117,22 @@ fn an_approved_dialog_writes_exactly_the_token_for_its_nonce() {
 #[test]
 fn the_dialog_shows_the_preview_after_the_nonce_line() {
     let (approved, _) = child_answer(
-        |preview| preview == "Post one voucher\nsecond line",
-        &format!("{NONCE}\nPost one voucher\nsecond line"),
+        |_, preview| preview == "Post one voucher\nsecond line",
+        &format!("{NONCE}\n1\nPost one voucher\nsecond line"),
     );
     assert!(approved);
+}
+
+/// The dialog is shown the count from the parent's count line (#746), which
+/// its title and button name; the control shows another count is not taken
+/// for it.
+#[test]
+fn the_dialog_is_shown_the_count_the_parent_sent() {
+    fn three(count: VoucherCount, _: &str) -> bool {
+        count == VoucherCount::new(3).unwrap()
+    }
+    assert!(child_answer(three, &format!("{NONCE}\n3\nPost 3 vouchers")).0);
+    assert!(!child_answer(three, &format!("{NONCE}\n2\nPost 2 vouchers")).0);
 }
 
 #[test]
@@ -130,12 +142,15 @@ fn an_input_not_in_the_parents_shape_shows_no_dialog_and_writes_nothing() {
         String::new(),
         NONCE.to_string(),
         format!("{NONCE}\n"),
-        "not-a-uuid\nPost one voucher".to_string(),
-        format!("{NONCE}\nPost\0one voucher"),
-        format!("{NONCE}\n{oversized}"),
+        format!("{NONCE}\n1\n"),
+        format!("{NONCE}\nPost one voucher"),
+        format!("{NONCE}\n0\nPost one voucher"),
+        "not-a-uuid\n1\nPost one voucher".to_string(),
+        format!("{NONCE}\n1\nPost\0one voucher"),
+        format!("{NONCE}\n1\n{oversized}"),
     ] {
         let (approved, output) = child_answer(
-            |_| panic!("no dialog is shown for input the parent never sends"),
+            |_, _| panic!("no dialog is shown for input the parent never sends"),
             &input,
         );
         assert!(!approved, "{input:?}");
