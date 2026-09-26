@@ -386,7 +386,7 @@ been proved on a live book. A batch is `posted_verified` only when Tally created
 exactly that many vouchers, the readback verifies every one, and the company's
 voucher mark moved by exactly that many. Otherwise it is
 `reconciliation_required` (`batch_step_unconfirmed` when only the mark
-disagrees), and a doubted batch has no review record yet
+was not confirmed), and a doubted batch has no review record yet
 (`acknowledge_post_review` refuses a batch): review its vouchers in Tally and do
 not rebuild it.
 
