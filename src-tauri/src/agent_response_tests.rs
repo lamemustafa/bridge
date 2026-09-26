@@ -226,3 +226,125 @@ fn offset_row_pages_still_advance_after_byte_trimming() {
         assert!(page.to_string().len() <= 500);
     }
 }
+
+fn post_result_with_line_errors(texts: usize) -> Value {
+    json!({"jsonrpc":"2.0","id":1,"result":{
+        "content":[{"type":"text","text":""}], "isError":false,
+        "structuredContent":{"result":{"dispatch":{"state":"reconciliation_required",
+            "response":{"outcome":{
+                "counters":{"line_error_count":texts + 1},
+                "tally_line_errors":(0..texts)
+                    .map(|_| json!({"text":"x".repeat(400),"truncated":false}))
+                    .collect::<Vec<_>>(),
+                "tally_line_errors_omitted":1
+            }}}}}
+    }})
+}
+
+/// Tally's LINEERROR text is cut first: a result that is over its cap only
+/// because of the text comes back whole without it, the omission counted,
+/// and is never refused. The same result without the text is unchanged.
+#[test]
+fn line_error_text_is_cut_before_a_result_is_refused() {
+    let mut framed = post_result_with_line_errors(4);
+    let mut bare = framed.clone();
+    assert!(drop_tally_line_error_text(&mut bare));
+    let cap = {
+        let mut sized = bare.clone();
+        set_mcp_content_json(&mut sized["result"]);
+        sized.to_string().len() + 1
+    };
+    enforce_jsonrpc_response_byte_cap(&mut framed, cap).expect("fits without the text");
+    let outcome =
+        &framed["result"]["structuredContent"]["result"]["dispatch"]["response"]["outcome"];
+    assert!(outcome.get("tally_line_errors").is_none(), "{outcome}");
+    assert_eq!(outcome["tally_line_errors_omitted"], 5);
+    assert_eq!(
+        framed["result"]["structuredContent"],
+        bare["result"]["structuredContent"]
+    );
+    // The text copy of the result is rebuilt too: no stale text survives,
+    // and the whole frame is within the cap.
+    assert!(framed.to_string().len() < cap);
+    let text = framed["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains(&"x".repeat(400)), "{text}");
+    // Under a cap the result cannot meet even without the text, it is refused
+    // exactly as a result that never had any.
+    let mut still_too_large = post_result_with_line_errors(4);
+    assert_eq!(
+        enforce_jsonrpc_response_byte_cap(&mut still_too_large, 200).unwrap_err(),
+        "agent_response_too_large"
+    );
+}
+
+/// The new step acts only where the key is present: a value without it is
+/// left byte-identical and reported as untouched, so every other tool's
+/// result goes through the cap exactly as before.
+#[test]
+fn a_result_without_line_error_text_is_untouched_by_the_text_step() {
+    for value in [
+        json!({"result":{"items":[{"id":1}],"tally_line_errors_omitted":3,"line_errors":["kept"]}}),
+        json!([{"outcome":{"line_error_count":1}}, "tally_line_errors", 7]),
+        json!("tally_line_errors"),
+    ] {
+        let before = value.to_string();
+        let mut after = value.clone();
+        assert!(!drop_tally_line_error_text(&mut after));
+        assert_eq!(after.to_string(), before);
+    }
+    // And a paged result without it is paged with no trace of the step.
+    let mut response = json!({"result":{"offset":0,"items":
+        (0..10_000).map(|id| json!({"id":id,"padding":"x".repeat(64)})).collect::<Vec<_>>()}});
+    assert!(fit_response(&mut response, "", 512, |value| value.to_string().len()).unwrap());
+    assert!(response["result"]
+        .get("tally_line_errors_omitted")
+        .is_none());
+}
+
+/// A result that must be paged anyway loses its LINEERROR text before any
+/// row: it keeps exactly the rows the same result without the text keeps.
+#[test]
+fn a_paged_result_loses_its_line_error_text_before_any_row() {
+    let paged = |with_text: bool| {
+        let mut outcome = json!({"counters":{"line_error_count":8},"tally_line_errors_omitted":8});
+        if with_text {
+            outcome["tally_line_errors_omitted"] = json!(4);
+            outcome["tally_line_errors"] = json!((0..4)
+                .map(|_| json!({"text":"y".repeat(400),"truncated":false}))
+                .collect::<Vec<_>>());
+        }
+        json!({"jsonrpc":"2.0","id":1,"result":{
+            "content":[{"type":"text","text":""}], "isError":false,
+            "structuredContent":{"result":{"offset":0,
+                "items":(0..200).map(|id| json!({"id":id,"padding":"x".repeat(64)})).collect::<Vec<_>>(),
+                "dispatch":{"response":{"outcome":outcome}}}}}})
+    };
+    let (mut with_text, mut without_text) = (paged(true), paged(false));
+    enforce_jsonrpc_response_byte_cap(&mut with_text, 8_000).unwrap();
+    enforce_jsonrpc_response_byte_cap(&mut without_text, 8_000).unwrap();
+    let rows = |framed: &Value| {
+        framed["result"]["structuredContent"]["result"]["items"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert!(rows(&without_text) < 200, "the cap pages this result");
+    assert_eq!(rows(&with_text), rows(&without_text));
+    assert_eq!(with_text, without_text);
+    assert!(!with_text.to_string().contains("yyyy"));
+}
+
+/// Text inside an array is found in every element, each counted on its own.
+#[test]
+fn line_error_text_is_dropped_from_every_element_of_an_array() {
+    let text = json!({"text":"z","truncated":false});
+    let mut value = json!({"outcomes":[
+        {"tally_line_errors":[text.clone()],"tally_line_errors_omitted":0},
+        {"tally_line_errors":[text.clone(), text]}
+    ]});
+    assert!(drop_tally_line_error_text(&mut value));
+    assert_eq!(
+        value,
+        json!({"outcomes":[{"tally_line_errors_omitted":1},{"tally_line_errors_omitted":2}]})
+    );
+}

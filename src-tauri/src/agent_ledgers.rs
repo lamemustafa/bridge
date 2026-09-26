@@ -229,6 +229,22 @@ fn basic_row(ledger: TallyLedger, opening_as_of: &TallyDate) -> Value {
     })
 }
 
+/// The caller's `as_of`, the date `party_gstin` is read as of (bridge#653);
+/// `None` leaves it to the Bridge host's date, taken where the rows are built.
+/// `as_of` selects only the GSTIN, so it is refused unless fields=compliance
+/// rather than left to be read as the opening-balance date, which
+/// `opening_balance_as_of` reports on its own.
+fn requested_gstin_as_of(args: &Value) -> Result<Option<String>, String> {
+    let Some(as_of) = optional_string(args, "as_of")? else {
+        return Ok(None);
+    };
+    let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
+    if !ledger_master_fields(&fields)? {
+        return Err("ledger_masters_as_of_requires_compliance".to_string());
+    }
+    normalized_date(&as_of).map(Some)
+}
+
 /// How long a ledger listing snapshot may serve its continuation pages
 /// (#630). A continuation page is served from the snapshot only while the
 /// book's extent, including `ALTMSTID` and `ALTVCHID`, is unchanged. Whether a
@@ -246,12 +262,14 @@ const LISTING_SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// Which read a listing snapshot holds. A `basic` listing with a `group`
 /// filter also holds the group collection, so it is a different read; a
-/// trial balance is keyed by its period.
+/// trial balance is keyed by its period; a compliance listing by the date its
+/// rows' `party_gstin` was read as of (#653), since that date is rendered into
+/// the rows it holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ListingKind {
     Basic,
     BasicWithGroups,
-    Compliance,
+    Compliance { gstin_as_of: String },
     TrialBalance { from: TallyDate, to: TallyDate },
 }
 
@@ -435,6 +453,8 @@ fn snapshot_refusal(cause: &'static str) -> ToolFailure {
 impl Server {
     pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
+        // Before any read: a refused `as_of` costs no Tally request.
+        let requested_as_of = requested_gstin_as_of(args)?;
         let (company, identity, mut evidence) = self.verified_company(guid).await?;
         let result: Result<ToolOutcome, ToolFailure> = async {
             let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
@@ -446,7 +466,9 @@ impl Server {
                 arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
             let snapshot_id = optional_string(args, "snapshot_id")?;
             let kind = match (compliance, group.is_some()) {
-                (true, _) => ListingKind::Compliance,
+                (true, _) => ListingKind::Compliance {
+                    gstin_as_of: requested_as_of.clone().unwrap_or_else(tally_host_today),
+                },
                 (false, true) => ListingKind::BasicWithGroups,
                 (false, false) => ListingKind::Basic,
             };
@@ -569,7 +591,7 @@ impl Server {
         kind: ListingKind,
     ) -> Result<ListingSnapshot, ToolFailure> {
         let (rows, groups, extent, read_evidence) = match &kind {
-            ListingKind::Compliance => {
+            ListingKind::Compliance { gstin_as_of } => {
                 let listing = self
                     .runtime
                     .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), identity)
@@ -581,7 +603,9 @@ impl Server {
                 // collection classifies every row.
                 let groups = HeldGroups::build(listing.groups);
                 let opening_as_of = listing.opening_as_of;
-                let gstin_as_of = tally_host_today();
+                // The kind carries the date, so a snapshot of these rows is only
+                // ever served to a page asking for the same one (#653).
+                let gstin_as_of = gstin_as_of.as_str();
                 let rows = listing
                     .records
                     .into_iter()
@@ -591,7 +615,7 @@ impl Server {
                         let gstin = party_gstin_on(
                             record.ledger.party_gstin.returned_text(),
                             &record.fields.gst_registrations,
-                            &gstin_as_of,
+                            gstin_as_of,
                         );
                         let mut row = json!({
                             "name": party_name(record.ledger.name),
@@ -604,7 +628,7 @@ impl Server {
                             "ancestry": ancestry_json(&chain),
                         });
                         if let Value::Object(fields) = &mut row {
-                            fields.extend(party_gstin_fields(gstin, &gstin_as_of));
+                            fields.extend(party_gstin_fields(gstin, gstin_as_of));
                         }
                         row
                     })

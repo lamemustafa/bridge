@@ -26,7 +26,9 @@ const POST_TOKEN_PREFIX: &str = "bridge-post-approved:";
 #[derive(Clone)]
 pub(crate) struct ApprovedImport {
     xml: String,
-    voucher_date: TallyDate,
+    /// Every voucher's date, in batch order: the queue's Education recheck
+    /// covers each of them.
+    voucher_dates: Vec<TallyDate>,
     verification_request: AgentReadRequest,
     ledger_catalogue_request: AgentReadRequest,
     ledger_binding: StandardLedgerCatalogBinding,
@@ -55,12 +57,21 @@ pub(crate) struct QueuedAdmission<'a> {
     pub(crate) ledger_binding: &'a StandardLedgerCatalogBinding,
 }
 
+/// Whether the profile accepts every voucher's date, and there is at least
+/// one: an empty list approves nothing.
+fn every_date_accepted(profile: DateBoundaryProfile, voucher_dates: &[TallyDate]) -> bool {
+    !voucher_dates.is_empty()
+        && voucher_dates
+            .iter()
+            .all(|voucher_date| profile.accepts_boundary(voucher_date))
+}
+
 impl ApprovedImport {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn confirm(
         xml: String,
         preview: &str,
-        voucher_date: TallyDate,
+        voucher_dates: Vec<TallyDate>,
         verification_request: AgentReadRequest,
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
@@ -68,10 +79,13 @@ impl ApprovedImport {
         currency_request: AgentReadRequest,
         company_marks_request: AgentReadRequest,
     ) -> Result<Self, String> {
+        if voucher_dates.is_empty() {
+            return Err("voucher_date_invalid".into());
+        }
         approve(preview).await?;
         Ok(Self {
             xml,
-            voucher_date,
+            voucher_dates,
             verification_request,
             ledger_catalogue_request,
             ledger_binding,
@@ -115,7 +129,7 @@ impl ApprovedImport {
         &self,
         profile: DateBoundaryProfile,
     ) -> Result<(), ApprovedImportAdmissionError> {
-        if profile.accepts_boundary(&self.voucher_date) {
+        if every_date_accepted(profile, &self.voucher_dates) {
             Ok(())
         } else {
             Err(ApprovedImportAdmissionError::EducationVoucherDateUnsupported)
@@ -136,7 +150,7 @@ impl ApprovedImport {
         std::hint::black_box(test_seam::SEAM_MARKER);
         Self {
             xml,
-            voucher_date,
+            voucher_dates: vec![voucher_date],
             verification_request: AgentReadRequest::parse(
                 bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile::CompanyListV2.render(),
             )

@@ -286,7 +286,10 @@ native boundary profile and refuses an unsupported operation date. Licensed
 mode permits ordinary dates conditionally, while the paired reads, identity,
 strict amounts, literal voucher bounds and operation-specific validation remain
 mandatory. The limited Silver observation below does not qualify Gold or a
-different licensed release; a Gold live monetary read is still missing.
+different licensed release. A Gold live monetary read has since been observed:
+`verify_import` over Bridge-built vouchers on licensed 7.1 Gold (VERIFIED
+2026-09-16 on one book, PARTIAL on a second; §9.13's 2026-09-25 correction).
+Reads of Gold books of thousands of vouchers still fail (bridge#485).
 
 ---
 
