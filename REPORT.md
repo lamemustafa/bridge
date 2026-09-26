@@ -169,3 +169,62 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - The critical path is Bundle smoke (windows), and 43% of it is the test-seam proof. That step builds a release test harness **without** `RUSTC_WORKSPACE_WRAPPER=sccache` (it runs `cargo` after the tauri build).
 - **Candidate, not built:** route that build through the same sccache server, or reuse artifacts. The Windows job would fall towards ~9–10 min and CI wall towards the macOS native job's ~14 min. That is a rough 2-min p50 saving per cycle, and more on p90. It needs its own measured PR.
 - 11 of 50 runs (22%) were cancelled by newer pushes. That is wasted runner time, but not wall-clock on the merge path.
+
+## 2026-09-26 06:53 UTC: Item 5, pinned-surface bottleneck → proposal issue #740
+
+**Proposal only; no code.** Filed as [#740](https://github.com/lamemustafa/bridge/issues/740) (`type:feature`, `area:infra`).
+- **Measured:**
+  - 80% of master merges touch the surface (40 of 50);
+  - `strict: true` with a p50 16 / p90 20 min CI puts the cap at about 3–3.75 merges an hour;
+  - pinned PRs additionally need a local re-merge, reseal and re-review after every pinned merge;
+  - **63% of consecutive pinned merges touch disjoint pinned files**, so their *only* conflict is the two stored aggregate digests (`manifest_sha256`, `compatibility_surface_sha256`).
+- **Options:**
+  - **A.** An order-independent seal: store per-file hashes only, and let the gate compute the aggregate. It keeps the per-file "unreviewed Tally-path change" check intact and is code-negative. **Recommended first.**
+  - **B.** GitHub merge queue, which requires A. There is a table of how each seal design behaves when the queue tests B on top of A:
+    - stored aggregate: B is ejected;
+    - reseal in queue CI: impossible, CI can't push;
+    - post-merge bot reseal: rejected, it bypasses protection;
+    - order-independent seal: works.
+  - **C.** Auto-reseal bot: not recommended, because of P8 and a weaker attestation.
+  - **D.** Narrow the surface: about 10% gain, and it touches the `MAX_SURFACE_FILES = 280` cap.
+- Each option has its security, rollback and expected-gain analysis in the issue. It also covers Lane D's merge-queue questions and flags an unverified risk: whether GitGuardian reports on `merge_group` commits.
+
+## 2026-09-26 06:53 UTC: FINAL, Cloud Lane P
+
+**Ready for review (Lane D merges):**
+- [#728](https://github.com/lamemustafa/bridge/pull/728), #723 sccache.
+  - `SCCACHE_IDLE_TIMEOUT: '0'`, with `--stop-server` kept strict.
+  - Windows proof: old fails, new passes, and a stopped server still fails closed. Full CI green on `a52748f` and `75846c4`.
+  - Sonnet and Opus reviews: no P1/P2 open; all 5 findings answered.
+  - It is **behind** master, with no conflict. It touches a pinned file, so an update needs a local re-merge and reseal.
+- [#688](https://github.com/lamemustafa/bridge/pull/688), #527 Git 2.43 upload-pack trust.
+  - Merged up to master; CI green; fresh Sonnet review has no P1/P2.
+
+**Draft, awaiting an owner decision:**
+- [#729](https://github.com/lamemustafa/bridge/pull/729), #669 cache retention rule.
+  - Round 1 found my P1 (duplicate YAML key, so CI ran 0 jobs) and a P2; both are fixed.
+  - Round 2 has no P1/P2. CI is green on `ccef193`.
+  - It stays a draft because automated cache deletion is the owner's option-3 call on #669.
+
+**Proposal:** [#740](https://github.com/lamemustafa/bridge/issues/740), the pinned-surface bottleneck.
+
+**Decisions needed:**
+1. #723: I deliberately did **not** tolerate the "already stopped" exit 2, because that case comes with fabricated zero statistics. If the owner still wants tolerance, it is an explicit P5 downgrade.
+2. #527: a documented minimum Git version (probably ≥ 2.44) for the merge driver's `%S/%X/%Y` placeholders, and/or a driver error naming that cause.
+3. #669: adopt #729. Separately, decide whether to delete today's 5 superseded + 2 PR-only entries (5,416 MiB) by hand, or let LRU and the 7-day eviction take them.
+4. #740:
+   - accept losing the stored self-checksum (option A)?
+   - accept review evidence naming the PR head under a merge queue (option B)?
+   - choose a batch size.
+5. Follow-ups I noticed but did not build:
+   - a strict duplicate-key YAML load of the workflows in `check-ci-workflow-consistency.mjs` (it would have caught my #729 P1 locally);
+   - routing the test-seam proof build (6.3 min p50, 43% of the Windows bundle job) through sccache;
+   - posting the lane-T noexec evidence onto #527 itself.
+
+**Throwaway branches I created (not for merging; deletion is Lane D's call):** `cloud-p/sccache-proof-723`, `cloud-p/cache-inventory-669`.
+
+**Deviations from the brief, recorded:**
+- Item 1's fix does not tolerate the stopped case (reason above).
+- Item 3 per-step timings come from 21 of the 50 runs, because a container restart lost the full re-fetch; the job-level and failure numbers cover all 50.
+- GitHub access was through the MCP API rather than `gh`, which is not available here.
+- The cache inventory came from a read-only throwaway workflow, since no MCP cache endpoint exists.
