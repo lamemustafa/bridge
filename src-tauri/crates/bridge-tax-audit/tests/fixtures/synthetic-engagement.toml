@@ -24,6 +24,10 @@ round_off_ledgers = ["Round Off"]
 # forms that mark a bank-only charge (matched upper-cased, so lower case here is deliberate).
 bank_reconciliation_ledger = "Lakeview Bank Current A/c"
 bank_charge_narration_terms = ["charges"]
+# high_value_register only: a counterparty type (a Government company is out of Clause 31(ba)-(bd)
+# in cash), and the statement narration forms that mark a cash withdrawal (s.194N, informational).
+counterparty_type_by_ledger = { "Union Textiles" = "government_company" }
+s194n_withdrawal_narration_terms = ["chq"]
 # creditor_ageing_43bh only: its trade creditors are every ledger under the read's own Sundry
 # Creditors group.
 creditor_groups = ["Sundry Creditors"]

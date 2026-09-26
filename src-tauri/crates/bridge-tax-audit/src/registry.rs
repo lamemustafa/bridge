@@ -19,9 +19,11 @@ use crate::Engagement;
 pub struct CallerData {
     pub report_totals: Option<ReportTotals>,
     pub turnover_inputs: TurnoverInputs,
-    /// The assessee's Form 26AS/AIS/TIS rows (`tds_tcs_26as`, `twentysixas_receipts`).
+    /// The assessee's Form 26AS/AIS/TIS rows (`tds_tcs_26as`, `twentysixas_receipts`; the AIS rows
+    /// also `high_value_register`).
     pub traces: crate::documents::TracesDocuments,
-    /// A bank statement (`bank_reconciliation`, which refuses without one).
+    /// A bank statement (`bank_reconciliation`, which refuses without one; `high_value_register`,
+    /// whose s.194N section reports none supplied).
     pub bank_statement: Option<crate::documents::BankStatementDoc>,
 }
 
@@ -79,6 +81,14 @@ pub const PORTED: &[PortedTest] = &[
         id: "financial_statements",
         min_figures: 18,
         run_on: |e, b, r, c| crate::financial_statements_on(e, b, r, c.report_totals.as_ref()),
+    },
+    PortedTest {
+        id: "high_value_register",
+        // 38 on any book: no row figures, no statement and an unknown recipient type.
+        min_figures: 38,
+        run_on: |e, b, r, c| {
+            crate::high_value_register_on(e, b, r, c.bank_statement.as_ref(), &c.traces.ais)
+        },
     },
     PortedTest {
         id: "ledger_scrutiny",

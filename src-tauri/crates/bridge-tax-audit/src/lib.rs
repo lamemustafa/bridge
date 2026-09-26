@@ -43,6 +43,7 @@ pub mod documents;
 pub mod error;
 pub mod financial_statements;
 pub mod findings;
+pub mod high_value_register;
 pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
@@ -107,6 +108,14 @@ pub struct Engagement {
     /// `bank_reconciliation`-only: the optional `[roles].bank_charge_narration_terms`, kept as
     /// written and validated when that test runs ([`bank_reconciliation::charge_terms`]).
     pub bank_charge_narration_terms: Option<toml::Value>,
+    /// `high_value_register`-only: `[roles].counterparty_type_by_ledger`, keyed by each ledger's
+    /// bound name, every value as written. Set when the engagement is bound; empty before binding
+    /// or when the table is absent. Typed when that test runs
+    /// ([`high_value_register::counterparty_types`]).
+    pub counterparty_type_by_ledger: BTreeMap<String, toml::Value>,
+    /// `high_value_register`-only: the optional `[roles].s194n_withdrawal_narration_terms`, kept as
+    /// written and validated when that test runs ([`high_value_register::s194n_terms`]).
+    pub s194n_withdrawal_narration_terms: Option<toml::Value>,
     /// `depreciation`-only: `None` when the client config carries no `[depreciation]` table at
     /// all (an engagement that never runs that test); `Some` once the table is present, at which
     /// point `block_by_ledger`, `opening_wdv_paise` and `dep_expense_ledgers` are REQUIRED within
@@ -805,6 +814,10 @@ not YYYY-MM-DD"
             own_account_narration_terms: roles.get("own_account_narration_terms").cloned(),
             bank_reconciliation_ledger: None,
             bank_charge_narration_terms: roles.get("bank_charge_narration_terms").cloned(),
+            counterparty_type_by_ledger: BTreeMap::new(),
+            s194n_withdrawal_narration_terms: roles
+                .get("s194n_withdrawal_narration_terms")
+                .cloned(),
             loan_ledgers_configured: cfg
                 .get("loans")
                 .and_then(toml::Value::as_table)
@@ -1037,6 +1050,15 @@ pub fn depreciation_on(
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 
+/// A bound engagement's `[loans.loan_ledgers]`, typed. Refuses when `[loans]` is not a table, as
+/// the reference's `loan_ledgers_config` raises there (`loans_interest`, `high_value_register`).
+fn bound_loans(bound: &Engagement) -> Result<BTreeMap<String, loans_interest::LoanConfig>> {
+    if bound.loans.not_a_table {
+        return Err(AuditError::Config("[loans] is not a table".to_string()));
+    }
+    loans_interest::loan_config(&bound.loans.loan_ledgers)
+}
+
 /// Run `loans_interest` on a book and return its canonical parity dump, with the module's own
 /// LOAN-1/2/3 invariants. The previous-year turnover is `[tds].previous_year_turnover_paise`, as
 /// the reference's pack reads it; absent without a `[tds]` table.
@@ -1049,10 +1071,7 @@ pub fn loans_interest_on(
         AuditError::Config("loans_interest needs [client].entity_type".to_string())
     })?;
     let (bound, _report) = engagement.bind(book)?;
-    if bound.loans.not_a_table {
-        return Err(AuditError::Config("[loans] is not a table".to_string()));
-    }
-    let loans = loans_interest::loan_config(&bound.loans.loan_ledgers)?;
+    let loans = bound_loans(&bound)?;
     let cash = book.ledgers_under_any(&bound.cash_groups);
     let bank = book.ledgers_under_any(&bound.bank_groups);
     let shared: BTreeSet<String> = bound
@@ -1227,6 +1246,45 @@ pub fn bank_reconciliation_on(
     )?;
     let module_check = bank_reconciliation::check_invariants(&statement.rows, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `high_value_register` on a book and return its canonical parity dump. It runs on every
+/// engagement, as the reference's pack runs it: the bank statement and the AIS rows are optional
+/// caller documents (`None` and empty when not supplied). The counterparty types are the
+/// configured loan ledgers' `lender_type`, overridden by `[roles].counterparty_type_by_ledger`; the
+/// s.194N recipient type follows `[client].entity_type`. Refuses when `[loans]` is not a table, as
+/// the reference's `loan_ledgers_config` raises there. The reference module has no
+/// `check_invariants`, so the dump's module invariants are empty on both sides.
+pub fn high_value_register_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+    statement: Option<&documents::BankStatementDoc>,
+    ais_rows: &[documents::AisRow],
+) -> Result<serde_json::Value> {
+    let (bound, _report) = engagement.bind(book)?;
+    let loans = bound_loans(&bound)?;
+    let counterparty_types =
+        high_value_register::counterparty_types(&loans, &bound.counterparty_type_by_ledger)?;
+    let terms = high_value_register::s194n_terms(bound.s194n_withdrawal_narration_terms.as_ref())?;
+    let cash = book.ledgers_under_any(&bound.cash_groups);
+    let bank = book.ledgers_under_any(&bound.bank_groups);
+    let round_off_ledgers: BTreeSet<String> = bound.round_off_ledgers.iter().cloned().collect();
+    let inputs = high_value_register::Inputs {
+        cash: &cash,
+        bank: &bank,
+        threshold_paise: None,
+        bank_statement: statement,
+        s194n_narration_terms: &terms,
+        ais_rows,
+        s194n_recipient_type: high_value_register::s194n_recipient_type(
+            bound.entity_type.as_deref(),
+        ),
+        round_off_ledgers: &round_off_ledgers,
+        counterparty_type_by_ledger: &counterparty_types,
+    };
+    let result = high_value_register::run(book, rules, &inputs)?;
+    canonical::canonical_test_result(book, &result, None)
 }
 
 /// Read, verify, build the book, run `cash_book_integrity` and return its canonical parity dump.

@@ -673,6 +673,16 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
             ),
         });
     }
+    // `[roles].counterparty_type_by_ledger`'s keys bind after `tax_ledgers`, as in the reference's
+    // `LEDGER_PATHS`; each value is a counterparty type, not a ledger, and is left as written.
+    let counterparty_type_by_ledger = bind_table_keys(
+        &mut lbinder,
+        table_at(
+            &engagement.raw_cfg,
+            &["roles", "counterparty_type_by_ledger"],
+        )?,
+        "roles.counterparty_type_by_ledger",
+    )?;
 
     // `[tds]` and `[tds_payees]` bind before `[loans]` and `[depreciation]`, as they come before
     // both in the reference's `LEDGER_PATHS` (only which refusal is reported first depends on it).
@@ -944,6 +954,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         bank_groups,
         round_off_ledgers,
         bank_reconciliation_ledger,
+        counterparty_type_by_ledger,
         loan_ledgers_configured,
         loans,
         depreciation,
@@ -1156,6 +1167,12 @@ mod tests {
         assert!(format!("{err}").contains("roles.bank_reconciliation_ledger"));
         let e = engagement("bank_reconciliation_ledger = 5\n");
         assert_eq!(e.bind(&b).unwrap_err().code(), Some(BIND_ID_MALFORMED));
+
+        let e =
+            engagement("counterparty_type_by_ledger = { \"Gov Co\" = \"government_company\" }\n");
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("roles.counterparty_type_by_ledger"));
     }
 
     #[test]
