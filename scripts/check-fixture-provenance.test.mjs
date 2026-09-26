@@ -125,6 +125,50 @@ test("a captured fixture whose bytes no longer match its declared hash fails the
   }
 });
 
+// #759: a row naming its fixture with a directory, relative to the Markdown
+// file, was matched against no file, so a swapped fixture passed while it
+// still counted as documented.
+test("a row naming its fixture with a directory is hash-checked against that file", async () => {
+  const root = await makeTree();
+  try {
+    const fixtures = join(root, "src-tauri/crates/bridge-tally-protocol/tests/fixtures");
+    await mkdir(join(fixtures, "agent"), { recursive: true });
+    const declaredBytes = "the real captured response\n";
+    const declaredSha256 = createHash("sha256").update(declaredBytes).digest("hex");
+    const row = `| \`agent/captured.bin\` | ${declaredBytes.length} | \`${declaredSha256}\` |\n`;
+    await writeFile(join(fixtures, "CAPTURE_PROVENANCE.md"), row);
+    // The control: the declared bytes pass, and are counted as checked.
+    await writeFile(join(fixtures, "agent", "captured.bin"), declaredBytes);
+    assert.match(runGate(root), /\(1 captured-fixture hash\(es\) verified/);
+    // A swapped file under the same path fails.
+    await writeFile(join(fixtures, "agent", "captured.bin"), "a hand-typed stand-in\n");
+    const output = runGateExpectingFailure(root);
+    assert.match(output, /agent\/captured\.bin/);
+    assert.match(output, /hand-authored-substitute pattern/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a row naming a directory path where no fixture is fails rather than checking nothing", async () => {
+  const root = await makeTree();
+  try {
+    const fixtures = join(root, "src-tauri/crates/bridge-tally-protocol/tests/fixtures");
+    await mkdir(join(fixtures, "agent"), { recursive: true });
+    const bytes = "captured\n";
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(join(fixtures, "agent", "captured.bin"), bytes);
+    await writeFile(
+      join(fixtures, "CAPTURE_PROVENANCE.md"),
+      `captured.bin\n| \`agnt/captured.bin\` | ${bytes.length} | \`${sha256}\` |\n`,
+    );
+    const output = runGateExpectingFailure(root);
+    assert.match(output, /agnt\/captured\.bin: declared in .* no fixture is at that path/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a byte-count-only mismatch (same filename, wrong declared size) still fails", async () => {
   const root = await makeTree();
   try {

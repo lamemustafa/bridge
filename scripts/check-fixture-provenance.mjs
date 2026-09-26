@@ -51,7 +51,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { extname, join, relative, resolve } from "node:path";
+import { dirname, extname, join, relative, resolve } from "node:path";
 
 // --root lets the contract tests point this at a synthetic tree instead of
 // the real repository, the same convention check-tally-request-builder-hazards.mjs
@@ -172,12 +172,29 @@ for (const fixtureDirectory of fixtureDirectories) {
   // and that is a legitimate paper trail this gate accepts.
   let documentationText = "";
   const declaredHashes = new Map(); // basename -> [{ bytes, sha256, sourceFile }]
+  // A row may name its fixture with a directory, relative to the Markdown
+  // file that holds it (`agent/d3-batch-import.xml`). Such a row was once
+  // matched against no file at all, so its hash went unchecked while the
+  // fixture still counted as documented (#759). It is resolved and checked
+  // against exactly that file, and a row naming a file that does not exist
+  // fails rather than checking nothing.
+  const declaredByPath = new Map(); // repository-relative path -> declarations
   for (const markdownPath of markdownFiles) {
     const text = readFileSync(markdownPath, "utf8");
     documentationText += `\n${text}`;
     for (const match of text.matchAll(TABLE_ROW)) {
       const [, name, bytesText, sha256] = match;
       const bytes = Number(bytesText.replaceAll(",", ""));
+      if (name.includes("/")) {
+        const target = relative(repositoryRoot, resolve(dirname(markdownPath), name));
+        if (!declaredByPath.has(target)) declaredByPath.set(target, []);
+        declaredByPath.get(target).push({
+          bytes,
+          sha256: sha256.toLowerCase(),
+          sourceFile: relative(repositoryRoot, markdownPath),
+        });
+        continue;
+      }
       if (!declaredHashes.has(name)) declaredHashes.set(name, []);
       declaredHashes.get(name).push({
         bytes,
@@ -274,8 +291,11 @@ for (const fixtureDirectory of fixtureDirectories) {
       continue;
     }
 
-    const declarations = declaredHashes.get(basename);
-    if (!declarations) continue; // Named in prose only — accepted, see file banner.
+    const declarations = [
+      ...(declaredHashes.get(basename) ?? []),
+      ...(declaredByPath.get(relativePath) ?? []),
+    ];
+    if (!declarations.length) continue; // Named in prose only — accepted, see file banner.
 
     const actualBytes = readFileSync(fixturePath);
     const actualSha256 = createHash("sha256").update(actualBytes).digest("hex");
@@ -297,6 +317,19 @@ for (const fixtureDirectory of fixtureDirectories) {
             "substitute pattern this gate exists to catch: either the capture " +
             "was genuinely re-taken (update the provenance table) or something " +
             "replaced it (restore the captured bytes)",
+        );
+      }
+    }
+  }
+
+  const fixtureSet = new Set(fixtureFiles.map((path) => relative(repositoryRoot, path)));
+  for (const [target, declarations] of declaredByPath) {
+    if (fixtureSet.has(target)) continue;
+    for (const declaration of declarations) {
+      if (failures.length < MAX_REPORTED) {
+        failures.push(
+          `${target}: declared in ${declaration.sourceFile} with a hash, but no ` +
+            "fixture is at that path — the row checks nothing; correct its path",
         );
       }
     }
