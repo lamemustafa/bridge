@@ -225,9 +225,12 @@ impl Server {
             &xml,
             identity.company_guid(),
         )
-        .map_err(|_| {
-            ToolFailure::from("voucher_type_export_invalid".to_string())
-                .with_prior_evidence(evidence.clone())
+        .map_err(|error| {
+            // The code names what failed and the cause why (bridge#676).
+            let mut failure = ToolFailure::from("voucher_type_export_invalid".to_string())
+                .with_prior_evidence(evidence.clone());
+            failure.cause = Some(error.safe_code());
+            failure
         })?;
         let book = parsed
             .records

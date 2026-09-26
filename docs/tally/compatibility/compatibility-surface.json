@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "8c13a0f7ae2d7c08c5849ab3619ca4957540045ce714069e9cf728fb70b24199"
+      "sha256": "de3126a04a748eb278098bc429a95335b65117b60e3cd93ec1627d8813b06051"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -103,7 +103,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "a91ac35c2bef17c40a11d928b38a555192227b64c85b98ac265e07b07b8f2525"
+      "sha256": "665d269c5512f5ce434221cc0b83c98d767b06415d72eebc6d5c224836b8b8f8"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -275,7 +275,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "e104391726e09e5d341daa4c58370a2cab13cfd3197423ccf0d002df72402e56"
+      "sha256": "8632ce5fc3823db8cef6c23d5613b1e3b156d673b8b0ef32523c3294496994a5"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_ledger_collection.rs",
@@ -463,7 +463,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "7c2a62ee630af74eb28519677b12838ceda91c7dec73517017deeef9fa8e817b"
+      "sha256": "dfe075ca50d0e901ded7e62f93def51efd873ea6d52d0ef85300fee8524dbb6a"
     },
     {
       "path": "src-tauri/src/agent_import_ack.rs",
@@ -575,7 +575,7 @@
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
-      "sha256": "9522c09aabae6ff2b2f8bbfa09bdad458349e595a1cdae7fb44296e5539fea4b"
+      "sha256": "0caa09b95278694e02d1eca1ca1ab4f7a5d112a2256cb2e7fe11b94c25219dfa"
     },
     {
       "path": "src-tauri/src/axal.rs",
@@ -1122,5 +1122,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "fe5a9351e63475f4e4129f8ccdcfe1d9c6cbcba4437b6d6b0b75a0c5a08f482c"
+  "manifest_sha256": "d5b77e1b5ac9143bfc147432062775a8655c89005668e284bf588c2cf4f724fd"
 }
