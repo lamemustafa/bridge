@@ -251,3 +251,9 @@ Inside sccache, the #728 PR run on Windows served 6 of 6 cacheable Rust compiles
 - Master took #712, a pinned change, at `bf01cc4`. #728 and #729 again conflicted on exactly the two aggregate lines. It is the second forced re-merge in about an hour, with neither PR changing anything.
 - Same procedure as before: no pin or claim change on either side, take master's generated files, reseal as its own commit, `--verify` current, diffs unchanged.
 - New heads: #728 `b33021b`, #729 `2816f76`. CI is re-running.
+
+## 2026-09-26 10:08 UTC: Check-in: third re-merge
+
+- Master took #721 and #742 (both pinned) at `4b8af05`. #728 and #729 conflicted on the two aggregate lines a **third** time since 08:00.
+- Same checked procedure. New heads: #728 `c46a6d9`, #729 `727daeb`.
+- Each round costs one full CI run per PR (about 16–20 min) and one cargo build for the reseal, for zero content change. That is measured support for #740 option A.
