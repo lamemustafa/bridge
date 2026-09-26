@@ -336,6 +336,33 @@ def _bank_reconciliation(c):
         bank_charge_narration_terms=bank_charge_narration_terms(c.cfg))
 
 
+def _high_value_register(c):
+    """As tae/pack.py calls it, on every engagement: the bank statement and the AIS rows are both
+    optional here, as there (none and no rows without their flags). The counterparty types are the
+    loan ledgers' lender_type with [roles].counterparty_type_by_ledger over them; the s.194N
+    recipient type follows the engagement's entity_type, exactly as pack.py maps it."""
+    from tae.audit_tests import high_value_register
+    from tae.config import (counterparty_type_by_ledger, loan_ledgers_config, role_ledger_set,
+                            s194n_narration_terms)
+    a = c.args
+    doc = _bank_statement(c) if (a.bank_statement or a.emit_bank_statement) else None
+    ais = _traces_documents(c)[1] if (a.traces_documents or a.emit_traces_documents) else []
+    round_off_ledgers = (role_ledger_set(c.cfg, "round_off_ledgers")
+                         if "round_off_ledgers" in c.cfg.get("roles", {}) else set())
+    counterparty_types = {k: v["lender_type"] for k, v in loan_ledgers_config(c.cfg).items()}
+    counterparty_types.update(counterparty_type_by_ledger(c.cfg))
+    if c.eng.entity_type in ("individual", "huf", "firm", "llp", "company"):
+        recipient = high_value_register.RECIPIENT_NOT_CO_OPERATIVE
+    elif c.eng.entity_type == "cooperative_society":
+        recipient = high_value_register.RECIPIENT_CO_OPERATIVE
+    else:
+        recipient = None
+    return high_value_register, high_value_register.run(
+        c.eng, c.rules, c.cash, c.bank, bank_statement=doc,
+        s194n_narration_terms=s194n_narration_terms(c.cfg), ais_rows=ais,
+        s194n_recipient_type=recipient, round_off_ledgers=frozenset(round_off_ledgers),
+        counterparty_type_by_ledger=counterparty_types)
+
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
     "bank_reconciliation": _bank_reconciliation,
@@ -346,6 +373,7 @@ RUNNERS = {
     "creditor_ageing_43bh": _creditor_ageing_43bh,
     "depreciation": _depreciation,
     "financial_statements": _financial_statements,
+    "high_value_register": _high_value_register,
     "ledger_scrutiny": _ledger_scrutiny,
     "loans_interest": _loans_interest,
     "partners_40b_194t": _partners_40b_194t,
@@ -369,11 +397,11 @@ def main() -> int:
     ap.add_argument("--emit-turnover-inputs",
                     help="applicability_44ab: take GSTR-1 turnover from the reference's own pack and write it here")
     ap.add_argument("--report-totals", help="financial_statements: report totals JSON to use")
-    ap.add_argument("--traces-documents", help="tds_tcs_26as/twentysixas_receipts: Form 26AS/AIS/TIS rows JSON to use")
+    ap.add_argument("--traces-documents", help="tds_tcs_26as/twentysixas_receipts/high_value_register: Form 26AS/AIS/TIS rows JSON to use")
     ap.add_argument("--emit-traces-documents",
                     help="tds_tcs_26as/twentysixas_receipts: read the rows with the reference's adapters and write them "
                          "here (client data: never commit the file)")
-    ap.add_argument("--bank-statement", help="bank_reconciliation: bank statement JSON to use")
+    ap.add_argument("--bank-statement", help="bank_reconciliation/high_value_register: bank statement JSON to use")
     ap.add_argument("--emit-bank-statement",
                     help="bank_reconciliation: read the statement with the reference's adapter and write it here "
                          "(client data: never commit the file)")

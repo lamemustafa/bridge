@@ -1904,6 +1904,20 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
+/// The folds this module knows, for finding two live masters that Tally's
+/// import lookup might not tell apart (bridge#626): the wide fold (case, NFC,
+/// dash and quote variants, whitespace runs including CR and LF), the observed
+/// gateway fold (`/` and `-` as a space, §9.4d), and the gateway fold applied
+/// after the wide one, which catches a pair needing both (`Rent/Office` plus
+/// CR LF beside `RENT OFFICE`). Two names that agree on any key are treated as
+/// possibly one master to Tally. No key decides a binding here; a caller uses
+/// them only to refuse.
+pub fn twin_fold_keys(value: &str) -> [String; 3] {
+    let wide = master_identity_key(value);
+    let both = verified_fold(&wide);
+    [wide, verified_fold(value), both]
+}
+
 /// A historical candidate index, retained for deterministic ordering.
 ///
 /// It may be broader than qualified gateway measurements and cannot resolve a
