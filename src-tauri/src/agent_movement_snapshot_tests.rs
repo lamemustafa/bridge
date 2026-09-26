@@ -135,6 +135,7 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let response = server
             .call_tool(
@@ -315,6 +316,7 @@ async fn a_divided_movement_refuses_a_posting_above_the_first_reads_ceiling() {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let response = server
             .call_tool(

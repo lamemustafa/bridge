@@ -1514,6 +1514,7 @@ mod tests {
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
+            batch_post_enabled: false,
         });
         let expected = render_lab_master_collection(
             identity.display_name(),
