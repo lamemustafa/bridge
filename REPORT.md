@@ -273,3 +273,9 @@ Append-only log. Newest entry at the bottom. This branch is never merged.
 - 342 tests pass at 6e2b984f. Sonnet pre-push check: none (records-only; records equal the shard merge key-for-key; fast-forward).
 - **Pushed `lane-e/e2b-hvr` @ 6e2b984f**, updated #713's body (candidate SHA, 342 tests, E2B2-01..39, 558/553, review record, net LOC +6921/−565 crate, +1526/−24 source and tests, 6 tests) and commented there.
 - Waiting on: Lane D's fresh independent review and the local real-book re-run at 6e2b984f. Next for this lane: re-stack E3a (and then E4) on 6e2b984f locally; their PRs open only after #713 merges.
+
+## 2026-09-26 03:20 UTC — E2b real books EQUAL; E3a re-stacked locally
+
+- Lane D merged master into `lane-e/e2b-hvr` (b47e154b; crate tree identical to 6e2b984f) and reported real-book parity **EQUAL on all three clients** against reference 140bc7d3. #713's body now names b47e154b as the candidate and carries the real-book line. CI's earlier "Required checks" failure on 6e2b984f was a superseded, cancelled run; the mutation-records check passes.
+- Follow-up Lane D named (not for #713): re-vendor the rules at 140bc7d3. Deferred here, since the crate stays frozen until the stack merges.
+- E3a: merged 6e2b984f into `lane-e/e3a-stock` locally (16fb0f06): `mutations.json` union (592 ids, none edited), one `stock: None` in E2b's new test book. 345 tests pass; clippy and fmt clean. Full run started, sharded to `cloud/lane-e-e3a-shards-2`; a Sonnet review of the merge runs before any push.
