@@ -457,6 +457,100 @@ async fn race_an_intent_during_approval(
     (response, observed, post_at, intents)
 }
 
+/// #711: while the dialog is open, `change` rewrites this batch's journal;
+/// the check under the admission lock then refuses with `code`, before this
+/// post's intent is appended, and the POST is never sent. `attempt_recorded`
+/// stays what the journal shows (`attempted`), and the batch carries exactly
+/// `intents` dispatch intents: only any `change` wrote, none from this post.
+async fn refused_under_the_admission_lock(
+    change: impl Fn(&std::path::Path, &ImportLedgerLine) + Send + Sync + 'static,
+    code: &str,
+    attempted: Value,
+    intents: usize,
+) {
+    let mut plans = before_approval();
+    let post_at = plans.len() + after_approval(xml(created_one())).len() - 1;
+    plans.extend(after_approval(xml(created_one())));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_batch(&server);
+    let batch_id = line.batch_id.clone();
+    let path = directory.path().join("agent-import-ledger.jsonl");
+    let scripted = ScriptedApproval::approving_after(move || change(&path, &line));
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted, server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator).len();
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["error"]["code"], code, "{response}");
+    assert_eq!(result["attempt_recorded"], attempted, "{response}");
+    assert_eq!(observed, post_at, "the POST is never sent: {response}");
+    let recorded = String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .lines()
+        .map(|record| serde_json::from_str::<Value>(record).unwrap())
+        .filter(|record| {
+            record["record_type"] == "dispatch_intent" && record["batch_id"] == batch_id.as_str()
+        })
+        .count();
+    assert_eq!(recorded, intents, "no intent from this post: {response}");
+}
+
+fn append_record(path: &std::path::Path, record: &impl serde::Serialize) {
+    use std::io::Write;
+    let mut bytes = serde_json::to_vec(record).unwrap();
+    bytes.push(b'\n');
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(&bytes)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_batch_gone_from_the_journal_under_the_lock_is_refused_by_name() {
+    refused_under_the_admission_lock(
+        |path, _| std::fs::write(path, b"").unwrap(),
+        "import_batch_not_found",
+        json!(null),
+        0,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_batch_attempted_while_approval_is_pending_is_refused_by_name() {
+    refused_under_the_admission_lock(
+        |path, line| {
+            append_record(
+                path,
+                &ledger::StatusRecord::dispatch_native(line, "c".repeat(64), Uuid::new_v4()),
+            );
+        },
+        "import_already_attempted",
+        json!(true),
+        1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_batch_changed_while_approval_is_pending_is_refused_by_name() {
+    refused_under_the_admission_lock(
+        |path, line| {
+            let mut changed = line.clone();
+            changed.sha256 = "d".repeat(64);
+            append_record(path, &changed);
+        },
+        "import_batch_changed",
+        json!(false),
+        0,
+    )
+    .await;
+}
+
 fn batch_server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
     Server::new(crate::agent::Settings {
         endpoint: TallyEndpointConfig {
@@ -634,11 +728,15 @@ async fn a_batch_is_refused_while_batch_posting_is_off() {
 async fn a_remoteid_recorded_while_approval_is_pending_is_never_sent() {
     let raced = Uuid::new_v4();
     let (response, observed, post_at, intents) = race_an_intent_during_approval(raced, raced).await;
-    // A refusal under the admission lock still reads as an unknown outcome
-    // (#711), though nothing was sent: the journal and the request count show
-    // that.
+    // Refused under the admission lock before the intent (#711): it keeps
+    // its own code, and nothing was recorded or sent.
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"], "import_dispatch_outcome_unknown",
+        response["structuredContent"]["result"]["error"]["code"], "import_remote_id_reused",
+        "{response}"
+    );
+    assert_eq!(
+        response["structuredContent"]["result"]["attempt_recorded"],
+        json!(false),
         "{response}"
     );
     assert_eq!(observed, post_at, "{response}");

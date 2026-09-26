@@ -270,6 +270,44 @@ pub(crate) struct PreIntentQueueRefusal {
     pub(crate) source: anyhow::Error,
 }
 
+/// A refusal under the exclusive admission lock, just before the dispatch
+/// intent is appended (#711). Nothing was recorded and nothing was sent, so
+/// each keeps its own code instead of the catch-all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum UnderLockRefusal {
+    #[error("import_batch_not_found")]
+    BatchNotFound,
+    #[error("import_already_attempted")]
+    AlreadyAttempted,
+    #[error("import_remote_id_reused")]
+    RemoteIdReused,
+    #[error("import_batch_changed")]
+    BatchChanged,
+}
+
+impl UnderLockRefusal {
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::BatchNotFound => "import_batch_not_found",
+            Self::AlreadyAttempted => "import_already_attempted",
+            Self::RemoteIdReused => "import_remote_id_reused",
+            Self::BatchChanged => "import_batch_changed",
+        }
+    }
+}
+
+/// Why `before_dispatch` refused. Only a named check made before the intent
+/// append is `Refused`; the lock, the journal read and the append itself are
+/// `Other`, which keeps the catch-all because the append may have recorded an
+/// intent (#711).
+/// Built explicitly at each site: this file holds no conversion (the approval
+/// seam gate refuses any `impl From`).
+#[derive(Debug)]
+pub(crate) enum BeforeDispatchError {
+    Refused(UnderLockRefusal),
+    Other(String),
+}
+
 /// The native approval every real post goes through. Outside this crate's own
 /// unit tests it is exactly [`confirm`]: nothing else exists to answer it.
 #[cfg(not(test))]
