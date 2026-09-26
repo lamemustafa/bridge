@@ -12,16 +12,17 @@ post dialog for the same voucher (#730), on a readback whose debit carries trail
   request to completion, never retries and does not alter bytes. Only synthetic companies were
   loaded (the extent and high-water responses list them); no client or client-derived book.
 - **Date:** 2026-09-26, 15:21 IST.
-- **The post:** a debug `bridge_mcp` built from #721's head with only the batch cap raised (the post
-  path unchanged) posted one saved batch of ONE Payment, dated 2026-04-03, Dr `Test Expense B` 1.00
+- **The post:** a debug `bridge_mcp` built from #721's head `84fb711e` with only the batch cap raised
+  (the post path unchanged) posted one saved batch of ONE Payment, dated 2026-04-03, Dr `Test Expense B` 1.00
   / Cr `Cash` 1.00, to the synthetic company `BRIDGE AMEND LAB` after one native approval. Tally
-  answered `CREATED 1`; it read back `posted_verified`. The post dialog showed `Dr 1.00` and
-  `Cr 1.00`.
+  answered `CREATED 1`; it read back `posted_verified`. The post dialog was observed on screen, not
+  captured: it showed `Dr 1.00` and `Cr 1.00`. The test renders it again from the journal.
 - **The capture:** one `verify_import` of that batch through the proxy, 30 exchanges in the order
   `SEESESEHSHSEECSCSEEVSVSEEVSVSE` (status probe, company extent, company high water, voucher
   census, import verification). Every repeat of a request received the same response. The
   extent and high-water requests equal those of the `d3-batch-*` capture; the census and
-  import-verification requests are this batch's own.
+  import-verification requests are this batch's own. The test asserts every request's SHA-256:
+  extent `9df2a53f…`, high water `0930288f…`, census `bad372ea…`, import verification `a29a7448…`.
 - **The readback:** the one voucher reads back with `-1.00` on the debit (ISDEEMEDPOSITIVE Yes)
   and `1.00` on the credit: Tally's own digits, with trailing zeros.
 - **Local state, not wire bytes:** `wa1-payment-journal.jsonl` holds the post's six journal lines

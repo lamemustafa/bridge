@@ -53,7 +53,7 @@ fn the_review_shows_the_doubt_and_the_voucher() {
 /// zero debit takes no sign, and a credit shows as it is, whatever its sign.
 /// An amount that is not a decimal refuses.
 #[test]
-fn a_debit_reads_as_the_post_dialog_showed_it_and_an_odd_sign_shows_as_it_is() {
+fn a_debit_is_negated_in_the_digits_tally_sent_and_an_odd_sign_shows_as_it_is() {
     let mut voucher = row_json(5, "Paid");
     voucher["amounts"][0]["amount"] = json!("-1234.50");
     voucher["amounts"][1]["amount"] = json!("2.00");

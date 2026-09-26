@@ -685,7 +685,8 @@ fn dispatched_batch(server: &Server) -> ImportLedgerLine {
 /// trailing zeros the post dialog showed.
 const WA1_BATCH: &str = "bridge-78ce4328-9c2a-4827-8584-821d6d656b40";
 
-/// That readback, in the captured order, as [`d3_batch_readback`] reads its.
+/// That readback, in the captured order, as [`d3_batch_readback`] reads the
+/// batch's.
 fn wa1_payment_readback() -> Vec<ScenarioPlan> {
     let extent = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/wa1-payment-company-extent.utf16le.xml"
@@ -707,6 +708,22 @@ fn wa1_payment_readback() -> Vec<ScenarioPlan> {
             'H' => xml(high_water.clone()),
             'C' => xml(census.clone()),
             _ => xml(readback.clone()),
+        })
+        .collect()
+}
+
+/// The sha256 of each request that capture carried, in the same order; `None`
+/// for the status probe. The extent and high-water requests are the d3
+/// capture's too.
+fn wa1_payment_requests() -> Vec<Option<&'static str>> {
+    "SEESESEHSHSEECSCSEEVSVSEEVSVSE"
+        .chars()
+        .map(|step| match step {
+            'S' => None,
+            'E' => Some("9df2a53f085dac2636e9435462b612c1487ec6f903677815036c9f39163f7dd8"),
+            'H' => Some("0930288f6eb531926d018cc4762288084831b8fad16a554e48fafbd694e245c2"),
+            'C' => Some("bad372eab88eed8009e302e573309d34aba6edf3fdb2da8a6b4bc2b1330ec7eb"),
+            _ => Some("a29a7448361733300968450db07bbbbc0754fd8eac8901decc1fc94510bc6955"),
         })
         .collect()
 }
@@ -779,7 +796,16 @@ async fn the_review_shows_each_entry_as_the_post_dialog_did() {
             "{entry}: {review}"
         );
     }
-    let _ = sent(simulator);
+    // Every request Bridge sent is the one the capture answered.
+    let requests = sent(simulator);
+    let expected = [wa1_payment_requests(), wa1_payment_requests()].concat();
+    assert_eq!(requests.len(), expected.len(), "{requests:?}");
+    for (index, (request, expected)) in requests.iter().zip(expected).enumerate() {
+        match expected {
+            None => assert_eq!(request.method, "GET", "request {index}"),
+            Some(sha256) => assert_eq!(request.request_body_sha256, sha256, "request {index}"),
+        }
+    }
 }
 
 /// A batch of several vouchers with no doubt recorded is refused before any
