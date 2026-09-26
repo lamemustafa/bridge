@@ -18,7 +18,7 @@ fn seeded(
 ) -> (Server, Value) {
     let server = server_at(simulator.address(), directory);
     let line = saved_captured_line(&server);
-    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    let native = native_post_request(&line, RemoteIds::from_ids(vec![Uuid::new_v4()])).unwrap();
     {
         let _lock = server.lock_import_admission().unwrap();
         server
@@ -665,7 +665,12 @@ async fn a_batch_of_several_vouchers_is_refused_before_any_request() {
     line.vouchers.push(second);
     line.txn_ids.push("BRIDGE_MCP_LIVE_20260906_A2".into());
     server.append_import_ledger(&line).unwrap();
-    let native = native_post_request(&line, Uuid::new_v4()).unwrap();
+    // One REMOTEID per voucher: the intent records the batch's two.
+    let native = native_post_request(
+        &line,
+        RemoteIds::from_ids(vec![Uuid::new_v4(), Uuid::new_v4()]),
+    )
+    .unwrap();
     {
         let _lock = server.lock_import_admission().unwrap();
         server

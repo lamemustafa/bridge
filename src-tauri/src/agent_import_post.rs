@@ -263,10 +263,10 @@ impl Server {
             // one can undo a person's cancel or delete (protocol reference §9.3).
             // Refused before any Tally request; checked again as the intent is
             // written, under the exclusive lock.
-            let remote_id = mint_remote_id();
+            let remote_ids = RemoteIds::mint(line.vouchers.len())?;
             let recorded = {
                 let _lock = self.lock_import_admission_shared()?;
-                self.import_remote_id_recorded_while_admitted(remote_id)?
+                self.import_remote_ids_recorded_while_admitted(remote_ids.as_slice())?
             };
             if recorded {
                 return Err("import_remote_id_reused".to_string().into());
@@ -278,15 +278,21 @@ impl Server {
             // the lease sends before posting (§11c).
             let before = self.verify_import_for_post(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
-            require_absent_verification_result(&before.payload["result"])?;
+            require_absent_verification_result(&before.payload["result"], line.vouchers.len())?;
             let payload = ImportPayload {
                 company_guid: line.company_guid.clone(),
                 vouchers: line.vouchers.clone(),
                 amends_batch_id: None,
             };
-            let voucher_date = bridge_tally_core::TallyDate::parse(line.vouchers[0].date.clone())
+            // Every voucher's date, so the queue's Education recheck covers
+            // them all, not only the first.
+            let voucher_dates = line
+                .vouchers
+                .iter()
+                .map(|voucher| bridge_tally_core::TallyDate::parse(voucher.date.clone()))
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| "voucher_date_invalid".to_string())?;
-            let native = native_post_request(&line, remote_id)?;
+            let native = native_post_request(&line, remote_ids)?;
             let xml = native.xml.clone();
             let verification_request = crate::tally::agent_read_request::AgentReadRequest::parse(
                 render_import_verification_read(
@@ -379,7 +385,7 @@ impl Server {
             let request = ApprovedImport::confirm(
                 xml,
                 &preview,
-                voucher_date,
+                voucher_dates,
                 verification_request,
                 ledger_catalogue_request,
                 ledger_binding.clone(),
@@ -430,7 +436,9 @@ impl Server {
                         if current.dispatched {
                             return Err("import_already_attempted".into());
                         }
-                        if self.import_remote_id_recorded_while_admitted(native.remote_id)? {
+                        if self.import_remote_ids_recorded_while_admitted(
+                            native.remote_ids.as_slice(),
+                        )? {
                             return Err("import_remote_id_reused".into());
                         }
                         if current.batch.sha256 != line.sha256
@@ -444,6 +452,9 @@ impl Server {
                     },
                 )
                 .await;
+            // Whatever the outcome, the book may have changed: no ledger
+            // listing of this company is continued from before it (#630).
+            self.drop_listing_snapshots(identity.company_guid());
             let posted = posted.map_err(|error| {
                 currencies_seen = error
                     .chain()
@@ -537,10 +548,32 @@ impl Server {
                     )
                 }) {
                     "post_catalogue_unreadable"
+                } else if error
+                    .chain()
+                    .any(|cause| cause.is::<crate::tally::approved_import::PreIntentQueueRefusal>())
+                {
+                    // Refused in the queue before the intent (#656): nothing
+                    // was sent, so the outcome is known.
+                    "post_queue_read_failed"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
-                ToolFailure::from_runtime(code, error)
+                // A queue read that failed in transport has no typed cause of
+                // its own; the transport's safe code names it.
+                let transport = (code == "post_queue_read_failed")
+                    .then(|| {
+                        error.chain().find_map(|cause| {
+                            cause
+                                .downcast_ref::<bridge_tally_transport::TallyTransportError>()
+                                .map(bridge_tally_transport::TallyTransportError::safe_code)
+                        })
+                    })
+                    .flatten();
+                let mut failure = ToolFailure::from_runtime(code, error);
+                if failure.cause.is_none() {
+                    failure.cause = transport;
+                }
+                failure
             })?;
             accumulated = combine_evidence(
                 accumulated.clone(),
@@ -778,22 +811,38 @@ fn mark_reconciliation_required(payload: &mut Value) {
     payload["result"]["error"] = json!({"code":"import_reconciliation_required", "message":"The saved attempt has not been confirmed as the intended new voucher. Reconcile this original batch without resending it."});
 }
 
-fn import_outcome_is_clean(outcome: Option<&bridge_tally_protocol::TallyImportOutcome>) -> bool {
+/// A clean response creates exactly the batch's `voucher_count` vouchers and
+/// nothing else.
+fn import_outcome_is_clean(
+    outcome: Option<&bridge_tally_protocol::TallyImportOutcome>,
+    voucher_count: usize,
+) -> bool {
     outcome.is_some_and(|outcome| {
         outcome.application_status() != TallyImportApplicationStatus::Failure
             && outcome.exceptions_were_reported()
-            && outcome.counters().is_clean_success_for(1, 0, 0)
+            && outcome
+                .counters()
+                .is_clean_success_for(voucher_count as u64, 0, 0)
     })
 }
 
-fn persisted_response_is_clean(response: Option<&ledger::DispatchResponse>) -> bool {
-    response.is_some_and(|response| import_outcome_is_clean(response.outcome.as_ref()))
+fn persisted_response_is_clean(
+    response: Option<&ledger::DispatchResponse>,
+    voucher_count: usize,
+) -> bool {
+    response
+        .is_some_and(|response| import_outcome_is_clean(response.outcome.as_ref(), voucher_count))
 }
 
-fn persisted_response_state(response: Option<&ledger::DispatchResponse>) -> &'static str {
+fn persisted_response_state(
+    response: Option<&ledger::DispatchResponse>,
+    voucher_count: usize,
+) -> &'static str {
     match response {
         None => "response_missing",
-        Some(response) if import_outcome_is_clean(response.outcome.as_ref()) => "response_clean",
+        Some(response) if import_outcome_is_clean(response.outcome.as_ref(), voucher_count) => {
+            "response_clean"
+        }
         Some(_) => "response_not_clean",
     }
 }
@@ -802,17 +851,18 @@ pub(super) fn finalize_previous_attempt_reconciliation(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
     masters_after_post: Option<&Value>,
+    voucher_count: usize,
 ) {
-    let name_verified = verification_status(&payload["result"], 1) == "posted_verified"
-        && persisted_response_is_clean(response);
+    let name_verified = verification_status(&payload["result"], voucher_count) == "posted_verified"
+        && persisted_response_is_clean(response, voucher_count);
     // A doubt recorded when this batch was posted outlives the readback, which
     // compares by name and cannot clear it (#239).
-    let doubt = masters_doubt(masters_after_post);
+    let doubt = post_doubt(masters_after_post, voucher_count);
     let reconciled = name_verified && doubt.is_none();
     payload["result"]["dispatch"] = json!({
         "state": if reconciled { "previous_attempt_reconciled" } else { "reconciliation_required" },
         "resent": false,
-        "response_state": persisted_response_state(response),
+        "response_state": persisted_response_state(response, voucher_count),
         "response": response,
     });
     if !name_verified {
@@ -831,7 +881,11 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     let masters = masters_after_post?;
     let state = masters["state"].as_str().unwrap_or_default();
     if state == "unchanged" || (state == "not_checked" && masters["reason"] == "masters_unmoved") {
-        return None;
+        // Clean on the masters; a batch's recorded step verdict may still
+        // doubt, independently.
+        return masters
+            .get("batch_step")
+            .and_then(|step| batch_step_doubt(Some(step)));
     }
     const REVIEW: &str = "Review the voucher in Tally and correct it there if it went to the wrong ledger. It is already posted, so do not rebuild this event.";
     Some(if state == "posted_under_changed_masters" {
@@ -859,19 +913,49 @@ pub(super) fn masters_doubt(masters_after_post: Option<&Value>) -> Option<(&'sta
     })
 }
 
+/// A batch's step doubt: its target's voucher mark did not move by exactly
+/// Tally's CREATED, or that was never recorded (pending, unreadable or
+/// absent). Nothing in the step says which voucher, so the review is of the
+/// whole batch.
+fn batch_step_doubt(step: Option<&Value>) -> Option<(&'static str, String)> {
+    if step.is_some_and(|step| step["state"] == "matched") {
+        return None;
+    }
+    Some((
+        "batch_step_unconfirmed",
+        "Tally reported creating the batch, but this company's voucher mark did not move by exactly that many, so another change may have been made in it while the batch was posting. Review the batch's vouchers in Tally. They are already posted, so do not rebuild this batch. No review record is available for a batch yet.".to_string(),
+    ))
+}
+
+/// Every doubt across the post: the masters check, and for a batch its step,
+/// which must be recorded as matched.
+fn post_doubt(
+    masters_after_post: Option<&Value>,
+    voucher_count: usize,
+) -> Option<(&'static str, String)> {
+    masters_doubt(masters_after_post).or_else(|| {
+        (voucher_count > 1)
+            .then(|| {
+                batch_step_doubt(masters_after_post.and_then(|masters| masters.get("batch_step")))
+            })
+            .flatten()
+    })
+}
+
 pub(super) fn finalize_current_dispatch(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
     masters_after_post: Option<&Value>,
+    voucher_count: usize,
 ) {
-    let verified = verification_status(&payload["result"], 1) == "posted_verified";
-    let clean = persisted_response_is_clean(response);
-    let masters_doubt = masters_doubt(masters_after_post);
+    let verified = verification_status(&payload["result"], voucher_count) == "posted_verified";
+    let clean = persisted_response_is_clean(response, voucher_count);
+    let masters_doubt = post_doubt(masters_after_post, voucher_count);
     payload["result"]["dispatch"] = json!({
         "state": if clean && verified && masters_doubt.is_none() { "posted_verified" } else { "reconciliation_required" },
         "counters":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.counters())),
         "application_status":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.application_status())),
-        "response_state": persisted_response_state(response),
+        "response_state": persisted_response_state(response, voucher_count),
         "response": response,
         "resent":false, "automatic_retry":false
     });
@@ -891,9 +975,11 @@ fn validate_post_profile_with_evidence(
     validate_import_dates_for_profile(payload, profile)
 }
 
-fn require_absent_verification_result(result: &Value) -> Result<(), String> {
-    if result["counts"]["not_found"].as_u64() != Some(1)
-        || result["vouchers"].as_array().map(Vec::len) != Some(1)
+/// Every one of the batch's `voucher_count` vouchers is absent from the book.
+fn require_absent_verification_result(result: &Value, voucher_count: usize) -> Result<(), String> {
+    if voucher_count == 0
+        || result["counts"]["not_found"].as_u64() != Some(voucher_count as u64)
+        || result["vouchers"].as_array().map(Vec::len) != Some(voucher_count)
     {
         return Err("import_preexisting_identity".into());
     }
@@ -939,7 +1025,9 @@ fn recheck_import_admission(
     corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)
         .map_err(anyhow::Error::msg)?;
     let result = verify_batch(line, &observed).map_err(anyhow::Error::msg)?;
-    require_absent_verification_result(&result).map_err(|code| match code.as_str() {
+    require_absent_verification_result(&result, line.vouchers.len()).map_err(|code| match code
+        .as_str()
+    {
         "import_preexisting_identity" => ApprovedImportAdmissionError::PreexistingIdentity.into(),
         _ => anyhow::Error::msg(code),
     })?;
@@ -1138,28 +1226,76 @@ fn mint_remote_id() -> Uuid {
     Uuid::new_v4()
 }
 
+/// The fresh REMOTEIDs of one native post, one per voucher in order, all
+/// distinct. They are minted together at dispatch time and never derived, so
+/// none can repeat one Tally may have seen (protocol reference §9.3).
+pub(super) struct RemoteIds(Vec<Uuid>);
+
+impl RemoteIds {
+    /// At least one id; a repeat, which a v4 UUID makes vanishingly rare, is
+    /// discarded, and a run of repeats refuses rather than loop.
+    pub(super) fn mint(count: usize) -> Result<Self, String> {
+        if count == 0 {
+            return Err("import_post_requires_one_voucher".into());
+        }
+        // No more than the journal will admit on read, so an intent is never
+        // written that the next journal read would refuse.
+        if count > ledger::MAX_BATCH_POST_VOUCHERS {
+            return Err("import_post_batch_too_large".into());
+        }
+        let mut ids = Vec::with_capacity(count);
+        let mut repeats = 0;
+        while ids.len() < count {
+            let id = mint_remote_id();
+            if ids.contains(&id) {
+                repeats += 1;
+                if repeats > 3 {
+                    return Err("import_remote_id_reused".into());
+                }
+            } else {
+                ids.push(id);
+            }
+        }
+        Ok(Self(ids))
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_ids(ids: Vec<Uuid>) -> Self {
+        Self(ids)
+    }
+
+    pub(super) fn as_slice(&self) -> &[Uuid] {
+        &self.0
+    }
+}
+
 /// One native post: the request bytes, their wire digest, and the fresh
-/// REMOTEID they carry. The post records `request_sha256` and `remote_id`
-/// together in its dispatch intent, before sending (bridge#579).
+/// REMOTEIDs they carry, one per voucher. The post records `request_sha256`
+/// and the REMOTEIDs together in its dispatch intent, before sending
+/// (bridge#579).
 pub(super) struct NativePostRequest {
     pub(super) xml: String,
     pub(super) request_sha256: String,
-    pub(super) remote_id: Uuid,
+    pub(super) remote_ids: RemoteIds,
 }
 
 pub(super) fn native_post_request(
     line: &ImportLedgerLine,
-    remote_id: Uuid,
+    remote_ids: RemoteIds,
 ) -> Result<NativePostRequest, String> {
     let company = line
         .company
         .as_ref()
         .ok_or_else(|| "import_post_company_missing".to_string())?;
-    let xml = render_native_voucher_xml(
+    if remote_ids.as_slice().len() != line.vouchers.len() {
+        return Err("import_post_remote_ids_mismatch".into());
+    }
+    let xml = render_native_vouchers_xml(
         &company.name,
-        &line.vouchers[0],
         line.identity_batch_id(),
-        remote_id,
+        line.vouchers
+            .iter()
+            .zip(remote_ids.as_slice().iter().copied()),
     );
     let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
         &xml,
@@ -1167,7 +1303,7 @@ pub(super) fn native_post_request(
     Ok(NativePostRequest {
         xml,
         request_sha256,
-        remote_id,
+        remote_ids,
     })
 }
 
