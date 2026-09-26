@@ -968,13 +968,29 @@ async fn a_voucher_cancelled_in_tally_reads_not_effective_not_divergent() {
     assert_eq!(
         result["unverified_vouchers"],
         json!([{"bridge_txn_id":"D3-003","status":"posted_not_effective","marker":"narration_tag",
-            "reason":"voucher_cancelled","voucher_number":"3",
+            "reason":"voucher_cancelled","diffs":[],"voucher_number":"3",
             "guid":"17a10910-773c-42c6-bd66-7bba9a392536-00000550","master_id":"1360","alter_id":1685}]),
         "{verified}"
     );
     assert_eq!(
         result["dispatch"]["state"], "reconciliation_required",
         "{verified}"
+    );
+    let markdown = fs::read_to_string(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{D3_BATCH}.proof.md")),
+    )
+    .unwrap();
+    assert!(
+        markdown
+            .contains("Readback counts: matching 49, divergent 0, not effective 1, not found 0"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("| D3-003 | posted_not_effective |"),
+        "{markdown}"
     );
 
     // Every request Bridge sent is the one the capture answered.
