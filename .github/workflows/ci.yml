@@ -188,6 +188,8 @@ jobs:
           workspaces: |
             src-tauri -> target
             tools -> target
+          # bridge#669: a PR-scoped cache only serves that PR; PRs restore master's.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Test portable Tally truth layer
         working-directory: src-tauri
         run: >-
@@ -337,6 +339,7 @@ jobs:
           # workspace binaries and incremental artifacts are not persisted.
           key: ${{ runner.os == 'Windows' && format('native-deps-v1-{0}', hashFiles('.github/actions/setup-windows-native/action.yml')) || '' }}
           env-vars: ${{ runner.os == 'Windows' && 'ImageOS ImageVersion OPENSSL LIBCLANG' || '' }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           # PRs consume trusted base caches. Manual branch runs can measure cold
           # and warm reuse in their own scope before a change reaches master.
           save-if: ${{ runner.os != 'Windows' || github.event_name != 'pull_request' }}
@@ -521,6 +524,7 @@ jobs:
           # Tauri sets this inside its process; include it before cache lookup so
           # artifacts from a plain Cargo build cannot masquerade as a warm bundle.
           env-vars: ${{ runner.os == 'macOS' && 'MACOSX_DEPLOYMENT_TARGET' || '' }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Set up Windows native prerequisites
         id: windows-bundle-prerequisites
         if: runner.os == 'Windows'
@@ -679,7 +683,8 @@ jobs:
 
   compiler-cache-retention:
     name: Retain two compiler-cache snapshots per OS
-    needs: [bundle-smoke, workflow-consistency]
+    # Every job that saves a Rust cache has finished, so no save races the listing.
+    needs: [bundle-smoke, native, tally-portable, workflow-consistency]
     if: ${{ always() && github.ref == 'refs/heads/master' && needs.workflow-consistency.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -696,7 +701,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version-file: .node-version
-      - name: Prune only obsolete master package compiler objects
+      # Package sccache: two newest per OS. Rust caches: newest per job/OS family.
+      - name: Prune only obsolete master compiler caches
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/prune-package-compiler-cache.mjs --apply

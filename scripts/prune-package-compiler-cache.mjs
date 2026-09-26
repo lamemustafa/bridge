@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { pathToFileURL } from "node:url";
 
-const prefix = "bridge-package-sccache-v1-";
 const managedKey = /^bridge-package-sccache-v1-(macOS|Windows)-(ARM64|X64)-[a-f0-9]{64}-[a-f0-9]{40}-\d+$/;
+// Swatinem/rust-cache keys end in an environment hash and a lockfile hash. A new master key in the
+// same job/OS family supersedes the older one: restores match the family prefix and take the newest.
+const rustKey = /^v0-rust-([\w.-]+)-[a-f0-9]{8}-[a-f0-9]{8}$/;
+const families = [
+  { prefix: "bridge-package-sccache-v1-", key: managedKey, keep: 2 },
+  { prefix: "v0-rust-", key: rustKey, keep: 1 },
+];
 
-export function obsoleteCaches(caches) {
+export function obsoleteCaches(caches, { key = managedKey, keep = 2 } = {}) {
   if (!Array.isArray(caches)) throw new TypeError("Expected a cache inventory");
   const groups = new Map();
   const ids = new Set();
   for (const cache of caches) {
-    const match = typeof cache?.key === "string" && cache.key.match(managedKey);
+    const match = typeof cache?.key === "string" && cache.key.match(key);
     if (cache?.ref !== "refs/heads/master" || !match) continue;
     if (!Number.isSafeInteger(cache.id) || cache.id <= 0 || ids.has(cache.id) ||
         !Number.isSafeInteger(cache.size_in_bytes) || cache.size_in_bytes <= 0 ||
@@ -22,7 +28,7 @@ export function obsoleteCaches(caches) {
     groups.set(match[1], group);
   }
   return [...groups.values()].flatMap((group) =>
-    group.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id).slice(2));
+    group.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id).slice(keep));
 }
 
 // The cache list is not a snapshot: a cache saved or evicted while it is paged moves total_count or
@@ -51,7 +57,7 @@ export async function pruneCaches({ env = process.env, fetcher = fetch, apply = 
     if (!response.ok) throw Object.assign(new Error("GitHub cache API request failed"), { status: response.status });
     return method === "GET" ? response.json() : undefined;
   }
-  async function inventory() {
+  async function inventory(prefix) {
     const caches = [];
     for (let page = 1; page <= 10; page += 1) {
       const query = new URLSearchParams({ key: prefix, ref: "refs/heads/master", per_page: "100", page: String(page) });
@@ -66,22 +72,27 @@ export async function pruneCaches({ env = process.env, fetcher = fetch, apply = 
     }
     throw Object.assign(new TypeError("Cache inventory is incomplete"), { code: "inventory_incomplete" });
   }
-  async function consistentInventory() {
+  async function consistentInventory(prefix) {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        return await inventory();
+        return await inventory(prefix);
       } catch (error) {
         if (error?.code !== "inventory_incomplete" || attempt >= INVENTORY_ATTEMPTS) throw error;
         await sleep(INVENTORY_RETRY_MS);
       }
     }
   }
-  const obsolete = obsoleteCaches(await consistentInventory());
+  // Every family is listed completely before anything is deleted.
+  const plans = [];
+  for (const family of families) plans.push(obsoleteCaches(await consistentInventory(family.prefix), family));
+  const obsolete = plans.flat();
   if (apply) {
     for (const cache of obsolete) await request("DELETE", `${endpoint}/${cache.id}`);
-    if (obsoleteCaches(await consistentInventory()).length) throw Object.assign(new Error("Compiler-cache retention did not converge"), { code: "retention_incomplete" });
+    for (const family of families) {
+      if (obsoleteCaches(await consistentInventory(family.prefix), family).length) throw Object.assign(new Error("Compiler-cache retention did not converge"), { code: "retention_incomplete" });
+    }
   }
-  return { applied: apply, obsoleteIds: obsolete.map((cache) => cache.id), retainedPerOS: 2 };
+  return { applied: apply, obsoleteIds: obsolete.map((cache) => cache.id), retainedPerOS: 2, retainedPerRustFamily: 1 };
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
