@@ -61,3 +61,6 @@ Head `cb57941d301920b6f110cff1f912a4866fb0f73a`. Sonnet: no P1/P2. Two independe
 
 ## 2026-09-26T06:37Z: all five Lane Q PRs are ready
 #727 (#662), #731 (#689, pinned, approval path: route an Opus independent reviewer), #733 (#696), #734 (#680), #736 (#632, pinned, optional). None is merged by me.
+
+## 2026-09-26T06:42Z: #727 merged
+#662 is fixed on master by Lane D's merge of PR #727. The session is unsubscribed from it.
