@@ -355,11 +355,8 @@ licence mode has been qualified.
 
 ## Approved voucher posting
 
-**Voucher posting is off by default in the MCPB extension** while two known
-limits remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher
-([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
-delete or roll back a voucher it has posted, so a wrong post must be corrected
-by hand in Tally ([#579](https://github.com/lamemustafa/bridge/issues/579)).
+**Voucher posting is off by default in the MCPB extension** while three known
+limits remain. Tally aims an import at a company by its name and cannot bind it to a company's GUID. Bridge's last request before the post checks that exactly one loaded company has the target's GUID and name, and that no other loaded company has the same name ignoring case and spacing; otherwise it refuses the post ([#607](https://github.com/lamemustafa/bridge/pull/607)). A company renamed to, or loaded under, the target's name (or one differing only in case or spacing) in the moment after that check could still receive the voucher, if it has the voucher's ledgers. Bridge may flag afterwards that the loaded companies changed, but cannot always say where the voucher went, and cannot prevent it (accepted residual, [#574](https://github.com/lamemustafa/bridge/issues/574)). A ledger renamed and replaced in that same moment means the post can land in the replacement ledger. Bridge marks the result as needing reconciliation when it sees that the ledger now resolves to a different master; a change that leaves the company's master mark unmoved, or is reverted before that check, is not seen, and a regroup in that moment is not detected ([#623](https://github.com/lamemustafa/bridge/pull/623)). And Bridge has no tool to delete or undo a voucher it has posted, so a wrong post must be corrected by hand in Tally. It records the REMOTEID each post sends, but no delete tool exists yet ([#579](https://github.com/lamemustafa/bridge/issues/579), [#582](https://github.com/lamemustafa/bridge/pull/582)).
 The saved batch file is now checked byte for byte against the approved record
 before posting ([#575](https://github.com/lamemustafa/bridge/issues/575), fixed).
 **Allow voucher posting (Journal, Payment, Receipt, Contra)** turns it on for
