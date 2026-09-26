@@ -61,7 +61,8 @@ What Bridge does today:
   child's exit status as the answer. It sends a fresh nonce on stdin and approves only when the child
   prints exactly the post token for that nonce and exits cleanly. `run_confirmation`'s doc comment
   says it "Runs before Tokio starts, because macOS dialogs require the main thread". The post
-  child shows a fixed approve/cancel `rfd::MessageDialog` over a bounded text preview (`show_review`).
+  child shows an approve/cancel `rfd::MessageDialog` over a bounded text preview (`show_review`),
+  whose title and post button name the voucher count the parent sends after the nonce (#746).
   On Windows it is a raw `MessageBoxW`, not `rfd`, because `rfd` without common-controls-v6 discards the
   custom button labels (that file's own comment). This is
   a real precedent for showing *some* native prompt from a process `bridge_mcp` controls, but it is

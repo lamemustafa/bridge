@@ -16,7 +16,7 @@
 //! party ledger) is caught only if it moves the ALTERID, which is not yet
 //! measured for an edit made in Tally's own screens.
 use super::*;
-use crate::tally::approved_import::{ReviewAcknowledged, REVIEW_BUTTON};
+use crate::tally::approved_import::{ReviewAcknowledged, VoucherCount, REVIEW_BUTTON};
 
 /// Names the fields [`voucher_fingerprint`] covers, and in which order. A new
 /// field is a new version, so a record never matches a fingerprint computed
@@ -917,7 +917,12 @@ impl Server {
             })
             .collect::<Vec<_>>();
 
-        let approval = ReviewAcknowledged::confirm(&preview).await.map_err(fail)?;
+        // The dialog's title names how many vouchers it shows (#746).
+        let count = VoucherCount::new(reviewed_rows.len())
+            .ok_or_else(|| fail("ack_readback_not_matched".to_string()))?;
+        let approval = ReviewAcknowledged::confirm(count, &preview)
+            .await
+            .map_err(fail)?;
 
         // What was approved must still be what Tally and the records hold.
         let mut rows_after = None;
