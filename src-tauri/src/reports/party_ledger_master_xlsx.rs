@@ -421,7 +421,7 @@ fn basis_text(basis: LineBasis) -> &'static str {
 
 fn decisions_summary(statuses: &[DecisionStatus], finality: Finality) -> String {
     if statuses.is_empty() {
-        return "None recorded for this period.".to_string();
+        return "None were applied to this export.".to_string();
     }
     let applied = statuses
         .iter()

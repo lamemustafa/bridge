@@ -139,7 +139,7 @@ applies those that still fit, and reports the rest without applying them. No dec
   subtotal. The record treats both the same way.
 - Until the store exists, the export presents no decisions. The view then differs from today's only by:
   - a basis column;
-  - a "None recorded" line;
+  - a "None were applied to this export." line;
   - reworded notes;
   - one exclusion text. A ledger whose group chain ends in a group with no parent in the read now says so, instead
     of "client mapping decision required".
