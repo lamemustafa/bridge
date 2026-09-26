@@ -106,3 +106,32 @@ fn every_composite_in_the_captured_voucher_is_classified() {
         assert!(is_currency_composite(amount), "{amount}");
     }
 }
+
+/// Each rule that ties a composite's parts together, broken alone on a
+/// captured composite. Every captured composite passes all of them (above).
+#[test]
+fn a_composite_whose_parts_disagree_is_not_one() {
+    let captured = captured_composites()
+        .into_iter()
+        .find(|value| value.starts_with("-$ ") && !value.contains(" /$"))
+        .expect("a captured negative composite with a rate");
+    assert!(is_currency_composite(&captured), "{captured}");
+    let rate_start = captured.find(" @ ").unwrap() + " @ ".len();
+    // The rate is not quoted in the base amount's symbol.
+    let other_base = format!(
+        "{}\u{20ac}{}",
+        &captured[..rate_start],
+        &captured[rate_start + "I\u{20b9}".len()..]
+    );
+    assert!(other_base.contains("@ \u{20ac} "), "{other_base}");
+    assert!(!is_currency_composite(&other_base), "{other_base}");
+    // The rate is not per the foreign amount's symbol.
+    let other_per = captured.replacen("/$", "/\u{20ac}", 1);
+    assert_ne!(other_per, captured);
+    assert!(!is_currency_composite(&other_per), "{other_per}");
+    // The foreign and base amounts carry different signs.
+    let base_start = captured.find(" = ").unwrap() + " = ".len();
+    let unsigned_base = format!("{}{}", &captured[..base_start], &captured[base_start + 1..]);
+    assert!(captured[base_start..].starts_with('-'));
+    assert!(!is_currency_composite(&unsigned_base), "{unsigned_base}");
+}

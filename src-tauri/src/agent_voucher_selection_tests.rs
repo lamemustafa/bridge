@@ -636,6 +636,8 @@ async fn a_refused_ledger_catalogue_names_its_cause_and_no_ledger() {
 
 // -- #674: a foreign-currency composite withholds its voucher, not the window --
 
+use crate::agent::voucher_parse::window_with_composite_vouchers;
+
 fn decoded(bytes: &[u8]) -> String {
     String::from_utf16(
         &bytes
@@ -646,29 +648,9 @@ fn decoded(bytes: &[u8]) -> String {
     .unwrap()
 }
 
-/// Synthetic mutation: the captured three-voucher window with voucher 1's
-/// three amounts (party entry, its bill allocation, sales entry) replaced by
-/// the three composites a live read of the several-currency book captured.
+/// Voucher 1 of the captured three-voucher window made a composite one.
 fn window_with_a_composite_voucher() -> String {
-    let forex = decoded(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/vouchers-forex-composite-20260915.utf16le.xml"
-    ));
-    let composites: Vec<&str> = forex
-        .split("<AMOUNT")
-        .skip(1)
-        .filter_map(|tail| Some(&tail[tail.find('>')? + 1..tail.find("</AMOUNT>")?]))
-        .collect();
-    assert_eq!(composites.len(), 3);
-    let captured = decoded(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
-    ));
-    let first_end = captured.find("</VOUCHER>").unwrap();
-    let mut first = captured[..first_end].to_string();
-    for (plain, composite) in ["-101.01", "-101.01", "101.01"].iter().zip(&composites) {
-        let at = first.find(&format!(">{plain}</AMOUNT>")).unwrap();
-        first.replace_range(at + 1..at + 1 + plain.len(), composite);
-    }
-    format!("{first}{}", &captured[first_end..])
+    window_with_composite_vouchers(1)
 }
 
 /// The whole-window `vouchers` plans of the timings test, serving `window`.
@@ -772,43 +754,6 @@ async fn an_ordinary_window_carries_no_withheld_fields() {
 }
 
 #[tokio::test]
-async fn voucher_presence_still_refuses_a_composite_window_by_its_amount_code() {
-    let window = ScenarioPlan::new(Fixture::SyntheticXml(window_with_a_composite_voucher()))
-        .with_encoding(WireEncoding::Utf16Le)
-        .with_framing(ResponseFraming::ContentLength);
-    let cycle = import_cycle_plans();
-    let mut plans = cycle[..10].to_vec();
-    plans.extend(cycle[10..16].iter().cloned());
-    plans.extend([cycle[0].clone(), window.clone(), cycle[1].clone(), window, cycle[1].clone()]);
-    let simulator = SequenceSimulator::spawn(plans).unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let response = server_for(simulator.address(), directory.path())
-        .call_tool(
-            "voucher_presence",
-            json!({
-                "company_guid": CAPTURED_GUID,
-                "from": "20260801",
-                "to": "20260802",
-                "numbering": [{"voucher_type": "Sales", "numbering_method": "manual"}],
-                "vouchers": [{
-                    "date": "20260801", "voucher_type": "Sales", "voucher_number": "2",
-                    "party": "Café Naïve Traders",
-                    "entries": [{"ledger": "Café Naïve Traders", "amount": "-102.02"},
-                                {"ledger": "WR2 Sales", "amount": "102.02"}],
-                }],
-            }),
-        )
-        .await;
-    simulator.cancel();
-    simulator.finish().unwrap();
-    assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"],
-        "bill_allocation_amount_invalid",
-        "{response}"
-    );
-}
-
-#[tokio::test]
 async fn a_withheld_voucher_is_listed_under_a_ledger_filter_it_touches() {
     // Voucher 1 posts to this party ledger; its amounts are the composites.
     let touching = call_filtered_vouchers_over(
@@ -833,4 +778,20 @@ async fn a_withheld_voucher_is_listed_under_a_ledger_filter_it_touches() {
     assert_eq!(result["total"], 1, "{result}");
     assert!(result.get("withheld_total").is_none(), "{result}");
     assert_eq!(result["state"], "complete");
+}
+
+/// A window whose every voucher is withheld is not empty: the empty-window
+/// corroboration does not run, so these plans hold no corroboration read and
+/// `finish` would fail on one.
+#[tokio::test]
+async fn an_all_withheld_window_is_not_empty_and_is_not_corroborated() {
+    let response =
+        call_vouchers_with(vouchers_plans(window_with_composite_vouchers(3)), json!({})).await;
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["total"], 0, "{result}");
+    assert_eq!(result["items"], json!([]));
+    assert_eq!(result["withheld_total"], 3);
+    assert_eq!(result["state"], "partial");
+    assert_eq!(result["reason"], "vouchers_withheld");
 }

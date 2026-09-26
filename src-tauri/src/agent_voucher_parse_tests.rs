@@ -1373,7 +1373,9 @@ fn only_a_whole_composite_withholds_anything_else_still_refuses() {
         parse_agent_rows_withholding(&cut_entry, FOREX_COMPANY_GUID).unwrap_err(),
         "voucher_amount_invalid"
     );
-    let second = at + composite.len() + captured[at + composite.len()..].find(composite).unwrap();
+    // Not the next occurrence: a VATEXPAMOUNT between them carries one too.
+    let allocations = captured.find("<BILLALLOCATIONS.LIST").unwrap();
+    let second = allocations + captured[allocations..].find(composite).unwrap();
     let cut_allocation = format!(
         "{}-$ 100.00 @ I\u{20b9} 86/${}",
         &captured[..second],
@@ -1393,33 +1395,24 @@ fn only_a_whole_composite_withholds_anything_else_still_refuses() {
         parse_agent_rows_withholding(&garbled, CAPTURED_VOUCHER_COMPANY_GUID).unwrap_err(),
         "voucher_amount_invalid"
     );
-    // A structural fault in a withheld voucher still refuses: its entries are
-    // checked like any other.
-    let unnamed = captured.replacen("<LEDGERNAME>", "<LEDGERNAMEX>", 1);
-    assert!(parse_agent_rows_withholding(&unnamed, FOREX_COMPANY_GUID).is_err());
+    // A structural fault in a withheld voucher still refuses: an entry with
+    // no ledger name is refused as in any other voucher.
+    let unnamed = captured.replacen(
+        "<LEDGERNAME>FX Party 01</LEDGERNAME>",
+        "<LEDGERNAME></LEDGERNAME>",
+        1,
+    );
+    assert_ne!(unnamed, captured);
+    assert_eq!(
+        parse_agent_rows_withholding(&unnamed, FOREX_COMPANY_GUID).unwrap_err(),
+        "agent_read_protocol_invalid"
+    );
 }
 
 #[test]
 fn a_rupee_voucher_beside_a_composite_one_is_read_whole() {
-    // Synthetic mutation: the captured three-voucher window with the first
-    // voucher's three amounts replaced by the captured composites.
-    let forex = captured_forex_composite_vouchers();
-    let composites: Vec<&str> = forex
-        .split("<AMOUNT")
-        .skip(1)
-        .filter_map(|tail| Some(&tail[tail.find('>')? + 1..tail.find("</AMOUNT>")?]))
-        .collect();
-    assert_eq!(composites.len(), 3);
     let captured = captured_native_vouchers();
-    let first_end = captured.find("</VOUCHER>").unwrap();
-    let mut first = captured[..first_end].to_string();
-    for (plain, composite) in ["-101.01", "-101.01", "101.01"].iter().zip(&composites) {
-        let at = first
-            .find(&format!(">{plain}</AMOUNT>"))
-            .expect("the captured amount");
-        first.replace_range(at + 1..at + 1 + plain.len(), composite);
-    }
-    let mutated = format!("{first}{}", &captured[first_end..]);
+    let mutated = window_with_composite_vouchers(1);
     let rows = parse_agent_rows_withholding(&mutated, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
     let ordinary = parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
     assert_eq!(rows.len(), 3);
@@ -1458,4 +1451,15 @@ fn the_captured_empty_rate_composite_withholds_too() {
     let mutated = captured.replacen(sales, empty_rate, 1);
     let rows = parse_agent_rows_withholding(&mutated, FOREX_COMPANY_GUID).unwrap();
     assert_eq!(withheld_view(&rows[0])[WITHHELD_MARKER], WITHHELD_FOREIGN_CURRENCY);
+}
+
+#[test]
+fn the_captured_request_is_what_vouchers_renders_today() {
+    let request = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/vouchers-forex-composite-20260915.request.xml"
+    );
+    assert_eq!(
+        render_agent_vouchers("BRIDGE CORPUS FOREX", "20260915", "20260915", None).unwrap(),
+        request
+    );
 }

@@ -313,7 +313,12 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 // `src-tauri/src/agent_voucher_type_class.rs` (bridge#625) decides which
 // vouchers a type filter returns, and which request is refused as ambiguous;
 // a defect there reports a class of vouchers as absent.
-pub const MAX_SURFACE_FILES: usize = 280;
+// `bridge-tally-protocol/src/currency_composite.rs` (bridge#674) decides
+// whether an amount is a foreign-currency composite, which decides whether a
+// `vouchers` read withholds a voucher or refuses its window; a defect there
+// sets aside an amount that should have refused, or refuses a window that
+// should have been read.
+pub const MAX_SURFACE_FILES: usize = 281;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

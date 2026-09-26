@@ -722,6 +722,54 @@ pub(super) fn required_tally_bool(value: Option<&String>) -> Result<bool, String
     }
 }
 
+/// Synthetic mutation for tests (#674): the captured three-voucher window
+/// (`native-three-vouchers`) with the first `count` vouchers' amounts replaced
+/// by the composites a live read of the several-currency book captured
+/// (`vouchers-forex-composite-20260915`): each negative amount by the captured
+/// negative composite, each positive one by the positive composite.
+#[cfg(test)]
+pub(super) fn window_with_composite_vouchers(count: usize) -> String {
+    let decode = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let forex = decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/vouchers-forex-composite-20260915.utf16le.xml"
+    ));
+    let amounts = |xml: &str| -> Vec<String> {
+        xml.split("<AMOUNT")
+            .skip(1)
+            .filter_map(|tail| Some(tail[tail.find('>')? + 1..tail.find("</AMOUNT>")?].to_string()))
+            .collect()
+    };
+    let composites = amounts(&forex);
+    let negative = composites.iter().find(|value| value.starts_with('-')).unwrap().clone();
+    let positive = composites.iter().find(|value| !value.starts_with('-')).unwrap().clone();
+    let mut window = decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    ));
+    // The first `</VOUCHER>` closes CMPINFO's counter, not a voucher.
+    let mut from = 0;
+    for _ in 0..count {
+        let start = from + window[from..].find("<VOUCHER ").unwrap();
+        let end = start + window[start..].find("</VOUCHER>").unwrap();
+        let mut voucher = window[start..end].to_string();
+        for plain in amounts(&voucher) {
+            let at = voucher.find(&format!(">{plain}</AMOUNT>")).unwrap();
+            let composite = if plain.starts_with('-') { &negative } else { &positive };
+            voucher.replace_range(at + 1..at + 1 + plain.len(), composite);
+        }
+        window.replace_range(start..end, &voucher);
+        from = start + voucher.len();
+    }
+    window
+}
+
 #[cfg(test)]
 #[path = "agent_voucher_parse_tests.rs"]
 mod boundary_tests;

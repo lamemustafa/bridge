@@ -6,9 +6,11 @@
 //! `-$ 100.00 @ I₹ 86/$  = -I₹ 8600.00` on a voucher's entries and bill
 //! allocation (`fixtures/agent/vouchers-forex-composite-20260915`), and with an
 //! empty rate `$ 0.00 @ I₹ /$  = I₹ 0.00` in a Trial Balance
-//! (`fixtures/trial_balance_currency_forex_live`). Only the shape is classified here. No value
-//! is read from a composite, so nothing downstream can mistake one for an
-//! amount; a caller that finds a composite sets the row aside or refuses it.
+//! (`fixtures/trial_balance_currency_forex_live`).
+//!
+//! Only the shape is classified here. No value is read from a composite, so
+//! nothing downstream can mistake one for an amount; a caller that finds a
+//! composite sets the row aside or refuses it.
 //!
 //! Strict by design: a composite cut short, doubled, or with a non-ASCII digit
 //! is not one, and falls through to the caller's own amount parse, which
@@ -16,8 +18,13 @@
 
 /// Whether `text` is exactly one composite: `<amount> @ <rate> = <amount>`,
 /// each amount an optional `-`, a currency symbol, one space and an ASCII
-/// decimal, and the rate `<symbol> <decimal>/<symbol>` or, empty,
-/// `<symbol> /<symbol>`.
+/// decimal, and the rate `<base symbol> <decimal>/<foreign symbol>` or, empty,
+/// `<base symbol> /<foreign symbol>`.
+///
+/// The parts must agree with each other, as every captured composite does:
+/// the rate is quoted in the base amount's symbol per the foreign amount's,
+/// and the two amounts carry the same sign. A string of the right shape whose
+/// parts disagree is not a composite, so its caller refuses it.
 pub fn is_currency_composite(text: &str) -> bool {
     let Some((foreign, rest)) = split_once_exact(text, " @ ") else {
         return false;
@@ -25,7 +32,14 @@ pub fn is_currency_composite(text: &str) -> bool {
     let Some((rate, base)) = split_once_exact(rest, " = ") else {
         return false;
     };
-    is_symbol_amount(foreign) && is_rate(rate.trim_end_matches(' ')) && is_symbol_amount(base)
+    let (Some(foreign), Some(rate), Some(base)) = (
+        symbol_amount(foreign),
+        rate_symbols(rate.trim_end_matches(' ')),
+        symbol_amount(base),
+    ) else {
+        return false;
+    };
+    rate.base == base.symbol && rate.per == foreign.symbol && foreign.negative == base.negative
 }
 
 fn split_once_exact<'a>(text: &'a str, separator: &str) -> Option<(&'a str, &'a str)> {
@@ -33,22 +47,31 @@ fn split_once_exact<'a>(text: &'a str, separator: &str) -> Option<(&'a str, &'a 
     (!right.contains(separator)).then_some((left, right))
 }
 
-fn is_symbol_amount(text: &str) -> bool {
-    let text = text.strip_prefix('-').unwrap_or(text);
-    match text.split_once(' ') {
-        Some((symbol, amount)) => is_symbol(symbol) && is_ascii_decimal(amount),
-        None => false,
-    }
+struct SymbolAmount<'a> {
+    negative: bool,
+    symbol: &'a str,
 }
 
-fn is_rate(text: &str) -> bool {
-    let Some((symbol, rest)) = text.split_once(' ') else {
-        return false;
+fn symbol_amount(text: &str) -> Option<SymbolAmount<'_>> {
+    let (negative, text) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
     };
-    let Some((number, per)) = rest.split_once('/') else {
-        return false;
-    };
-    is_symbol(symbol) && (number.is_empty() || is_ascii_decimal(number)) && is_symbol(per)
+    let (symbol, amount) = text.split_once(' ')?;
+    (is_symbol(symbol) && is_ascii_decimal(amount)).then_some(SymbolAmount { negative, symbol })
+}
+
+/// The rate's two symbols: the base it is quoted in, and the foreign unit.
+struct RateSymbols<'a> {
+    base: &'a str,
+    per: &'a str,
+}
+
+fn rate_symbols(text: &str) -> Option<RateSymbols<'_>> {
+    let (base, rest) = text.split_once(' ')?;
+    let (number, per) = rest.split_once('/')?;
+    (is_symbol(base) && (number.is_empty() || is_ascii_decimal(number)) && is_symbol(per))
+        .then_some(RateSymbols { base, per })
 }
 
 fn is_symbol(text: &str) -> bool {

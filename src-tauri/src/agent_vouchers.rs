@@ -222,7 +222,8 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         }
         if withheld_total > 0 {
             payload["result"]["withheld_total"] = json!(withheld_total);
-            payload["result"]["withheld_vouchers"] = Value::Array(listed_withheld(&withheld));
+            payload["result"]["withheld_vouchers"] =
+                Value::Array(listed_withheld(&withheld, server.settings.max_bytes));
             payload["result"]["coverage"] = json!(format!(
                 "items exclude {withheld_total} voucher(s) whose amounts Tally stored in a foreign currency; they are listed in withheld_vouchers, and total counts items only"
             ));
@@ -405,9 +406,21 @@ impl Server {
 /// At most this many withheld vouchers are listed; `withheld_total` is exact.
 const MAX_WITHHELD_LISTED: usize = 100;
 
-/// The first [`MAX_WITHHELD_LISTED`] withheld vouchers, in window order.
-fn listed_withheld(withheld: &[Value]) -> Vec<Value> {
-    withheld.iter().take(MAX_WITHHELD_LISTED).map(withheld_summary).collect()
+/// The first withheld vouchers, in window order: at most
+/// [`MAX_WITHHELD_LISTED`], and no more than a quarter of the response budget,
+/// as `candidates` are bounded. `withheld_total` stays exact.
+fn listed_withheld(withheld: &[Value], response_budget_bytes: usize) -> Vec<Value> {
+    let budget = response_budget_bytes / 4;
+    let mut used = 0usize;
+    let mut listed = Vec::new();
+    for summary in withheld.iter().take(MAX_WITHHELD_LISTED).map(withheld_summary) {
+        used = used.saturating_add(summary.to_string().len());
+        if used > budget {
+            break;
+        }
+        listed.push(summary);
+    }
+    listed
 }
 
 /// A withheld voucher as `withheld_vouchers` lists it: identity and cause,

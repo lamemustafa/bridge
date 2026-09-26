@@ -2,6 +2,7 @@
 //! the repository's existing synthetic capture. Nothing here is evidence about
 //! a real book.
 use super::*;
+use crate::agent::voucher_parse::window_with_composite_vouchers;
 use bridge_tally_transport::TallyEndpointConfig;
 use tally_protocol_simulator::{
     Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
@@ -1788,4 +1789,59 @@ async fn a_transaction_label_outside_the_published_nested_schema_is_refused_befo
             );
         }
     }
+}
+
+/// #674: `vouchers` withholds a foreign-currency voucher, but presence sums
+/// and matches amounts, so a composite still refuses its whole window, by the
+/// same code as before.
+#[tokio::test]
+async fn voucher_presence_still_refuses_a_composite_window_by_its_amount_code() {
+    let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
+    steps.extend(paired_read(&catalogue_xml()));
+    steps.extend(paired_read(&high_water_xml()));
+    steps.extend(paired_read(&window_with_composite_vouchers(1)));
+    let simulator = SequenceSimulator::spawn(plans(steps)).expect("simulator");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+        batch_post_enabled: false,
+    });
+    let response = server
+        .call_tool(
+            "voucher_presence",
+            json!({
+                "company_guid": CAPTURED_GUID,
+                "from": "20260801",
+                "to": "20260802",
+                "numbering": [{"voucher_type":"Sales","numbering_method":"manual"}],
+                // Inside the captured window (1 Aug, Sales), which the check needs.
+                "vouchers": [{
+                    "date": "20260801",
+                    "voucher_type": "Sales",
+                    "voucher_number": "9",
+                    "party": "Café Naïve Traders",
+                    "entries": [
+                        {"ledger": "Café Naïve Traders", "amount": "-7.00"},
+                        {"ledger": "WR2 Sales", "amount": "7.00"},
+                    ],
+                }],
+            }),
+        )
+        .await;
+    simulator.cancel();
+    let _ = simulator.finish();
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "bill_allocation_amount_invalid",
+        "{response}"
+    );
 }
